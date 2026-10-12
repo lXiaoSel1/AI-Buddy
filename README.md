@@ -2,7 +2,7 @@
 
 **简体中文** · [English](README.en.md)
 
-**当前版本：[v1.7.6](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.6)** · 优化桌宠鼠标跟随，修复方向图片等待和快速动作切换；见 [验收记录](docs/VALIDATION-1.7.6.md)
+**当前版本：[v1.7.7](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.7)** · 修复鼠标绕桌宠转圈时的卡顿和视线反转；见 [验收记录](docs/VALIDATION-1.7.7.md)
 
 ## 简介
 
@@ -151,7 +151,7 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
 
 需要 Windows 10/11 x64。AI 酱是免安装的便携版，自带 Electron 运行时，不需要另装 Node.js、Python 或绘图工具。
 
-1. 从 [Releases](https://github.com/lXiaoSel1/ai-buddy/releases) 下载 `AI-Buddy-1.7.6-Windows-x64.zip`。精确大小和 SHA-256 以 Release 附件为准，同页附有 `SHA256SUMS-1.7.6.txt`。
+1. 从 [Releases](https://github.com/lXiaoSel1/ai-buddy/releases) 下载 `AI-Buddy-1.7.7-Windows-x64.zip`。精确大小和 SHA-256 以 Release 附件为准，同页附有 `SHA256SUMS-1.7.7.txt`。
 2. 把 ZIP 完整解压到一个可写目录，会得到一个 `AI-Buddy` 文件夹。
 3. 进入 **AI-Buddy** 文件夹，双击根目录的 **AI Buddy.exe** 启动。**AI Buddy.vbs / AI Buddy.cmd** 是兼容入口，也会启动同一个程序。从 1.7.3 起，根目录的 EXE 会直接校验运行时并启动，不再依赖 PowerShell 的 `Get-FileHash`；1.7.2 的脚本入口在缺少这条命令的电脑上可能直接退出，旧包只在 `runtime` 版本目录里有 EXE。
 
@@ -347,7 +347,7 @@ npm start
 
 开发需要 Windows x64 和 Node.js 24，依赖 Electron 44.6.0、React 19.3.0 和 esbuild 0.28.2。`npm test` 只覆盖纯逻辑，使用临时数据和模拟服务，不需要付费请求，也不代表原生集成或视觉验收。`npm run check:version` 检查 `package.json`、`package-lock.json`、两份 README 里的下载文件名和当前版本链接，以及构建说明的版本是否一致，源码构建会先跑这项检查。构建产物在 `builds/development`。
 
-不要提交 `local/`、生成的 `builds/`、密钥、个人 CG 或日志。发布前的版本同步步骤见 [构建说明](docs/BUILD.md)。验收记录：[1.7.3](docs/VALIDATION-1.7.3.md)（便携启动与本机 Codex 检测；包括模拟桌面端独立安装、真实本机桌面端 / Store 程序的登录和图像能力读取，未在用户笔记本上远程验证，也未重新生成 CG）、[1.7.2](docs/VALIDATION-1.7.2.md)（近景立绘与发布检查）、[1.7.1](docs/VALIDATION-1.7.1.md)（WebM 动画与主题）、[1.7.0](docs/VALIDATION-1.7.0.md)。
+不要提交 `local/`、生成的 `builds/`、密钥、个人 CG 或日志。发布前的版本同步步骤见 [构建说明](docs/BUILD.md)。验收记录：[1.7.7](docs/VALIDATION-1.7.7.md)（鼠标绕桌宠转圈的卡顿与视线反转）、[1.7.6](docs/VALIDATION-1.7.6.md)（鼠标位置采样与方向帧预取）、[1.7.5](docs/VALIDATION-1.7.5.md)（火山方舟绘图与 Galgame 立绘参考）、[1.7.3](docs/VALIDATION-1.7.3.md)（便携启动与本机 Codex 检测；包括模拟桌面端独立安装、真实本机桌面端 / Store 程序的登录和图像能力读取，未在用户笔记本上远程验证，也未重新生成 CG）、[1.7.2](docs/VALIDATION-1.7.2.md)（近景立绘与发布检查）、[1.7.1](docs/VALIDATION-1.7.1.md)（WebM 动画与主题）、[1.7.0](docs/VALIDATION-1.7.0.md)。
 
 ## 许可与致谢
 
