@@ -2,6 +2,7 @@ import {connectionIdentity} from './service-identity.mjs';
 import {CodexProvider} from './codex-provider.mjs';
 import {mkdirSync,readFileSync,copyFileSync,existsSync,realpathSync} from 'node:fs';
 import {join,resolve,relative,isAbsolute} from 'node:path';
+import {t} from './i18n.mjs';
 
 export function codexImageBytes(item,directory){
  if(item?.type!=='imageGeneration'||item.failure||!['completed','succeeded','success'].includes(String(item.status).toLowerCase()))throw Error('Codex 图像生成未完成');
@@ -17,7 +18,7 @@ export function codexImageBytes(item,directory){
 }
 export class CodexImageProvider extends CodexProvider{
  constructor(options){super({...options,imageGeneration:true,clientInfo:{name:'whale_companion_cg',version:'1.4.0',title:'鲸鱼娘 CG 绘图'}});}
- async check(){this.setEnabled(true);await this.start();const capabilities=await this.request('modelProvider/capabilities/read',{},15000);if(!capabilities.imageGeneration)throw Error('当前 Codex 登录不支持内置图像生成');return {ok:true,message:'Codex 图像能力可用',imageGeneration:true};}
+ async check(){this.setEnabled(true);await this.start();let capabilities;try{capabilities=await this.request('modelProvider/capabilities/read',{},15000);}catch(error){if(/method not found|unknown.*method|unsupported|not supported|unrecognized|invalid request/i.test(error.message))throw Error(t('此 Codex 版本不支持图像能力接口，请更新 Codex 桌面端后重试，或选择外部绘图 API。'));throw error;}if(!capabilities.imageGeneration)throw Error(t('当前 Codex 登录不支持内置图像生成'));return {ok:true,message:t('Codex 图像能力可用'),imageGeneration:true};}
  async models(){await this.check();const result=await this.request('model/list',{limit:100},15000);return (result.data??[]).map(row=>({id:row.model??row.id,name:row.displayName??row.model??row.id})).filter(row=>row.id);}
  async generate(profile,{prompt,references=[],directory,signal,onSubmit=async()=>{}}){
   await this.check();mkdirSync(directory,{recursive:true});

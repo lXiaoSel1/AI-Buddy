@@ -801,5 +801,13 @@
   "账号订阅": "Account subscription",
   "账号模式": "Account mode",
   "订阅": "Subscription",
-  "API 参考估算": "API-equivalent estimate"
+  "API 参考估算": "API-equivalent estimate",
+  "未找到 Codex 程序。请先安装并打开 Codex 桌面端，再点击测试连接；自定义安装可设置 AI_BUDDY_CODEX_PATH 指向 codex.exe。": "Codex was not found. Install and open the Codex desktop app, then test again. For a custom location, set AI_BUDDY_CODEX_PATH to codex.exe.",
+  "Codex 程序无法访问，请检查 Windows 权限或安全软件。": "Codex cannot be accessed. Check Windows permissions or security software.",
+  "Codex 启动失败，请更新并打开 Codex 桌面端后重试。": "Codex could not start. Update and open the Codex desktop app, then retry.",
+  "Codex 配置无法读取，请检查文件权限。": "The Codex configuration cannot be read. Check file permissions.",
+  "此 Codex 版本不支持图像能力接口，请更新 Codex 桌面端后重试，或选择外部绘图 API。": "This Codex version does not support the image capability interface. Update the desktop app or choose an external image API.",
+  "当前 Codex 登录不支持内置图像生成": "The current Codex account or provider does not support built-in image generation.",
+  "Codex 图像能力可用": "Codex image generation is available.",
+  "Codex 对话进程已结束": "The Codex connection has closed."
 }

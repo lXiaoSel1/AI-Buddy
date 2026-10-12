@@ -3,10 +3,12 @@ import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { mkdirSync,readFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
+import {codexHome,codexRuntimeError} from './runtime-discovery.mjs';
+import {t} from './i18n.mjs';
 
 export class CodexProvider extends EventEmitter {
-  constructor({binary,defaultModel,dataRoot,onUsage=()=>{},audit=()=>{},imageGeneration=false,clientInfo=null}) {
-    super(); Object.assign(this,{binary,defaultModel,dataRoot,onUsage,audit});
+  constructor({binary,defaultModel,dataRoot,onUsage=()=>{},audit=()=>{},imageGeneration=false,clientInfo=null,spawnImpl=spawn,env=process.env}) {
+    super(); Object.assign(this,{binary,defaultModel,dataRoot,onUsage,audit,spawnImpl,env});
     this.imageGeneration=imageGeneration;this.clientInfo=clientInfo;this.enabled=false; this.pending=new Map(); this.nextId=1; this.child=null; this.chatTail=Promise.resolve(); this.notifications=new Set();
   }
   setEnabled(value) {
@@ -29,11 +31,17 @@ export class CodexProvider extends EventEmitter {
     this.starting=(async()=>{
       // The Codex executable manages existing login itself. This app never reads auth.json.
       const overrides=['notify=[]','web_search="disabled"','features.shell_tool=false','features.js_repl=false','features.memories=false','features.goals=false','features.apps=false','features.image_generation='+this.imageGeneration];
-      const config=readFileSync(join(process.env.USERPROFILE,'.codex/config.toml'),'utf8');
+      const binary=typeof this.binary==='function'?await this.binary():this.binary;
+      if(!this.enabled)throw new Error(t('联网聊天已关闭'));
+      if(!binary)throw codexRuntimeError({code:'CODEX_NOT_FOUND'});
+      mkdirSync(this.dataRoot,{recursive:true});
+      let config='';try{config=readFileSync(join(codexHome(this.env),'config.toml'),'utf8');}catch(error){if(error.code!=='ENOENT')throw new Error(t('Codex 配置无法读取，请检查文件权限。'));}
       for(const match of config.matchAll(/^\[(plugins\.(?:"[^"]+"|[^.\]\s]+)|mcp_servers\.[^.\]\s]+)\]\s*$/gm))overrides.push(match[1]+'.enabled=false');
-      const child=spawn(this.binary,['app-server','--stdio',...overrides.flatMap(x=>['-c',x])],{windowsHide:true,cwd:this.dataRoot,stdio:['pipe','pipe','pipe']});this.child=child;
+      const child=this.spawnImpl(binary,['app-server',...overrides.flatMap(x=>['-c',x])],{env:this.env,windowsHide:true,cwd:this.dataRoot,stdio:['pipe','pipe','pipe']});this.child=child;
+      const spawned=new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',error=>reject(codexRuntimeError(error)));});
       this.audit({type:'codex-process-start',online:true});
       createInterface({input:this.child.stdout}).on('line',line=>{
+        if(this.child!==child)return;
         let message; try{message=JSON.parse(line);}catch{return;}
         if(message.id!==undefined && this.pending.has(message.id)) {
           const p=this.pending.get(message.id);this.pending.delete(message.id);clearTimeout(p.timer);
@@ -47,14 +55,17 @@ export class CodexProvider extends EventEmitter {
         for(const listener of this.notifications) listener(message);
       });
       this.child.stderr.on('data',data=>{this.lastError=String(data).slice(-2000);});
-      this.child.on('error',error=>this.fail(error));
-      this.child.on('exit',()=>{if(this.child===child){this.child=null;this.fail(new Error('Codex 对话进程已结束'));}});
+      const failed=error=>{if(this.child!==child)return;this.child=null;this.fail(error);child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();child.kill();};
+      child.stdin.on('error',()=>failed(new Error(t('Codex 对话进程已结束'))));
+      child.on('error',error=>failed(codexRuntimeError(error)));
+      child.on('exit',()=>failed(new Error(t('Codex 对话进程已结束'))));
+      await spawned;
       await this.request('initialize',{clientInfo:this.clientInfo??{name:'whale_companion',version:'1.0.0',title:'鲸鱼娘本地陪伴'},capabilities:{experimentalApi:true}},15000);
       this.child.stdin.write(JSON.stringify({method:'initialized',params:{}})+'\n');
       const account=await this.request('account/read',{refreshToken:false},15000);
       if(!account.account && account.requiresOpenaiAuth) throw new Error('本机 Codex 尚未登录，请先使用 Codex 自身登录入口');
     })();
-    try {await this.starting;} finally {this.starting=null;}
+    try {await this.starting;} catch(error){const child=this.child;this.child=null;if(child){child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();child.kill();}this.fail(error);throw error;} finally {this.starting=null;}
   }
   fail(error) {for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(error);}this.pending.clear();for(const l of this.notifications)l({method:'provider/error',params:{message:error.message}});}
   async complete(options) {

@@ -1,6 +1,6 @@
 {
   "name": "ai-buddy",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "description": "Local AI usage monitoring and desktop companion",
   "type": "module",
   "private": true,
@@ -9,7 +9,8 @@
     "test": "node --test test/*.test.mjs",
     "build": "node scripts/build-public.mjs",
     "start": "electron builds/development --open=overview",
-    "check:version": "node scripts/check-release-version.mjs"
+    "check:version": "node scripts/check-release-version.mjs",
+    "build:launcher": "node scripts/build-portable-launcher.mjs"
   },
   "dependencies": {
     "react": "19.3.0",

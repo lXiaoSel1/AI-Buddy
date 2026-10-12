@@ -10,5 +10,17 @@ $aiChanExeName = if ($aiChanPointer.runtime) { $aiChanPointer.runtime.executable
 if ([IO.Path]::GetFileName($aiChanExeName) -ne $aiChanExeName) { throw 'Invalid executable name' }
 $aiChanExe = [IO.Path]::GetFullPath((Join-Path $aiChanRuntime $aiChanExeName))
 if (-not $aiChanExe.StartsWith((Join-Path $aiChanRoot 'runtime\'),[StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid runtime path' }
-if ($aiChanPointer.runtime.sha256 -and (Get-FileHash -LiteralPath $aiChanExe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $aiChanPointer.runtime.sha256) { throw 'Executable hash mismatch' }
-Start-Process -FilePath $aiChanExe -ArgumentList @('"' + $aiChanBuild + '"', '--open=overview') -WorkingDirectory $aiChanRoot -WindowStyle Hidden
+if ($aiChanPointer.runtime.sha256) {
+    $aiChanHasher = [Security.Cryptography.SHA256]::Create()
+    $aiChanStream = [IO.File]::OpenRead($aiChanExe)
+    try { $aiChanHash = [BitConverter]::ToString($aiChanHasher.ComputeHash($aiChanStream)).Replace('-', '').ToLowerInvariant() }
+    finally { $aiChanStream.Dispose(); $aiChanHasher.Dispose() }
+    if ($aiChanHash -ne $aiChanPointer.runtime.sha256) { throw 'Executable hash mismatch' }
+}
+$aiChanStart = New-Object Diagnostics.ProcessStartInfo
+$aiChanStart.FileName = $aiChanExe
+$aiChanStart.Arguments = '"' + $aiChanBuild + '" --open=overview'
+$aiChanStart.WorkingDirectory = $aiChanRoot
+$aiChanStart.UseShellExecute = $false
+$aiChanStart.CreateNoWindow = $true
+[void][Diagnostics.Process]::Start($aiChanStart)

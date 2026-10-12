@@ -4,3 +4,5 @@ local/
 dist/
 *.log
 .env*
+
+/AI Buddy.exe

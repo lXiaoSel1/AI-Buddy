@@ -24,7 +24,7 @@ import { EMOTIONS,validEmotion,shortReply } from './emotions.mjs';
 import {connectionView} from './connection-view.mjs';
 import {lockPageZoom} from './page-zoom.mjs';
 import {TOOL_NAMES} from './token-sources.mjs';
-import {codexBinary} from './runtime-discovery.mjs';
+import {resolveCodexBinary,codexHome} from './runtime-discovery.mjs';
 import {APP_NAME,APP_ID,PANEL_TITLE,APP_ICON_ICO,APP_ICON_PNG} from './app-brand.mjs';
 
 const build=__dirname;
@@ -274,9 +274,9 @@ app.whenReady().then(async()=>{
   netSession.webRequest.onBeforeRequest({urls:['http://*/*','https://*/*']},(details,callback)=>{audit({type:'renderer-external-blocked',scheme:details.url.split(':')[0]});callback({cancel:true});});
   netSession.setPermissionRequestHandler((_,__,callback)=>callback(false));
   const home=process.env.USERPROFILE;
-  let config='';try{config=readFileSync(join(home,'.codex/config.toml'),'utf8');}catch(error){if(error.code!=='ENOENT')throw error;}
+  let config='';try{config=readFileSync(join(codexHome(),'config.toml'),'utf8');}catch(error){if(error.code!=='ENOENT')throw error;}
   const model=config.match(/^model\s*=\s*"([^"]+)"/m)?.[1] || 'gpt-6.1-sol';
-  const binary=codexBinary({root,explicit:arg('codex')});
+  const binary=()=>resolveCodexBinary({root,explicit:arg('codex')});
   const codex=new CodexProvider({binary,defaultModel:model,dataRoot,onUsage:usage=>worker?.postMessage({type:'companion-usage',...usage}),audit});
   provider=new ModelRouter({codex,dataRoot,crypto:safeStorage,legacy:existsSync(settingsStore.target+'.snapshots'),onChange:()=>broadcastSettings(),onUsage:usage=>{appendFileSync(join(dataRoot,'api-usage.jsonl'),JSON.stringify(usage)+'\n');worker?.postMessage({type:'refresh'});},audit});
   await provider.ready;
