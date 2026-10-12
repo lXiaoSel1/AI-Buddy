@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "name": "我的 DeepSeek Harness",
+      "tool": "dsh",
+      "path": "",
+      "format": "auto",
+      "mode": "request",
+      "enabled": false,
+      "mapping": {}
+    }
+  ],
+  "aliases": {},
+  "modelAliases": {}
+}

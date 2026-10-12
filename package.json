@@ -1,0 +1,24 @@
+{
+  "name": "ai-buddy",
+  "version": "1.7.0",
+  "description": "Local AI usage monitoring and desktop companion",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "build": "node scripts/build-public.mjs",
+    "start": "electron builds/development --open=overview"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "electron": "44.6.0",
+    "esbuild": "0.28.2"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

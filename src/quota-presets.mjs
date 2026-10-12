@@ -1,0 +1,1 @@
+export const QUOTA_PRESETS=[{id:'codex',name:'Codex',local:true},{id:'claude',name:'Claude',local:true},{id:'glm',name:'GLM / Z.ai',regions:true},{id:'kimi',name:'Kimi Coding'},{id:'minimax',name:'MiniMax Coding',regions:true},{id:'deepseek',name:'DeepSeek API 余额'},{id:'gemini',name:'Gemini',local:true}];

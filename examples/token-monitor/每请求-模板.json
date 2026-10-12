@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "name": "我的工具用量",
+      "tool": "custom",
+      "path": "",
+      "format": "jsonl",
+      "enabled": false,
+      "mode": "request",
+      "cacheIncluded": true,
+      "reasoningIncluded": true,
+      "mapping": {
+        "id": "id",
+        "sessionId": "session",
+        "timestamp": "timestamp",
+        "model": "model",
+        "provider": "provider",
+        "workspace": "project",
+        "input": "usage.prompt_tokens",
+        "output": "usage.completion_tokens",
+        "total": "usage.total_tokens"
+      }
+    }
+  ],
+  "aliases": {},
+  "modelAliases": {}
+}

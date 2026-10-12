@@ -1,0 +1,557 @@
+{
+  "version": "v014-1791486615776",
+  "sourceFrames": 120,
+  "runtimeFrames": "separate from redrawn sources",
+  "size": {
+    "width": 384,
+    "height": 416
+  },
+  "views": {
+    "front": {
+      "body": "./assets/v014-layers/body-front.png",
+      "eyes": [
+        [
+          175,
+          218
+        ],
+        [
+          211,
+          218
+        ]
+      ],
+      "mouth": [
+        193,
+        234
+      ],
+      "headHinge": [
+        192,
+        247
+      ],
+      "limbs": {
+        "upper": {
+          "src": "./assets/v014-layers/front-upper.png",
+          "width": 289,
+          "height": 608
+        },
+        "lower": {
+          "src": "./assets/v014-layers/front-lower.png",
+          "width": 240,
+          "height": 574
+        },
+        "palm0": {
+          "src": "./assets/v014-layers/front-palm0.png",
+          "width": 263,
+          "height": 282
+        },
+        "palm1": {
+          "src": "./assets/v014-layers/front-palm1.png",
+          "width": 264,
+          "height": 282
+        },
+        "fist0": {
+          "src": "./assets/v014-layers/front-fist0.png",
+          "width": 201,
+          "height": 225
+        },
+        "fist1": {
+          "src": "./assets/v014-layers/front-fist1.png",
+          "width": 201,
+          "height": 226
+        }
+      },
+      "eyesParts": {},
+      "parts": {
+        "body": {
+          "src": "./assets/v014-layers/partition-v3-front-body.png",
+          "sha256": "8b2f253eddc54f899d24336da9e4812e73c597603a8e5841b2c70d884f72357b",
+          "derived": true,
+          "pixels": 10830
+        },
+        "rear-hair": {
+          "src": "./assets/v014-layers/partition-v3-front-rear-hair.png",
+          "sha256": "bbbcfc41513d2a904a174d647c8b6a3ac9d7472912342c56d93cbaa5feb0638d",
+          "derived": true,
+          "pixels": 5223
+        },
+        "head-hair": {
+          "src": "./assets/v014-layers/partition-v3-front-head-hair.png",
+          "sha256": "838dad656f678b2ff04a27709bd641901143e7f8f429e34b6ead4fe6ba2c96ea",
+          "derived": true,
+          "pixels": 12898
+        },
+        "face": {
+          "src": "./assets/v014-layers/partition-v3-front-face.png",
+          "sha256": "b9dab568e0a9554ce1bc7e8b88945953f90b67971e3449ea792efa18053aded3",
+          "derived": true,
+          "pixels": 2348
+        },
+        "tail": {
+          "src": "./assets/v014-layers/partition-v3-front-tail.png",
+          "sha256": "ae414df7efdbcc2ef1552e861389c50ac466ea411c9f6d8c6fbc17977462ca27",
+          "derived": true,
+          "pixels": 2041
+        }
+      }
+    },
+    "right": {
+      "body": "./assets/v014-layers/body-right.png",
+      "eyes": [
+        [
+          201.16628591459067,
+          221.13043478260872
+        ],
+        [
+          231.90030339292406,
+          216.44927536231887
+        ]
+      ],
+      "mouth": [
+        218.9596644546784,
+        239.60869565217394
+      ],
+      "headHinge": [
+        192,
+        247
+      ],
+      "limbs": {
+        "upper": {
+          "src": "./assets/v014-layers/right-upper.png",
+          "width": 267,
+          "height": 450
+        },
+        "lower": {
+          "src": "./assets/v014-layers/right-lower.png",
+          "width": 250,
+          "height": 467
+        },
+        "palm0": {
+          "src": "./assets/v014-layers/right-palm0.png",
+          "width": 259,
+          "height": 267
+        },
+        "palm1": {
+          "src": "./assets/v014-layers/right-palm1.png",
+          "width": 259,
+          "height": 267
+        },
+        "thigh": {
+          "src": "./assets/v014-layers/right-thigh.png",
+          "width": 219,
+          "height": 376
+        },
+        "shin": {
+          "src": "./assets/v014-layers/right-shin.png",
+          "width": 136,
+          "height": 333
+        },
+        "shoe": {
+          "src": "./assets/v014-layers/right-shoe.png",
+          "width": 222,
+          "height": 178
+        }
+      },
+      "eyesParts": {
+        "eye0": {
+          "src": "./assets/v014-layers/right-eye0.png",
+          "width": 468,
+          "height": 365
+        },
+        "eye1": {
+          "src": "./assets/v014-layers/right-eye1.png",
+          "width": 265,
+          "height": 315
+        },
+        "closed0": {
+          "src": "./assets/v014-layers/right-closed0.png",
+          "width": 456,
+          "height": 159
+        },
+        "closed1": {
+          "src": "./assets/v014-layers/right-closed1.png",
+          "width": 268,
+          "height": 116
+        }
+      },
+      "parts": {
+        "body": {
+          "src": "./assets/v014-layers/partition-v3-right-body.png",
+          "sha256": "133a2057e4180fce1c3394cca26f84a9b74519e82093b8994f3a94ea1d2884e2",
+          "derived": true,
+          "pixels": 8813
+        },
+        "rear-hair": {
+          "src": "./assets/v014-layers/partition-v3-right-rear-hair.png",
+          "sha256": "759e522deeed07ba5938cf05da179f83bf28a9ac5524ee14445aa393093cb04d",
+          "derived": true,
+          "pixels": 4505
+        },
+        "head-hair": {
+          "src": "./assets/v014-layers/partition-v3-right-head-hair.png",
+          "sha256": "8ffd4ea5eb3a20a0a4131a04860757f51c2f513d0f3f11004037776050632f35",
+          "derived": true,
+          "pixels": 14486
+        },
+        "face": {
+          "src": "./assets/v014-layers/partition-v3-right-face.png",
+          "sha256": "1ba4023015dcaec1d4b46dfafb623245546c6b6bcc54fd6f0ea5cee2324b7092",
+          "derived": true,
+          "pixels": 2203
+        },
+        "tail": {
+          "src": "./assets/v014-layers/partition-v3-right-tail.png",
+          "sha256": "33af272614de46d81b9d423d537d824191a2e7e97ad3bff5615421f28351a076",
+          "derived": true,
+          "pixels": 3113
+        }
+      }
+    },
+    "left": {
+      "body": "./assets/v014-layers/body-left.png",
+      "eyes": [
+        [
+          178.58912607188466,
+          225.8095238095238
+        ],
+        [
+          159.90184272942892,
+          222.71428571428567
+        ]
+      ],
+      "mouth": [
+        168.69585841999634,
+        239.6190476190476
+      ],
+      "headHinge": [
+        192,
+        247
+      ],
+      "limbs": {
+        "upper": {
+          "src": "./assets/v014-layers/left-upper.png",
+          "width": 282,
+          "height": 462
+        },
+        "lower": {
+          "src": "./assets/v014-layers/left-lower.png",
+          "width": 231,
+          "height": 449
+        },
+        "palm0": {
+          "src": "./assets/v014-layers/left-palm0.png",
+          "width": 275,
+          "height": 272
+        },
+        "palm1": {
+          "src": "./assets/v014-layers/left-palm1.png",
+          "width": 274,
+          "height": 271
+        },
+        "thigh": {
+          "src": "./assets/v014-layers/left-thigh.png",
+          "width": 186,
+          "height": 392
+        },
+        "shin": {
+          "src": "./assets/v014-layers/left-shin.png",
+          "width": 205,
+          "height": 443
+        },
+        "shoe": {
+          "src": "./assets/v014-layers/left-shoe.png",
+          "width": 240,
+          "height": 238
+        }
+      },
+      "eyesParts": {
+        "eye0": {
+          "src": "./assets/v014-layers/left-eye0.png",
+          "width": 456,
+          "height": 325
+        },
+        "eye1": {
+          "src": "./assets/v014-layers/left-eye1.png",
+          "width": 331,
+          "height": 290
+        },
+        "closed0": {
+          "src": "./assets/v014-layers/left-closed0.png",
+          "width": 462,
+          "height": 156
+        },
+        "closed1": {
+          "src": "./assets/v014-layers/left-closed1.png",
+          "width": 335,
+          "height": 133
+        }
+      },
+      "parts": {
+        "body": {
+          "src": "./assets/v014-layers/partition-v3-left-body.png",
+          "sha256": "de9267bcddc05a3ca562b0abfc8cab51d592593ff9f97c23948d11070de99d52",
+          "derived": true,
+          "pixels": 7637
+        },
+        "rear-hair": {
+          "src": "./assets/v014-layers/partition-v3-left-rear-hair.png",
+          "sha256": "617d89a875cf73f73e5f6a4ed3b999e79b374f885b1f325bc29d18707148b2bd",
+          "derived": true,
+          "pixels": 3706
+        },
+        "head-hair": {
+          "src": "./assets/v014-layers/partition-v3-left-head-hair.png",
+          "sha256": "c45470854d329b56654f37700973182154080da80f9f3d733ab4a876673c3322",
+          "derived": true,
+          "pixels": 12805
+        },
+        "face": {
+          "src": "./assets/v014-layers/partition-v3-left-face.png",
+          "sha256": "f3bd711eb2202fb4811a544eac1f7f741797241d17596fdc59258864ae225377",
+          "derived": true,
+          "pixels": 1362
+        },
+        "tail": {
+          "src": "./assets/v014-layers/partition-v3-left-tail.png",
+          "sha256": "5e75c93576afa658a7a02997939db0af4a2318c75257cb7f812626837387e10e",
+          "derived": true,
+          "pixels": 2356
+        }
+      }
+    },
+    "idle": {
+      "body": "./assets/v014-layers/body-idle.png",
+      "eyes": [
+        [
+          177,
+          260
+        ],
+        [
+          212,
+          260
+        ]
+      ],
+      "mouth": [
+        195,
+        278
+      ],
+      "headHinge": [
+        195,
+        290
+      ],
+      "limbs": {},
+      "eyesParts": {},
+      "preservedSignPixels": true,
+      "parts": {
+        "body": {
+          "src": "./assets/v014-layers/partition-v3-idle-body.png",
+          "sha256": "854e8a8bad67b4e5d56727a10a719b52273b37238989ca71c7f800bff4919173",
+          "derived": true,
+          "pixels": 52438
+        },
+        "rear-hair": {
+          "src": "./assets/v014-layers/partition-v3-idle-rear-hair.png",
+          "sha256": "e39f3539393349ccb86cf14c5657e0d680fc0afc90a9c6d149c5a7b05c03484a",
+          "derived": true,
+          "pixels": 4461
+        },
+        "head-hair": {
+          "src": "./assets/v014-layers/partition-v3-idle-head-hair.png",
+          "sha256": "a8f128bf5ded3049bc02a11fcfd158d7c53f144ed4e5c7a709e72804d52d86be",
+          "derived": true,
+          "pixels": 12786
+        },
+        "face": {
+          "src": "./assets/v014-layers/partition-v3-idle-face.png",
+          "sha256": "915e9b5fa1af48c1aef85f43839b069abf3eaa8283ceaa3dbe037238c5c86014",
+          "derived": true,
+          "pixels": 2072
+        },
+        "tail": {
+          "src": "./assets/v014-layers/partition-v3-idle-tail.png",
+          "sha256": "f4097b32d3ffc17aec5c500d023f94784811f06d2f99877706603d4f9f1ddc1e",
+          "derived": true,
+          "pixels": 1125
+        }
+      }
+    },
+    "front-run": {
+      "body": "./assets/v014-layers/body-front-run.png",
+      "eyes": [
+        [
+          175,
+          218
+        ],
+        [
+          211,
+          218
+        ]
+      ],
+      "mouth": [
+        193,
+        234
+      ],
+      "headHinge": [
+        192,
+        247
+      ],
+      "limbs": {
+        "upper": {
+          "src": "./assets/v014-layers/front-upper.png",
+          "width": 289,
+          "height": 608
+        },
+        "lower": {
+          "src": "./assets/v014-layers/front-lower.png",
+          "width": 240,
+          "height": 574
+        },
+        "palm0": {
+          "src": "./assets/v014-layers/front-palm0.png",
+          "width": 263,
+          "height": 282
+        },
+        "palm1": {
+          "src": "./assets/v014-layers/front-palm1.png",
+          "width": 264,
+          "height": 282
+        },
+        "fist0": {
+          "src": "./assets/v014-layers/front-fist0.png",
+          "width": 201,
+          "height": 225
+        },
+        "fist1": {
+          "src": "./assets/v014-layers/front-fist1.png",
+          "width": 201,
+          "height": 226
+        }
+      },
+      "eyesParts": {},
+      "parts": {
+        "body": {
+          "src": "./assets/v014-layers/partition-v3-front-run-body.png",
+          "sha256": "a3993ab230bb591e81e8c0ecfe68404e43b101af3dd24c1cb645b00690bd6f2b",
+          "derived": true,
+          "pixels": 9226
+        },
+        "rear-hair": {
+          "src": "./assets/v014-layers/partition-v3-front-run-rear-hair.png",
+          "sha256": "bbbcfc41513d2a904a174d647c8b6a3ac9d7472912342c56d93cbaa5feb0638d",
+          "derived": true,
+          "pixels": 5223
+        },
+        "head-hair": {
+          "src": "./assets/v014-layers/partition-v3-front-run-head-hair.png",
+          "sha256": "838dad656f678b2ff04a27709bd641901143e7f8f429e34b6ead4fe6ba2c96ea",
+          "derived": true,
+          "pixels": 12898
+        },
+        "face": {
+          "src": "./assets/v014-layers/partition-v3-front-run-face.png",
+          "sha256": "b9dab568e0a9554ce1bc7e8b88945953f90b67971e3449ea792efa18053aded3",
+          "derived": true,
+          "pixels": 2348
+        },
+        "tail": {
+          "src": "./assets/v014-layers/partition-v3-front-run-tail.png",
+          "sha256": "ae414df7efdbcc2ef1552e861389c50ac466ea411c9f6d8c6fbc17977462ca27",
+          "derived": true,
+          "pixels": 2041
+        }
+      }
+    }
+  },
+  "features": {
+    "eye0": {
+      "src": "./assets/v014-layers/face-eye0.png",
+      "width": 216,
+      "height": 175
+    },
+    "eye1": {
+      "src": "./assets/v014-layers/face-eye1.png",
+      "width": 215,
+      "height": 176
+    },
+    "brow0": {
+      "src": "./assets/v014-layers/face-brow0.png",
+      "width": 130,
+      "height": 48
+    },
+    "brow1": {
+      "src": "./assets/v014-layers/face-brow1.png",
+      "width": 129,
+      "height": 48
+    },
+    "closed0": {
+      "src": "./assets/v014-layers/face-closed0.png",
+      "width": 191,
+      "height": 78
+    },
+    "closed1": {
+      "src": "./assets/v014-layers/face-closed1.png",
+      "width": 191,
+      "height": 78
+    },
+    "smile": {
+      "src": "./assets/v014-layers/face-smile.png",
+      "width": 121,
+      "height": 87
+    },
+    "fear": {
+      "src": "./assets/v014-layers/face-fear.png",
+      "width": 85,
+      "height": 80
+    },
+    "sad": {
+      "src": "./assets/v014-layers/face-sad.png",
+      "width": 127,
+      "height": 44
+    },
+    "tear0": {
+      "src": "./assets/v014-layers/face-tear0.png",
+      "width": 78,
+      "height": 124
+    },
+    "tear1": {
+      "src": "./assets/v014-layers/face-tear1.png",
+      "width": 79,
+      "height": 124
+    }
+  },
+  "generatedUnderlays": true,
+  "directionAnglesDeg": [
+    0,
+    11.25,
+    22.5,
+    45,
+    56.25,
+    67.5,
+    90,
+    101.25,
+    112.5,
+    135,
+    146.25,
+    157.5,
+    180,
+    191.25,
+    202.5,
+    225,
+    236.25,
+    247.5,
+    270,
+    281.25,
+    292.5,
+    315,
+    326.25,
+    337.5
+  ],
+  "partitionMethod": "Disjoint generated pixels; reconstruct before applying shared registered topology",
+  "limbSampling": {
+    "shinSourceCrop": [
+      0,
+      0,
+      1,
+      0.69
+    ],
+    "footWidth": 24
+  }
+}

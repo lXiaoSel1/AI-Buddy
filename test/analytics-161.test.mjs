@@ -1,0 +1,39 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {UsageQuery,normalizedRequest,sortProjects} from '../src/usage-query.mjs';
+import {resolveIdentity,connectionIdentity,platformCatalog} from '../src/service-identity.mjs';
+import {ServiceAttribution,validateRule} from '../src/service-attribution.mjs';
+import {PriceService} from '../src/pricing.mjs';
+import {validateViews,defaultViews,compactNumber} from '../src/statistics-views.mjs';
+import {parseTokenRecord} from '../src/token-adapters.mjs';
+const row=(id,extra={})=>({tool:'codex',sourceId:'one',sessionId:'s',requestId:id,timestamp:'2026-10-11T12:00:00.000Z',workspace:'E:/A',model:'gpt-6',actualProvider:'unknown',cacheIncluded:false,usage:{input:10,output:5,cacheRead:0,cacheWrite:0,total:15,requests:1},...extra});
+test('Platform evidence stays separate from model vendor and source aliases never replace recorded routes',()=>{
+ for(const tool of ['codex','claude','gemini','kimi','opencode','cline','roo','dsh']){const r=resolveIdentity(row('r',{tool,model:'gpt-6',actualProvider:'openrouter'}),{aliasProvider:'openai'});assert.equal(r.serviceProvider,'openrouter');assert.equal(r.modelVendor,'openai');}
+ assert.equal(resolveIdentity(row('x',{actualProvider:'unknown',model:'claude-sonnet'})).serviceProvider,'unknown');
+ const cg=resolveIdentity(row('cg',{tool:'companion',actualProvider:'codex'}));assert.equal(cg.serviceProvider,'unknown');assert.equal(cg.channel,'codex');
+ const dsh=resolveIdentity(row('dsh',{tool:'dsh',actualProvider:'deepseek-account',model:'deepseek-v4'}));assert.equal(dsh.serviceProvider,'deepseek');assert.equal(dsh.billingRoute,'account');
+ assert.notEqual(resolveIdentity(row('a',{actualProvider:'custom'})).serviceProvider,resolveIdentity(row('b',{actualProvider:'custom',sourceId:'two'})).serviceProvider);
+ assert.equal(resolveIdentity(row('x',{model:'openrouter/openai/gpt-6'})).modelVendor,'openai');
+ assert.equal(resolveIdentity(row('x'),{id:'one',aliasProvider:'anthropic'}).identityAssignment,'user');
+});
+test('Request snapshots remove secrets and retain original provider despite later configuration changes',()=>{
+ const profile={id:'p',kind:'openai',protocol:'responses',baseUrl:'https://proxy.example/v1?key=secret#secret',key:'SECRET'},saved=connectionIdentity(profile);assert.equal(saved.address,'https://proxy.example');assert.equal(saved.servicePlatform,'custom:p:proxy.example');assert.equal(saved.billingRoute,'proxy');assert.ok(!JSON.stringify(saved).includes('secret'));profile.baseUrl='https://api.openai.com/v1';assert.equal(resolveIdentity(row('a',{connectionIdentity:saved})).serviceProvider,'custom:p:proxy.example');assert.equal(connectionIdentity(profile).servicePlatform,'openai');
+ const event=parseTokenRecord({id:'c',tool:'companion'},{id:'r',timestamp:'2026-10-11T12:00:00Z',provider:'openai',connectionIdentity:saved,usage:{input:1,output:2}}, {},'x.jsonl',0)[0];assert.equal(event.serviceProvider,saved.servicePlatform);assert.deepEqual(event.connectionIdentity,saved);
+});
+test('Catalog offers twenty providers without adding requests and vendor/platform filters intersect',()=>{const q=new UsageQuery();q.replaceGroup('a',[row('a',{actualProvider:'openrouter'})]);assert.ok(platformCatalog().length>=20);const r=q.query({provider:'openrouter',modelVendor:'openai'});assert.equal(r.totals.total,15);assert.ok(r.platformCatalog.find(p=>p.id==='azure'&&!p.observed));assert.equal(q.query({provider:'azure'}).totals.requests,0);assert.equal(q.rows.size,1);});
+test('Attribution previews, saves, conflicts, restart, deletion and fixed DST dates preserve usage',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ai161-rules-')),service=new ServiceAttribution(dir);await service.ready;
+ const rows=[row('unknown'),row('known',{actualProvider:'openrouter'})],r={sourceId:'one',platform:'anthropic',from:'2026-10-11',to:'2026-10-11',timeZone:'America/New_York',billingRoute:'api'};
+ assert.equal(service.preview(r,rows).affected,1);assert.equal(service.preview(r,rows).confirmed,1);const {rules}=await service.save(r,rows);assert.equal(service.resolve(rows[0]).serviceProvider,'anthropic');assert.equal(service.resolve(rows[1]).serviceProvider,'openrouter');assert.throws(()=>service.preview({...r,platform:'google'},rows),/重叠/);const restored=new ServiceAttribution(dir);await restored.ready;assert.equal(restored.resolve(rows[0]).identityAssignment,'user');assert.deepEqual(rows[0].usage,{input:10,output:5,cacheRead:0,cacheWrite:0,total:15,requests:1});await restored.remove(rules[0].id);assert.equal(restored.resolve(rows[0]).serviceProvider,'unknown');
+ const dst=validateRule({...r,from:'2026-11-01',to:'2026-11-01'});assert.equal(Date.parse(dst.toExclusive)-Date.parse(dst.fromInclusive),25*3600000);assert.throws(()=>validateRule({...r,from:'2026-02-30'}),/日期/);
+});
+test('Reference estimates allow unknown routes while explicit account/API custom rates remain separate',async()=>{const p=new PriceService({dataRoot:await mkdtemp(join(tmpdir(),'ai161-price-')),bundle:{rows:{'deepseek/deepseek-chat':{input:1,output:2,cacheRead:0,cacheWrite:0,currency:'USD'}},version:'test'}});await p.ready;const r=normalizedRequest(row('x',{actualProvider:'deepseek',model:'deepseek-chat'}));assert.ok(p.estimate(r).amount>0);assert.equal(p.estimate({...r,billingRoute:'account'}).amount,p.estimate(r).amount);assert.ok(p.estimate({...r,billingRoute:'api'}).amount>0);await p.save({overrides:[{provider:'deepseek',model:'deepseek-chat',billingRoute:'account',input:0,output:0,cacheRead:0,cacheWrite:0,currency:'CNY'}]});assert.equal(p.estimate({...r,billingRoute:'account'}).currency,'CNY');assert.equal(p.estimate({...r,billingRoute:'api'}).currency,'USD');});
+test('Raw project ordering handles unknowns, partial values, stable path ties and exports without rescanning',()=>{
+ const q=new UsageQuery();q.replaceGroup('a',[row('big',{workspace:'E:/B',usage:{input:2000000000,output:1,total:2000000001,requests:1}}),row('tie',{workspace:'D:/A'}),row('tie2',{workspace:'E:/A'}),row('unknown',{workspace:'E:/unknown',usage:{input:null,output:null,total:null,requests:1}}),row('partial',{workspace:'E:/A',usage:{input:null,output:null,total:null,requests:1}})]);
+ const initial=q.query(),scans=q.scanned;assert.equal(initial.projects[0].name,'E:/B');for(const field of ['total','input','output','name'])for(const direction of ['asc','desc']){const r=q.query({sortField:field,sortDirection:direction});if(field!=='name')assert.equal(r.projects.at(-1).name,'E:/unknown');assert.equal(q.scanned,scans);}
+ const sorted=q.query({sortField:'total',sortDirection:'asc'}).projects;assert.deepEqual(sorted.slice(0,2).map(p=>p.name),['D:/A','E:/A']);const exported=JSON.parse(q.export({view:'projects',sortField:'total',sortDirection:'asc'}));assert.deepEqual(exported.projects.map(p=>p.name),sorted.map(p=>p.name));assert.equal(exported.periods,undefined);const csv=q.export({view:'projects',sortField:'total',sortDirection:'asc'},'csv');assert.ok(csv.indexOf('D:/A')<csv.indexOf('E:/B'));assert.ok(csv.includes('project'));assert.equal(compactNumber(2e9),'2B');
+});
+test('View preferences validate nested fields and keep independent page defaults',()=>{const v=defaultViews();assert.equal(v.overview.preset,'today');assert.equal(v.history.preset,'30d');assert.equal(v.projects.preset,'all');v.projects.sortDirection='asc';v.overview.visibleTools=[];const saved=validateViews(v);assert.equal(saved.projects.sortDirection,'asc');assert.deepEqual(saved.overview.visibleTools,[]);assert.throws(()=>validateViews({sessions:{}}));assert.throws(()=>validateViews({projects:{sortField:'injected'}}));assert.throws(()=>validateViews({overview:{from:'2026-10-12',to:'2026-10-11'}}));});

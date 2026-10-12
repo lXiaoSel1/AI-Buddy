@@ -1,0 +1,2 @@
+{"id":"example-001","session":"example-session","timestamp":"2026-01-01T10:00:00Z","model":"glm-example","provider":"zhipu","project":"example-project","usage":{"prompt_tokens":120,"completion_tokens":30,"total_tokens":150}}
+{"id":"example-002","session":"example-session","timestamp":"2026-01-01T10:01:00Z","model":"glm-example","provider":"zhipu","project":"example-project","usage":{"prompt_tokens":80,"completion_tokens":20,"total_tokens":100}}

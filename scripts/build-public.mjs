@@ -1,0 +1,15 @@
+import {build} from 'esbuild';
+import {existsSync,readFileSync,mkdirSync,cpSync,copyFileSync,writeFileSync} from 'node:fs';
+import {resolve,join} from 'node:path';
+const root=resolve(import.meta.dirname,'..'),resources=process.argv.find(a=>a.startsWith('--resources='))?.slice(12);
+if(!resources)throw Error('Pass --resources=<build folder from the matching portable release>');
+const source=resolve(resources),out=join(root,'builds/development');
+if(!existsSync(join(source,'assets/frame-sequence-manifest.json')))throw Error('Resource manifest missing');
+const sequences=JSON.parse(readFileSync(join(source,'assets/frame-sequence-manifest.json'),'utf8')),previews=JSON.parse(readFileSync(join(source,'assets/gallery-preview-manifest.json'),'utf8'));
+mkdirSync(out,{recursive:true});cpSync(join(source,'assets'),join(out,'assets'),{recursive:true});
+const shared={bundle:true,logLevel:'info',legalComments:'eof'};
+for(const entry of ['main','preload','monitor-worker'])await build({...shared,entryPoints:[join(root,'src',entry+'.mjs')],outfile:join(out,entry+'.cjs'),platform:'node',target:'node24',format:'cjs',external:['electron'],define:entry==='main'?{'__FRAME_SEQUENCES__':JSON.stringify(sequences)}:undefined});
+for(const entry of ['dashboard','pet'])await build({...shared,entryPoints:[join(root,'src',entry+'.mjs')],outfile:join(out,entry+'.js'),platform:'browser',target:'chrome144',format:'iife',define:{'process.env.NODE_ENV':'"production"','__ALL_ACTION_RIGS__':'false','__FIVE_ACTIONS_V014__':'false','__FRAME_SEQUENCES__':JSON.stringify(sequences),'__PREVIEW_ATLASES__':JSON.stringify(entry==='dashboard'?previews.resources:{})}});
+for(const name of ['index.html','pet.html','dashboard.css'])copyFileSync(join(root,'src',name),join(out,name));
+writeFileSync(join(out,'package.json'),JSON.stringify({name:'ai-buddy',productName:'AI Buddy',version:JSON.parse(readFileSync(join(root,'package.json'),'utf8')).version,main:'main.cjs'}));
+console.log('Built '+out);

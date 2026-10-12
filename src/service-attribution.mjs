@@ -1,0 +1,18 @@
+import {join} from 'node:path';
+import {randomUUID} from 'node:crypto';
+import {createSnapshotStorage,readJson} from './storage.mjs';
+import {resolveIdentity,platformId,BILLING_ROUTES} from './service-identity.mjs';
+import {dateInZone,resolveZone} from './usage-query.mjs';
+function boundary(date,zone){if(!date)return null;if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||new Date(date+'T00:00:00Z').toISOString().slice(0,10)!==date)throw Error('日期无效');let lo=Date.parse(date+'T00:00:00Z')-172800000,hi=lo+345600000;while(hi-lo>1){const mid=Math.floor((lo+hi)/2);if(dateInZone(mid,zone)<date)lo=mid;else hi=mid;}return new Date(hi).toISOString();}
+function following(date){const d=new Date(date+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+1);return d.toISOString().slice(0,10);}
+export function validateRule(value,timeZone){if(!value.sourceId||typeof value.sourceId!=='string')throw Error('请选择来源');const zone=resolveZone(value.timeZone||timeZone),from=value.from||'',to=value.to||'';if(from&&to&&from>to)throw Error('开始日期不能晚于结束日期');const platform=platformId(value.platform,value.sourceId);if(platform==='unknown')throw Error('请选择服务平台');const billingRoute=value.billingRoute||'unknown';if(!Object.hasOwn(BILLING_ROUTES,billingRoute))throw Error('计费路线无效');return {id:value.id||randomUUID(),sourceId:value.sourceId,from,to,timeZone:zone,fromInclusive:boundary(from,zone),toExclusive:to?boundary(following(to),zone):null,platform,rawChannel:String(value.rawChannel||'').trim().slice(0,200),billingRoute};}
+export const ruleMatches=(rule,row)=>rule.sourceId===row.sourceId&&(!rule.rawChannel||rule.rawChannel===row.rawChannel)&&(!rule.fromInclusive||row.timestamp>=rule.fromInclusive)&&(!rule.toExclusive||row.timestamp<rule.toExclusive);
+export function conflict(a,b){return a.id!==b.id&&a.sourceId===b.sourceId&&(!a.rawChannel||!b.rawChannel||a.rawChannel===b.rawChannel)&&(!a.toExclusive||!b.fromInclusive||a.toExclusive>b.fromInclusive)&&(!b.toExclusive||!a.fromInclusive||b.toExclusive>a.fromInclusive);}
+export class ServiceAttribution{
+ constructor(dataRoot){this.store=createSnapshotStorage(join(dataRoot,'service-attribution-v1.json'));this.revision=0;this.ready=readJson(this.store,{version:1,rules:[]}).then(v=>{this.state=v;});}
+ resolve(row,source){const base=resolveIdentity(row,source);if(base.serviceProvider!=='unknown')return base;const rule=this.state?.rules.find(r=>ruleMatches(r,{...row,...base}));return rule?{...base,serviceProvider:rule.platform,servicePlatform:rule.platform,billingRoute:rule.billingRoute,identityBasis:'用户指定 · '+rule.id,identityAssignment:'user',attributionRule:rule.id}:base;}
+ view(){return {rules:this.state.rules,revision:this.revision};}
+ preview(value,rows,zone){const rule=validateRule(value,zone);if(this.state.rules.some(r=>conflict(r,rule)))throw Error('与已有规则重叠，请先编辑或删除冲突规则');let affected=0,confirmed=0;for(const row of rows){const base=resolveIdentity(row);if(!ruleMatches(rule,{...row,...base}))continue;if(base.serviceProvider==='unknown'&&!(row.identityAssignment==='user'&&!row.attributionRule))affected++;else confirmed++;}return {rule,affected,confirmed};}
+ async save(value,rows,zone){await this.ready;const preview=this.preview(value,rows,zone),rules=this.state.rules.filter(r=>r.id!==preview.rule.id);rules.push(preview.rule);await this.store.writeText(JSON.stringify({version:1,rules}));this.state={version:1,rules};this.revision++;return {...this.view(),preview};}
+ async remove(id){const rules=this.state.rules.filter(r=>r.id!==id);await this.store.writeText(JSON.stringify({version:1,rules}));this.state={version:1,rules};this.revision++;return this.view();}
+}
