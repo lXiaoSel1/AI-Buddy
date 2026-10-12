@@ -5,9 +5,10 @@ import {FRAME_SEQUENCES,validateFrameSequence,sequenceFrameAt,sequenceSampleFram
 // The controller remains the owner of action/feedback timing. Only discontinuities
 // seek; ordinary playback uses playbackRate and requestVideoFrameCallback.
 export class VideoSequenceRenderer{
- constructor(fallback,{sequences=FRAME_SEQUENCES,maxStaticFrames=64}={}){
+ constructor(fallback,{sequences=FRAME_SEQUENCES,maxStaticFrames=64,staticConcurrency=2,directionPrefetch=12}={}){
   this.fallback=fallback;this.sequences=sequences;this.fullFrameSequences=true;this.maxStaticFrames=maxStaticFrames;
   this.targets=new Map();this.prepared=new Map();this.stills=new Map();this.pending=new Map();this.errors=new Map();this.serial=0;this.targetSerial=0;this.videoDraws=0;this.seekCount=0;
+  this.staticQueue=[];this.staticJobs=new Map();this.staticActive=0;this.staticEpoch=0;this.staticConcurrency=Math.max(1,staticConcurrency);this.directionPrefetch=Math.min(directionPrefetch,Math.floor((maxStaticFrames-1)/2));
   for(const c of Object.values(sequences))validateFrameSequence(c);
   this.ready=Promise.all([fallback.ready,this.still(sequences.idle,0)]).then(()=>this);
  }
@@ -18,13 +19,37 @@ export class VideoSequenceRenderer{
  get allActionsRig(){return false;}get workingRigPilot(){return false;}get rigDraws(){return 0;}get rigResizes(){return 0;}
  eyeOrigin(sample){const c=this.sequences[sample.actionId],p=c?.eyeOrigin;return p?{x:p.x/c.canvas.width*FRAME_SIZE.width,y:p.y/c.canvas.height*FRAME_SIZE.height}:this.fallback.eyeOrigin?.(sample)??{x:98,y:130};}
  resource(clip){return clip.resourceId??clip.actionId;}
- still(clip,index){
+ still(clip,index,{priority=0}={}){
   if(!clip)return Promise.reject(Error('Missing animation'));
   const record=clip.staticFrames?.[index]??clip.staticFrames?.[0],key=this.resource(clip)+'/'+(clip.staticFrames?.[index]?index:0);
   const cached=this.stills.get(key);if(cached){cached.used=++this.serial;return Promise.resolve(cached.image);}
-  if(this.pending.has(key))return this.pending.get(key);
-  const image=new Image();image.src=record.src;
-  const pending=image.decode().then(()=>{if(image.naturalWidth!==clip.canvas.width||image.naturalHeight!==clip.canvas.height)throw Error('Animation still dimensions differ');this.stills.set(key,{image,used:++this.serial});this.pending.delete(key);this.trimStills();return image;}).catch(e=>{this.pending.delete(key);this.errors.set(key,e.message);throw e;});this.pending.set(key,pending);return pending;
+  if(this.pending.has(key)){const job=this.staticJobs.get(key);if(job)job.priority=Math.min(job.priority,priority);return this.pending.get(key);}
+  let done,fail;const pending=new Promise((resolve,reject)=>{done=resolve;fail=reject;});
+  const job={key,clip,record,priority,order:++this.serial,epoch:this.staticEpoch,done,fail,pending};this.pending.set(key,pending);this.staticJobs.set(key,job);this.staticQueue.push(job);
+  this.pruneStaticQueue();queueMicrotask(()=>this.pumpStills());return pending;
+ }
+ pruneStaticQueue(){
+  const interest=new Set([...this.targets.values()].flatMap(s=>[s.stillKey,...(s.prefetchKeys??[])]));
+  this.staticQueue.sort((a,b)=>a.priority-b.priority||b.order-a.order);
+  this.staticQueue=this.staticQueue.filter((job,index)=>{if(index<this.maxStaticFrames-this.staticActive&&(job.priority===0||interest.has(job.key)))return true;this.pending.delete(job.key);this.staticJobs.delete(job.key);job.done(null);return false;});
+ }
+ pumpStills(){
+  this.staticQueue.sort((a,b)=>a.priority-b.priority||b.order-a.order);
+  while(this.staticActive<this.staticConcurrency&&this.staticQueue.length){
+   const job=this.staticQueue.shift(),image=new Image();this.staticActive++;image.src=job.record.src;
+   image.decode().then(()=>{
+    if(image.naturalWidth!==job.clip.canvas.width||image.naturalHeight!==job.clip.canvas.height)throw Error('Animation still dimensions differ');
+    if(job.epoch===this.staticEpoch){this.stills.set(job.key,{image,used:++this.serial});this.trimStills();}else image.src='';job.done(image);
+   }).catch(e=>{if(job.epoch===this.staticEpoch)this.errors.set(job.key,e.message);job.fail(e);}).finally(()=>{
+    if(this.pending.get(job.key)===job.pending){this.pending.delete(job.key);this.staticJobs.delete(job.key);}this.staticActive--;this.pumpStills();
+   });
+  }
+ }
+ prefetchDirection(state,clip,index){
+  if(state.prefetchCenter===index)return;state.prefetchCenter=index;
+  const frames=[];for(let d=1;d<=this.directionPrefetch;d++)for(const sign of [-1,1])frames.push({index:(index+sign*d+clip.frames.length)%clip.frames.length,priority:d});
+  state.prefetchKeys=new Set(frames.map(f=>this.resource(clip)+'/'+f.index));this.pruneStaticQueue();
+  for(const frame of frames)void this.still(clip,frame.index,{priority:frame.priority}).catch(()=>{});
  }
  trimStills(){const keep=new Set([...this.targets.values()].filter(s=>s.stillKey).map(s=>s.stillKey));const oldest=[...this.stills].filter(([k])=>!keep.has(k)).sort((a,b)=>a[1].used-b[1].used);while(this.stills.size>this.maxStaticFrames&&oldest.length){const[k,e]=oldest.shift();this.stills.delete(k);e.image.src='';}}
  createSlot(clip){
@@ -47,7 +72,7 @@ export class VideoSequenceRenderer{
  }
  acquire(target,clip){
   let s=this.targets.get(target);if(!s){s={id:++this.targetSerial,resource:null,slot:null,shown:null,drawKey:null,alpha:null,stillKey:null,lastElapsed:null,actionId:null};this.targets.set(target,s);}
-  const key=this.resource(clip);if(s.resource!==key){this.closeSlot(s.slot);s.slot=this.prepared.get(key)??this.createSlot(clip);this.prepared.delete(key);s.resource=key;s.actionId=null;s.drawKey=null;s.stillKey=null;s.lastElapsed=null;}
+  const key=this.resource(clip);if(s.resource!==key){this.closeSlot(s.slot);s.slot=this.prepared.get(key)??this.createSlot(clip);this.prepared.delete(key);s.resource=key;s.actionId=null;s.drawKey=null;s.stillKey=null;s.lastElapsed=null;s.prefetchCenter=null;s.prefetchKeys=null;this.pruneStaticQueue();}
   return s;
  }
  seek(slot,ms){if(slot.seekPending||!slot.ready)return;slot.seekPending=true;slot.video.currentTime=Math.max(0,Math.min(slot.video.duration-.001,ms/1000));this.seekCount++;}
@@ -59,16 +84,21 @@ export class VideoSequenceRenderer{
   let image,shownFrame=index,key;
   if(stillMode){
    slot.video.pause();const fixed=direction?index:sample.reducedMotion?(clip.emotionPeakFrame??0):0;state.stillKey=this.resource(clip)+'/'+fixed;
+   if(direction){void this.still(clip,fixed).catch(()=>{});this.prefetchDirection(state,clip,fixed);}else{state.prefetchCenter=null;state.prefetchKeys=null;this.pruneStaticQueue();}
    const cached=this.stills.get(state.stillKey);if(cached){cached.used=++this.serial;image=cached.image;shownFrame=fixed;key='still/'+state.stillKey;}else{void this.still(clip,fixed).catch(()=>{});return false;}
    if(slot.error)target.dataset.sequenceError='动画暂时无法播放';
   }else{
-   delete target.dataset.sequenceError;state.stillKey=null;
+   delete target.dataset.sequenceError;state.stillKey=null;state.prefetchCenter=null;state.prefetchKeys=null;this.pruneStaticQueue();
    const changed=state.actionId!==sample.actionId,rewound=state.lastElapsed!==null&&elapsed+1<state.lastElapsed;
    if(slot.video.playbackRate!==rate)slot.video.playbackRate=rate;
    const delta=Math.abs(slot.video.currentTime*1000-phase),circular=Math.min(delta,Math.abs(delta-clip.cycleMs));
    if(changed||rewound||(playing&&performance.now()-slot.lastSync>1500&&circular>100)){
     if(circular>8)this.seek(slot,phase);slot.lastSync=performance.now();
    }
+   // Remember the requested clock even while the decoder is seeking. Otherwise
+   // each callback sees the same action change and starts another seek before
+   // the new frame can be drawn. The actual displayed sample stays unchanged.
+   state.actionId=sample.actionId;state.lastElapsed=elapsed;
    if(playing&&slot.video.paused&&!slot.seekPending)void slot.video.play().catch(e=>{slot.error=e.message;this.errors.set(slot.resource,e.message);});else if(!playing&&!slot.video.paused)slot.video.pause();
    if(slot.seekPending&&state.shown)return false;
    image=slot.video;shownFrame=sequenceFrameAt(clip,slot.mediaMs+.1);key='video/'+state.resource+'/'+slot.serial;
@@ -88,6 +118,6 @@ export class VideoSequenceRenderer{
  isAdvancing(target){const s=this.targets.get(target);return !!(s?.slot?.ready&&!s.slot.seekPending&&!s.slot.video.paused);}
  targetDraws(target){return this.targets.get(target)?.slot?.serial??0;}
  invalidate(target){const s=this.targets.get(target);if(s){s.drawKey=null;s.alpha=null;}this.fallback.invalidate(target);}
- release(target){const s=this.targets.get(target);if(s)this.closeSlot(s.slot);this.targets.delete(target);this.fallback.release(target);if(!this.targets.size){for(const s of this.prepared.values())this.closeSlot(s);this.prepared.clear();for(const e of this.stills.values())e.image.src='';this.stills.clear();}this.trimStills();}
+ release(target){const s=this.targets.get(target);if(s)this.closeSlot(s.slot);this.targets.delete(target);this.fallback.release(target);if(!this.targets.size){for(const s of this.prepared.values())this.closeSlot(s);this.prepared.clear();for(const e of this.stills.values())e.image.src='';this.stills.clear();this.staticEpoch++;for(const job of this.staticQueue){this.pending.delete(job.key);this.staticJobs.delete(job.key);job.done(null);}this.staticQueue=[];}this.pruneStaticQueue();this.trimStills();}
  inspect(){return {backend:this.backend,targets:this.targets.size,decoders:this.targets.size+this.prepared.size,playing:[...this.targets.values()].filter(s=>s.slot&&!s.slot.video.paused).length,frames:this.stills.size,maxFrames:this.maxStaticFrames,maxBytes:this.maxStaticFrames*576*624*4,maxPending:this.maxStaticFrames,bytes:[...this.stills.values()].reduce((n,s)=>n+s.image.naturalWidth*s.image.naturalHeight*4,0),pending:this.pending.size,errors:[...this.errors],seeks:this.seekCount,physicalResources:new Set(Object.values(this.sequences).map(c=>this.resource(c))).size,videos:[...this.targets.values()].map(s=>{const q=s.slot.video.getVideoPlaybackQuality();return {resource:s.resource,ready:s.slot.ready,frame:s.shown?.displayedSequenceFrame,total:q.totalVideoFrames,dropped:q.droppedVideoFrames,duration:s.slot.video.duration};})};}
 }

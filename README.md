@@ -2,7 +2,7 @@
 
 **简体中文** · [English](README.en.md)
 
-**当前版本：[v1.7.5](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.5)** · 火山方舟绘图与参考图适配、具体错误提示、DeepSeek 立绘参考纠正；见 [验收记录](docs/VALIDATION-1.7.5.md)
+**当前版本：[v1.7.6](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.6)** · 优化桌宠鼠标跟随，修复方向图片等待和快速动作切换；见 [验收记录](docs/VALIDATION-1.7.6.md)
 
 ## 简介
 
@@ -151,7 +151,7 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
 
 需要 Windows 10/11 x64。AI 酱是免安装的便携版，自带 Electron 运行时，不需要另装 Node.js、Python 或绘图工具。
 
-1. 从 [Releases](https://github.com/lXiaoSel1/ai-buddy/releases) 下载 `AI-Buddy-1.7.5-Windows-x64.zip`。精确大小和 SHA-256 以 Release 附件为准，同页附有 `SHA256SUMS-1.7.5.txt`。
+1. 从 [Releases](https://github.com/lXiaoSel1/ai-buddy/releases) 下载 `AI-Buddy-1.7.6-Windows-x64.zip`。精确大小和 SHA-256 以 Release 附件为准，同页附有 `SHA256SUMS-1.7.6.txt`。
 2. 把 ZIP 完整解压到一个可写目录，会得到一个 `AI-Buddy` 文件夹。
 3. 进入 **AI-Buddy** 文件夹，双击根目录的 **AI Buddy.exe** 启动。**AI Buddy.vbs / AI Buddy.cmd** 是兼容入口，也会启动同一个程序。从 1.7.3 起，根目录的 EXE 会直接校验运行时并启动，不再依赖 PowerShell 的 `Get-FileHash`；1.7.2 的脚本入口在缺少这条命令的电脑上可能直接退出，旧包只在 `runtime` 版本目录里有 EXE。
 
