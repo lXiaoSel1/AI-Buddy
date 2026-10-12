@@ -55,17 +55,31 @@ export function cursorDirection(point,eyes,{deadZone=12}={}){
   return {angle,index:Math.round(angle/22.5)%16,distance};
 }
 export class GazeTransition{
-  constructor({continuous=false}={}){this.target=0;this.from=0;this.at=0;this.initialized=false;this.continuous=continuous;}
-  angle(now){const t=Math.max(0,Math.min(1,(now-this.at)/180));return wrapAngle(this.from+shortArc(this.from,this.target)*(1-(1-t)**3));}
+  constructor({continuous=false}={}){this.target=0;this.from=0;this.at=0;this.initialized=false;this.continuous=continuous;this.unwrapped=null;this.duration=180;this.speed=0;}
+  ease(now){const t=Math.max(0,Math.min(1,(now-this.at)/this.duration));return 1-(1-t)**3;}
+  // Slow pointer movement keeps the 180ms glide; a fast circle shortens it (down to
+  // 90ms at 1440°/s and above) so the gaze lag stays small instead of growing with speed.
+  glide(step,now){const v=Math.abs(step)/Math.max(8,now-this.at)*1000;this.speed=this.speed*.6+v*.4;this.duration=180-90*Math.max(0,Math.min(1,(this.speed-360)/1080));}
+  // Continuous gaze eases along an unwrapped angle. Pointer samples arrive every
+  // 16ms, so each step is small even when the cursor circles fast; the eased gaze
+  // may lag far behind, but it keeps turning the way the pointer went instead of
+  // taking the opposite short arc once the lag reaches half a turn.
+  unwrappedAngle(now){const u=this.unwrapped;return u.from+(u.to-u.from)*this.ease(now);}
+  angle(now){if(this.unwrapped)return wrapAngle(this.unwrappedAngle(now));return wrapAngle(this.from+shortArc(this.from,this.target)*this.ease(now));}
   update(index,angle,now){
     if(this.continuous&&Number.isFinite(angle)){
       const target=wrapAngle(angle);
-      if(this.initialized&&Math.abs(shortArc(this.target,target))<.3)return Math.round(this.target/22.5)%16;
-      this.from=this.initialized?this.angle(now):0;this.target=target;this.at=now;this.initialized=true;return index;
+      if(!this.initialized||!this.unwrapped){const from=this.initialized?this.angle(now):0,to=from+shortArc(from,target);this.unwrapped={from,to,turn:to<from?-1:1};this.target=target;this.at=now;this.initialized=true;return index;}
+      let step=shortArc(this.target,target);
+      if(Math.abs(step)<.3)return Math.round(this.target/22.5)%16;
+      // A half-turn jump (pointer crossing the eyes) is ambiguous; keep the current turning direction.
+      if(Math.abs(step)>=179.5)step=Math.abs(step)*this.unwrapped.turn;
+      const from=this.unwrappedAngle(now),to=this.unwrapped.to+step,shift=Math.abs(to)>3600?360*Math.trunc(to/360):0;
+      this.glide(step,now);this.unwrapped={from:from-shift,to:to-shift,turn:step<0?-1:1};this.target=target;this.at=now;return index;
     }
     if(this.initialized&&Number.isFinite(angle)&&Math.abs(shortArc(this.target,angle))<=14.25)return Math.round(this.target/22.5)%16;
     const target=index*22.5;if(this.initialized&&target===this.target)return index;
-    this.from=this.initialized?this.angle(now):0;this.target=target;this.at=now;this.initialized=true;return index;
+    this.from=this.initialized?this.angle(now):0;this.unwrapped=null;this.duration=180;this.target=target;this.at=now;this.initialized=true;return index;
   }
 }
 export class PetActionController{
