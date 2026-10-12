@@ -2,7 +2,7 @@
 
 **简体中文** · [English](README.en.md)
 
-**当前版本：[v1.7.3](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.3)** · 修复便携启动及 Codex 桌面端检测，详见 [1.7.3 验收记录](docs/VALIDATION-1.7.3.md)
+**当前版本：[v1.7.5](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.5)** · 火山方舟绘图与参考图适配、具体错误提示、DeepSeek 立绘参考纠正；见 [验收记录](docs/VALIDATION-1.7.5.md)
 
 ## 简介
 
@@ -151,7 +151,7 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
 
 需要 Windows 10/11 x64。AI 酱是免安装的便携版，自带 Electron 运行时，不需要另装 Node.js、Python 或绘图工具。
 
-1. 从 [Releases](https://github.com/lXiaoSel1/ai-buddy/releases) 下载 `AI-Buddy-1.7.3-Windows-x64.zip`。精确大小和 SHA-256 以 Release 附件为准，同页附有 `SHA256SUMS-1.7.3.txt`。
+1. 从 [Releases](https://github.com/lXiaoSel1/ai-buddy/releases) 下载 `AI-Buddy-1.7.5-Windows-x64.zip`。精确大小和 SHA-256 以 Release 附件为准，同页附有 `SHA256SUMS-1.7.5.txt`。
 2. 把 ZIP 完整解压到一个可写目录，会得到一个 `AI-Buddy` 文件夹。
 3. 进入 **AI-Buddy** 文件夹，双击根目录的 **AI Buddy.exe** 启动。**AI Buddy.vbs / AI Buddy.cmd** 是兼容入口，也会启动同一个程序。从 1.7.3 起，根目录的 EXE 会直接校验运行时并启动，不再依赖 PowerShell 的 `Get-FileHash`；1.7.2 的脚本入口在缺少这条命令的电脑上可能直接退出，旧包只在 `runtime` 版本目录里有 EXE。
 
@@ -285,6 +285,7 @@ Galgame 顶栏的 **角色来源** 决定谁出场，**实际对话** 决定由�
 | 聊天 | 本机 Codex 登录、OpenAI Chat Completions / Responses、Gemini 原生、Anthropic Messages | Codex 通道需要本机已登录的 Codex |
 | CG | Codex 内置图像 | 沿用本机 Codex 模型，优先横向 16:9 构图 |
 | CG | OpenAI Images 兼容 | gpt-image-1 系列默认 1536×1024 |
+| CG | 火山方舟 / Seedream | 专用 JSON 文生图及参考图协议，默认 2K；使用账号实际开通的模型或绘图接入点 |
 | CG | Gemini Interactions | 16:9，默认 1K |
 | CG | 通义万相 | 生成与编辑默认 `wan2.6-image`、1280×720；异步文生图默认 1696×960 |
 
@@ -293,6 +294,8 @@ Galgame 顶栏的 **角色来源** 决定谁出场，**实际对话** 决定由�
 开启 **自动生成 CG** 后，可以选择生成升级纪念图和小剧场合影，这项默认关闭。联网聊天开启时，每张新的升级 CG 会多调用一次聊天模型来设计主题，失败就改用本地的角色主题组合；重试时复用已有的主题。模型调用和绘图都可能产生服务费用。
 
 当前 CG 构图规则：男性第一人称，男性角色本人不入镜；允许合理的手部互动、文字及服装 Logo，不限制为一只男性手。
+
+1.7.5 的新 CG 使用当前角色的 Galgame 立绘，自定义立绘优先；DeepSeek 不再使用 Q 版桌宠制作母版。旧任务重试保留原参考快照，需要新参考时创建新 CG。火山方舟返回的 HTTP 状态、服务错误原因和请求 ID 会显示在界面，敏感内容会过滤。配置步骤见 [CG 绘图指南](CG_API_GUIDE.md)。
 
 ![CG 图鉴](docs/screenshots/cg-gallery.png)
 

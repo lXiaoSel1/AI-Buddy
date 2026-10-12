@@ -1,6 +1,6 @@
 {
   "name": "ai-buddy",
-  "version": "1.7.3",
+  "version": "1.7.5",
   "description": "Local AI usage monitoring and desktop companion",
   "type": "module",
   "private": true,

@@ -2,7 +2,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {join,resolve,relative,isAbsolute} from 'node:path';
 import {mkdirSync,readFileSync,writeFileSync,existsSync,realpathSync} from 'node:fs';
 import {ModelRouter} from './model-router.mjs';
-import {CG_PRESETS,CG_PROTOCOLS,cgOptions} from './cg-presets.mjs';
+import {CG_PRESETS,CG_PROTOCOLS,cgOptions,cgProtocol} from './cg-presets.mjs';
 import {localTheme,themePrompt} from './cg-theme.mjs';
 import {CG_COMPOSITION_VERSION,constrainCgPrompt} from './cg-composition.mjs';
 import {CgTransport} from './cg-transport.mjs';
@@ -21,9 +21,9 @@ export class CgService extends ModelRouter{
   });
  }
  publicProfile(profile){return {...super.publicProfile(profile),options:profile.options??cgOptions(),references:profile.options?.references!==false&&!profile.protocol.startsWith('wan-t2i')};}
- validateDraft(draft,previous){const profile=super.validateDraft(draft,previous),preset=this.presets.find(row=>row.kind===profile.kind);profile.options=cgOptions({...previous?.options,references:preset.references,...draft.options});if(profile.protocol.startsWith('wan-t2i'))profile.options.references=false;return profile;}
+ validateDraft(draft,previous){const profile=super.validateDraft(draft,previous);profile.protocol=cgProtocol(profile);const preset=this.presets.find(row=>row.kind===profile.kind);profile.options=cgOptions({...previous?.options,references:preset.references,...draft.options});if(profile.protocol.startsWith('wan-t2i'))profile.options.references=false;return profile;}
  status(){return {...super.status(),busy:!!this.jobs?.some(pending)||this.activeTurns>0,autoEnabled:this.enabled};}
- publicJob(job){return {id:job.id,status:job.status,kind:job.kind,sourceEventId:job.sourceEventId,label:job.label,at:job.at,provider:job.profile.kind,model:job.profile.model,connectionName:job.profile.name,error:job.error??null,assetRef:job.assetRef??null,thumbnailRef:job.thumbnailRef??null,width:job.width,height:job.height,sha256:job.sha256,retryOf:job.retryOf??null,prompt:job.prompt??null,theme:job.theme??null,referenceMode:job.referenceMode??null,referenceNotice:job.referenceMode==='text-only'?'未使用人物参考':job.environmentReferenceOmitted?'已保留全部人物参考；环境仅使用文字线索':null,characters:job.characters??null,scene:job.scene??null,deletedAt:job.deletedAt??null};}
+ publicJob(job){return {id:job.id,status:job.status,kind:job.kind,sourceEventId:job.sourceEventId,label:job.label,at:job.at,provider:job.profile.kind,model:job.profile.model,connectionName:job.profile.name,error:job.error??null,errorDetails:job.errorDetails??null,assetRef:job.assetRef??null,thumbnailRef:job.thumbnailRef??null,width:job.width,height:job.height,sha256:job.sha256,retryOf:job.retryOf??null,prompt:job.prompt??null,theme:job.theme??null,referenceMode:job.referenceMode??null,referenceNotice:job.referenceMode==='text-only'?'未使用人物参考':job.environmentReferenceOmitted?'已保留全部人物参考；环境仅使用文字线索':null,characters:job.characters??null,scene:job.scene??null,deletedAt:job.deletedAt??null};}
  view(){return {...super.view(),jobs:(this.jobs??[]).slice(-30).reverse().map(job=>this.publicJob(job))};}
  available(){try{this.materialize(this.selected());return true;}catch{return false;}}
  unlocked(id){if(this.activeTurns||(this.jobs??[]).some(job=>pending(job)&&(id===undefined||job.profile.id===id)))throw Error('请等待当前 CG 队列完成后再修改或切换连接');}
@@ -79,7 +79,7 @@ export class CgService extends ModelRouter{
     const decoded=this.imageCodec(result.buffer),path=join(job.directory,'image.png'),thumb=join(job.directory,'thumbnail.png'),raw=join(job.directory,'original.'+(decoded.extension??'png'));
     writeFileSync(raw,result.buffer,{flag:'wx'});writeFileSync(path,decoded.png,{flag:'wx'});writeFileSync(thumb,decoded.thumbnail,{flag:'wx'});
     await this.jobsMutate(()=>Object.assign(job,{status:'ready',error:null,assetRef:relative(this.dataRoot,path).replaceAll('\\','/'),thumbnailRef:relative(this.dataRoot,thumb).replaceAll('\\','/'),originalRef:relative(this.dataRoot,raw).replaceAll('\\','/'),width:decoded.width,height:decoded.height,sha256:sha(decoded.png),revisedPrompt:result.revisedPrompt??null,completedAt:Date.now()}));
-   }catch(error){await this.jobsMutate(()=>{job.status=job.status==='cancelled'?'cancelled':this.closed&&job.remoteTask?'queued':'failed';job.error=error.message?.slice(0,160)??'CG 生成失败，请重试';});}
+   }catch(error){await this.jobsMutate(()=>{job.status=job.status==='cancelled'?'cancelled':this.closed&&job.remoteTask?'queued':'failed';job.error=error.message?.slice(0,1800)??'CG 生成失败，请重试';job.errorDetails=error.details??null;});}
    finally{clearTimeout(timer);this.currentController=null;this.currentJob=null;this.codex.close();}
   }
  }

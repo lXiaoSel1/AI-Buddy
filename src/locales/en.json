@@ -809,5 +809,9 @@
   "此 Codex 版本不支持图像能力接口，请更新 Codex 桌面端后重试，或选择外部绘图 API。": "This Codex version does not support the image capability interface. Update the desktop app or choose an external image API.",
   "当前 Codex 登录不支持内置图像生成": "The current Codex account or provider does not support built-in image generation.",
   "Codex 图像能力可用": "Codex image generation is available.",
-  "Codex 对话进程已结束": "The Codex connection has closed."
+  "Codex 对话进程已结束": "The Codex connection has closed.",
+  "火山方舟 / Seedream": "Volcengine Ark / Seedream",
+  "火山方舟 Seedream": "Volcengine Ark Seedream",
+  "请选择已开通的 Seedream 模型或绘图接入点 ID；支持文生图和角色参考图。": "Use an enabled Seedream model or image endpoint ID. Supports text prompts and character references.",
+  "服务未提供模型列表，无法确认连接；请生成测试图验证": "The service does not provide a model list. Generate a test image to verify the connection."
 }
