@@ -1,5 +1,7 @@
 # AI 酱 · AI Buddy
 
+**当前版本：[v1.7.2](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.2)**
+
 **让每一份 AI 工作都有记录，也有陪伴。**
 
 简体中文 · [English](README.en.md)
@@ -12,7 +14,7 @@ AI Buddy 是一个 Windows 桌面应用：只读本机 AI 工具日志，整理 
 
 ## 下载与开始
 
-从 [Releases](https://github.com/lXiaoSel1/ai-buddy/releases) 下载 `AI-Buddy-1.7.1-Windows-x64.zip`，完整解压到可写目录，双击 **AI Buddy.vbs**。也可运行 **AI Buddy.cmd**，或版本运行目录中的 **AI Buddy.exe**。
+从 [Releases](https://github.com/lXiaoSel1/ai-buddy/releases) 下载 `AI-Buddy-1.7.2-Windows-x64.zip`，完整解压到可写目录，双击 **AI Buddy.vbs**。也可运行 **AI Buddy.cmd**，或版本运行目录中的 **AI Buddy.exe**。
 
 - Windows 10/11 x64；本轮为免安装 ZIP，不提供安装程序。
 - 包含 Electron 运行时，不需要另装 Node.js、Python 或图像工具。
@@ -67,6 +69,18 @@ API 配置中的额度连接独立于聊天和绘图。支持 Codex、Claude、G
 - 切换角色恢复该角色自己的背景，不沿用上一位角色的 CG。
 - CG 图鉴右键可移入回收站，支持撤销和恢复；本轮不自动永久删除图片。
 
+### 打开小剧场
+
+1. 在 **API 配置 → 聊天 API** 保存并使用一个聊天连接。
+2. 回到 **Galgame**，点击 **开启联网聊天**。软件重启后需要再次开启。
+3. 点击顶部的 **小剧场**，输入话题（例如“一起讨论今天的工作”），再点 **开演**。
+4. 可留空话题；本机版会尝试使用可用的近期活动。没有可用素材时，填写一个话题再试。
+5. 用 **继续** 推进剧情，出现选项时选择或输入回复；过去的剧场在 **对话历史 → 小剧场** 查看。
+
+小剧场使用当前聊天连接，会调用模型。聊天处理中或当前剧场尚未结束时先等待或结束；如处于冷却中，窗口会显示等待状态，当前界面尚未提供冷却时间设置。剧场合影另用 CG 连接，不是开演的前提。
+
+1.7.2 将单人立绘改为近景构图：脸与上半身更突出，下半身自然进入对话框后；多人场景和立绘选择器继续完整显示人物。
+
 ![Galgame](docs/screenshots/galgame-zh-CN.png)
 ![CG 背景自动隐藏立绘](docs/screenshots/cg-background.png)
 
@@ -117,7 +131,7 @@ CG 自动生成可选择升级纪念图与剧场合影。联网聊天开启时�
 
 ## 源码构建
 
-本次测试范围与已知边界见 [1.7.1 验收记录](docs/VALIDATION-1.7.1.md)。
+本次立绘与发布检查见 [1.7.2 验收记录](docs/VALIDATION-1.7.2.md)；WebM 和主题的原始验收见 [1.7.1 记录](docs/VALIDATION-1.7.1.md)。
 
 见 [构建说明](docs/BUILD.md)。源码需要 Node.js 24 和 npm，Windows 品牌运行包需要 Electron 44.6.0。动画与内置资源从同版本发行 ZIP 提取；不需要重新生成图片或视频。
 

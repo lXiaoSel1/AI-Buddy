@@ -3040,6 +3040,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         className: 'whg-sprite' + (s.portrait ? ' whg-sprite-portrait' : '') + (customSprite ? ' whg-sprite-custom' : ''),
         src,
         spriteKey: customSprite || emoKey ? null : s.sprite,
+        align: 'top',
         alt: s.name,
         draggable: false,
         onError: () => { setImgFail(true) },
