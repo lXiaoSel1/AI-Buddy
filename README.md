@@ -17,7 +17,7 @@ AI 酱（AI Buddy）是一个 Windows 桌面应用。它只读本机 AI 工具�
 - **60fps 透明桌宠**：常驻桌面一角。任务完成时跳一跳，出错时也会有反应。
 - **11 套角色主题，中英双语**：配色取自各角色立绘，可以固定一套，也可以跟着当前角色换。
 
-![AI 酱 1.7.2 的 Galgame 界面：Claude 近景立绘](docs/screenshots/galgame-zh-CN.png)
+![AI 酱的 Galgame 界面：Claude 近景立绘](docs/screenshots/galgame-zh-CN.png)
 
 ## 功能
 
@@ -153,7 +153,7 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
 
 1. 从 [Releases](https://github.com/lXiaoSel1/ai-buddy/releases) 下载 `AI-Buddy-1.7.3-Windows-x64.zip`。精确大小和 SHA-256 以 Release 附件为准，同页附有 `SHA256SUMS-1.7.3.txt`。
 2. 把 ZIP 完整解压到一个可写目录，会得到一个 `AI-Buddy` 文件夹。
-3. 进入 **AI-Buddy** 文件夹，双击根目录的 **AI Buddy.exe** 启动。**AI Buddy.vbs / AI Buddy.cmd** 是兼容入口，也会启动同一个程序。旧的 1.7.2 包仅在 `runtime` 版本目录中包含 EXE；启动修正版补上根目录入口，并取消对 PowerShell `Get-FileHash` 命令的依赖。
+3. 进入 **AI-Buddy** 文件夹，双击根目录的 **AI Buddy.exe** 启动。**AI Buddy.vbs / AI Buddy.cmd** 是兼容入口，也会启动同一个程序。从 1.7.3 起，根目录的 EXE 会直接校验运行时并启动，不再依赖 PowerShell 的 `Get-FileHash`；1.7.2 的脚本入口在缺少这条命令的电脑上可能直接退出，旧包只在 `runtime` 版本目录里有 EXE。
 
 几点注意：
 
@@ -298,6 +298,14 @@ Galgame 顶栏的 **角色来源** 决定谁出场，**实际对话** 决定由�
 
 ![API 配置](docs/screenshots/api-zh-CN.png)
 
+### 使用本机 Codex 绘图
+
+“Codex 内置图像”用的是这台电脑上 Codex 的绘图能力。AI 酱不自带 Codex，也不带登录账号。请先在这台电脑上安装、打开并登录 Codex 桌面端，再到 **API 配置 → CG 绘图 → Codex** 点 **测试连接（不出图）**；测试连接不会生成图片。
+
+AI 酱能找到桌面端运行缓存、Microsoft Store 安装、常见独立安装和 npm 原生程序里的 Codex，不需要为了路径检测单独安装 npm CLI。自定义安装可以把环境变量 `AI_BUDDY_CODEX_PATH` 设为原生 `codex.exe` 的完整路径，重启 AI 酱后再试。自定义 Codex 配置目录遵循 `CODEX_HOME`；缺少可选的 `config.toml` 不再导致启动失败。
+
+程序是否存在、登录是否可用、图像能力是否可用是三项独立检查。Codex 没有提供图像能力时，请更新 Codex，或改用外部绘图 API。接入协议参考 [OpenAI Codex app-server 文档](https://learn.chatgpt.com/docs/app-server)。
+
 ### 在线额度
 
 额度连接和聊天、绘图连接互相独立。各服务能返回的字段不同，不支持的账号会提示原因。只有单独启用后才会查询：窗口显示时约每 2 分钟一次，隐藏时约每 15 分钟一次。AI 酱不会靠发送模型对话来探测额度，也不读取浏览器 Cookie。认证失败时会提示重新登录；临时失败时保留上次成功的数值和更新时间。
@@ -336,7 +344,7 @@ npm start
 
 开发需要 Windows x64 和 Node.js 24，依赖 Electron 44.6.0、React 19.3.0 和 esbuild 0.28.2。`npm test` 只覆盖纯逻辑，使用临时数据和模拟服务，不需要付费请求，也不代表原生集成或视觉验收。`npm run check:version` 检查 `package.json`、`package-lock.json`、两份 README 里的下载文件名和当前版本链接，以及构建说明的版本是否一致，源码构建会先跑这项检查。构建产物在 `builds/development`。
 
-不要提交 `local/`、生成的 `builds/`、密钥、个人 CG 或日志。发布前的版本同步步骤见 [构建说明](docs/BUILD.md)。验收记录：[1.7.2](docs/VALIDATION-1.7.2.md)（近景立绘与发布检查）、[1.7.1](docs/VALIDATION-1.7.1.md)（WebM 动画与主题）、[1.7.0](docs/VALIDATION-1.7.0.md)。
+不要提交 `local/`、生成的 `builds/`、密钥、个人 CG 或日志。发布前的版本同步步骤见 [构建说明](docs/BUILD.md)。验收记录：[1.7.3](docs/VALIDATION-1.7.3.md)（便携启动与本机 Codex 检测；包括模拟桌面端独立安装、真实本机桌面端 / Store 程序的登录和图像能力读取，未在用户笔记本上远程验证，也未重新生成 CG）、[1.7.2](docs/VALIDATION-1.7.2.md)（近景立绘与发布检查）、[1.7.1](docs/VALIDATION-1.7.1.md)（WebM 动画与主题）、[1.7.0](docs/VALIDATION-1.7.0.md)。
 
 ## 许可与致谢
 
@@ -365,13 +373,3 @@ DeepSeek、Grok、Seed、Kimi、Qwen、MiniMax、GPT、Gemini、Claude、GLM、�
 - [gal-view](https://github.com/Ayase34/gal-view) - DSH Web GUI 会话页的 Galgame 风格对话视图 + 场景元素可视化编辑器
 - [dsh-galgame](https://github.com/Lanxing6480/dsh-galgame) - Galgame 模式界面插件
 - [AutoWebUI](https://github.com/FynnReinhardt/deepseek-harness-galgame) - DSH galgame模式
-
-## 1.7.3 启动与本机 Codex 修复
-
-解压后进入 AI-Buddy，直接双击根目录的 **AI Buddy.exe**。旧的 1.7.2 脚本可能因 `Get-FileHash` 不可用而退出；新入口直接校验并启动，不依赖 PowerShell。保留完整目录，不要只拷贝 EXE。
-
-“Codex 内置图像”指使用本机 Codex 的绘图能力，并不代表 AI Buddy 自带 Codex 或登录账号。请先在这台电脑安装、打开并登录 Codex 桌面端，再到 **API 配置 → CG 绘图 → Codex → 测试连接**。测试连接不生成图片。已支持桌面端运行缓存、Microsoft Store 安装、常见独立安装和 npm 原生程序，无需为了路径检测单独安装 npm CLI。
-
-自定义安装可将环境变量 `AI_BUDDY_CODEX_PATH` 设为实际原生 `codex.exe` 的完整路径，重启 AI Buddy 后重试。自定义 Codex 配置目录遵循 `CODEX_HOME`；缺少可选 `config.toml` 不再导致启动失败。程序存在、登录可用、图像能力可用是三个独立检查，未提供图像能力时请更新 Codex 或选用外部绘图 API。
-
-本轮验证包括模拟桌面端独立安装、真实本机桌面端/Store 程序登录及图像能力读取；未在用户笔记本远程验证，未重新生成 CG。接入协议参考 [OpenAI Codex app-server 文档](https://learn.chatgpt.com/docs/app-server)。

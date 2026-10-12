@@ -2,7 +2,7 @@
 
 [简体中文](README.md) · **English**
 
-**Current release: [v1.7.3](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.3)** · Closer single-character portraits; see the [1.7.2 validation record](docs/VALIDATION-1.7.2.md)
+**Current release: [v1.7.3](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.3)** · Portable startup and Codex desktop discovery fixes; see the [1.7.3 validation record](docs/VALIDATION-1.7.3.md)
 
 ## Overview
 
@@ -17,7 +17,7 @@ AI Buddy (AI 酱) is a Windows desktop app. It reads your local AI-tool logs, to
 - **A 60fps transparent desktop pet**: it lives in a corner of the screen, jumps when a task finishes and reacts when one fails.
 - **11 character themes, Chinese and English**: palettes come from each portrait. Keep one fixed or let it follow the current character.
 
-![AI Buddy 1.7.2 Galgame with Claude's close portrait](docs/screenshots/galgame-en.png)
+![AI Buddy Galgame with Claude's close portrait](docs/screenshots/galgame-en.png)
 
 ## What it does
 
@@ -153,7 +153,7 @@ Requires Windows 10/11 x64. AI Buddy is portable and bundles the Electron runtim
 
 1. Download `AI-Buddy-1.7.3-Windows-x64.zip` from [Releases](https://github.com/lXiaoSel1/ai-buddy/releases). The release assets give the exact size and SHA-256, including `SHA256SUMS-1.7.3.txt`.
 2. Extract the whole ZIP to a writable location. You get an `AI-Buddy` folder.
-3. Open the **AI-Buddy** folder and double-click **AI Buddy.exe** in its root. **AI Buddy.vbs / AI Buddy.cmd** are compatibility launchers that start the same program. The original 1.7.2 package only had the EXE under the versioned `runtime` folder; the launch fix adds the root launcher and no longer depends on the PowerShell `Get-FileHash` command.
+3. Open the **AI-Buddy** folder and double-click **AI Buddy.exe** in its root. **AI Buddy.vbs / AI Buddy.cmd** are compatibility launchers that start the same program. Since 1.7.3, the root EXE validates the runtime and starts it directly, without the PowerShell `Get-FileHash` command; the 1.7.2 script launcher could exit on machines where that command is unavailable, and the old package only had the EXE under the versioned `runtime` folder.
 
 Notes:
 
@@ -298,6 +298,14 @@ Current CG composition rule: male first-person view with the male character out 
 
 ![API connections](docs/screenshots/api-en.png)
 
+### Drawing with local Codex
+
+Codex built-in images use the drawing capability of Codex on this computer. AI Buddy does not ship Codex or an account. Install, open and sign in to the Codex desktop app on this computer first, then go to **API connections → CG drawing → Codex** and click **Test connection (no image)**; the test does not generate an image.
+
+AI Buddy finds Codex in desktop runtime caches, registered Microsoft Store installations, common standalone locations and native npm binaries; a separate npm CLI installation is not required for discovery. For a custom install, set the `AI_BUDDY_CODEX_PATH` environment variable to the absolute path of its native `codex.exe` and restart AI Buddy. A custom Codex configuration folder follows `CODEX_HOME`, and a missing optional `config.toml` no longer stops startup.
+
+Program presence, sign-in and image capability are checked separately. If Codex does not provide image capabilities, update Codex or choose an external image API. The integration follows the [OpenAI Codex app-server documentation](https://learn.chatgpt.com/docs/app-server).
+
 ### Online quotas
 
 Quota connections are independent of chat and image connections. Each service returns different fields, and unsupported accounts show a reason. Nothing is queried until you enable a service; after that it refreshes about every 2 minutes while the window is visible and about every 15 minutes while hidden. AI Buddy never sends a model conversation to probe a quota and does not read browser cookies. Authentication failures ask you to sign in again; temporary failures keep the last successful values and their timestamp.
@@ -336,7 +344,7 @@ npm start
 
 Development needs Windows x64 and Node.js 24, with Electron 44.6.0, React 19.3.0 and esbuild 0.28.2. `npm test` covers pure logic with temporary data and mock services; it needs no paid requests and does not certify native integration or visual acceptance. `npm run check:version` checks that `package.json`, `package-lock.json`, the download names and current-release links in both READMEs, and the build guide agree; the source build runs the same check first. Build output goes to `builds/development`.
 
-Do not commit `local/`, generated `builds/`, keys, personal CGs or logs. Release version steps are in [BUILD.md](docs/BUILD.md). Validation records: [1.7.2](docs/VALIDATION-1.7.2.md) (close portraits and release checks), [1.7.1](docs/VALIDATION-1.7.1.md) (WebM animations and themes), [1.7.0](docs/VALIDATION-1.7.0.md).
+Do not commit `local/`, generated `builds/`, keys, personal CGs or logs. Release version steps are in [BUILD.md](docs/BUILD.md). Validation records: [1.7.3](docs/VALIDATION-1.7.3.md) (portable startup and local Codex discovery; covers simulated desktop-only installations and real local desktop/Store sign-in and image-capability checks, with no remote test on the user's laptop and no new CG generated), [1.7.2](docs/VALIDATION-1.7.2.md) (close portraits and release checks), [1.7.1](docs/VALIDATION-1.7.1.md) (WebM animations and themes), [1.7.0](docs/VALIDATION-1.7.0.md).
 
 ## License and credits
 
@@ -365,13 +373,3 @@ DeepSeek, Grok, Seed, Kimi, Qwen, MiniMax, GPT, Gemini, Claude, GLM, Hunyuan and
 - [gal-view](https://github.com/Ayase34/gal-view) - A Galgame-style conversation view for the DSH Web GUI, with a visual editor for scene elements
 - [dsh-galgame](https://github.com/Lanxing6480/dsh-galgame) - Galgame mode interface plugin
 - [AutoWebUI](https://github.com/FynnReinhardt/deepseek-harness-galgame) - DSH Galgame mode
-
-## 1.7.3 startup and local Codex discovery
-
-Run **AI Buddy.exe** at the root of the extracted AI-Buddy folder. The native entry validates the runtime without PowerShell; it fixes the original 1.7.2 launcher failure when `Get-FileHash` is unavailable. Keep the complete folder.
-
-Built-in Codex images use your separately installed and signed-in Codex desktop app. AI Buddy does not ship Codex or an account. Open and sign in to Codex on this computer, then choose **API configuration → CG images → Codex → Test connection**. This check does not generate an image. Desktop runtime caches, registered Microsoft Store installations, common standalone locations and native npm binaries are supported. A separate npm CLI installation is not required for desktop discovery.
-
-For a custom install, set `AI_BUDDY_CODEX_PATH` to the absolute path of its native `codex.exe` and restart AI Buddy. `CODEX_HOME` is respected; an absent optional `config.toml` is supported. Missing binaries, login failures and unsupported image capabilities are reported separately. Update Codex or select an external image API if image capabilities are unavailable.
-
-Tests cover simulated desktop-only installations and real local desktop/Store authentication and capability checks. The user's laptop was not remotely tested; no new CG was generated. See [validation](docs/VALIDATION-1.7.3.md) and [OpenAI app-server documentation](https://learn.chatgpt.com/docs/app-server).
