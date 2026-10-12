@@ -53,6 +53,8 @@ API 配置中的额度连接独立于聊天和绘图。支持 Codex、Claude、G
 
 仅在明确启用后查询；不通过发送模型对话探测额度，不读取浏览器 Cookie。认证失败提示重新登录；临时失败保留上次成功值及原更新时间。
 
+![额度连接（English）](docs/screenshots/quotas-en.png)
+
 ## 十一位角色与 Galgame
 
 **DeepSeek、Grok、Seed、Kimi、Qwen、MiniMax、GPT、Gemini、Claude、GLM、混元（Hunyuan）** 各有立绘、背景、性格、语气、首次问候与 CG 外观设定。角色和聊天 API 独立，例如使用 Qwen 形象与 Claude API 对话。
@@ -107,6 +109,8 @@ CG 自动生成可选择升级纪念图与剧场合影。联网聊天开启时�
 发行 ZIP 不包含开发者的存档、密钥、聊天、个人 CG、日志或浏览器配置。README 截图来自独立测试存档；空数据界面及开发验收 CG 不代表真实账号用量。
 
 ## 源码构建
+
+本次测试范围与已知边界见 [1.7.0 验收记录](docs/VALIDATION-1.7.0.md)。
 
 见 [构建说明](docs/BUILD.md)。源码需要 Node.js 24 和 npm，Windows 品牌运行包需要 Electron 44.6.0。动画与内置资源从同版本发行 ZIP 提取；不需要重新生成图片或视频。
 

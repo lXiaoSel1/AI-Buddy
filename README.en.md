@@ -44,6 +44,8 @@ Open Cost → Price settings to browse effective prices by platform, model, loca
 
 Separate opt-in connections cover Codex, Claude, GLM/Z.ai, Kimi Coding, MiniMax Coding, DeepSeek API balances and supported Gemini CLI accounts. Available fields depend on the service and account; unsupported accounts show a reason. No model conversation is sent to probe a quota, and browser cookies are not read. Temporary errors retain the last successful values and timestamp.
 
+![Quota connections](docs/screenshots/quotas-en.png)
+
 ## Eleven characters
 
 **DeepSeek, Grok, Seed, Kimi, Qwen, MiniMax, GPT, Gemini, Claude, GLM and Hunyuan** have distinct portraits, backgrounds, personalities, voices, greetings and visual descriptions.
@@ -83,6 +85,8 @@ Eleven character-inspired color themes can be fixed or follow the selected chara
 Local monitoring is read-only, sends no model requests and does not modify the monitored tools. App data is under `local/data-v003`; keep that directory when updating. Release packages exclude developer profiles, keys, private conversations, personal CGs and logs. Screenshots use an independent test profile and development validation images, not live account usage.
 
 See [BUILD.md](docs/BUILD.md) for source builds. Node.js 24 is needed for development; runtime artwork and animations can be extracted from the matching release ZIP.
+
+See the [1.7.0 validation record](docs/VALIDATION-1.7.0.md) for tested behavior and review boundaries.
 
 Special thanks to [JAdpp/dsh-whale-galgame](https://github.com/JAdpp/dsh-whale-galgame), [dsh-deep-whale](https://github.com/Small-tailqwq/dsh-deep-whale), [dsh-deepseek-girl-pet](https://github.com/f0909172434/dsh-deepseek-girl-pet), [上善](https://www.pixiv.net/users/62155430), [ZipZipPipe](https://www.pixiv.net/users/18604994) and the [AI gijinka gallery](https://genderswapai.com/zh-CN/ai-gijinka/gallery). Additional thanks to [ccusage](https://github.com/ccusage/ccusage), [CodexBar](https://github.com/steipete/CodexBar), [models.dev](https://models.dev), [Electron](https://www.electronjs.org/), [React](https://react.dev/), [esbuild](https://esbuild.github.io/) and [RIFE](https://github.com/hzwer/ECCV2022-RIFE).
 
