@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {validateFrameSequence,sequenceFrameAt,sequenceSampleFrame} from '../src/frame-sequence.mjs';
+import {THEMES,themeVariables,chromeColor,hslHex,DEFAULT_THEME_TONE} from '../src/appearance.mjs';
+const clip=()=>({actionId:'jump',backend:'webm-alpha',canvas:{width:576,height:624},cycleMs:41.667,frames:[0,16.667,33.333].map(timestampMs=>({timestampMs})),video:{src:'jump.webm',codec:'vp9-alpha',durationMs:41.667},staticFrames:{0:{src:'start.webp'},2:{src:'peak.webp'}},emotionPeakFrame:2});
+test('Transparent video preserves a short final frame and an independent emotion peak',()=>{const c=clip();validateFrameSequence(c);assert.equal(sequenceFrameAt(c,41.666),2);assert.equal(sequenceFrameAt(c,41.667),0);assert.equal(sequenceSampleFrame(c,{elapsedMs:0,reducedMotion:true}),2);for(const mutate of [c=>c.video.durationMs=50,c=>delete c.staticFrames[2],c=>c.frames[2].timestampMs=42,c=>c.video.codec='vp8']){const bad=clip();mutate(bad);assert.throws(()=>validateFrameSequence(bad));}const png={...clip(),backend:'png',frames:clip().frames.map(f=>({...f,src:'a.png'}))};assert.equal(validateFrameSequence(png),png);});
+function rgb(value){const hsl=/hsl\((\d+) (\d+)% (\d+)%\)/.exec(value);if(hsl)value=hslHex(...hsl.slice(1).map(Number));return [1,3,5].map(i=>parseInt(value.slice(i,i+2),16)/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);}
+function luminance(c){const[a,b,d]=rgb(c);return a*.2126+b*.7152+d*.0722;}
+function contrast(a,b){const x=luminance(a),y=luminance(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);}
+test('All eleven accepted medium palettes have readable text and matching window chrome',()=>{assert.equal(DEFAULT_THEME_TONE,'medium');for(const id of Object.keys(THEMES)){const c=themeVariables(id);for(const surface of ['bg','sidebar','surface','raised'])for(const text of ['text','muted'])assert.ok(contrast(c['--buddy-'+text],c['--buddy-'+surface])>=4.5,id+' '+surface+' '+text);assert.equal(chromeColor(id),hslHex(THEMES[id].hue,42,id==='deepseek'?10:19));assert.ok(contrast(c['--buddy-on-accent'],c['--buddy-accent'])>=4.5);}});
+
+test('DeepSeek retains the original design while other themes are brighter',()=>{const v=themeVariables('deepseek');assert.equal(v['--buddy-bg'],'hsl(218 43% 8%)');assert.equal(v['--buddy-text'],'#e5edf5');assert.equal(chromeColor('deepseek'),hslHex(218,42,10));for(const id of Object.keys(THEMES).filter(id=>id!=='deepseek'))assert.match(themeVariables(id)['--buddy-bg'],/16%/);});

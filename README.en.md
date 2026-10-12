@@ -12,13 +12,15 @@ The Galgame engine and interface are adapted from **[JAdpp/dsh-whale-galgame](ht
 
 ## Download
 
-Download `AI-Buddy-1.7.0-Windows-x64.zip` from [Releases](https://github.com/lXiaoSel1/ai-buddy/releases), extract the complete folder to a writable location, and run **AI Buddy.vbs**. **AI Buddy.cmd** and the versioned **AI Buddy.exe** are alternative launchers.
+Download `AI-Buddy-1.7.1-Windows-x64.zip` from [Releases](https://github.com/lXiaoSel1/ai-buddy/releases), extract the complete folder to a writable location, and run **AI Buddy.vbs**. **AI Buddy.cmd** and the versioned **AI Buddy.exe** are alternative launchers.
 
 - Windows 10/11 x64; portable ZIP, no installer in this release.
 - Electron is bundled. Node.js, Python and image-generation tools are not required to run the app.
 - Keep the folder structure. Do not run from inside the ZIP or copy only the executable.
 - The release provides a SHA-256 checksum. The executable is not commercially code-signed.
 - This repository is private for review; downloads require access. The owner decides when to make it public.
+
+The portable directory is about **572 MiB** and its ZIP about **363 MiB**, approximately **77% smaller** than the 1.7.0 ZIP. Use the release asset size and SHA-256 for exact integrity checks.
 
 ## Local usage and reporting
 
@@ -73,9 +75,14 @@ With online chat enabled, a new level-up CG may use one additional chat request 
 
 ## Desktop pet, themes and language
 
+Animations now use transparent VP9 WebM at approximately 60fps, with quality-first CRF 18 encoding. Pet and gallery share the videos; gaze directions and static emotional peaks use lossless WebP. The 15 videos total about 38.8 MiB, or 87.2 MiB including stills. Complete PNG sequences are not duplicated in the distribution.
+
 The approved transparent full-frame animations play at **60fps**, with 15 visible actions and 18 compatible logical IDs. Drag the pet, adjust size and speed, and click through transparent areas. Task outcomes use synchronized queued animation and speech feedback.
 
-Eleven character-inspired color themes can be fixed or follow the selected character. Window chrome matches the interface; artwork is not recolored. Choose Simplified Chinese or English in General settings. Existing history and custom user text stay unchanged; built-in defaults and new conversations use the selected language.
+Eleven character-inspired color themes can be fixed or follow the selected character. **DeepSeek keeps its original deep-blue design; the other ten themes use the softer medium-dark palette.** Window chrome matches the interface; artwork is not recolored. Choose Simplified Chinese or English in General settings. Existing history and custom user text stay unchanged; built-in defaults and new conversations use the selected language.
+
+![Claude medium-dark theme](docs/screenshots/theme-claude.png)
+![Original DeepSeek theme](docs/screenshots/theme-deepseek.png)
 
 ![Animations](docs/screenshots/actions-en.png)
 ![Settings](docs/screenshots/settings-en.png)
@@ -86,7 +93,7 @@ Local monitoring is read-only, sends no model requests and does not modify the m
 
 See [BUILD.md](docs/BUILD.md) for source builds. Node.js 24 is needed for development; runtime artwork and animations can be extracted from the matching release ZIP.
 
-See the [1.7.0 validation record](docs/VALIDATION-1.7.0.md) for tested behavior and review boundaries.
+See the [1.7.1 validation record](docs/VALIDATION-1.7.1.md) for tested behavior and review boundaries.
 
 Special thanks to [JAdpp/dsh-whale-galgame](https://github.com/JAdpp/dsh-whale-galgame), [dsh-deep-whale](https://github.com/Small-tailqwq/dsh-deep-whale), [dsh-deepseek-girl-pet](https://github.com/f0909172434/dsh-deepseek-girl-pet), [上善](https://www.pixiv.net/users/62155430), [ZipZipPipe](https://www.pixiv.net/users/18604994) and the [AI gijinka gallery](https://genderswapai.com/zh-CN/ai-gijinka/gallery). Additional thanks to [ccusage](https://github.com/ccusage/ccusage), [CodexBar](https://github.com/steipete/CodexBar), [models.dev](https://models.dev), [Electron](https://www.electronjs.org/), [React](https://react.dev/), [esbuild](https://esbuild.github.io/) and [RIFE](https://github.com/hzwer/ECCV2022-RIFE).
 

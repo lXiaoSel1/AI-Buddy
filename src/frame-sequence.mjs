@@ -6,12 +6,17 @@ export function validateFrameSequence(clip){
   if(!clip||!Number.isFinite(clip.cycleMs)||clip.cycleMs<=0||!Number.isInteger(clip.canvas?.width)||!Number.isInteger(clip.canvas?.height)||clip.canvas.width<=0||clip.canvas.height<=0||!Array.isArray(clip.frames)||!clip.frames.length)throw Error('Invalid full-frame sequence');
   let previous=-1;
   for(const [index,frame] of clip.frames.entries()){
-    if(typeof frame.src!=='string'||!Number.isFinite(frame.timestampMs)||frame.timestampMs<0||frame.timestampMs<=previous||frame.timestampMs>=clip.cycleMs||index===0&&frame.timestampMs!==0)throw Error('Invalid sequence frame timestamp');
+    if((clip.backend!=='webm-alpha'&&typeof frame.src!=='string')||!Number.isFinite(frame.timestampMs)||frame.timestampMs<0||frame.timestampMs<=previous||frame.timestampMs>=clip.cycleMs||index===0&&frame.timestampMs!==0)throw Error('Invalid sequence frame timestamp');
     previous=frame.timestampMs;
   }
   if(clip.interpolation&&(!Number.isInteger(clip.interpolation.multiplier)||clip.interpolation.multiplier<1))throw Error('Invalid interpolation multiplier');
   if(clip.emotionPeakFrame!==undefined&&(!Number.isInteger(clip.emotionPeakFrame)||clip.emotionPeakFrame<0||clip.emotionPeakFrame>=clip.frames.length))throw Error('Invalid emotion peak frame');
   if(clip.directionFrames&&(!Array.isArray(clip.directionFrames)||clip.directionFrames.length!==16||clip.directionFrames[0]!==0||clip.directionFrames.some((frame,index)=>!Number.isInteger(frame)||frame<0||frame>=clip.frames.length||index>0&&frame<=clip.directionFrames[index-1])))throw Error('Invalid sixteen-direction mapping');
+  if(clip.backend==='webm-alpha'){
+    if(typeof clip.video?.src!=='string'||clip.video.codec!=='vp9-alpha'||!Number.isFinite(clip.video.durationMs)||Math.abs(clip.video.durationMs-clip.cycleMs)>1||!clip.staticFrames?.[0]?.src)throw Error('Invalid transparent video resource');
+    if(clip.emotionPeakFrame!==undefined&&!clip.staticFrames[clip.emotionPeakFrame]?.src)throw Error('Missing emotion still');
+    if(clip.directionFrames&&clip.frames.some((f,index)=>!clip.staticFrames[index]?.src))throw Error('Missing direction still');
+  }
   return clip;
 }
 

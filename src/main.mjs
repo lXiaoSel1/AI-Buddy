@@ -84,7 +84,7 @@ function moveDrag(point){
   positionPet(pet,next,settings.preferences.petScale);drag.position=next;petEvent({kind:'drag',active:true,direction:drag.direction||1});
 }
 async function saveSettings() {await settingsStore.writeText(JSON.stringify(settings));}
-function settingsView(){return {preferences:{...settings.preferences},version:appVersion,build:build.split(/[\\/]/).at(-1),dataRoot,logRoots,tokenSources,defaultModel:provider?.defaultModel,modelConnections:provider?.state?connectionView(provider):null,cgConnections:cg?.state?connectionView(cg):null,systemTimeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,monitorAppliedInterval};}
+function settingsView(){return {preferences:{...settings.preferences},themeCharacter,version:appVersion,build:build.split(/[\\/]/).at(-1),dataRoot,logRoots,tokenSources,defaultModel:provider?.defaultModel,modelConnections:provider?.state?connectionView(provider):null,cgConnections:cg?.state?connectionView(cg):null,systemTimeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,monitorAppliedInterval};}
 function broadcastSettings(){const value=settingsView();for(const win of [pet,panel])if(win&&!win.isDestroyed())win.webContents.send('settings:update',value);return value;}
 function saveConnection(service,draft){
   // An unusable edit must not overwrite the currently selected profile before
@@ -136,12 +136,12 @@ async function settingsAction(action){
   if(action==='refresh'){worker?.postMessage({type:'refresh'});return settingsView();}
   throw new Error('未知设置操作');
 }
-function applyChrome(character){if(character)themeCharacter=character;setLocale(settings.preferences?.language);if(panel&&!panel.isDestroyed()){panel.setTitle(localizedTitle());if(process.platform==='win32')panel.setTitleBarOverlay({color:chromeColor(resolvedTheme(settings.preferences,themeCharacter)),symbolColor:'#e5edf5',height:34});}if(tray){tray.setToolTip(settings.preferences?.language==='en'?'AI Buddy':'AI 酱');updateTray();}}
+function applyChrome(character){if(character&&character!==themeCharacter){themeCharacter=character;broadcastSettings();}setLocale(settings.preferences?.language);if(panel&&!panel.isDestroyed()){panel.setTitle(localizedTitle());if(process.platform==='win32')panel.setTitleBarOverlay({color:chromeColor(resolvedTheme(settings.preferences,themeCharacter)),symbolColor:'#e5edf5',height:34});}if(tray){tray.setToolTip(settings.preferences?.language==='en'?'AI Buddy':'AI 酱');updateTray();}}
 let themeCharacter='deepseek';
 function openPanel(page='overview',focus=true) {
   if(page==='sessions')page='overview';
   if(!panel || panel.isDestroyed()) {
-    panel=new BrowserWindow({width:1180,height:820,minWidth:900,minHeight:650,title:PANEL_TITLE,icon:appIconPath,backgroundColor:'#0a1325',show:false,
+    panel=new BrowserWindow({width:1180,height:820,minWidth:900,minHeight:650,title:PANEL_TITLE,icon:appIconPath,backgroundColor:chromeColor(resolvedTheme(settings.preferences,themeCharacter)),show:false,
       ...(process.platform==='win32'?{titleBarStyle:'hidden',titleBarOverlay:{color:'#0b1628',symbolColor:'#c8deef',height:34},accentColor:false}:{}),
       webPreferences:{preload:join(build,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,partition:'whale-memory'}});
     brandWindow(panel);applyChrome();

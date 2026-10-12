@@ -2,6 +2,7 @@ import {PetActionController,actionSample,getPetAction,PET_ATLAS,FRAME_SIZE,curso
 import {subscribeAnimationClock} from './animation-clock.mjs';
 import {motionRenderer} from './motion-renderer.mjs';
 import {APP_NAME} from './app-brand.mjs';
+import {applyAppearance} from './appearance.mjs';
 const sprite=document.querySelector('.sprite'),bubble=document.querySelector('.bubble'),badge=document.querySelector('.badge');
 const surface=document.createElement('canvas');surface.width=FRAME_SIZE.width;surface.height=FRAME_SIZE.height;surface.setAttribute('aria-hidden','true');sprite.append(surface);
 const image=new Image();image.src=PET_ATLAS.src;
@@ -17,6 +18,7 @@ const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
 let preferences={petScale:1,animationSpeed:.75,showStatusBadge:true,followCursor:true,completionBubbles:true};
 function applySettings(value){
   preferences=value.preferences;
+  applyAppearance(preferences,value.themeCharacter);
   controller.setSpeed(preferences.animationSpeed??.75);
   document.body.style.setProperty('--pet-scale',preferences.petScale);
   geometry=null;motionRenderer.invalidate?.(surface);
@@ -73,6 +75,7 @@ function render(){
   const {sprite:rect,badge:b}=petGeometry();
   const state=controller.select(),pose=actionSample(state.id,state.elapsed,{lookIndex:state.lookIndex,lookAngle:state.lookAngle,reducedMotion:reducedMotion.matches});
   pose.elapsedMs=state.elapsed;pose.clockMs=state.clockMs;pose.baseElapsedMs=state.baseElapsed;pose.followBaseId=state.source.startsWith('cursor')?'idle':null;pose.gazeAngle=state.lookAngle;pose.gazeWeight=state.gazeWeight;pose.turn=state.turn;pose.reducedMotion=reducedMotion.matches;
+  pose.playbackRate=state.animationSpeed;pose.playing=true;
   currentSample=pose;
   row=pose.row;col=pose.col;
   const background=(-col*FRAME_SIZE.width)+'px '+(-row*FRAME_SIZE.height)+'px';
@@ -104,7 +107,7 @@ document.addEventListener('pointerdown',begin);document.addEventListener('moused
 document.addEventListener('pointerup',end);document.addEventListener('mouseup',end);
 document.addEventListener('pointercancel',()=>{if(down){down=false;void window.whale.dragEnd();}});
 window.whale.status().then(updateSnapshot);
-function clock(){frameTimer?.();frameTimer=null;const wasVisible=controller.visible;controller.setVisible(!document.hidden&&preferences.petVisible!==false);if(!document.hidden){if(!wasVisible)controller.trigger('wave',{source:'show'});render();frameTimer=subscribeAnimationClock(render);}}
+function clock(){frameTimer?.();frameTimer=null;const wasVisible=controller.visible;controller.setVisible(!document.hidden&&preferences.petVisible!==false);if(!document.hidden){if(!wasVisible)controller.trigger('wave',{source:'show'});render();frameTimer=subscribeAnimationClock(render);}else motionRenderer.release?.(surface);}
 document.addEventListener('visibilitychange',clock);
 window.addEventListener('pagehide',()=>frameTimer?.());
 reducedMotion.addEventListener('change',render);

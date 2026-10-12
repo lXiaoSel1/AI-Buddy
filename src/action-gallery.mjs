@@ -6,7 +6,7 @@ import {galleryRenderer as motionRenderer} from './motion-renderer.mjs';
 import {frameSequence,sequenceSampleFrame} from './frame-sequence.mjs';
 const h=React.createElement;
 
-const ActionSprite=memo(function ActionSprite({id,playing=true,speed=1,onError}){
+const ActionSprite=memo(function ActionSprite({id,playing=true,windowVisible=true,speed=1,onError}){
   const sequence=frameSequence(id),nativeCount=sequence?.nativeFrameCount??sequence?.interpolation?.nativeFrameCount??sequence?.frames.length;
   const element=useRef(null),canvas=useRef(null),phase=useRef(0),[inView,setInView]=useState(true);
   useEffect(()=>{phase.current=0;},[id]);
@@ -18,11 +18,11 @@ const ActionSprite=memo(function ActionSprite({id,playing=true,speed=1,onError})
   useEffect(()=>{
     let active=true,last=null;
     element.current.dataset.animating=String(playing&&inView);
-    if(!inView)motionRenderer.release?.(canvas.current);
+    if(!inView||!windowVisible){motionRenderer.release?.(canvas.current);phase.current=0;}
     const draw=()=>{
-      if(!active||!inView||!element.current||!canvas.current)return;
+      if(!active||!inView||!windowVisible||!element.current||!canvas.current)return;
       try{
-        const sample=actionSample(id,phase.current,{reducedMotion:!playing&&matchMedia('(prefers-reduced-motion: reduce)').matches});sample.clockMs=phase.current;
+        const sample=actionSample(id,phase.current,{reducedMotion:!playing&&matchMedia('(prefers-reduced-motion: reduce)').matches});sample.clockMs=phase.current;sample.playbackRate=speed;sample.playing=playing&&inView;
         motionRenderer.draw(canvas.current,sample);
         if(canvas.current.dataset.sequenceError)onError();
         element.current.dataset.frame=sequence?(motionRenderer.displayedSample?.(canvas.current)?.displayedSequenceFrame??sequenceSampleFrame(sequence,sample)):sample.frame;
@@ -37,9 +37,9 @@ const ActionSprite=memo(function ActionSprite({id,playing=true,speed=1,onError})
       }catch(error){element.current.dataset.error=error.message;onError();}
     };
     draw();motionRenderer.ready.then(()=>{if(active)draw();}).catch(error=>{if(active&&element.current){element.current.dataset.error=error.message;onError();}});
-    const stop=playing&&inView?subscribeAnimationClock(now=>{if(last!==null&&(!sequence||motionRenderer.displayedSample?.(canvas.current)?.actionId===id))phase.current+=(now-last)*speed;last=now;draw();}):null;
-    return()=>{active=false;stop?.();motionRenderer.release?.(canvas.current);};
-  },[id,playing,inView,speed,onError]);
+    const stop=inView&&windowVisible?subscribeAnimationClock(now=>{if(playing&&last!==null&&(motionRenderer.isAdvancing?.(canvas.current)??true)&&(!sequence||motionRenderer.displayedSample?.(canvas.current)?.actionId===id))phase.current+=(now-last)*speed;last=now;draw();}):null;
+    return()=>{active=false;stop?.();};
+  },[id,playing,inView,windowVisible,speed,onError]);
   return h('div',{ref:element,className:'action-viewport','data-preview':id,'data-frame':0},
     h('canvas',{ref:canvas,className:'action-sprite','aria-hidden':true}));
 });
@@ -78,6 +78,6 @@ export function ActionGallery({settings}){
     !assetsReady&&!error&&h('p',{className:'action-loading',role:'status'},t("正在加载…")),
     assetsReady&&h('div',{className:'action-grid'},...actions.map(action=>h('section',{className:'action-card',key:action.id,'data-action-card':action.id},
       h('div',{className:'action-card-title'},h('h2',null,t(action.label))),
-      h(ActionSprite,{id:action.id,playing:playing&&visible,speed,onError:playbackError}),
+      h(ActionSprite,{id:action.id,playing:playing&&visible,windowVisible:visible,speed,onError:playbackError}),
       h('button',{'data-pet-play':action.id,disabled:hidden,onClick:()=>{void play(action.id);}},t("在桌宠播放"))))));
 }

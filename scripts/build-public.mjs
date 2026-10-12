@@ -10,6 +10,6 @@ mkdirSync(out,{recursive:true});cpSync(join(source,'assets'),join(out,'assets'),
 const shared={bundle:true,logLevel:'info',legalComments:'eof'};
 for(const entry of ['main','preload','monitor-worker'])await build({...shared,entryPoints:[join(root,'src',entry+'.mjs')],outfile:join(out,entry+'.cjs'),platform:'node',target:'node24',format:'cjs',external:['electron'],define:entry==='main'?{'__FRAME_SEQUENCES__':JSON.stringify(sequences)}:undefined});
 for(const entry of ['dashboard','pet'])await build({...shared,entryPoints:[join(root,'src',entry+'.mjs')],outfile:join(out,entry+'.js'),platform:'browser',target:'chrome144',format:'iife',define:{'process.env.NODE_ENV':'"production"','__ALL_ACTION_RIGS__':'false','__FIVE_ACTIONS_V014__':'false','__FRAME_SEQUENCES__':JSON.stringify(sequences),'__PREVIEW_ATLASES__':JSON.stringify(entry==='dashboard'?previews.resources:{})}});
-for(const name of ['index.html','pet.html','dashboard.css'])copyFileSync(join(root,'src',name),join(out,name));
+for(const name of ['index.html','pet.html','dashboard.css','appearance.css'])copyFileSync(join(root,'src',name),join(out,name));
 writeFileSync(join(out,'package.json'),JSON.stringify({name:'ai-buddy',productName:'AI Buddy',version:JSON.parse(readFileSync(join(root,'package.json'),'utf8')).version,main:'main.cjs'}));
 console.log('Built '+out);

@@ -8,6 +8,6 @@ Development requires Windows x64 and Node.js 24. The portable app does not.
 4. Run `npm start` to launch the compiled app through the development Electron runtime.
 5. Run `npm test` for portable pure-logic tests. Native release acceptance scripts and local asset-production evidence are maintained separately; they are not implied by this command.
 
-Do not publish `local/`, generated `builds/`, credentials, user CGs or logs. The resource ZIP is a release asset rather than Git history because complete-frame animations are large. Upstream/runtime licensing remains in the distributed files.
+Do not publish `local/`, generated `builds/`, credentials, user CGs or logs. The resource ZIP is a release asset rather than Git history to keep generated media outside Git history. Upstream/runtime licensing remains in the distributed files.
 
-Source-build output is under `builds/development`. Tests use temporary data and mock services; no paid model request is needed. The formal 1.7.0 binary additionally has branded Windows resources and a release manifest. Source tests do not certify native integration or visual acceptance.
+Source-build output is under `builds/development`. Tests use temporary data and mock services; no paid model request is needed. The formal 1.7.1 binary additionally has branded Windows resources and a release manifest. Source tests do not certify native integration or visual acceptance.
