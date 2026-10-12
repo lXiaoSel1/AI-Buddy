@@ -2,7 +2,7 @@
 
 [简体中文](README.md) · **English**
 
-**Current release: [v1.7.5](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.5)** · Volcengine Ark image/reference support, actionable API errors and the corrected DeepSeek portrait reference; see the [validation record](docs/VALIDATION-1.7.5.md).
+**Current release: [v1.7.6](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.6)** · Smoother cursor following, direction-frame prefetch and reliable action switching; see the [validation record](docs/VALIDATION-1.7.6.md).
 
 ## Overview
 
@@ -151,7 +151,7 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for per-file notes. The Gal
 
 Requires Windows 10/11 x64. AI Buddy is portable and bundles the Electron runtime; Node.js, Python and image tools are not needed.
 
-1. Download `AI-Buddy-1.7.5-Windows-x64.zip` from [Releases](https://github.com/lXiaoSel1/ai-buddy/releases). The release assets give the exact size and SHA-256, including `SHA256SUMS-1.7.5.txt`.
+1. Download `AI-Buddy-1.7.6-Windows-x64.zip` from [Releases](https://github.com/lXiaoSel1/ai-buddy/releases). The release assets give the exact size and SHA-256, including `SHA256SUMS-1.7.6.txt`.
 2. Extract the whole ZIP to a writable location. You get an `AI-Buddy` folder.
 3. Open the **AI-Buddy** folder and double-click **AI Buddy.exe** in its root. **AI Buddy.vbs / AI Buddy.cmd** are compatibility launchers that start the same program. Since 1.7.3, the root EXE validates the runtime and starts it directly, without the PowerShell `Get-FileHash` command; the 1.7.2 script launcher could exit on machines where that command is unavailable, and the old package only had the EXE under the versioned `runtime` folder.
 

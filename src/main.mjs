@@ -309,14 +309,16 @@ app.whenReady().then(async()=>{
   updateTray();tray.on('double-click',()=>openPanel());
   const recoverPet=()=>positionPet(pet,clamp(petBounds(pet.getContentBounds(),settings.preferences.petScale)),settings.preferences.petScale);
   screen.on('display-removed',recoverPet);screen.on('display-metrics-changed',recoverPet);
+  let lastCursorPoint=null;
   setInterval(()=>{
-    if(!pet || pet.isDestroyed() || !pet.isVisible())return;
+    if(!pet || pet.isDestroyed() || !pet.isVisible()){lastCursorPoint=null;return;}
     // Private validation can drive the same input handlers without live OS cursor interference.
     if(arg('cursor')==='manual')return;
     const cursor=screen.getCursorScreenPoint();
     if(drag)moveDrag(cursor);
-    const b=pet.getContentBounds();pet.webContents.send('pet:cursor',{x:cursor.x-b.x,y:cursor.y-b.y,dragging:!!drag});
-  },60);
+    const b=pet.getContentBounds(),point={x:cursor.x-b.x,y:cursor.y-b.y,dragging:!!drag};
+    if(!lastCursorPoint||point.x!==lastCursorPoint.x||point.y!==lastCursorPoint.y||point.dragging!==lastCursorPoint.dragging){lastCursorPoint=point;pet.webContents.send('pet:cursor',point);}
+  },16);
   logRoots=arg('roots')?JSON.parse(readFileSync(arg('roots'),'utf8')):[{provider:'codex',path:join(home,'.codex/sessions')},{provider:'codex',path:join(home,'.codex/archived_sessions')},{provider:'claude',path:join(home,'.claude/projects')}];
   monitorAppliedInterval=settings.preferences.monitorRefreshMs;
   worker=new Worker(join(build,'monitor-worker.cjs'),{workerData:{roots:arg('roots')?logRoots:undefined,home,env:process.env,dataRoot,refreshIntervalMs:settings.preferences.monitorRefreshMs,statisticsTimeZone:settings.preferences.statisticsTimeZone,autoPriceUpdates:settings.preferences.autoPriceUpdates}});
