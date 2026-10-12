@@ -1,7 +1,9 @@
 import {build} from 'esbuild';
 import {existsSync,readFileSync,mkdirSync,cpSync,copyFileSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
+import {checkReleaseVersion} from './check-release-version.mjs';
 const root=resolve(import.meta.dirname,'..'),resources=process.argv.find(a=>a.startsWith('--resources='))?.slice(12);
+checkReleaseVersion(root);
 if(!resources)throw Error('Pass --resources=<build folder from the matching portable release>');
 const source=resolve(resources),out=join(root,'builds/development');
 if(!existsSync(join(source,'assets/frame-sequence-manifest.json')))throw Error('Resource manifest missing');

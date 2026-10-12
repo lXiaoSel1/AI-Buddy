@@ -92,6 +92,12 @@
 .galgame-page .whg-root-tab .whg-stage{display:flex;padding:6px;overflow:hidden}
 .galgame-page .whg-root-tab .whg-sprite-wrap{height:100%;width:100%;margin:0;transform:none}
 .galgame-page .whg-root-tab .whg-sprite{height:100%;width:100%;max-width:100%;object-fit:contain;object-position:center bottom}
+/* Single-character close framing: keep the head below the toolbar and let the
+   lower body continue behind the dialogue. The picker and ensemble keep their
+   full-figure framing. Width still constrains wide/custom silhouettes. */
+.galgame-page .whg-root-tab .whg-stage:has(>.whg-sprite-wrap){overflow:clip;overflow-clip-margin:24px;z-index:1}
+.galgame-page .whg-root-tab .whg-stage>.whg-sprite-wrap{position:absolute;top:12px;left:12px;width:calc(100% - 24px);height:190%;max-width:none;align-items:flex-start;pointer-events:none}
+.galgame-page .whg-root-tab .whg-sprite-wrap>.whg-sprite{object-position:center top}
 .galgame-page .whg-root-tab .whg-cast{padding:6px 2% 22px;gap:2%}
 .galgame-page .whg-root-tab .whg-cast-slot,.galgame-page .whg-root-tab .whg-cast-slot[data-lead=true]{display:flex;flex:1;min-width:0;max-width:32%;height:100%;transform:none}
 .galgame-page .whg-root-tab .whg-cast-slot[data-overflow=true]{display:flex}

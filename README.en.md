@@ -1,5 +1,7 @@
 # AI Buddy · AI 酱
 
+**Current release: [v1.7.2](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.2)**
+
 **A record of your AI work. A companion on your desktop.**
 
 [简体中文](README.md) · English
@@ -12,7 +14,7 @@ The Galgame engine and interface are adapted from **[JAdpp/dsh-whale-galgame](ht
 
 ## Download
 
-Download `AI-Buddy-1.7.1-Windows-x64.zip` from [Releases](https://github.com/lXiaoSel1/ai-buddy/releases), extract the complete folder to a writable location, and run **AI Buddy.vbs**. **AI Buddy.cmd** and the versioned **AI Buddy.exe** are alternative launchers.
+Download `AI-Buddy-1.7.2-Windows-x64.zip` from [Releases](https://github.com/lXiaoSel1/ai-buddy/releases), extract the complete folder to a writable location, and run **AI Buddy.vbs**. **AI Buddy.cmd** and the versioned **AI Buddy.exe** are alternative launchers.
 
 - Windows 10/11 x64; portable ZIP, no installer in this release.
 - Electron is bundled. Node.js, Python and image-generation tools are not required to run the app.
@@ -56,6 +58,17 @@ Each character owns their levels, conversation history, background, CG gallery, 
 
 CG backgrounds automatically hide the portrait to prevent duplicate characters. Use the toolbar to show/hide it manually or return to automatic behavior. Switching characters restores that character’s background. Right-click a CG to move it to the recycle bin; undo and restore do not generate another image.
 
+### Starting Theater
+
+1. Save and activate a chat connection under **API configuration → Chat API**.
+2. Open **Galgame** and enable online chat. This switch resets to off after restart.
+3. Click **Theater**, enter an optional topic, then click **Start play**. An explicit topic is useful when no recent activity is available; the local app uses available activity rather than automatically browsing the web.
+4. Advance with **Continue**, then select a choice or type a reply when prompted. Past scenes are under **Dialogue history → Theater**.
+
+Theater calls the selected chat model. Wait for active chat to finish or close the current scene before starting another. The dialog shows an active cooldown; this version does not expose a cooldown setting. CG group pictures use the separate image connection and are not required to start a scene.
+
+Version 1.7.2 gives single-character scenes a closer portrait framing: the face and upper body are larger, with the lower body behind the dialogue. Multi-character scenes and portrait pickers retain full-figure views.
+
 ![Galgame](docs/screenshots/galgame-en.png)
 ![CG background without a duplicate portrait](docs/screenshots/cg-background.png)
 
@@ -93,7 +106,7 @@ Local monitoring is read-only, sends no model requests and does not modify the m
 
 See [BUILD.md](docs/BUILD.md) for source builds. Node.js 24 is needed for development; runtime artwork and animations can be extracted from the matching release ZIP.
 
-See the [1.7.1 validation record](docs/VALIDATION-1.7.1.md) for tested behavior and review boundaries.
+See the [1.7.2 validation record](docs/VALIDATION-1.7.2.md) for the portrait and release checks. Original WebM and theme verification remains in the [1.7.1 record](docs/VALIDATION-1.7.1.md).
 
 Special thanks to [JAdpp/dsh-whale-galgame](https://github.com/JAdpp/dsh-whale-galgame), [dsh-deep-whale](https://github.com/Small-tailqwq/dsh-deep-whale), [dsh-deepseek-girl-pet](https://github.com/f0909172434/dsh-deepseek-girl-pet), [上善](https://www.pixiv.net/users/62155430), [ZipZipPipe](https://www.pixiv.net/users/18604994) and the [AI gijinka gallery](https://genderswapai.com/zh-CN/ai-gijinka/gallery). Additional thanks to [ccusage](https://github.com/ccusage/ccusage), [CodexBar](https://github.com/steipete/CodexBar), [models.dev](https://models.dev), [Electron](https://www.electronjs.org/), [React](https://react.dev/), [esbuild](https://esbuild.github.io/) and [RIFE](https://github.com/hzwer/ECCV2022-RIFE).
 
