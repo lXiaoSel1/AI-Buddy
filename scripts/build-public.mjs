@@ -1,12 +1,17 @@
 import {build} from 'esbuild';
 import {existsSync,readFileSync,mkdirSync,readdirSync,copyFileSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
+import {createHash} from 'node:crypto';
 import {checkReleaseVersion} from './check-release-version.mjs';
 const root=resolve(import.meta.dirname,'..'),resources=process.argv.find(a=>a.startsWith('--resources='))?.slice(12);
 checkReleaseVersion(root);
 if(!resources)throw Error('Pass --resources=<build folder from the matching portable release>');
 const source=resolve(resources),out=join(root,'builds/development');
 if(!existsSync(join(source,'assets/frame-sequence-manifest.json')))throw Error('Resource manifest missing');
+const portraitProof=JSON.parse(readFileSync(join(root,'assets/cg-references/maid-left.source.json'),'utf8'));
+for(const [file,expected] of [[portraitProof.source,portraitProof.sourceSha256],['assets/cg-references/maid-left.png',portraitProof.pngSha256]]){
+ if(!existsSync(join(source,file))||createHash('sha256').update(readFileSync(join(source,file))).digest('hex')!==expected)throw Error('CG portrait reference does not match this source release: '+file+'. Use the matching portable release resources.');
+}
 const sequences=JSON.parse(readFileSync(join(source,'assets/frame-sequence-manifest.json'),'utf8')),previews=JSON.parse(readFileSync(join(source,'assets/gallery-preview-manifest.json'),'utf8'));
 // Copy one file at a time: Node 24's recursive cpSync can abort on long
 // Windows resource paths containing non-ASCII characters.

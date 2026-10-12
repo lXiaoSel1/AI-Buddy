@@ -2,7 +2,7 @@
 
 [简体中文](README.md) · **English**
 
-**Current release: [v1.7.3](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.3)** · Portable startup and Codex desktop discovery fixes; see the [1.7.3 validation record](docs/VALIDATION-1.7.3.md)
+**Current release: [v1.7.5](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.5)** · Volcengine Ark image/reference support, actionable API errors and the corrected DeepSeek portrait reference; see the [validation record](docs/VALIDATION-1.7.5.md).
 
 ## Overview
 
@@ -151,7 +151,7 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for per-file notes. The Gal
 
 Requires Windows 10/11 x64. AI Buddy is portable and bundles the Electron runtime; Node.js, Python and image tools are not needed.
 
-1. Download `AI-Buddy-1.7.3-Windows-x64.zip` from [Releases](https://github.com/lXiaoSel1/ai-buddy/releases). The release assets give the exact size and SHA-256, including `SHA256SUMS-1.7.3.txt`.
+1. Download `AI-Buddy-1.7.5-Windows-x64.zip` from [Releases](https://github.com/lXiaoSel1/ai-buddy/releases). The release assets give the exact size and SHA-256, including `SHA256SUMS-1.7.5.txt`.
 2. Extract the whole ZIP to a writable location. You get an `AI-Buddy` folder.
 3. Open the **AI-Buddy** folder and double-click **AI Buddy.exe** in its root. **AI Buddy.vbs / AI Buddy.cmd** are compatibility launchers that start the same program. Since 1.7.3, the root EXE validates the runtime and starts it directly, without the PowerShell `Get-FileHash` command; the 1.7.2 script launcher could exit on machines where that command is unavailable, and the old package only had the EXE under the versioned `runtime` folder.
 
@@ -285,6 +285,7 @@ Chat and CG image generation use two separate sets of connections, both managed 
 | Chat | Local Codex sign-in, OpenAI Chat Completions / Responses, native Gemini, Anthropic Messages | The Codex channel needs a local Codex login |
 | CG | Codex built-in images | Uses the local Codex model; prefers a 16:9 landscape composition |
 | CG | OpenAI Images compatible | 1536×1024 for the gpt-image-1 family |
+| CG | Volcengine Ark / Seedream | Dedicated JSON text/image-reference protocol, 2K by default; use a model or image endpoint enabled for your account |
 | CG | Gemini Interactions | 16:9, 1K by default |
 | CG | Wan (Tongyi Wanxiang) | Generation/editing defaults to `wan2.6-image` at 1280×720; asynchronous text-to-image defaults to 1696×960 |
 
@@ -293,6 +294,8 @@ Choose a preset or enter a custom compatible endpoint and model ID; compatibilit
 With **Generate CG automatically** turned on, you can choose level-up commemorative CGs and Theater group pictures; it is off by default. When online chat is on, each new level-up CG uses one extra chat request to design a theme, falling back to local character themes if that fails; retries reuse the prepared theme. Model and image calls can incur service charges.
 
 Current CG composition rule: male first-person view with the male character out of frame; natural hand interaction, text and clothing logos are allowed, and it is not limited to one male hand.
+
+New CG jobs in 1.7.5 use the selected character’s Galgame portrait, with custom portraits taking priority. DeepSeek no longer uses the chibi desktop-pet master. Retrying an older job preserves its saved references; create a new CG to use a new reference. API errors show the HTTP status, service reason and request ID with sensitive content redacted. See the [CG connection guide](CG_API_GUIDE.md).
 
 ![CG gallery](docs/screenshots/cg-gallery.png)
 
