@@ -7,6 +7,7 @@ using System.Text.Json;
 var suite=new Suite();await suite.Run();
 
 sealed class Suite {
+ [System.Runtime.InteropServices.DllImport("kernel32.dll",CharSet=System.Runtime.InteropServices.CharSet.Unicode)] static extern uint GetShortPathName(string path,System.Text.StringBuilder buffer,uint size);
  readonly string root=Path.Combine(Path.GetTempPath(),"AI Buddy installer tests "+Guid.NewGuid().ToString("N"));int passed;
  void Assert(bool condition,string message){if(!condition)throw new Exception(message);}
  async Task Test(string name,Func<Task> action){await action();passed++;Console.WriteLine("PASS "+name);}
@@ -23,6 +24,7 @@ sealed class Suite {
    var serving=Task.Run(async()=>{await server.WaitForConnectionAsync();using var reader=new StreamReader(server,Encoding.UTF8,false,1024,true);var line=await reader.ReadLineAsync();using var doc=JsonDocument.Parse(line!);Assert(doc.RootElement.GetProperty("command").GetString()=="installation-status","JSONL command");await server.WriteAsync("{\"ready\":true}\n"u8.ToArray());await server.FlushAsync();server.Disconnect();});
    var reply=await AiBuddy.Setup.WindowsHost.Request(name,new{command="installation-status"},5000,default);await serving;Assert(reply?.GetProperty("ready").GetBoolean()==true,"pipe response");
   });
+  await Test("Windows short user-profile aliases normalize consistently",()=>{var longPath=Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);var buffer=new System.Text.StringBuilder(32768);var count=GetShortPathName(longPath,buffer,(uint)buffer.Capacity);if(count>0&&count<buffer.Capacity)Assert(SafePaths.Full(buffer.ToString())==SafePaths.Full(longPath),"short path identity");return Task.CompletedTask;});
   var p=new[]{Zip("root","root",new(){["AI Buddy.exe"]="launcher"u8.ToArray()}),Zip("runtime","runtime",new(){["AI Buddy.exe"]="runtime"u8.ToArray()}),Zip("app30","build",new(){["main.cjs"]="30"u8.ToArray()},"30fps"),Zip("app60","build",new(){["main.cjs"]="60"u8.ToArray()},"60fps"),Zip("character","build",new(){["assets/portrait.webp"]="portrait"u8.ToArray()}),Zip("motion30","build",new(){["assets/motion.webm"]="motion30"u8.ToArray()},"30fps"),Zip("motion60","build",new(){["assets/motion.webm"]="motion60"u8.ToArray()},"60fps")};
   var m=Fixture(p);var bytes=JsonSerializer.SerializeToUtf8Bytes(m,Json.Options);var hash=Hashing.Bytes(bytes);await File.WriteAllBytesAsync(Path.Combine(root,"install-manifest-1.8.0.json"),bytes);
   await Test("fixed manifest and both editions",()=>{Manifests.Parse(bytes,hash);Assert(Manifests.Select(m,"30fps",["deepseek"],"deepseek").Length==5,"dependencies");return Task.CompletedTask;});

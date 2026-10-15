@@ -1,11 +1,11 @@
 import {spawn,spawnSync} from 'node:child_process';
-import {readFileSync,writeFileSync,mkdirSync,readdirSync,existsSync} from 'node:fs';
+import {readFileSync,writeFileSync,realpathSync,mkdirSync,readdirSync,existsSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {runtimeExecutable} from './runtime-path.mjs';
 import {requestLocalControl} from '../src/local-control.mjs';
-const root=resolve(import.meta.dirname,'..'),pkg=process.argv.find(a=>a.startsWith('--package='))?.slice(10),baseRoot=pkg?resolve(pkg):root,manifest=JSON.parse(readFileSync(join(baseRoot,pkg?'local/current-build.json':'local/candidate-build.json'),'utf8')),exe=runtimeExecutable(baseRoot,manifest),directory=join(root,'local/buddy-180/brand-'+Date.now()),data=join(directory,'独立测试 数据'),pipe='\\\\.\\pipe\\ai161-brand-'+process.pid;
+const root=resolve(import.meta.dirname,'..'),pkg=process.argv.find(a=>a.startsWith('--package='))?.slice(10),baseRoot=pkg?realpathSync.native(resolve(pkg)):root,manifest=JSON.parse(readFileSync(join(baseRoot,pkg?'local/current-build.json':'local/candidate-build.json'),'utf8')),exe=runtimeExecutable(baseRoot,manifest),directory=join(root,'local/buddy-180/brand-'+Date.now()),data=join(directory,'独立测试 数据'),pipe='\\\\.\\pipe\\ai161-brand-'+process.pid;
 mkdirSync(directory,{recursive:true});writeFileSync(join(directory,'roots.json'),'[]');
 const query=(command,args={})=>requestLocalControl(pipe,{command,...args},{timeoutMs:2000}),pause=ms=>new Promise(r=>setTimeout(r,ms));
 const args=['--data='+data,'--roots='+join(directory,'roots.json'),'--pipe='+pipe,'--cursor=manual','--open=overview'];

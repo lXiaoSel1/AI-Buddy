@@ -22,7 +22,7 @@ public sealed class WindowsHost : IAppHost {
     }
     static bool Belongs(JsonElement value,string root) {
         if(!value.TryGetProperty("build",out var build)||build.ValueKind!=JsonValueKind.String)return false;
-        return Path.GetFullPath(build.GetString()!).StartsWith(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar)+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase);
+        return SafePaths.Full(build.GetString()!).StartsWith(SafePaths.Full(root).TrimEnd(Path.DirectorySeparatorChar)+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase);
     }
     public async Task<string?> DiscoverDataPath(string root,CancellationToken cancel) {
         var status=await Request(PipeName(null),new{command="snapshot"},5000,cancel);
@@ -58,7 +58,7 @@ public sealed class WindowsHost : IAppHost {
         var build=SafePaths.Under(root,installed.Build);var end=DateTime.UtcNow.AddSeconds(90);
         while(DateTime.UtcNow<end) {
             cancel.ThrowIfCancellationRequested();var status=await Request(PipeName(installed),new{command="installation-status"},1500,cancel);
-            if(status is {} s&&s.TryGetProperty("version",out var version)&&version.GetString()==installed.Version&&s.TryGetProperty("build",out var returned)&&string.Equals(Path.GetFullPath(returned.GetString()!),build,StringComparison.OrdinalIgnoreCase)&&s.TryGetProperty("ready",out var ready)&&ready.GetBoolean())return;
+            if(status is {} s&&s.TryGetProperty("version",out var version)&&version.GetString()==installed.Version&&s.TryGetProperty("build",out var returned)&&string.Equals(SafePaths.Full(returned.GetString()!),build,StringComparison.OrdinalIgnoreCase)&&s.TryGetProperty("ready",out var ready)&&ready.GetBoolean())return;
             await Task.Delay(800,cancel);
         }
         throw new IOException("AI Buddy did not become ready within 90 seconds; previous program will be restored");

@@ -28,7 +28,7 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
     }
     public async Task<Installation> Install(InstallOptions requested,IProgress<InstallProgress>? progress,CancellationToken cancel) {
         Manifests.Parse(manifestBytes,manifestHash);
-        var root=Path.GetFullPath(requested.Root).TrimEnd(Path.DirectorySeparatorChar);SafePaths.NoLinks(root);
+        var root=SafePaths.Full(requested.Root).TrimEnd(Path.DirectorySeparatorChar);SafePaths.NoLinks(root);
         if(Path.GetPathRoot(root)==root+Path.DirectorySeparatorChar || root.Length<4)throw new IOException("Choose a dedicated application folder");
         Directory.CreateDirectory(root);
         var control=SafePaths.Under(root,"local/installer");Directory.CreateDirectory(control);
@@ -135,14 +135,14 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         if(!System.Text.RegularExpressions.Regex.IsMatch(journal.Id,"^[a-f0-9]{32}$") || journal.Options.Edition is not ("30fps" or "60fps") || journal.Build!=$"builds/v1.8.0-{journal.Options.Edition}-{journal.Id}" || journal.Runtime!=$"runtime/AI-Buddy-v1.8.0-{journal.Id}" || journal.RootFiles.Any(p=>!Manifests.RootFileAllowed(p)) || journal.PreviouslyExistingRootFiles.Except(journal.RootFiles).Any())throw new InvalidDataException("Invalid transaction ownership; no recovery files were changed");
     }
     public async Task Rollback(string root,IProgress<InstallProgress>? progress,CancellationToken cancel) {
-        root=Path.GetFullPath(root);var control=SafePaths.Under(root,"local/installer");
+        root=SafePaths.Full(root);var control=SafePaths.Under(root,"local/installer");
         await using var installationLock=new FileStream(Path.Combine(control,"install.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
         var journal=Json.Read<InstallJournal>(Path.Combine(control,"rollback.json"));
         if(journal.PreviousPointer is null)throw new IOException("No previous version is available");
         await RollbackJournal(root,journal,progress,cancel);Json.Save(Path.Combine(control,"transaction.json"),journal with{Phase="rolled-back"});
     }
     public async Task Uninstall(string root,bool deletePersonalData,IProgress<InstallProgress>? progress,CancellationToken cancel) {
-        root=Path.GetFullPath(root);var installed=Existing(root)??throw new IOException("Installation record is missing");
+        root=SafePaths.Full(root);var installed=Existing(root)??throw new IOException("Installation record is missing");
         if(deletePersonalData&&installed.DataPath is not null)throw new IOException("Custom personal-data path is retained; remove it manually if intended");
         var control=SafePaths.Under(root,"local/installer");
         await using var installationLock=new FileStream(Path.Combine(control,"install.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);

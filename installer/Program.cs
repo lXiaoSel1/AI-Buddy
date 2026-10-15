@@ -34,6 +34,7 @@ internal static class Program {
         var log=new List<InstallProgress>();var progress=new Progress<InstallProgress>(v=>{lock(log){if(v.Phase!="download"&&v.Phase!="extract")log.Add(v);}});
         try {
             var command=Argument(args,"action")??"install";
+            if(command=="inspect"){Json.Save(receipt,new{ok=true,version=Manifest.AppVersion,manifestSha256=Hashing.Bytes(ManifestBytes),runtime=System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription});return 0;}
             if(command=="rollback")await Engine.Rollback(root,progress,default);
             else if(command=="uninstall")await Engine.Uninstall(root,false,progress,default);
             else {

@@ -1,5 +1,5 @@
 """Create complete offline editions and <=1 GiB volumes without changing media."""
-import argparse, hashlib, json, shutil, zipfile
+import argparse, hashlib, json, shutil, zipfile, subprocess
 from pathlib import Path
 
 p=argparse.ArgumentParser();p.add_argument('--work',required=True);a=p.parse_args()
@@ -10,6 +10,9 @@ def sha(path):
 def save(path,value):path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
 digest=sha(manifestPath);installer=work/'installer-build/AI-Buddy-Setup-1.8.0-win-x64.exe'
 assert installer.is_file()
+identity=work/'installer-identity.json'
+subprocess.run([str(installer),'--headless','--action=inspect','--root='+str(work/'identity-probe'),'--receipt='+str(identity)],check=True,creationflags=subprocess.CREATE_NO_WINDOW)
+assert json.loads(identity.read_text(encoding='utf-8'))['manifestSha256']==digest,'Installer is not pinned to the current package manifest' 
 shutil.copy2(installer,assets/installer.name)
 receipts=[]
 for edition in ['30fps','60fps']:

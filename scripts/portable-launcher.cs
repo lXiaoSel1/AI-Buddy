@@ -32,7 +32,7 @@ internal static class PortableLauncher {
     }
     [STAThread]
     private static int Main(string[] args) {
-        string root = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+        string root = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar));
         try {
             // Also works when placed next to the extracted AI-Buddy folder.
             if (!File.Exists(Path.Combine(root, "local", "current-build.json")) &&
