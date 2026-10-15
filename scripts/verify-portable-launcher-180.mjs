@@ -1,9 +1,9 @@
 import {spawn} from 'node:child_process';
-import {mkdirSync,writeFileSync,readFileSync} from 'node:fs';
+import {realpathSync,mkdirSync,writeFileSync,readFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import assert from 'node:assert/strict';
 import {requestLocalControl} from '../src/local-control.mjs';
-const root=resolve(import.meta.dirname,'..'),pkg=resolve(process.argv[2]),entry=join(pkg,'AI Buddy.exe'),directory=join(root,'local/buddy-180/portable-startup-'+Date.now()),data=join(directory,'独立测试 数据'),pipe='\\\\.\\pipe\\buddy-178-portable-'+process.pid;
+const root=resolve(import.meta.dirname,'..'),pkg=realpathSync.native(resolve(process.argv[2])),entry=join(pkg,'AI Buddy.exe'),directory=join(root,'local/buddy-180/portable-startup-'+Date.now()),data=join(directory,'独立测试 数据'),pipe='\\\\.\\pipe\\buddy-178-portable-'+process.pid;
 mkdirSync(directory,{recursive:true});writeFileSync(join(directory,'roots.json'),'[]');
 const manifest=JSON.parse(readFileSync(join(pkg,'local/current-build.json'))),build=resolve(pkg,manifest.path),groups=JSON.parse(readFileSync(join(build,'assets/character-sequence-manifest.json')));
 const args=['--data='+data,'--roots='+join(directory,'roots.json'),'--pipe='+pipe,'--cursor=manual'],env={...process.env,PATH:join(process.env.SystemRoot,'System32')};
