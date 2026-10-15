@@ -167,7 +167,7 @@ Notes:
 - On first launch it looks for common log folders under the current user. No AI tools installed? The companion features still work offline.
 - The automatic GitHub **Source code** archives are source-only. Choose a release asset containing `Windows-x64` to run the app.
 - This repository and official releases are public. Release packages exclude the developer's saves, connection secrets and local logs.
-- If the 60fps edition is split, download every `.zip.partNN`, the matching `.zip.parts.json`, `Combine-AI-Buddy-1.8.0.ps1` and `Combine-AI-Buddy-1.8.0-60fps.cmd` into one folder, then double-click the `.cmd`. It verifies each part, combines them and verifies the complete ZIP before you extract it. Only the built-in Windows PowerShell is required; no Node.js or Python. Do not extract an individual part.
+- Both 1.8.0 portable editions are split: 2 parts for 30fps and 3 for 60fps. Download every `.zip.partNN` for your edition, its `.zip.parts.json`, `Combine-AI-Buddy-1.8.0.ps1` and the matching `30fps.cmd` or `60fps.cmd` merge tool into one folder, then double-click the `.cmd`. It verifies each part, combines them and verifies the complete ZIP before you extract it. Only the built-in Windows PowerShell is required; no Node.js or Python. Do not extract an individual part.
 
 Folder layout after extraction:
 

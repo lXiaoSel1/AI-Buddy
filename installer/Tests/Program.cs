@@ -67,6 +67,7 @@ sealed class Suite {
   using var unusedHttp=new HttpClient(new Handler((_,_)=>throw new Exception("offline must not request network")));
   var host=new FakeHost();var engine=new InstallEngine(m,bytes,hash,new Downloader(unusedHttp),host,Path.Combine(root,"root.zip"));var installRoot=Path.Combine(root,"中文 安装");
   var options=new InstallOptions(installRoot,Path.Combine(root,"cache"),"30fps",["deepseek"],"deepseek",root,false,true);
+  await Test("space estimate reserves staging, root backup and manager",()=>{var e=engine.Estimate(options);var selected=Manifests.Select(m,"30fps",["deepseek"],"deepseek");Assert(e.InstallAdditionalBytes>e.ExpandedBytes+2*selected.Where(x=>x.Mount=="root").Sum(x=>x.UnpackedBytes)+new FileInfo(Path.Combine(root,"root.zip")).Length+bytes.Length,"all simultaneous copies reserved");return Task.CompletedTask;});
   await Test("offline install, zero network, verified startup",async()=>{var record=await engine.Install(options,null,default);Assert(record.Edition=="30fps"&&host.Starts==1,"offline installation");});
   var data=Path.Combine(installRoot,"local/data-v003/keep.json");Directory.CreateDirectory(Path.GetDirectoryName(data)!);await File.WriteAllTextAsync(data,"original save");
   await Test("edition switch preserves save",async()=>{await engine.Install(options with {Edition="60fps"},null,default);Assert(File.ReadAllText(data)=="original save","preserve");});

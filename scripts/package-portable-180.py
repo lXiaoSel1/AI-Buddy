@@ -25,6 +25,16 @@ for edition in ['30fps','60fps']:
  save(tree/'local/installation.json',record)
  save(tree/'local/current-build.json',dict(version='1.8.0',appVersion='1.8.0',path=build,runtime=dict(path=runtime,**manifest['runtime']),animationProfile=edition))
  dest=tree/'local/install-manifests'/f'{digest}.json';dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(manifestPath,dest)
+ # Re-running a candidate build must not ship pins from previous, unpublished candidates.
+ assert tree.resolve().is_relative_to((work/'portable').resolve())
+ for old in dest.parent.glob('*.json'):
+  if old.name!=dest.name:old.unlink()
+ expected={manager,'local/installation.json','local/current-build.json',f'local/install-manifests/{digest}.json'}
+ for package in selected:
+  prefix=''if package['mount']=='root'else (build if package['mount']=='build'else runtime)+'/'
+  expected.update(prefix+f['path']for f in package['files'])
+ actual={p.relative_to(tree).as_posix()for p in tree.rglob('*')if p.is_file()}
+ assert actual==expected,dict(extra=sorted(actual-expected),missing=sorted(expected-actual))
  for package in selected:
   base=tree if package['mount']=='root' else tree/(build if package['mount']=='build' else runtime)
   for f in package['files']:assert (base/f['path']).stat().st_size==f['bytes'] and sha(base/f['path'])==f['sha256'],f['path']
