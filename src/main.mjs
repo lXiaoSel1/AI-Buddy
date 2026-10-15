@@ -1,3 +1,5 @@
+import {createInstalledResources} from './installed-resources.mjs';
+import {spawn} from 'node:child_process';
 import {setLocale,t,localizedTitle} from './i18n.mjs';
 import {chromeColor,resolvedTheme} from './appearance.mjs';
 import {CgThemePlanner} from './cg-theme.mjs';
@@ -42,7 +44,9 @@ function brandWindow(window){
 }
 const arg=name=>process.argv.find(x=>x.startsWith('--'+name+'='))?.slice(name.length+3);
 const previewQuery=arg('rig')==='working'?{query:{workingRig:'1'}}:arg('rig')==='all'?{query:{allActionRigs:'1'}}:arg('rig')==='source'?{query:{sourcePreview:'1'}}:{};
-const dataRoot=resolve(arg('data') || join(root,'local/data-v003'));
+const resources=createInstalledResources({root,build});
+const dataRoot=resolve(arg('data') || resources.installation?.dataPath || join(root,'local/data-v003'));
+if(!resources.fallback())throw Error('没有完整角色资源，请运行安装器修复 / No complete character resources; run installer repair');
 mkdirSync(dataRoot,{recursive:true});
 app.setPath('userData',join(dataRoot,'chromium'));
 app.setPath('crashDumps',join(dataRoot,'crash-reports'));
@@ -50,7 +54,7 @@ if(!app.requestSingleInstanceLock())app.exit(0);
 for(const flag of ['disable-background-networking','disable-component-update','disable-domain-reliability','disable-sync'])app.commandLine.appendSwitch(flag);
 const auditPath=join(dataRoot,'runtime-audit.jsonl');
 const audit=value=>appendFileSync(auditPath,JSON.stringify({timestamp:new Date().toISOString(),...value})+'\n');
-const pipe=arg('pipe') || '\\\\.\\pipe\\whale-companion-v001';
+const pipe=arg('pipe') || (resources.installation?.pipe?'\\\\.\\pipe\\'+resources.installation.pipe:null) || '\\\\.\\pipe\\whale-companion-v001';
 let pet,panel,tray,worker,game,provider,snapshot={indexing:true,sessions:[],active:[],todayUsage:{codex:{total:0},claude:{total:0}},workTotal:0},settings={},drag=null,lastWork=null,quitting=false,gestureMode=false,lastPetHit=false,ignoringMouse=true,petAssetsReady=false;
 const settingsStore=createSnapshotStorage(join(dataRoot,'settings.json'));
 let cg,quotas;
@@ -63,7 +67,7 @@ function tokenAction(action,args={}){return new Promise((done,fail)=>{if(!worker
 let petState={id:'idle',source:'monitor',manual:false,expiresAt:null},gameRequests=0;
 const actionIds=new Set(PET_ACTIONS.map(a=>a.id));
 function petEvent(value){if(pet&&!pet.isDestroyed())pet.webContents.send('pet:action',value);}
-function playPet(request){const value=validatePetPlayback({...request,characterId:request?.characterId??petState.characterId??resolvePetCharacter(settings.preferences,themeCharacter)});petEvent({kind:'play',...value});audit({type:'pet-manual-action',id:value.id,lookIndex:value.lookIndex,characterId:value.characterId});return {ok:true,...value};}
+function playPet(request){const value=validatePetPlayback({...request,characterId:request?.characterId??petState.characterId??resolvePetCharacter(settings.preferences,themeCharacter)});resources.require([value.characterId]);petEvent({kind:'play',...value});audit({type:'pet-manual-action',id:value.id,lookIndex:value.lookIndex,characterId:value.characterId});return {ok:true,...value};}
 function petAuto(){petEvent({kind:'auto'});return {ok:true};}
 function triggerPet(id,source='event',durationMs=null){petEvent({kind:'trigger',id,source,...(durationMs===null?{}:{durationMs})});}
 function feedback(value){if(settings.preferences?.petVisible!==false)petEvent({kind:'feedback',value});}
@@ -85,7 +89,7 @@ function moveDrag(point){
   positionPet(pet,next,settings.preferences.petScale);drag.position=next;petEvent({kind:'drag',active:true,direction:drag.direction||1});
 }
 async function saveSettings() {await settingsStore.writeText(JSON.stringify(settings));}
-function settingsView(){return {preferences:{...settings.preferences},themeCharacter,petCharacterId:petState.characterId??'deepseek',version:appVersion,build:build.split(/[\\/]/).at(-1),dataRoot,logRoots,tokenSources,defaultModel:provider?.defaultModel,modelConnections:provider?.state?connectionView(provider):null,cgConnections:cg?.state?connectionView(cg):null,systemTimeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,monitorAppliedInterval};}
+function settingsView(){return {resources:resources.status(),effectivePetCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter)),preferences:{...settings.preferences},themeCharacter,petCharacterId:petState.characterId??resources.fallback('deepseek'),version:appVersion,build:build.split(/[\\/]/).at(-1),dataRoot,logRoots,tokenSources,defaultModel:provider?.defaultModel,modelConnections:provider?.state?connectionView(provider):null,cgConnections:cg?.state?connectionView(cg):null,systemTimeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,monitorAppliedInterval};}
 function broadcastSettings(){const value=settingsView();for(const win of [pet,panel])if(win&&!win.isDestroyed())win.webContents.send('settings:update',value);return value;}
 function saveConnection(service,draft){
   // An unusable edit must not overwrite the currently selected profile before
@@ -119,6 +123,7 @@ function setPreferences(patch){
   let valid;try{valid=validatePreferencesPatch(patch);}catch(error){return Promise.reject(error);}
   const run=settingsTail.then(async()=>{
     const next={...settings.preferences,...valid},resize=next.petScale!==settings.preferences.petScale;
+    if(valid.petFixedCharacter)resources.require([valid.petFixedCharacter]);
     if(resize&&drag)throw new Error('请先松开桌宠，再调整大小');
     if(next.petVisible!==settings.preferences.petVisible)await game.action('pet-set',{enabled:next.petVisible});
     settings.preferences=next;applyChrome();applyPetPreferences(resize);
@@ -138,7 +143,7 @@ async function settingsAction(action){
   throw new Error('未知设置操作');
 }
 function applyChrome(character){if(character&&character!==themeCharacter){themeCharacter=character;broadcastSettings();}setLocale(settings.preferences?.language);if(panel&&!panel.isDestroyed()){panel.setTitle(localizedTitle());if(process.platform==='win32')panel.setTitleBarOverlay({color:chromeColor(resolvedTheme(settings.preferences,themeCharacter)),symbolColor:'#e5edf5',height:34});}if(tray){tray.setToolTip(settings.preferences?.language==='en'?'AI Buddy':'AI 酱');updateTray();}}
-let themeCharacter='deepseek';
+let themeCharacter=resources.fallback('deepseek');
 function openPanel(page='overview',focus=true) {
   if(page==='sessions')page='overview';
   if(!panel || panel.isDestroyed()) {
@@ -147,7 +152,7 @@ function openPanel(page='overview',focus=true) {
       webPreferences:{preload:join(build,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,partition:'whale-memory'}});
     brandWindow(panel);applyChrome();
     lockPageZoom(panel,error=>audit({type:'zoom-policy-error',message:error.message}));
-    panel.setMenuBarVisibility(false);panel.loadFile(join(build,'index.html'),{hash:page,...previewQuery});
+    panel.setMenuBarVisibility(false);panel.loadFile(join(build,'index.html'),{hash:page,...previewQuery,query:{...previewQuery.query,petCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter))}});
     panel.on('close',event=>{if(!quitting){event.preventDefault();petAuto();panel.hide();}});
     panel.once('ready-to-show',()=>focus?panel.show():panel.showInactive());
     panel.webContents.setWindowOpenHandler(()=>({action:'deny'}));
@@ -189,6 +194,16 @@ ipcMain.handle('pet:play',(_,request)=>playPet(request));
 ipcMain.handle('pet:auto',()=>petAuto());
 ipcMain.handle('pet:state',()=>petState);
 ipcMain.on('pet:state',(event,value)=>{if(event.sender!==pet?.webContents||!actionIds.has(value?.id))return;const previous=petState.characterId;petState={id:value.id,source:String(value.source||'monitor').slice(0,20),manual:value.manual===true,expiresAt:Number.isFinite(value.expiresAt)?value.expiresAt:null,characterId:validPetCharacter(value.characterId)?value.characterId:'deepseek'};if(panel&&!panel.isDestroyed())panel.webContents.send('pet:state',petState);if(previous!==petState.characterId)broadcastSettings();});
+async function manageResources(characterId){
+  const manager=resources.manager();if(!manager)throw Error('请下载此版本的在线安装器进行管理 / Download this version’s installer to manage resources');
+  const ids=(Array.isArray(characterId)?characterId:[characterId]).filter(Boolean);if(ids.some(id=>!validPetCharacter(id)))throw Error('Unknown character');
+  const en=settings.preferences?.language==='en';
+  const answer=await dialog.showMessageBox(panel??pet,{type:'question',title:'AI Buddy',message:en?'Open the resource manager? Downloads start only after you click Install.':'打开角色资源管理器？点击安装后才会下载。',buttons:en?['Open','Cancel']:['打开','取消'],defaultId:0,cancelId:1});
+  if(answer.response!==0)return {cancelled:true};
+  const child=spawn(manager,['--root='+root,...(ids.length?['--characters-add='+ids.join(',')]:[])],{detached:true,stdio:'ignore'});await new Promise((ok,fail)=>{child.once('spawn',ok);child.once('error',fail);});child.unref();return {ok:true};
+}
+ipcMain.handle('resources:status',()=>resources.status(true));
+ipcMain.handle('resources:manage',(_,id)=>manageResources(id));
 ipcMain.handle('chat:status',()=>provider.status());
 ipcMain.handle('chat:enabled',(_,enabled)=>{provider.setEnabled(enabled);audit({type:'chat-enabled',enabled:provider.enabled});return provider.status();});
 ipcMain.handle('models:get',()=>connectionView(provider));
@@ -226,6 +241,9 @@ const control=createLocalControlServer({
   onRequest:async request=>{
       let result;
       if(request.command==='snapshot')result={processId:process.pid,singleInstance:app.hasSingleInstanceLock(),snapshot,settings:settingsView(),petAction:petState,chat:{enabled:provider?.enabled || false,model:provider?.defaultModel},petBounds:pet?.getBounds(),petContentBounds:pet?.getContentBounds(),petVisible:pet?.isVisible(),petAssetsReady,petAlwaysOnTop:pet?.isAlwaysOnTop(),petInteraction:{gestureMode,lastPetHit,ignoringMouse,dragging:!!drag},displays:screen.getAllDisplays().map(d=>({workArea:d.workArea,scaleFactor:d.scaleFactor})),build,dataRoot};
+      else if(request.command==='installation-status')result={version:appVersion,build,dataRoot,processId:process.pid,ready:!!game&&petAssetsReady,busy:!!(gameRequests||provider?.status().busy||cg?.status().busy),resources:resources.status()};
+      else if(request.command==='installation-quit'){if(request.expectedBuild!==build)result={ok:false,error:'Different installation'};else if(gameRequests||provider?.status().busy||cg?.status().busy)result={ok:false,busy:true};else{result={ok:true};setTimeout(()=>{void shutdown();},100);}}
+      else if(request.command==='resources-status')result=resources.status(true);
       else if(request.command==='pet-play')result=playPet(request.action);
       else if(request.command==='pet-auto')result=petAuto();
       else if(request.command==='settings-get')result=settingsView();
@@ -283,9 +301,9 @@ app.whenReady().then(async()=>{
   await provider.ready;
   quotas=new QuotaService({dataRoot,home,crypto:safeStorage,binary,onChange:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('quotas:update',value);}});await quotas.ready;quotas.start();
   const cgUsage=usage=>{appendFileSync(join(dataRoot,'cg-usage.jsonl'),JSON.stringify({timestamp:new Date().toISOString(),...usage})+'\n');worker?.postMessage({type:'refresh'});};
-  cg=new CgService({themePlanner:new CgThemePlanner(provider,()=>settings.preferences?.language|| (app.getLocale().startsWith('zh')?'zh-CN':'en')),codex:new CodexImageProvider({binary,defaultModel:model,dataRoot,onUsage:cgUsage,audit}),dataRoot,crypto:safeStorage,imageCodec:createCgCodec(nativeImage),onUsage:cgUsage,onChange:()=>{broadcastSettings();if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',{});},audit,referenceResolver:createCharacterReferenceResolver(build,ref=>cg.readAsset(ref))});
+  cg=new CgService({resourceCheck:ids=>resources.require(ids),themePlanner:new CgThemePlanner(provider,()=>settings.preferences?.language|| (app.getLocale().startsWith('zh')?'zh-CN':'en')),codex:new CodexImageProvider({binary,defaultModel:model,dataRoot,onUsage:cgUsage,audit}),dataRoot,crypto:safeStorage,imageCodec:createCgCodec(nativeImage),onUsage:cgUsage,onChange:()=>{broadcastSettings();if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',{});},audit,referenceResolver:createCharacterReferenceResolver(build,ref=>cg.readAsset(ref))});
   await cg.ready;
-  game=await createGalgame({dataRoot,provider,model,cg,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value);}});
+  game=await createGalgame({dataRoot,provider,model,cg,resources,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value);}});
   cg.start();
   const legacyGameSettings=await game.action('settings-get');
   const firstPreferences=!settings.preferences||!Object.keys(settings.preferences).length;
@@ -304,7 +322,7 @@ app.whenReady().then(async()=>{
   lockPageZoom(pet,error=>audit({type:'zoom-policy-error',message:error.message}));
   positionPet(pet,bounds,settings.preferences.petScale);pet.on('will-resize',event=>event.preventDefault());
   pet.setAlwaysOnTop(settings.preferences.alwaysOnTop,'floating');setGestureMode(false);
-  pet.loadFile(join(build,'pet.html'),previewQuery);pet.once('ready-to-show',async()=>{
+  pet.loadFile(join(build,'pet.html'),{...previewQuery,query:{...previewQuery.query,petCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter))}});pet.once('ready-to-show',async()=>{
     if(PET_ACTIONS.some(action=>action.sourceFrameCount))try{await pet.webContents.executeJavaScript('window.petCharacterReady.then(()=>window.frameSequenceInspection.renderer.ready).then(()=>true)');}catch(error){rendererErrors.push(error.message);audit({type:'pet-assets-error',message:error.message});return;}
     if(!pet.isDestroyed()){petAssetsReady=true;applyPetPreferences();}
   });

@@ -22,18 +22,18 @@ function petGeometry(){if(!geometry)geometry={sprite:sprite.getBoundingClientRec
 window.addEventListener('resize',()=>{geometry=null;motionRenderer.invalidate?.(surface);});
 const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
 let preferences={petScale:1.25,animationSpeed:.75,showStatusBadge:true,followCursor:true,completionBubbles:true};
-let configuredCharacter='deepseek',demoRequest=null,demoActive=false,settingsReady=false,characterError=null;
+let configuredCharacter=currentPetCharacter(),demoRequest=null,demoActive=false,settingsReady=false,characterError=null;
 function applyCharacterPresentation(id){sprite.style.transformOrigin='0 0';sprite.style.transform=petPresentation(id).transform;geometry=null;motionRenderer.invalidate?.(surface);}
-applyCharacterPresentation('deepseek');
+applyCharacterPresentation(currentPetCharacter());
 let initialCharacterReady=false,resolveInitialCharacter;
 window.petCharacterReady=new Promise(resolve=>{resolveInitialCharacter=resolve;});
 async function finishInitialCharacter(){await motionRenderer.ready;if(initialCharacterReady||characterSwitch.loading||characterSwitch.current!==characterSwitch.target)return;motionRenderer.draw(surface,actionSample('idle',0,{reducedMotion:true}));currentSample=motionRenderer.displayedSample?.(surface)??actionSample('idle',0);initialCharacterReady=true;resolveInitialCharacter(true);}
-const characterSwitch=new PetCharacterSwitch({prepare:prepareCharacterRenderer,commit:(id,next)=>{adoptCharacterRenderer(id,next);applyCharacterPresentation(id);controller.baseAt=controller.animationNow();controller.lookAt=-Infinity;controller.gaze.initialized=false;controller.gaze.unwrapped=null;controller.gazeBlend={from:0,target:0,at:Date.now()};currentSample=actionSample('idle',0);lastOpaque=null;geometry=null;},onPrepared:()=>{if(!initialCharacterReady){characterSwitch.advance();void finishInitialCharacter();}},onError:error=>{window.petMotionError=error.message;characterError=t('角色动作加载失败，请重试。',preferences.language);demoRequest=null;demoActive=false;controller.holdFeedback=false;if(!initialCharacterReady)void finishInitialCharacter();}});
+const characterSwitch=new PetCharacterSwitch({current:currentPetCharacter(),prepare:prepareCharacterRenderer,commit:(id,next)=>{adoptCharacterRenderer(id,next);applyCharacterPresentation(id);controller.baseAt=controller.animationNow();controller.lookAt=-Infinity;controller.gaze.initialized=false;controller.gaze.unwrapped=null;controller.gazeBlend={from:0,target:0,at:Date.now()};currentSample=actionSample('idle',0);lastOpaque=null;geometry=null;},onPrepared:()=>{if(!initialCharacterReady){characterSwitch.advance();void finishInitialCharacter();}},onError:error=>{window.petMotionError=error.message;characterError=t('角色动作加载失败，请重试。',preferences.language);demoRequest=null;demoActive=false;controller.holdFeedback=false;if(!initialCharacterReady)void finishInitialCharacter();}});
 function requestCharacter(id){characterSwitch.request(id);if(!initialCharacterReady&&!characterSwitch.loading)void finishInitialCharacter();}
 function applySettings(value){
   preferences=value.preferences;
   settingsReady=true;
-  configuredCharacter=resolvePetCharacter(preferences,value.themeCharacter);
+  configuredCharacter=value.effectivePetCharacter??resolvePetCharacter(preferences,value.themeCharacter);
   if(!demoRequest&&!demoActive)requestCharacter(configuredCharacter);
   applyAppearance(preferences,value.themeCharacter);
   controller.setSpeed(preferences.animationSpeed??.75);

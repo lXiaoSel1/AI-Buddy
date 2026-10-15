@@ -10,9 +10,9 @@ import {fitReferences,referenceInstructions} from './cg-reference-registry.mjs';
 import {createSnapshotStorage,readJson} from './storage.mjs';
 const pending=job=>['queued','planning','generating'].includes(job.status),sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 export class CgService extends ModelRouter{
- constructor({codex,dataRoot,crypto,onChange=()=>{},onUsage=()=>{},audit=()=>{},fetchImpl,imageCodec,themePlanner=null,referenceResolver=async()=>[],pollInterval=10000,timeoutMs=600000}){
+ constructor({codex,dataRoot,crypto,onChange=()=>{},onUsage=()=>{},audit=()=>{},fetchImpl,imageCodec,themePlanner=null,resourceCheck=()=>{},referenceResolver=async()=>[],pollInterval=10000,timeoutMs=600000}){
   super({codex,dataRoot,crypto,onChange,onUsage,audit,fetchImpl,legacy:false,storeName:'cg-connections.json',presets:CG_PRESETS,protocols:CG_PROTOCOLS,timeoutMs});
-  Object.assign(this,{imageCodec,referenceResolver,themePlanner});this.jobs=[];this.tombstones={};this.listeners=new Set();this.sentJobs=new Map();this.jobTail=Promise.resolve();this.jobStore=createSnapshotStorage(join(dataRoot,'cg-jobs.json'));this.imageTransport=new CgTransport({fetchImpl,onUsage,pollInterval});this.started=false;this.closed=false;
+  Object.assign(this,{imageCodec,referenceResolver,themePlanner,resourceCheck});this.jobs=[];this.tombstones={};this.listeners=new Set();this.sentJobs=new Map();this.jobTail=Promise.resolve();this.jobStore=createSnapshotStorage(join(dataRoot,'cg-jobs.json'));this.imageTransport=new CgTransport({fetchImpl,onUsage,pollInterval});this.started=false;this.closed=false;
   const configurationReady=this.ready;
   this.ready=Promise.all([configurationReady,readJson(this.jobStore,{version:1,jobs:[]})]).then(async([,state])=>{
    this.enabled=this.state.autoEnabled===true;this.jobs=state.jobs;this.tombstones=state.tombstones??{};
@@ -44,6 +44,7 @@ export class CgService extends ModelRouter{
  async enqueue({id=randomUUID(),sourceEventId,kind='level',label='',prompt,characters=[],scene=null,automatic=false,retryOf=null,draft=null,themeBrief=null,theme=null}){
   await this.ready;if(automatic&&!this.enabled)return {skipped:true};
   const prior=this.jobs.find(job=>job.sourceEventId===sourceEventId);if(prior)return this.publicJob(prior);
+  this.resourceCheck(characters.map(c=>c.id));
   const profile=draft?this.draftProfile(draft):structuredClone(this.selected());this.materialize(profile);
   const directory=join(this.dataRoot,'cg-assets',id);if(!/^[a-zA-Z0-9_-]{1,180}$/.test(id))throw Error('CG 标识无效');mkdirSync(directory,{recursive:true});
   const old=retryOf?this.job(retryOf):null;

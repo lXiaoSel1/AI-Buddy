@@ -10,3 +10,8 @@ dist/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+
+installer/**/bin/
+installer/**/obj/
+installer/generated/
+installer/BuildIdentity.g.cs

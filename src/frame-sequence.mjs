@@ -1,8 +1,9 @@
 // The build supplies immutable sequence metadata and shared physical resources.
 const legacySequences=typeof __FRAME_SEQUENCES__==='undefined'?{}:__FRAME_SEQUENCES__;
 export const CHARACTER_SEQUENCES=typeof __PET_CHARACTER_SEQUENCES__==='undefined'?{deepseek:legacySequences}:__PET_CHARACTER_SEQUENCES__;
-let activeCharacter='deepseek';
-export let FRAME_SEQUENCES=CHARACTER_SEQUENCES.deepseek??legacySequences;
+const initialCharacter=typeof location!=='undefined'?new URLSearchParams(location.search).get('petCharacter'):null;
+let activeCharacter=initialCharacter&&CHARACTER_SEQUENCES[initialCharacter]?.idle?initialCharacter:'deepseek';
+export let FRAME_SEQUENCES=CHARACTER_SEQUENCES[activeCharacter]??legacySequences;
 export const currentPetCharacter=()=>activeCharacter;
 export const frameSequence=(id,characterId=activeCharacter)=>CHARACTER_SEQUENCES[characterId]?.[id]??null;
 export function activatePetCharacter(id){
