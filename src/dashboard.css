@@ -29,7 +29,8 @@
 @media(max-width:950px){.galgame-page .content{padding:10px 12px 12px}.galgame-page .whg-root-tab .whg-panel{margin:16px 12px 10px;padding:28px 12px 12px}.galgame-page .whg-panel .whg-choice{font-size:12px;padding:7px 9px}.galgame-page .whg-panel .whg-line-now{max-height:72px}}
 .action-heading{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:24px}
 .action-heading h1{margin:0}
-.action-toolbar{display:flex;flex-shrink:0}
+.action-toolbar{display:flex;flex-shrink:0;gap:10px;align-items:center;flex-wrap:wrap}
+.action-toolbar select{max-width:180px;min-height:36px;border:1px solid var(--buddy-border,#36566b);border-radius:7px;padding:8px 12px;color:var(--buddy-text,#d8e8f2);background:var(--buddy-raised,#152a3e)}
 .action-toolbar button,.action-card>button{border:1px solid var(--buddy-border,#36566b);border-radius:7px;padding:9px 13px;color:var(--buddy-accent,#b0deeb);background:var(--buddy-raised,#152a3e);font-size:11px}
 .action-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
 .action-card{border:1px solid var(--buddy-border,#27394f);border-radius:12px;background:var(--buddy-surface,#0f1d30);padding:17px;overflow:hidden}

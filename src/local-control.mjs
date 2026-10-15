@@ -2,12 +2,11 @@ import {createServer,connect} from 'node:net';
 
 // One JSONL request per connection. A client may finish sending while it waits
 // for an asynchronous response, or disappear before that response is ready.
-export function createLocalControlServer({onRequest,onSocketError=()=>{},maxRequestBytes=65536}) {
+export function createLocalControlServer({onRequest,onSocketError=()=>{},maxRequestBytes=65536,idleTimeoutMs=30000,requestTimeoutMs=150000}) {
   return createServer({allowHalfOpen:true},socket=>{
     let input='',handled=false;
     socket.setEncoding('utf8');
     socket.on('error',error=>onSocketError(error));
-    socket.setTimeout(30000,()=>socket.destroy());
     const reply=value=>{
       if(socket.destroyed||!socket.writable||socket.writableEnded)return;
       let body;
@@ -16,6 +15,10 @@ export function createLocalControlServer({onRequest,onSocketError=()=>{},maxRequ
       // socket's error listener remains installed for its entire lifetime.
       try{socket.end(body);}catch(error){onSocketError(error);socket.destroy();}
     };
+    // Receiving a request and executing it have different deadlines. A first
+    // statistics query can build its persistent index after startup restores
+    // the raw ledger. Keep that bounded operation alive beyond the idle limit.
+    socket.setTimeout(idleTimeoutMs,()=>handled?reply({error:'Local request timed out'}):socket.destroy());
     socket.on('data',chunk=>{
       if(handled)return;
       input+=chunk;
@@ -24,6 +27,7 @@ export function createLocalControlServer({onRequest,onSocketError=()=>{},maxRequ
       handled=true;let request;
       try{request=JSON.parse(input.slice(0,newline));if(!request||typeof request!=='object'||Array.isArray(request)||typeof request.command!=='string')throw new Error('Invalid request');}
       catch{reply({error:'Invalid local request'});return;}
+      socket.setTimeout(requestTimeoutMs);
       void Promise.resolve().then(()=>onRequest(request)).then(reply,error=>reply({error:String(error?.message || error || 'Local request failed')}));
     });
     socket.on('end',()=>{if(!handled){handled=true;reply({error:'Incomplete local request'});}});
@@ -40,7 +44,7 @@ export function requestLocalControl(pipe,request,{timeoutMs=5000}={}) {
     socket.on('error',error=>finish(error));
     socket.on('connect',()=>{try{socket.write(JSON.stringify(request)+'\n');}catch(error){finish(error);}});
     socket.on('data',chunk=>response+=chunk);
-    socket.on('end',()=>{try{finish(null,JSON.parse(response));}catch(error){finish(error);}});
+    socket.on('end',()=>{if(!response.trim())return finish(new Error('Local pipe closed before a complete response'));try{finish(null,JSON.parse(response));}catch(error){finish(error);}});
     socket.on('close',()=>{if(!settled)finish(new Error('Local pipe closed before a complete response'));});
   });
 }

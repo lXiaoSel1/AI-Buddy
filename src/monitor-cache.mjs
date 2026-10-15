@@ -13,7 +13,7 @@ export function validMonitorDelta(row){
 // entry arrays incrementally instead of building/flattening a 230 MB string.
 // Keep a transaction's entries until its closing brace is validated, so a broken
 // record can never publish file positions without the matching usage data.
-export async function* monitorDeltaRows(path){
+export async function* monitorDeltaRows(path,{streamEntries=false,end}={}){
   const headers=[/^\s*\{\s*"version"\s*:\s*1\s*,\s*"ledger"\s*:\s*\{\s*(?:"version"\s*:\s*1\s*,\s*)?"sessions"\s*:\s*\[/,
     /^\s*,\s*"codex"\s*:\s*\[/,/^\s*,\s*"claude"\s*:\s*\[/,/^\s*\}\s*,\s*"files"\s*:\s*\[/];
   let buffer='',stage=0,row=null,scan=0,depth=0,quoted=false,escaped=false,comma=false,afterComma=false;
@@ -24,7 +24,7 @@ export async function* monitorDeltaRows(path){
       if(stage===0){buffer=buffer.trimStart();if(!buffer)return;}
       if([0,2,4,6].includes(stage)){
         const match=buffer.match(headers[stage/2]);
-        if(match){if(stage===0)row={version:1,ledger:{sessions:[],codex:[],claude:[]},files:[]};buffer=buffer.slice(match[0].length);stage++;comma=false;afterComma=false;resetEntry();continue;}
+        if(match){if(stage===0){row={version:1,ledger:{sessions:[],codex:[],claude:[]},files:[]};if(streamEntries)yield {begin:true};}buffer=buffer.slice(match[0].length);stage++;comma=false;afterComma=false;resetEntry();continue;}
         if(!eof&&buffer.length<1024&&!buffer.includes('\n'))return;
       }else if([1,3,5,7].includes(stage)){
         if(!scan){
@@ -39,7 +39,7 @@ export async function* monitorDeltaRows(path){
           if(quoted){if(escaped)escaped=false;else if(c==='\\')escaped=true;else if(c==='"')quoted=false;continue;}
           if(c==='"')quoted=true;else if(c==='['||c==='{')depth++;else if(c===']'||c==='}'){
             depth--;if(depth===0){
-              try{const entry=JSON.parse(buffer.slice(0,scan+1));(stage===7?row.files:row.ledger[['sessions','codex','claude'][(stage-1)/2]]).push(entry);}catch{bad=true;break;}
+              try{const entry=JSON.parse(buffer.slice(0,scan+1)),kind=stage===7?'files':['sessions','codex','claude'][(stage-1)/2];if(streamEntries){const check={version:1,ledger:{sessions:[],codex:[],claude:[]},files:[]};(kind==='files'?check.files:check.ledger[kind]).push(entry);if(!validMonitorDelta(check))throw Error('Invalid checkpoint entry');yield {entry:{kind,key:entry[0],value:entry[1]}};}else (stage===7?row.files:row.ledger[kind]).push(entry);}catch{bad=true;break;}
               buffer=buffer.slice(scan+1);resetEntry();comma=true;afterComma=false;complete=true;break;
             }
           }
@@ -47,7 +47,7 @@ export async function* monitorDeltaRows(path){
         if(complete)continue;
         if(!bad&&!eof&&buffer.length<=8*1024*1024)return;
       }else if(stage===8){
-        const match=buffer.match(/^[ \t\r]*\}/);if(match){buffer=buffer.slice(match[0].length);stage=9;continue;}
+        const match=buffer.match(/^[ \t\r]*(?:,\s*"deltaFile"\s*:\s*("(?:[^"\\]|\\.)*")\s*)?\}/);if(match){if(match[1])row.deltaFile=JSON.parse(match[1]);buffer=buffer.slice(match[0].length);stage=9;continue;}
         if(!eof&&!buffer.includes('\n')&&buffer.length<1024)return;
       }else if(stage===9){
         buffer=buffer.replace(/^[ \t\r]*/,'');
@@ -57,7 +57,7 @@ export async function* monitorDeltaRows(path){
       stage=-1;row=null;resetEntry();yield {invalid:true};
     }
   }
-  for await(const chunk of createReadStream(path,{encoding:'utf8',highWaterMark:65536})){buffer+=chunk;yield* drain();}
+  for await(const chunk of createReadStream(path,{encoding:'utf8',highWaterMark:65536,...(end===undefined?{}:{end})})){buffer+=chunk;yield* drain();}
   yield* drain(true);
 }
 

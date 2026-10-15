@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {connect} from 'node:net';
+import {connect,createServer} from 'node:net';
 import {randomUUID} from 'node:crypto';
 import {createLocalControlServer,requestLocalControl} from '../src/local-control.mjs';
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
@@ -43,4 +43,18 @@ test('Rejected handlers and unserializable replies produce one error response',a
  const {pipe}=await fixture(t,r=>{if(r.command==='reject')throw new Error('fixture failure');const cyclic={};cyclic.self=cyclic;return cyclic;});
  assert.equal((await requestLocalControl(pipe,{command:'reject'})).error,'fixture failure');
  assert.match((await requestLocalControl(pipe,{command:'cycle'})).error,/circular/i);
+});
+test('An accepted slow query outlives the receive-idle timeout',async t=>{
+ const {pipe}=await fixture(t,async()=>{await pause(120);return {requests:442357};},{idleTimeoutMs:20,requestTimeoutMs:500});
+ assert.deepEqual(await requestLocalControl(pipe,{command:'statistics'}),{requests:442357});
+});
+test('A stalled operation gets a complete timeout response without blocking later requests',async t=>{
+ const {pipe}=await fixture(t,r=>r.command==='stall'?new Promise(()=>{}):{ok:true},{idleTimeoutMs:20,requestTimeoutMs:60});
+ assert.equal((await requestLocalControl(pipe,{command:'stall'})).error,'Local request timed out');
+ assert.deepEqual(await requestLocalControl(pipe,{command:'next'}),{ok:true});
+});
+test('An empty closed response reports the pipe failure instead of a JSON syntax error',async t=>{
+ const pipe='\\\\.\\pipe\\whale-empty-test-'+randomUUID(),server=createServer(s=>s.on('data',()=>s.end()));
+ await new Promise(resolve=>server.listen(pipe,resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+ await assert.rejects(requestLocalControl(pipe,{command:'snapshot'}),/closed before a complete response/);
 });

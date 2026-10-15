@@ -8,7 +8,7 @@ export function checkReleaseVersion(root){
  if(!/^\d+\.\d+\.\d+$/.test(v))throw Error('Invalid release version');
  if(lock.version!==v||lock.packages?.['']?.version!==v)throw Error('package-lock.json version differs from package.json');
  for(const file of ['README.md','README.en.md']){
-  const text=read(file),downloads=[...text.matchAll(/AI-Buddy-(\d+\.\d+\.\d+)-Windows-x64\.zip/g)].map(m=>m[1]);
+  const text=read(file),downloads=[...text.matchAll(/AI-Buddy-(\d+\.\d+\.\d+)-Windows-x64(?:-(?:30|60)fps)?\.zip/g)].map(m=>m[1]);
   if(!downloads.length||downloads.some(n=>n!==v))throw Error(file+' download version differs from package.json');
   if(!text.includes(`[v${v}](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v${v})`))throw Error(file+' is missing the current release link');
  }

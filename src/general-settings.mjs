@@ -3,12 +3,15 @@ import {THEMES} from './appearance.mjs';
 import React,{useState} from 'react';
 import {ConnectionSelection} from './connection-selection.mjs';
 import {TokenDetectionControl} from './token-settings.mjs';
+import {PET_CHARACTERS,petCharacterName} from './pet-characters.mjs';
+import {frameSequence} from './frame-sequence.mjs';
 const h=React.createElement;
 const providerName=value=>value==='claude'?'Claude Code':value;
 export function GeneralSettings({view,onSaved,onPage,onManage}){
   const [busy,setBusy]=useState(false),[status,setStatus]=useState(t("修改会立即生效并自动保存")),[error,setError]=useState('');
   if(!view)return h('p',null,t("正在读取本地设置…"));
   const prefs=view.preferences;
+  const petId=view.petCharacterId??'deepseek',petPreview=frameSequence('idle',petId)?.staticFrames?.[0]?.src??'./assets/maid-left.webp';
   async function save(patch){
     setBusy(true);setError('');setStatus(t("正在保存…"));
     try{onSaved(await window.whale.setSettings(patch));setStatus(t("已保存 · 重启后保留"));}
@@ -29,7 +32,9 @@ export function GeneralSettings({view,onSaved,onPage,onManage}){
     h('section',{className:'card appearance-settings'},h('h2',null,t("外观与语言")),select('language',t("语言 / Language"),t("界面和新对话使用所选语言，历史内容保留原文。"),[['zh-CN',t("简体中文")],['en','English']]),select('themeMode',t("主题模式"),t("跟随的是当前角色，与聊天 API 分开。"),[['fixed',t("固定主题")],['character',t("跟随角色")]]),h('div',{className:'theme-picker'},...Object.entries(THEMES).map(([id,v])=>h('button',{key:id,'data-theme-choice':id,'aria-pressed':prefs.theme===id&&prefs.themeMode==='fixed',onClick:()=>save({theme:id,themeMode:'fixed'}),disabled:busy,style:{'--swatch':v.accent,'--swatch-alt':v.secondary}},h('span',{className:'theme-swatch','aria-hidden':true}),prefs.language==='en'?(v.nameEn||v.name):v.name))),toggle('hideSpriteOnCg',t("使用 CG 背景时自动隐藏立绘"),t("自动模式下避免背景人物与立绘重叠；也可在 Galgame 手动切换。"))),
     h('div',{className:'settings-grid'},
       h('div',{className:'settings-column'},
-      h('section',{className:'card settings-pet'},h('div',{className:'settings-section-heading'},h('div',null,h('h2',null,t("桌宠")),h('p',null,t("按住角色或状态条拖动，点击打开工作面板。"))),h('div',{className:'settings-pet-preview','aria-hidden':true},h('img',{src:'./assets/maid-left.webp',alt:''}))),
+      h('section',{className:'card settings-pet'},h('div',{className:'settings-section-heading'},h('div',null,h('h2',null,t("桌宠")),h('p',null,t("当前桌宠")+' · '+t(petCharacterName(petId))),h('p',null,t("按住角色或状态条拖动，点击打开工作面板。"))),h('div',{className:'settings-pet-preview','aria-hidden':true},h('img',{src:petPreview,alt:''}))),
+        select('petCharacterMode',t('桌宠角色'),t('跟随 Galgame 最终选中的角色，与聊天 API 分开。'),[['follow',t('跟随 Galgame 角色')],['fixed',t('固定角色')]]),
+        prefs.petCharacterMode==='fixed'&&select('petFixedCharacter',t('固定角色'),t('切换 Galgame 角色时保持此桌宠。'),PET_CHARACTERS.map(c=>[c.id,t(c.name)])),
         toggle('petVisible',t("显示桌宠"),t("隐藏后可从托盘重新显示。")),
         select('petScale',t("桌宠大小"),t("角色、状态条和提示气泡一起缩放。"),[[0.75,t("75% · 小")],[1,t("100% · 默认")],[1.25,t("125% · 大")],[1.5,t("150% · 更大")]]),
         select('animationSpeed',t("动作播放速度"),t("放慢动作循环；鼠标跟随和拖动仍及时响应。"),[[0.25,t("25% · 很慢")],[0.5,t("50% · 慢")],[0.75,t("75% · 默认")],[1,t("100% · 原速")]]),

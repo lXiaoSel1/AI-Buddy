@@ -754,7 +754,7 @@
   "等待": "Waiting",
   "工作中": "Working",
   "工作": "Working",
-  "审查中": "Focused",
+  "审查中": "Reviewing",
   "观察": "Look around",
   "开心": "Cheerful",
   "害羞": "Shy",
@@ -813,5 +813,12 @@
   "火山方舟 / Seedream": "Volcengine Ark / Seedream",
   "火山方舟 Seedream": "Volcengine Ark Seedream",
   "请选择已开通的 Seedream 模型或绘图接入点 ID；支持文生图和角色参考图。": "Use an enabled Seedream model or image endpoint ID. Supports text prompts and character references.",
-  "服务未提供模型列表，无法确认连接；请生成测试图验证": "The service does not provide a model list. Generate a test image to verify the connection."
+  "服务未提供模型列表，无法确认连接；请生成测试图验证": "The service does not provide a model list. Generate a test image to verify the connection.",
+  "当前桌宠": "Current companion",
+  "桌宠角色": "Companion character",
+  "跟随 Galgame 角色": "Follow Galgame character",
+  "固定角色": "Fixed character",
+  "跟随 Galgame 最终选中的角色，与聊天 API 分开。": "Follow the character selected in Galgame, independently of the chat API.",
+  "切换 Galgame 角色时保持此桌宠。": "Keep this companion when switching Galgame characters.",
+  "角色动作加载失败，请重试。": "Character animation could not load. Please try again."
 }

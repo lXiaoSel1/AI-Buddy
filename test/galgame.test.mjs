@@ -2,8 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {join} from 'node:path';
 import {createGalgame} from '../src/galgame-host.mjs';
+import {createSnapshotStorage,readJson} from '../src/storage.mjs';
 let calls=0;
 const provider={enabled:false,listProviders:()=>[{id:'codex',name:'Codex'}],listModels:()=>[{id:'gpt-6.1-sol'}],async *stream(){calls++;throw new Error('offline');}};
+test('A saved cast scene advances and closes offline without acquiring a chat turn',async()=>{
+ const root=join(import.meta.dirname,'../local/test-runs','offline-cast-'+Date.now());let turns=0;
+ const offline={...provider,runTurn:async fn=>{turns++;return fn()}};
+ let game=await createGalgame({dataRoot:root,provider:offline,model:'fixture'});await game.action('settings-set',{characterMode:'manual',characterId:'claude'});game.close();
+ await new Promise(r=>setTimeout(r,100));const storage=createSnapshotStorage(join(root,'galgame/storages/dsh-whale-galgame/global.json')),saved=await readJson(storage);
+ saved.sideStory={scene:{id:'saved-cast',cast:['claude','qwen'],cursor:0,settled:true,beats:[{speaker:'claude',text:'甲',emotion:'angry'},{speaker:'qwen',text:'乙',emotion:'shy'}],interludes:[{at:1,consumed:true,choices:[]}]},history:[],transcripts:[]};await storage.writeText(JSON.stringify(saved));
+ game=await createGalgame({dataRoot:root,provider:offline,model:'fixture'});
+ try{assert.equal((await game.action('view')).sideStory.scene.cursor,0);const next=await game.action('side-story',{op:'advance'});assert.equal(next.sideStory.scene.cursor,1);assert.equal(next.sideStory.scene.beats[1].emotion,'shy');await assert.rejects(()=>game.action('side-story',{op:'start'}),/离线/);await assert.rejects(()=>game.action('side-story',{op:'speak',text:'hello'}),/离线/);assert.equal((await game.action('side-story',{op:'close'})).sideStory.scene,null);assert.equal(turns,0);}finally{game.close();}
+});
 test('Galgame runs offline with model names and eleven roles, persistence and no model calls',async()=>{
  const root=join(import.meta.dirname,'../local/test-runs','galgame-'+Date.now());
  let game=await createGalgame({dataRoot:root,provider,model:'gpt-6.1-sol'});

@@ -6,3 +6,7 @@ dist/
 .env*
 
 /AI Buddy.exe
+
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
