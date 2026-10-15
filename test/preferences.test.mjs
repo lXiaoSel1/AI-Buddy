@@ -8,7 +8,8 @@ test('Legacy settings inherit saved Galgame visibility and valid preferences sur
   assert.deepEqual(normalizePreferences(undefined,false),{...DEFAULT_PREFERENCES,petVisible:false});
   const custom={...DEFAULT_PREFERENCES,petScale:1.25,alwaysOnTop:false,monitorRefreshMs:5000,displayTimeZone:'UTC'};
   assert.deepEqual(normalizePreferences(custom),custom);
-  assert.equal(normalizePreferences({petScale:500,clickThrough:'false'}).petScale,1);
+  assert.equal(normalizePreferences({petScale:500,clickThrough:'false'}).petScale,1.25);
+  assert.equal(normalizePreferences({petScale:1}).petScale,1);
   assert.equal(normalizePreferences({clickThrough:'false'}).clickThrough,true);
 });
 test('Settings whitelist rejects invalid types, injected paths and unsupported values before mutation',()=>{

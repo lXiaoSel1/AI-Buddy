@@ -14,7 +14,8 @@ import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
 import { WHALE_ART as LEGACY_ART } from './art.generated'
 import { CHARACTER_ART } from '../character-catalog.mjs'
-import { CharacterPortrait, CastPortrait } from './character-portrait'
+import { ExpressionPortrait, CastPortrait } from './character-portrait'
+import {validPetCharacter} from '../pet-characters.mjs'
 const WHALE_ART = { ...LEGACY_ART, ...CHARACTER_ART }
 
 const CSS = [
@@ -1023,7 +1024,9 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   const [backgroundFileName, setBackgroundFileName] = useState('')
   const [spritePreview, setSpritePreview] = useState<string | null>(null)
   const [spriteFileName, setSpriteFileName] = useState('')
-  const [customSprite, setCustomSprite] = useState<string | null>(null)
+  const [customSpriteState, setCustomSpriteState] = useState<{characterId:string;data:string|null}>({characterId:'',data:null})
+  const customSprite = customSpriteState.characterId === s?.current ? customSpriteState.data : null
+  const setCustomSprite = (data:string|null) => setCustomSpriteState({characterId:String(s?.current||''),data})
   const [profileDraft, setProfileDraft] = useState<CharacterProfile>({ ...EMPTY_CHARACTER_PROFILE })
   const [profileBaseline, setProfileBaseline] = useState<CharacterProfile>({ ...EMPTY_CHARACTER_PROFILE })
   const [profileBuiltIn, setProfileBuiltIn] = useState<CharacterProfile>({ ...EMPTY_CHARACTER_PROFILE })
@@ -1074,7 +1077,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     if ((!open && props.variant !== 'tab') || !currentStory?.beats?.length) return
     const index = Math.max(0, Math.min(currentStory.beats.length - 1, Number(currentStory.cursor) || 0))
     const beat = currentStory.beats[index]
-    if (beat?.speaker !== 'deepseek' || !beat.emotion) return
+    if (!validPetCharacter(beat?.speaker) || !beat.emotion) return
     void (window as any).whale?.storyFeedback({messageId:String(currentStory.id)+':'+index,characterId:beat.speaker,emotion:beat.emotion,text:beat.text}).catch(() => {})
   }, [open, props.variant, currentStory?.id, currentStory?.cursor])
 
@@ -1200,7 +1203,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         setImgFail(false)
       }
     }).catch(() => {
-      if (alive) setCustomSprite(null)
+      if (alive) {setCustomSprite(null);setImgFail(true)}
     })
     return () => { alive = false }
   }, [s && s.current, s && s.enabled, s && s.spriteRevision, props.sessionId])
@@ -2990,7 +2993,8 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       }),
       React.createElement('div', { className: 'whg-cast' },
         scene.cast.map((member: any, index: number) => {
-          const src = art(member.sprite)
+          const memberEmotion = speaking===member.id ? beat?.emotion||'normal' : 'normal'
+          const src = member.id==='deepseek'&&EMOTION_ART[memberEmotion] ? art(EMOTION_ART[memberEmotion]) : art(member.sprite)
           return React.createElement('div', {
             key: member.id,
             className: 'whg-cast-slot',
@@ -3000,7 +3004,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
             'data-overflow': index >= 2 ? 'true' : 'false',
           },
             src
-              ? React.createElement(CastPortrait, { member, src, request: api })
+              ? React.createElement(CastPortrait, { member, src, normalSrc:art(member.sprite), request: api, emotion:memberEmotion })
               : React.createElement('div', { className: 'whg-sprite-fallback' }, '🐋'),
             React.createElement('div', {
               className: 'whg-cast-name',
@@ -3017,7 +3021,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     if (activeScene) return castStage(activeScene)
     if (!isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg !== false)) return React.createElement('div',{className:'whg-stage','data-sprite-hidden':true})
     const emotion = emotionOf()
-    const mood = s.current === 'deepseek' ? emotion : moodOf()
+    const mood = emotion
     let src: string | undefined
     let useFilter = !s.moodSprites
     let emoKey = ''
@@ -3028,15 +3032,25 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       emoKey = emotion === 'normal' ? '' : EMOTION_ART[emotion]
       src = emoKey ? art(emoKey) : art(s.sprite)
       useFilter = !emoKey
+    } else if (CHARACTER_ART[s.sprite]) {
+      src = art(s.sprite)
+      emoKey = emotion === 'normal' ? '' : emotion
+      useFilter = false
     } else if (s.moods) {
       src = art(s.moods[mood]) || art(s.moods.normal)
       if (!src) src = art(s.sprite)
     } else {
       src = art(s.sprite)
     }
-    const wrap = (!src || imgFail)
+    const wrap = s.hasCustomSprite&&!customSprite&&!imgFail
+      ? React.createElement('div', {className:'whg-sprite-loading','aria-label':s.name})
+      : (!src || imgFail)
       ? React.createElement('div', { className: 'whg-sprite-fallback' }, '🐋')
-      : React.createElement(CharacterPortrait, {
+      : React.createElement(ExpressionPortrait, {
+        characterId:s.current,
+        normalSrc:art(s.sprite),
+        emotion,
+        custom:!!customSprite,
         className: 'whg-sprite' + (s.portrait ? ' whg-sprite-portrait' : '') + (customSprite ? ' whg-sprite-custom' : ''),
         src,
         spriteKey: customSprite || emoKey ? null : s.sprite,

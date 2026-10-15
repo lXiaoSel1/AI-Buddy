@@ -1,10 +1,16 @@
 import {FRAME_SIZE} from './pet-actions.mjs';
-import {FRAME_SEQUENCES,validateFrameSequence,sequenceFrameAt,sequenceSampleFrame} from './frame-sequence.mjs';
+import {FRAME_SEQUENCES,validateFrameSequence,sequenceFrameAt,sequenceSampleFrame,videoSourceFrameAt} from './frame-sequence.mjs';
 
 const ring=(index,length)=>((index%length)+length)%length;
 // Signed shortest step between two indices of a looping direction sequence.
 const ringStep=(from,to,length)=>{const d=ring(to-from,length);return d>length/2?d-length:d;};
 const outward=(index,length)=>{const out=[ring(index,length)];for(let d=1;d<=length/2;d++){out.push(ring(index+d,length));if(d<length/2)out.push(ring(index-d,length));}return out;};
+export function directionContentRect(clip,size,index){
+ const b=clip.staticFrames?.[index]?.contentBounds??clip.directionContentBounds;if(!b)return null;
+ const x=Math.max(0,Math.floor(b[0]/clip.canvas.width*size.width)-2),y=Math.max(0,Math.floor(b[1]/clip.canvas.height*size.height)-2);
+ const right=Math.min(size.width,Math.ceil(b[2]/clip.canvas.width*size.width)+2),bottom=Math.min(size.height,Math.ceil(b[3]/clip.canvas.height*size.height)+2);
+ return {x,y,width:right-x,height:bottom-y};
+}
 
 // Timed media is decoded by Chromium (including WebM BlockAdditional alpha).
 // The controller remains the owner of action/feedback timing. Only discontinuities
@@ -61,7 +67,11 @@ export class VideoSequenceRenderer{
     if(image.naturalWidth!==job.clip.canvas.width||image.naturalHeight!==job.clip.canvas.height)throw Error('Animation still dimensions differ');
     if(!job.size){if(job.epoch===this.staticEpoch){this.stills.set(job.key,{image,used:++this.serial});this.trimStills();}else image.src='';job.done(image);return;}
     let frame=image;
-    if(typeof createImageBitmap==='function'){frame=await createImageBitmap(image,{resizeWidth:job.size.width,resizeHeight:job.size.height,resizeQuality:'high'});image.src='';}
+    if(typeof createImageBitmap==='function'){
+     frame=await createImageBitmap(image,{resizeWidth:job.size.width,resizeHeight:job.size.height,resizeQuality:'high'});image.src='';
+     const region=directionContentRect(job.clip,job.size,job.index);
+     if(region){const full=frame;try{frame=await createImageBitmap(full,region.x,region.y,region.width,region.height);job.region=region;}finally{full.close();}}
+    }
     if(job.epoch===this.staticEpoch&&this.staticJobs.get(job.key)===job){this.storeDirection(job,frame);job.done(frame);}else{this.closeFrame(frame);job.done(null);}
    }).catch(e=>{if(job.epoch===this.staticEpoch)this.errors.set(job.key,e.message);job.fail(e);}).finally(()=>{
     if(this.pending.get(job.key)===job.pending){this.pending.delete(job.key);this.staticJobs.delete(job.key);}this.staticActive--;this.pumpStills();
@@ -75,7 +85,7 @@ export class VideoSequenceRenderer{
  }
  storeDirection(job,frame){
   const bytes=(frame.width||frame.naturalWidth)*(frame.height||frame.naturalHeight)*4,old=this.directions.get(job.key);if(old)this.dropDirection(job.key,old);
-  this.directions.set(job.key,{image:frame,used:++this.serial,bytes,index:job.index,size:job.size.width+'x'+job.size.height,anchor:this.anchorFrames(job.clip).includes(job.index)?1:0});
+  this.directions.set(job.key,{image:frame,region:job.region,used:++this.serial,bytes,index:job.index,size:job.size.width+'x'+job.size.height,anchor:this.anchorFrames(job.clip).includes(job.index)?1:0});
   this.directionBytes+=bytes;this.directionLoads++;this.trimDirections();
  }
  dropDirection(key,entry){this.directions.delete(key);this.directionBytes-=entry.bytes;this.closeFrame(entry.image);}
@@ -112,7 +122,9 @@ export class VideoSequenceRenderer{
  // as long as the whole set fits the byte budget (otherwise only the anchors stay resident).
  warmFrames(clip,index,size,prefetch){
   if(!this.warmBatch)return [];
-  const length=clip.frames.length,capacity=Math.floor(this.directionBudgetBytes/Math.max(1,size.width*size.height*4)),anchors=this.anchorFrames(clip);
+  const sizeKey=size.width+'x'+size.height;
+  if(clip.decodedFootprint?.size!==sizeKey){const bytes=clip.frames.reduce((n,_,i)=>{const r=directionContentRect(clip,size,i)??size;return n+r.width*r.height*4;},0);clip.decodedFootprint={size:sizeKey,bytes};}
+  const length=clip.frames.length,capacity=Math.floor(this.directionBudgetBytes/Math.max(1,clip.decodedFootprint.bytes/length)),anchors=this.anchorFrames(clip);
   if(capacity<anchors.length+this.directionLookahead+8)return [];
   const near=a=>[...a].sort((x,y)=>Math.abs(ringStep(index,x,length))-Math.abs(ringStep(index,y,length))),order=capacity>=length?[...near(anchors),...outward(index,length)]:near(anchors);
   const taken=new Set(prefetch.map(f=>f.index)),out=[];taken.add(index);
@@ -122,7 +134,7 @@ export class VideoSequenceRenderer{
  // Exact direction, else the nearest decoded one, preferring frames between the
  // last shown frame and the target so a fast turn keeps moving.
  nearestDirection(state,clip,index,size){
-  const length=clip.frames.length,lookup=i=>{const n=ring(i,length),key=this.stillKey(clip,n,size),entry=this.directions.get(key)??this.stills.get(this.stillKey(clip,n));return entry?{key,entry,index:n}:null;};
+  const length=clip.frames.length,lookup=i=>{const n=ring(i,length);if(clip.directionBlinkRanges?.some(([start,end])=>n>=start&&n<=end))return null;const key=this.stillKey(clip,n,size),entry=this.directions.get(key)??this.stills.get(this.stillKey(clip,n));return entry?{key,entry,index:n}:null;};
   const exact=lookup(index);if(exact)return exact;
   const back=-(state.motion||1);
   for(let d=1;d<=this.directionFallback;d++){const hit=lookup(index+back*d)??lookup(index-back*d);if(hit)return hit;}
@@ -158,7 +170,7 @@ export class VideoSequenceRenderer{
   const state=this.acquire(target,clip),slot=state.slot,elapsed=Math.max(0,sample.elapsedMs??0),phase=elapsed%clip.cycleMs,rate=sample.playbackRate??1,playing=sample.playing!==false&&!sample.reducedMotion;
   const index=sequenceSampleFrame(clip,sample),direction=clip.directionFrames&&(Number.isFinite(sample.lookAngle)||Number.isInteger(sample.lookIndex));
   const stillMode=sample.reducedMotion||direction||slot.error||!slot.ready;
-  let image,shownFrame=index,key;
+  let image,region,shownFrame=index,key;
   if(stillMode){
    slot.video.pause();
    if(direction){
@@ -168,7 +180,7 @@ export class VideoSequenceRenderer{
     const found=this.nearestDirection(state,clip,index,size);
     if(!found){this.directionMisses++;return false;}
     if(found.index!==index)this.directionApprox++;
-    found.entry.used=++this.serial;image=found.entry.image;shownFrame=found.index;key='direction/'+found.key;state.shownDirectionKey=found.key;
+    found.entry.used=++this.serial;image=found.entry.image;region=found.entry.region;shownFrame=found.index;key='direction/'+found.key;state.shownDirectionKey=found.key;
    }else{
     const fixed=sample.reducedMotion?(clip.emotionPeakFrame??0):0;state.stillKey=this.resource(clip)+'/'+fixed;this.clearDirection(state);this.pruneStaticQueue();
     const cached=this.stills.get(state.stillKey);if(cached){cached.used=++this.serial;image=cached.image;shownFrame=fixed;key='still/'+state.stillKey;}else{void this.still(clip,fixed).catch(()=>{});return false;}
@@ -188,12 +200,12 @@ export class VideoSequenceRenderer{
    state.actionId=sample.actionId;state.lastElapsed=elapsed;
    if(playing&&slot.video.paused&&!slot.seekPending)void slot.video.play().catch(e=>{slot.error=e.message;this.errors.set(slot.resource,e.message);});else if(!playing&&!slot.video.paused)slot.video.pause();
    if(slot.seekPending&&state.shown)return false;
-   image=slot.video;shownFrame=sequenceFrameAt(clip,slot.mediaMs+.1);key='video/'+state.resource+'/'+slot.serial;
+   image=slot.video;shownFrame=videoSourceFrameAt(clip,slot.mediaMs+.1);key='video/'+state.resource+'/'+slot.serial;
   }
   const surface=this.fallback.targetState(target);key+='/'+target.width+'/'+target.height;
   state.actionId=sample.actionId;state.lastElapsed=elapsed;
   if(!force&&state.drawKey===key&&surface.key===key)return false;
-  surface.ctx.clearRect(0,0,target.width,target.height);surface.ctx.drawImage(image,0,0,target.width,target.height);surface.key=key;state.drawKey=key;state.alpha=null;this.videoDraws++;
+  surface.ctx.clearRect(0,0,target.width,target.height);if(region)surface.ctx.drawImage(image,region.x,region.y,region.width,region.height);else surface.ctx.drawImage(image,0,0,target.width,target.height);surface.key=key;state.drawKey=key;state.alpha=null;this.videoDraws++;
   state.shown={...sample,displayedSequenceFrame:shownFrame,displayedTargetId:state.id,decodedMediaMs:slot.mediaMs};return true;
  }
  displayedSample(target){return this.targets.get(target)?.shown??null;}
@@ -211,5 +223,6 @@ export class VideoSequenceRenderer{
  targetDraws(target){return this.targets.get(target)?.slot?.serial??0;}
  invalidate(target){const s=this.targets.get(target);if(s){s.drawKey=null;s.alpha=null;}this.fallback.invalidate(target);}
  release(target){const s=this.targets.get(target);if(s)this.closeSlot(s.slot);this.targets.delete(target);this.fallback.release(target);if(!this.targets.size){for(const s of this.prepared.values())this.closeSlot(s);this.prepared.clear();for(const e of this.stills.values())e.image.src='';this.stills.clear();for(const [k,e] of [...this.directions])this.dropDirection(k,e);this.directionBytes=0;this.staticEpoch++;for(const job of this.staticQueue){this.pending.delete(job.key);this.staticJobs.delete(job.key);job.done(null);}this.staticQueue=[];}this.pruneStaticQueue();this.trimStills();this.trimDirections();}
+ dispose(){for(const target of [...this.targets.keys()])this.release(target);this.release(null);}
  inspect(){return {backend:this.backend,targets:this.targets.size,decoders:this.targets.size+this.prepared.size,playing:[...this.targets.values()].filter(s=>s.slot&&!s.slot.video.paused).length,frames:this.stills.size,maxFrames:this.maxStaticFrames,maxBytes:this.maxStaticFrames*576*624*4,maxPending:this.maxStaticFrames,bytes:[...this.stills.values()].reduce((n,s)=>n+s.image.naturalWidth*s.image.naturalHeight*4,0),pending:this.pending.size,directionFrames:this.directions.size,directionBytes:this.directionBytes,directionBudgetBytes:this.directionBudgetBytes,directionLoads:this.directionLoads,directionApprox:this.directionApprox,directionMisses:this.directionMisses,errors:[...this.errors],seeks:this.seekCount,physicalResources:new Set(Object.values(this.sequences).map(c=>this.resource(c))).size,videos:[...this.targets.values()].map(s=>{const q=s.slot.video.getVideoPlaybackQuality();return {resource:s.resource,ready:s.slot.ready,frame:s.shown?.displayedSequenceFrame,total:q.totalVideoFrames,dropped:q.droppedVideoFrames,duration:s.slot.video.duration};})};}
 }

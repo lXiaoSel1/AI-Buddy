@@ -1,3 +1,5 @@
+import {UsageRepository} from './usage-repository.mjs';
+import {migrateLegacy} from './usage-migrate.mjs';
 import { readdir, stat, open, mkdir } from 'node:fs/promises';
 import { join, basename, resolve, sep } from 'node:path';
 import { watch,createReadStream } from 'node:fs';
@@ -9,11 +11,12 @@ import { MONITOR_INTERVALS } from './preferences.mjs';
 import { replayMonitorDelta, orphanMonitorDeltas } from './monitor-cache.mjs';
 
 export class LocalMonitor {
-  constructor({roots,dataRoot,onUpdate=()=>{},refreshIntervalMs=1000}) {
+  constructor({roots,dataRoot,onUpdate=()=>{},refreshIntervalMs=1000,persistentHistory=false}) {
     this.roots=roots; this.dataRoot=dataRoot; this.onUpdate=onUpdate;
-    this.files=new Map(); this.ledger=new UsageLedger(); this.errors=new Map(); this.watchers=[]; this.closed=false; this.busy=false; this.indexing=true;
+    this.repository=persistentHistory?new UsageRepository(join(dataRoot,"usage-ledger-v2","legacy.sqlite")):null;
+    this.files=new Map(); this.ledger=new UsageLedger({},this.repository); this.errors=new Map(); this.watchers=[]; this.closed=false; this.busy=false; this.indexing=true;
     this.startedAt=Date.now();this.ledger.workStartedAt=this.startedAt;
-    this.cache=createSnapshotStorage(join(dataRoot,'monitor-index-v005.json'));
+    this.cache=createSnapshotStorage(join(dataRoot,'monitor-index-v005.json'),{retainText:false,compactReceipt:true});
     this.progress={scanned:0,total:0}; this.lastSave=0; this.saveRevision=-1;
     this.dirtyFiles=new Set();this.hasCache=false;this.persisting=null;this.deltaFile='monitor-deltas-'+Date.now()+'.jsonl';
     this.pendingPaths=new Map();this.lastDiscovery=0;
@@ -23,7 +26,13 @@ export class LocalMonitor {
   start() {return this.starting??=this.initialize();}
   async initialize() {
     const started=performance.now();
-    let current=await readJson(this.cache,null),saved=current?.version===1?current:await readJson(createSnapshotStorage(join(this.dataRoot,'monitor-index-v004.json')),null);
+    if(this.repository){
+      const restored=await migrateLegacy(this.repository,this.dataRoot);
+      this.ledger.sessions=restored.sessions;this.files=restored.files;this.hasCache=true;this.startup.mode=restored.mode;
+      if(restored.invalid)this.errors.set('index-cache','索引末尾不完整，正在核对原日志');
+      this.ledger.rebuildRequestIndex();
+    }else{
+    let current=await readJson(this.cache,null),saved=current?.version===1?current:await readJson(createSnapshotStorage(join(this.dataRoot,'monitor-index-v004.json'),{retainText:false,compactReceipt:true}),null);
     if(saved?.version===1) {
       for(const kind of ['sessions','codex','claude'])this.ledger[kind]=new Map(saved.ledger?.[kind]||[]);
       this.files=new Map(saved.files || []);this.hasCache=current?.version===1;this.deltaFile=saved.deltaFile || this.deltaFile;
@@ -47,6 +56,7 @@ export class LocalMonitor {
       this.deltaFile='monitor-deltas-v005-'+Date.now()+'-'+randomUUID()+'.jsonl';this.deltaBytes=0;
     }
     this.ledger.rebuildRequestIndex();
+    }
     try{
       const reader=createInterface({input:createReadStream(join(this.dataRoot,'companion-usage.jsonl')),crlfDelay:Infinity});
       for await(const line of reader){let row;try{row=JSON.parse(line);}catch{continue;}if(row.sessionId && row.usage)this.ingestCompanion(row);}
@@ -161,6 +171,15 @@ export class LocalMonitor {
   ingestCompanion(row){this.ledger.session('codex',row.sessionId,{purpose:row.purpose,connectionIdentity:row.connectionIdentity,workspace:row.purpose==='cg-theme'?'AI娘 CG 主题设计':'鲸鱼娘陪伴聊天',model:row.model,companion:true,createdAt:row.timestamp});this.ledger.ingestCodex({type:'event_msg',timestamp:row.timestamp,payload:{type:'token_count',info:{total_token_usage:row.usage}}},row.sessionId,'companion');}
   emit() { this.onUpdate(this.snapshot()); }
   async persist() {
+    if(this.repository){
+    if(this.hasCache&&this.saveRevision===this.ledger.revision&&!this.dirtyFiles.size)return;
+    for(const key of this.ledger.dirtySessions)this.repository.put('sessions',key,this.ledger.sessions.get(key));
+    for(const key of this.dirtyFiles)this.repository.put('files',key,this.files.get(key));
+    this.repository.publish({ready:true},this.ledger.dirtyRequestSessions);
+    this.saveRevision=this.ledger.revision;this.hasCache=true;this.ledger.clearDirty();this.dirtyFiles.clear();
+  return;
+    }
+
     if(this.persisting)return this.persisting;
     if(this.hasCache&&this.saveRevision===this.ledger.revision && !this.dirtyFiles.size)return;
     this.persisting=(async()=>{
@@ -185,5 +204,5 @@ export class LocalMonitor {
     })();
     try{await this.persisting;}finally{this.persisting=null;}
   }
-  async close() { this.closed=true; clearInterval(this.timer); clearInterval(this.persistTimer); clearTimeout(this.debounce); for(const w of this.watchers) w.close(); await this.starting;while(this.busy)await new Promise(r=>setTimeout(r,10));await this.persisting;await this.persist(); }
+  async close() { this.closed=true; clearInterval(this.timer); clearInterval(this.persistTimer); clearTimeout(this.debounce); for(const w of this.watchers) w.close(); await this.starting;while(this.busy)await new Promise(r=>setTimeout(r,10));await this.persisting;await this.persist();this.repository?.close(); }
 }

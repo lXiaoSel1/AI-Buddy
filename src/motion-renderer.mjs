@@ -7,7 +7,7 @@ import {AllActionRigRenderer} from './all-action-rig-renderer.mjs';
 import {V014RigRenderer} from './v014-rig-renderer.mjs';
 import {FrameSequenceRenderer} from './frame-sequence-renderer.mjs';
 import {VideoSequenceRenderer} from './video-sequence-renderer.mjs';
-import {FRAME_SEQUENCES} from './frame-sequence.mjs';
+import {FRAME_SEQUENCES,CHARACTER_SEQUENCES,activatePetCharacter} from './frame-sequence.mjs';
 import {PreviewAtlasRenderer,PREVIEW_ATLASES} from './preview-atlas-renderer.mjs';
 const load=async src=>{const image=new Image();image.src=src;await image.decode();return image;};
 function readPixels(image){const canvas=document.createElement('canvas');canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(image,0,0);return ctx.getImageData(0,0,canvas.width,canvas.height).data;}
@@ -68,8 +68,31 @@ const query=typeof location!=='undefined'?new URLSearchParams(location.search):n
 const allActionRigs=query.get('sourcePreview')!=='1'&&(query.get('allActionRigs')==='1'||typeof __ALL_ACTION_RIGS__!=='undefined'&&__ALL_ACTION_RIGS__);
 const fiveActionsV014=typeof __FIVE_ACTIONS_V014__!=='undefined'&&__FIVE_ACTIONS_V014__;
 const baseRenderer=MOTION_MANIFEST.mode==='hd-source'?(workingRigPilot?new WorkingRigRenderer():fiveActionsV014?new V014RigRenderer():allActionRigs?new AllActionRigRenderer():new HdSourceRenderer({loadSources:!PET_ACTIONS.filter(action=>action.hd).every(action=>FRAME_SEQUENCES[action.id])})):new MotionRenderer();
-export const motionRenderer=Object.values(FRAME_SEQUENCES).some(c=>c.backend==='webm-alpha')?new VideoSequenceRenderer(baseRenderer):Object.keys(FRAME_SEQUENCES).length?new FrameSequenceRenderer(baseRenderer):baseRenderer;
-export const galleryRenderer=Object.keys(PREVIEW_ATLASES).length?new PreviewAtlasRenderer(baseRenderer):motionRenderer;
+export let motionRenderer=Object.values(FRAME_SEQUENCES).some(c=>c.backend==='webm-alpha')?new VideoSequenceRenderer(baseRenderer):Object.keys(FRAME_SEQUENCES).length?new FrameSequenceRenderer(baseRenderer):baseRenderer;
+export let galleryRenderer=Object.keys(PREVIEW_ATLASES).length?new PreviewAtlasRenderer(baseRenderer):motionRenderer;
+export async function prepareCharacterRenderer(characterId){
+ const sequences=CHARACTER_SEQUENCES[characterId];
+ if(!sequences?.idle)throw Error('角色动作资源未就绪');
+ const next=new VideoSequenceRenderer(baseRenderer,{sequences});
+ try{
+  await next.ready;
+  // A thumbnail alone is not enough to replace a working pet. Verify that the
+  // destination idle video can decode before committing the character switch.
+  const slot=next.prepare(sequences.idle);
+  if(!slot.ready)await new Promise((resolve,reject)=>{
+   const clear=()=>{clearTimeout(timer);slot.video.removeEventListener('loadeddata',check);slot.video.removeEventListener('error',check);};
+   const check=()=>{if(slot.error||slot.closed){clear();reject(Error(slot.error||'角色动作加载已取消'));}else if(slot.ready){clear();resolve();}};
+   const timer=setTimeout(()=>{clear();reject(Error('角色动作加载超时'));},15000);
+   slot.video.addEventListener('loadeddata',check);slot.video.addEventListener('error',check);check();
+  });
+  return next;
+ }catch(error){next.dispose();throw error;}
+}
+export function adoptCharacterRenderer(characterId,next){
+ activatePetCharacter(characterId);motionRenderer.dispose?.();motionRenderer=next;galleryRenderer=next;
+ if(window.frameSequenceInspection)window.frameSequenceInspection.renderer=next;
+ if(window.galleryPreviewInspection)window.galleryPreviewInspection.renderer=next;
+}
 if(Object.keys(PREVIEW_ATLASES).length||motionRenderer instanceof VideoSequenceRenderer)window.galleryPreviewInspection={renderer:galleryRenderer,cache:()=>galleryRenderer.inspect()};
 if(motionRenderer.fullFrameSequences)window.frameSequenceInspection={renderer:motionRenderer,actionSample,PET_ACTIONS,cache:()=>motionRenderer.inspect()};
 if(workingRigPilot)window.workingRigInspection={renderer:motionRenderer,actionSample,PET_ACTIONS};

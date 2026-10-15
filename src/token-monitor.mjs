@@ -1,3 +1,6 @@
+import {migrateGeneric} from './usage-generic-migrate.mjs';
+import {UsageRepository} from './usage-repository.mjs';
+import {SqlUsageQuery} from './usage-query-sqlite.mjs';
 import {ServiceAttribution} from './service-attribution.mjs';
 import {resolveIdentity,platformCatalog} from './service-identity.mjs';
 import {readdir,stat,open,appendFile,mkdir} from 'node:fs/promises';
@@ -18,7 +21,7 @@ const hash=value=>createHash('sha256').update(value).digest('hex');
 const sum=(a,b)=>{for(const k of Object.keys(emptyUsage())){a[k]+=(typeof b[k]==='number'?b[k]:0);if(k==='requests')continue;const missing=b.fieldMissing?.[k]||(b[k]===null&&b.requests>0?b.requests:0);if(missing){a.fieldMissing??={};a.fieldMissing[k]=(a.fieldMissing[k]||0)+missing;}}return a;};
 const total=row=>Object.values(row).filter(v=>v&&typeof v==='object'&&typeof v.total==='number').reduce((n,u)=>n+u.total,0);
 export class GenericTokenLedger {
- constructor(){this.records=new Map();this.pending=[];this.revision=0;this.startedAt=Date.now();this.groups=new Map();this.dirtyGroups=new Set();this.snapshotBuilds=0;}
+ constructor(repository=null){this.repository=repository;this.records=repository?repository.map("generic"):new Map();this.pending=[];this.revision=0;this.startedAt=Date.now();this.groups=repository?{keys:()=>repository.groups(['generic']),get(key){return {values:function*(){for(const[,v]of repository.entries('generic',{group:key,ordered:true}))yield v;}};}}:new Map();this.dirtyGroups=new Set();this.snapshotBuilds=0;}
  ingest(event,persist=true){
   if(!event.timestamp)return false;
   const key=event.tool+':'+event.sessionId+':'+event.requestId,old=this.records.get(key),value={...event,key,workBase:old?.workBase??(event.workEligible===false?(event.usage.total||0):0)};
@@ -26,16 +29,17 @@ export class GenericTokenLedger {
    // Streaming corrections update the same request; totals never regress silently.
    if(event.tool!=='dsh'||event.usageAuthority!=='replace')for(const k of Object.keys(emptyUsage()))if(old.usage[k]!==null&&(value.usage[k]===null||value.usage[k]<old.usage[k]))value.usage[k]=old.usage[k];
   }
-  this.records.set(key,value);const group=event.tool+':'+event.sessionId;if(!this.groups.has(group))this.groups.set(group,new Map());this.groups.get(group).set(key,value);this.dirtyGroups.add(group);this.revision++;if(persist)this.pending.push(value);return true;
+  this.records.set(key,value);const group=event.tool+':'+event.sessionId;if(!this.repository){if(!this.groups.has(group))this.groups.set(group,new Map());this.groups.get(group).set(key,value);}this.dirtyGroups.add(group);this.revision++;if(persist&&!this.repository)this.pending.push(value);return true;
  }
  snapshot(sources,now=Date.now(),legacySessions=new Set()){
   const signature=JSON.stringify([this.revision,sources.map(s=>[s.id,s.overlapGroup,s.primary]),[...legacySessions]]);
   if(this.cached?.signature===signature){const v=this.cached.value;return {...v,sessions:v.sessions.map(s=>({...s,displayStatus:s.status==='running'&&now-Date.parse(s.lastActivity)>120000?'unknown':s.status}))};}this.snapshotBuilds++;
   const totals={},daily=new Map(),sessions=new Map(),projects=new Map(),cube=new Map(),groups=new Map(),settings=new Map(sources.map(s=>[s.id,s])),startedAt=this.startedAt;let missingRequests=0,workSinceStart=0;
   for(const row of this.records.values()){if(row.tool==='companion'&&row.reportedProvider==='codex'&&legacySessions.has(row.sessionId))continue;const source=settings.get(row.sourceId);if((source?.overlapGroup||row.overlapGroup)&&(source?.primary??row.primary)===false)continue;
-   if(row.mode==='cumulative'){const k=row.tool+':'+row.sessionId;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(row);}else add(row,row.usage);
+   if(row.mode==='cumulative'){if(this.repository)continue;const k=row.tool+':'+row.sessionId;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(row);}else add(row,row.usage);
   }
-  for(const rows of groups.values()){rows.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp)||String(a.requestId).localeCompare(String(b.requestId)));let previous=emptyUsage();for(const r of rows){if(r.usage.total===null){add(r,r.usage);continue;}if(r.usage.total<previous.total)continue;const u={...r.usage};for(const k of Object.keys(emptyUsage()))if(k!=='requests'&&u[k]!==null)u[k]=Math.max(0,u[k]-(previous[k]||0));u.requests=u.total>0?1:0;add(r,u);for(const k of Object.keys(emptyUsage()))previous[k]=Math.max(previous[k]||0,r.usage[k]||0);}}
+  const cumulative=this.repository?(function*(repo){for(const key of repo.groups(['generic']))yield (function*(){for(const[,r]of repo.entries('generic',{group:key,ordered:true,tieRequest:true})){const source=settings.get(r.sourceId);if(r.mode!=='cumulative'||(source?.overlapGroup||r.overlapGroup)&&(source?.primary??r.primary)===false||r.tool==='companion'&&r.reportedProvider==='codex'&&legacySessions.has(r.sessionId))continue;yield r;}})();})(this.repository):groups.values();
+  for(let rows of cumulative){if(!this.repository)rows.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp)||String(a.requestId).localeCompare(String(b.requestId)));let previous=emptyUsage();for(const r of rows){if(r.usage.total===null){add(r,r.usage);continue;}if(r.usage.total<previous.total)continue;const u={...r.usage};for(const k of Object.keys(emptyUsage()))if(k!=='requests'&&u[k]!==null)u[k]=Math.max(0,u[k]-(previous[k]||0));u.requests=u.total>0?1:0;add(r,u);for(const k of Object.keys(emptyUsage()))previous[k]=Math.max(previous[k]||0,r.usage[k]||0);}}
   function add(r,u){r={...r,...resolveIdentity(r,settings.get(r.sourceId))};const key=r.tool+':'+r.sessionId;let s=sessions.get(key);if(!s){s={key,id:r.sessionId,provider:r.tool,tool:r.tool,sourceId:r.sourceId,workspace:r.workspace,model:r.model,serviceProvider:r.serviceProvider,reportedProvider:r.reportedProvider,companion:r.purpose!=='work',purpose:r.purpose,subagent:r.subagent,status:'unknown',displayStatus:'unknown',usage:emptyUsage(),missingRequests:0,lastActivity:null,createdAt:r.timestamp};sessions.set(key,s);}
    if(!s.lastActivity||Date.parse(r.timestamp)>=Date.parse(s.lastActivity)){Object.assign(s,{lastActivity:r.timestamp,model:r.model,serviceProvider:r.serviceProvider,status:r.status,displayStatus:r.status,feedbackEligible:r.tool!=='dsh'&&r.workEligible===true&&Date.parse(r.timestamp)>=startedAt&&(r.observedAt||0)>=startedAt});}
    if(!totals[r.tool])totals[r.tool]=emptyUsage();sum(totals[r.tool],u);sum(s.usage,u);
@@ -62,12 +66,14 @@ export function mergeSnapshots(legacy,generic,sources,aliases={}){
  result.cube=[...(legacy.cube||[]).map(r=>({...r,...resolveIdentity(r)})),...(generic.cube||[])];result.aliases=aliases;return result;
 }
 export class TokenMonitor {
- constructor(options){this.options=options;this.sources=new TokenSources(options);this.ledger=new GenericTokenLedger();this.files=new Map();this.closed=false;this.busy=false;this.watchers=[];this.errors=new Map();this.listeners=options.onUpdate||(()=>{});this.onSources=options.onSources||(()=>{});this.onTaskFeedback=options.onTaskFeedback||(()=>{});this.taskStates=new Map();this.terminalWatermarks=new Map();this.pendingFeedback=[];this.cacheRevision=0;this.cache=createSnapshotStorage(join(options.dataRoot,'token-index-v1.json'));this.dataFile=join(options.dataRoot,'token-events-v1.jsonl');this.refreshIntervalMs=options.refreshIntervalMs||1000;this.lastDiscovery=0;this.revision=0;this.knownSources=new Set();this.warm=false;this.attribution=new ServiceAttribution(options.dataRoot);this.analytics=new UsageQuery(r=>this.attribution.resolve(r,this.analyticsSourceMap?.get(r.sourceId)));this.prices=new PriceService({dataRoot:options.dataRoot});this.timeZone=resolveZone(options.statisticsTimeZone||"America/New_York");}
- async start(){await this.prices.ready;await this.attribution.ready;await this.sources.init();const cache=await readJson(this.cache,{files:[]});this.files=new Map(cache.files);this.taskStates=new Map(cache.taskStates||[]);this.terminalWatermarks=new Map(cache.terminalWatermarks||[]);
-  try{const reader=createInterface({input:createReadStream(this.dataFile),crlfDelay:Infinity});for await(const line of reader){try{this.ledger.ingest(JSON.parse(line),false);}catch{}}}catch(e){if(e.code!=='ENOENT')throw e;}
-  await this.restartLegacy();await this.scan(true);this.warm=true;this.timer=setInterval(()=>void this.scan(false).catch(e=>this.errors.set('scan',e.message)),this.refreshIntervalMs);return this;
+ constructor(options){this.options=options;this.sources=new TokenSources(options);this.repository=options.persistentHistory===false?null:new UsageRepository(join(options.dataRoot,"usage-ledger-v2","generic.sqlite"));this.ledger=new GenericTokenLedger(this.repository);this.files=new Map();this.closed=false;this.busy=false;this.watchers=[];this.errors=new Map();this.listeners=options.onUpdate||(()=>{});this.onSources=options.onSources||(()=>{});this.onTaskFeedback=options.onTaskFeedback||(()=>{});this.taskStates=new Map();this.terminalWatermarks=new Map();this.pendingFeedback=[];this.cacheRevision=0;this.cache=createSnapshotStorage(join(options.dataRoot,'token-index-v1.json'),{retainText:false,compactReceipt:true});this.dataFile=join(options.dataRoot,'token-events-v1.jsonl');this.refreshIntervalMs=options.refreshIntervalMs||1000;this.lastDiscovery=0;this.revision=0;this.knownSources=new Set();this.warm=false;this.attribution=new ServiceAttribution(options.dataRoot);this.analytics=this.repository?new SqlUsageQuery(this.repository,r=>this.attribution.resolve(r,this.analyticsSourceMap?.get(r.sourceId))):new UsageQuery(r=>this.attribution.resolve(r,this.analyticsSourceMap?.get(r.sourceId)));this.analyticsSources=this.repository?.meta("analyticsSources");this.prices=new PriceService({dataRoot:options.dataRoot});this.timeZone=resolveZone(options.statisticsTimeZone||"America/New_York");}
+ start(){return this.starting??=this.initialize();}
+ async initialize(){await this.prices.ready;await this.attribution.ready;await this.sources.init();const cache=this.repository?.meta("state")??await readJson(this.cache,{files:[]});this.files=new Map(cache.files);this.taskStates=new Map(cache.taskStates||[]);this.terminalWatermarks=new Map(cache.terminalWatermarks||[]);
+  if(this.repository)await migrateGeneric(this.repository,this.dataFile,this.ledger,cache);else try{const reader=createInterface({input:createReadStream(this.dataFile),crlfDelay:Infinity});for await(const line of reader){let row;try{row=JSON.parse(line);}catch{continue;}this.ledger.ingest(row,false);}}catch(e){if(e.code!=='ENOENT')throw e;}
+  if(this.repository)this.repository.publish({ready:true,state:cache});
+  await this.restartLegacy();await this.scan(true);if(this.closed)return this;this.warm=true;this.timer=setInterval(()=>void this.scan(false).catch(e=>this.errors.set('scan',e.message)),this.refreshIntervalMs);return this;
  }
- async restartLegacy(){if(this.legacy)await this.legacy.close();const roots=this.sources.list().filter(s=>s.enabled&&['codex','claude'].includes(s.tool)).map(s=>({provider:s.tool,path:s.path}));this.legacy=new LocalMonitor({...this.options,roots,refreshIntervalMs:this.refreshIntervalMs,onUpdate:v=>{this.legacySnapshot=v;this.emit();}});await this.legacy.start();}
+ async restartLegacy(){if(this.legacy)await this.legacy.close();const roots=this.sources.list().filter(s=>s.enabled&&['codex','claude'].includes(s.tool)).map(s=>({provider:s.tool,path:s.path}));this.legacy=new LocalMonitor({...this.options,persistentHistory:!!this.repository,roots,refreshIntervalMs:this.refreshIntervalMs,onUpdate:v=>{this.legacySnapshot=v;this.emit();}});await this.legacy.start();}
  setRefreshInterval(ms){this.refreshIntervalMs=ms;this.legacy?.setRefreshInterval(ms);if(this.timer){clearInterval(this.timer);this.timer=setInterval(()=>void this.scan(false).catch(e=>this.errors.set('scan',e.message)),ms);}}
  genericSnapshot(){
   const value=this.ledger.snapshot(this.sources.list(),Date.now(),new Set(this.legacySnapshot?.sessions.filter(s=>s.provider==='codex'&&s.usage.total>0).map(s=>s.id)||[]));
@@ -129,18 +135,30 @@ export class TokenMonitor {
    if(failure)throw failure;return counts;
   }finally{await handle.close();}
  }
- async persist(){if(!this.ledger.pending.length&&this.savedRevision===this.ledger.revision&&this.savedCacheRevision===this.cacheRevision)return;await mkdir(this.options.dataRoot,{recursive:true});const pending=this.ledger.pending.splice(0);try{if(pending.length)await appendFile(this.dataFile,pending.map(r=>JSON.stringify(r)).join('\n')+'\n');await this.cache.writeText(JSON.stringify({version:1,files:[...this.files],taskStates:[...this.taskStates],terminalWatermarks:[...this.terminalWatermarks]}));this.savedRevision=this.ledger.revision;this.savedCacheRevision=this.cacheRevision;}catch(e){this.ledger.pending.unshift(...pending);throw e;}}
+ async persist(){if(this.repository){if(this.savedRevision===this.ledger.revision&&this.savedCacheRevision===this.cacheRevision)return;this.repository.publish({ready:true,state:{version:2,files:[...this.files],taskStates:[...this.taskStates],terminalWatermarks:[...this.terminalWatermarks]}});this.savedRevision=this.ledger.revision;this.savedCacheRevision=this.cacheRevision;return;}if(!this.ledger.pending.length&&this.savedRevision===this.ledger.revision&&this.savedCacheRevision===this.cacheRevision)return;await mkdir(this.options.dataRoot,{recursive:true});const pending=this.ledger.pending.splice(0);try{if(pending.length)await appendFile(this.dataFile,pending.map(r=>JSON.stringify(r)).join('\n')+'\n');await this.cache.writeText(JSON.stringify({version:1,files:[...this.files],taskStates:[...this.taskStates],terminalWatermarks:[...this.terminalWatermarks]}));this.savedRevision=this.ledger.revision;this.savedCacheRevision=this.cacheRevision;}catch(e){this.ledger.pending.unshift(...pending);throw e;}}
  syncAnalytics(){
+  if(!this.repository)return this.syncAnalyticsRows();
+  const legacy=this.legacy.repository;
+  for(const key of legacy.changedGroups())this.legacy.ledger.dirtyRequestSessions.add(key);
+  for(const key of this.repository.changedGroups())this.ledger.dirtyGroups.add(key);
+  const dirtyLegacy=[...this.legacy.ledger.dirtyRequestSessions],dirtyGeneric=[...this.ledger.dirtyGroups],signature=this.analyticsSources;
+  try{this.repository.transaction(()=>{this.syncAnalyticsRows();this.repository.acknowledgeChanges();});
+   // The separate legacy connection is acknowledged after contribution commit.
+   // A crash between the two safely repeats an idempotent group replacement.
+   legacy.acknowledgeChanges();
+  }catch(e){this.analyticsSources=signature;for(const k of dirtyLegacy)this.legacy.ledger.dirtyRequestSessions.add(k);for(const k of dirtyGeneric)this.ledger.dirtyGroups.add(k);this.analytics.restoreIndex();throw e;}
+ }
+ syncAnalyticsRows(){
   const sources=this.sources.list();this.analyticsSourceMap=new Map(sources.map(s=>[s.id,s]));const signature=JSON.stringify(sources.map(s=>[s.id,s.path,s.overlapGroup,s.primary,s.aliasProvider]).concat(this.attribution.revision));
   const l=this.legacy.ledger;if(this.analyticsSources!==signature){for(const k of l.requestGroups.keys())l.dirtyRequestSessions.add(k);for(const k of this.ledger.groups.keys())this.ledger.dirtyGroups.add(k);this.analyticsSources=signature;}
-  for(const key of l.dirtyRequestSessions){const rows=l.requestRows(key);for(const r of rows){const matches=sources.filter(s=>s.tool===r.tool&&r.location?.file&&(resolve(r.location.file).toLowerCase()===resolve(s.path).toLowerCase()||resolve(r.location.file).toLowerCase().startsWith(resolve(s.path).toLowerCase()+'\\'))).sort((a,b)=>b.path.length-a.path.length);r.sourceId=matches[0]?.id||r.sourceId;}this.analytics.replaceGroup(key,rows);}
+  for(const key of l.dirtyRequestSessions){const rows=(function*(){for(const r of l.iterateRequestRows(key)){const matches=sources.filter(s=>s.tool===r.tool&&r.location?.file&&(resolve(r.location.file).toLowerCase()===resolve(s.path).toLowerCase()||resolve(r.location.file).toLowerCase().startsWith(resolve(s.path).toLowerCase()+'\\'))).sort((a,b)=>b.path.length-a.path.length);r.sourceId=matches[0]?.id||r.sourceId;yield r;}})();this.analytics.replaceGroup(key,this.repository?rows:[...rows]);}
   l.dirtyRequestSessions.clear();
-  for(const key of this.ledger.dirtyGroups){const rows=[...this.ledger.groups.get(key).values()].sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));let previous=emptyUsage();const normalized=[];
-   for(const r of rows){const source=sources.find(s=>s.id===r.sourceId);if((source?.overlapGroup||r.overlapGroup)&&(source?.primary??r.primary)===false)continue;if(r.tool==='companion'&&r.reportedProvider==='codex'&&l.sessions.has('codex:'+r.sessionId))continue;
-    let usage=r.usage;if(r.mode==='cumulative'){if(usage.total===null){normalized.push(r);continue;}if(usage.total<previous.total)continue;usage={...usage,...Object.fromEntries(Object.keys(emptyUsage()).filter(k=>k!=='requests').map(k=>[k,usage[k]===null?null:Math.max(0,usage[k]-(previous[k]||0))])),requests:1};previous=r.usage;if(!usage.total)continue;}
-    normalized.push({...r,usage,actualProvider:r.reportedProvider||'unknown'});
-   }this.analytics.replaceGroup(key,normalized);
-  }this.ledger.dirtyGroups.clear();
+  for(const key of this.ledger.dirtyGroups){const input=this.ledger.groups.get(key).values(),rows=this.repository?input:[...input].sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
+   const normalized=(function*(){let previous=emptyUsage();for(const r of rows){const source=sources.find(s=>s.id===r.sourceId);if((source?.overlapGroup||r.overlapGroup)&&(source?.primary??r.primary)===false)continue;if(r.tool==='companion'&&r.reportedProvider==='codex'&&l.sessions.has('codex:'+r.sessionId))continue;
+    let usage=r.usage;if(r.mode==='cumulative'){if(usage.total===null){yield r;continue;}if(usage.total<previous.total)continue;usage={...usage,...Object.fromEntries(Object.keys(emptyUsage()).filter(k=>k!=='requests').map(k=>[k,usage[k]===null?null:Math.max(0,usage[k]-(previous[k]||0))])),requests:1};previous=r.usage;if(!usage.total)continue;}
+    yield {...r,usage,actualProvider:r.reportedProvider||'unknown'};
+   }})();this.analytics.replaceGroup(key,this.repository?normalized:[...normalized]);
+  }this.ledger.dirtyGroups.clear();this.analytics.saveIndex?.();this.repository?.meta('analyticsSources',signature);
  }
  async configure({statisticsTimeZone,autoPriceUpdates}={}){if(statisticsTimeZone){this.timeZone=resolveZone(statisticsTimeZone);this.legacy.ledger.timeZone=this.timeZone;this.legacy.emit();}if(typeof autoPriceUpdates==='boolean'&&this.prices.state.autoUpdate!==autoPriceUpdates)await this.prices.save({autoUpdate:autoPriceUpdates});}
  async action(action,args={}){
@@ -161,5 +179,5 @@ export class TokenMonitor {
   const old=JSON.stringify(this.sources.list().filter(s=>s.enabled&&['codex','claude'].includes(s.tool)));const result=await this.sources.action(action,args);if(action!=='get'&&action!=='export'){if(old!==JSON.stringify(this.sources.list().filter(s=>s.enabled&&['codex','claude'].includes(s.tool))))await this.restartLegacy();this.lastDiscovery=0;await this.scan(true);}return result;
  }
  ingestCompanion(row){this.legacy.ingestCompanion(row);this.legacy.emit();}
- async close(){this.closed=true;clearInterval(this.timer);for(const {watcher} of this.watchers)watcher.close();while(this.busy)await new Promise(r=>setTimeout(r,20));await this.persist();await this.legacy?.close();}
+ async close(){this.closed=true;clearInterval(this.timer);await this.starting?.catch(()=>{});for(const {watcher} of this.watchers)watcher.close();while(this.busy)await new Promise(r=>setTimeout(r,20));await this.persist();await this.legacy?.close();this.repository?.close();}
 }

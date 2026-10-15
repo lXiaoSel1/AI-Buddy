@@ -1,13 +1,19 @@
 import {PetActionController,actionSample,getPetAction,PET_ATLAS,FRAME_SIZE,cursorDirection} from './pet-actions.mjs';
 import {subscribeAnimationClock} from './animation-clock.mjs';
-import {motionRenderer} from './motion-renderer.mjs';
+import {motionRenderer,prepareCharacterRenderer,adoptCharacterRenderer} from './motion-renderer.mjs';
+import {currentPetCharacter,CHARACTER_SEQUENCES} from './frame-sequence.mjs';
+import {resolvePetCharacter} from './pet-characters.mjs';
+import {PetCharacterSwitch} from './pet-character-switch.mjs';
+import {petPresentation} from './pet-presentation.mjs';
 import {APP_NAME} from './app-brand.mjs';
 import {applyAppearance} from './appearance.mjs';
+import {t} from './i18n.mjs';
 const sprite=document.querySelector('.sprite'),bubble=document.querySelector('.bubble'),badge=document.querySelector('.badge');
 const surface=document.createElement('canvas');surface.width=FRAME_SIZE.width;surface.height=FRAME_SIZE.height;surface.setAttribute('aria-hidden','true');sprite.append(surface);
 const image=new Image();image.src=PET_ATLAS.src;
 sprite.style.backgroundImage=`url('${PET_ATLAS.src}')`;sprite.style.backgroundSize=PET_ATLAS.width+'px '+PET_ATLAS.height+'px';
 const controller=new PetActionController({ready:(id,elapsed)=>motionRenderer.isReadyFor?.(id,elapsed,{reducedMotion:reducedMotion.matches})??true});
+controller.holdFeedback=true;
 let presentedBubble=null;
 let pixels=null,mode='idle',row=0,col=0,down=false,lastOpaque=null,bubbleTimer,frameTimer=null,dialogActive=false,lastCursor=null,lastBackground='',lastState='',badgeText=APP_NAME+' · 离线陪伴';
 let currentSample=actionSample('idle',0);
@@ -15,9 +21,20 @@ let geometry=null;
 function petGeometry(){if(!geometry)geometry={sprite:sprite.getBoundingClientRect(),badge:badge.getBoundingClientRect()};return geometry;}
 window.addEventListener('resize',()=>{geometry=null;motionRenderer.invalidate?.(surface);});
 const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
-let preferences={petScale:1,animationSpeed:.75,showStatusBadge:true,followCursor:true,completionBubbles:true};
+let preferences={petScale:1.25,animationSpeed:.75,showStatusBadge:true,followCursor:true,completionBubbles:true};
+let configuredCharacter='deepseek',demoRequest=null,demoActive=false,settingsReady=false,characterError=null;
+function applyCharacterPresentation(id){sprite.style.transformOrigin='0 0';sprite.style.transform=petPresentation(id).transform;geometry=null;motionRenderer.invalidate?.(surface);}
+applyCharacterPresentation('deepseek');
+let initialCharacterReady=false,resolveInitialCharacter;
+window.petCharacterReady=new Promise(resolve=>{resolveInitialCharacter=resolve;});
+async function finishInitialCharacter(){await motionRenderer.ready;if(initialCharacterReady||characterSwitch.loading||characterSwitch.current!==characterSwitch.target)return;motionRenderer.draw(surface,actionSample('idle',0,{reducedMotion:true}));currentSample=motionRenderer.displayedSample?.(surface)??actionSample('idle',0);initialCharacterReady=true;resolveInitialCharacter(true);}
+const characterSwitch=new PetCharacterSwitch({prepare:prepareCharacterRenderer,commit:(id,next)=>{adoptCharacterRenderer(id,next);applyCharacterPresentation(id);controller.baseAt=controller.animationNow();controller.lookAt=-Infinity;controller.gaze.initialized=false;controller.gaze.unwrapped=null;controller.gazeBlend={from:0,target:0,at:Date.now()};currentSample=actionSample('idle',0);lastOpaque=null;geometry=null;},onPrepared:()=>{if(!initialCharacterReady){characterSwitch.advance();void finishInitialCharacter();}},onError:error=>{window.petMotionError=error.message;characterError=t('角色动作加载失败，请重试。',preferences.language);demoRequest=null;demoActive=false;controller.holdFeedback=false;if(!initialCharacterReady)void finishInitialCharacter();}});
+function requestCharacter(id){characterSwitch.request(id);if(!initialCharacterReady&&!characterSwitch.loading)void finishInitialCharacter();}
 function applySettings(value){
   preferences=value.preferences;
+  settingsReady=true;
+  configuredCharacter=resolvePetCharacter(preferences,value.themeCharacter);
+  if(!demoRequest&&!demoActive)requestCharacter(configuredCharacter);
   applyAppearance(preferences,value.themeCharacter);
   controller.setSpeed(preferences.animationSpeed??.75);
   document.body.style.setProperty('--pet-scale',preferences.petScale);
@@ -62,8 +79,8 @@ window.whale.onCursor(point=>{
 });
 window.whale.onPetAction(value=>{
   if(value.kind==='feedback')controller.enqueueFeedback(value.value);
-  if(value.kind==='play')controller.play({id:value.id,lookIndex:value.lookIndex,durationMs:value.durationMs});
-  if(value.kind==='auto')controller.automatic();
+  if(value.kind==='play'){demoRequest={id:value.id,lookIndex:value.lookIndex,durationMs:value.durationMs,characterId:value.characterId??currentPetCharacter()};requestCharacter(demoRequest.characterId);}
+  if(value.kind==='auto'){demoRequest=null;demoActive=false;requestCharacter(configuredCharacter);controller.holdFeedback=characterSwitch.target!==characterSwitch.current;controller.automatic();}
   if(value.kind==='trigger')controller.trigger(value.id,{source:value.source,durationMs:value.durationMs});
   if(value.kind==='drag')controller.drag(value.active,value.direction);
   if(value.kind==='dialog'){dialogActive=value.active;controller.setBase(dialogActive?'working':mode);}
@@ -73,7 +90,14 @@ function render(){
   if(document.hidden)return;
   // Read rectangles before any style/text write. Only the small sprite is repainted.
   const {sprite:rect,badge:b}=petGeometry();
-  const state=controller.select(),pose=actionSample(state.id,state.elapsed,{lookIndex:state.lookIndex,lookAngle:state.lookAngle,reducedMotion:reducedMotion.matches});
+  if(demoActive&&(!controller.manual||controller.manual.expiresAt<=Date.now())){demoActive=false;requestCharacter(demoRequest?.characterId??configuredCharacter);controller.holdFeedback=!!demoRequest||characterSwitch.target!==characterSwitch.current;controller.automatic();}
+  const hasStartedFeedback=!!controller.feedback.active||controller.feedback.queue.some(item=>item.startedAt!==undefined);
+  controller.holdFeedback=!settingsReady||!!((demoRequest||characterSwitch.target!==characterSwitch.current)&&!hasStartedFeedback);
+  let state=controller.select();
+  const characterChanged=characterSwitch.advance({busy:controller.dragging||!!controller.manual||hasStartedFeedback});
+  if(characterChanged)state=controller.select();
+  if(demoRequest&&!characterSwitch.loading&&!characterSwitch.failed&&currentPetCharacter()===demoRequest.characterId&&!controller.dragging&&!controller.manual){controller.play(demoRequest);demoRequest=null;demoActive=true;controller.holdFeedback=false;state=controller.select();}
+  const pose=actionSample(state.id,state.elapsed,{lookIndex:state.lookIndex,lookAngle:state.lookAngle,reducedMotion:reducedMotion.matches});
   pose.elapsedMs=state.elapsed;pose.clockMs=state.clockMs;pose.baseElapsedMs=state.baseElapsed;pose.followBaseId=state.source.startsWith('cursor')?'idle':null;pose.gazeAngle=state.lookAngle;pose.gazeWeight=state.gazeWeight;pose.turn=state.turn;pose.reducedMotion=reducedMotion.matches;
   pose.playbackRate=state.animationSpeed;pose.playing=true;
   currentSample=pose;
@@ -83,11 +107,15 @@ function render(){
   motionRenderer.draw(surface,pose);
   currentSample=motionRenderer.displayedSample?.(surface)??pose;
   presentFeedback(state.feedback);
-  if(lastCursor)hitAt(lastCursor.x,lastCursor.y,rect,b);
+  if(characterError&&!state.feedback&&!controller.manual){
+    bubble.textContent=characterError;characterError=null;bubble.hidden=false;geometry=null;clearTimeout(bubbleTimer);
+    bubbleTimer=setTimeout(()=>{bubble.hidden=true;geometry=null;},6500);
+  }
+  if(lastCursor&&!characterChanged)hitAt(lastCursor.x,lastCursor.y,rect,b);
   const text=state.manual?'演示 · '+getPetAction(state.id).label:badgeText;if(badge.textContent!==text)badge.textContent=text;
   const label=APP_NAME+' · '+getPetAction(state.id).label;if(sprite.getAttribute('aria-label')!==label)sprite.setAttribute('aria-label',label);
-  window.petActionDiagnostic={...state,...pose,renderer:motionRenderer.backend,displayedActionId:currentSample.actionId,sequenceFrame:motionRenderer.sequences?.[state.id]?currentSample.displayedSequenceFrame??null:null,sourceFrameCount:motionRenderer.sequences?.[state.id]?.frames.length??getPetAction(state.id).frames,draws:motionRenderer.draws,rigDraws:motionRenderer.rigDraws??0,rigResizes:motionRenderer.rigResizes??0,canvasSize:[surface.width,surface.height],geometryReads:motionRenderer.geometryReads??0};
-  const report={id:state.id,source:state.source,manual:state.manual,expiresAt:state.expiresAt},key=JSON.stringify(report);
+  window.petActionDiagnostic={...state,...pose,characterId:currentPetCharacter(),targetCharacterId:characterSwitch.target,presentation:petPresentation(currentPetCharacter()),renderer:motionRenderer.backend,displayedActionId:currentSample.actionId,sequenceFrame:motionRenderer.sequences?.[state.id]?currentSample.displayedSequenceFrame??null:null,sourceFrameCount:motionRenderer.sequences?.[state.id]?.frames.length??getPetAction(state.id).frames,draws:motionRenderer.draws,rigDraws:motionRenderer.rigDraws??0,rigResizes:motionRenderer.rigResizes??0,canvasSize:[surface.width,surface.height],geometryReads:motionRenderer.geometryReads??0};
+  const report={id:state.id,source:state.source,manual:state.manual,expiresAt:state.expiresAt,characterId:currentPetCharacter()},key=JSON.stringify(report);
   if(key!==lastState){lastState=key;window.whale.reportPetState(report);}
 }
 function hitAt(clientX,clientY,rect=petGeometry().sprite,b=petGeometry().badge){
@@ -109,6 +137,6 @@ document.addEventListener('pointercancel',()=>{if(down){down=false;void window.w
 window.whale.status().then(updateSnapshot);
 function clock(){frameTimer?.();frameTimer=null;const wasVisible=controller.visible;controller.setVisible(!document.hidden&&preferences.petVisible!==false);if(!document.hidden){if(!wasVisible)controller.trigger('wave',{source:'show'});render();frameTimer=subscribeAnimationClock(render);}else motionRenderer.release?.(surface);}
 document.addEventListener('visibilitychange',clock);
-window.addEventListener('pagehide',()=>frameTimer?.());
+window.addEventListener('pagehide',()=>{frameTimer?.();characterSwitch.dispose();motionRenderer.dispose?.();});
 reducedMotion.addEventListener('change',render);
 clock();

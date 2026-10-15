@@ -21,6 +21,7 @@ import { createLocalControlServer,requestLocalControl } from './local-control.mj
 import { DEFAULT_PREFERENCES,normalizePreferences,validatePreferencesPatch } from './preferences.mjs';
 import { PET_ACTIONS,validatePetPlayback } from './pet-actions.mjs';
 import { EMOTIONS,validEmotion,shortReply } from './emotions.mjs';
+import {validPetCharacter,resolvePetCharacter} from './pet-characters.mjs';
 import {connectionView} from './connection-view.mjs';
 import {lockPageZoom} from './page-zoom.mjs';
 import {TOOL_NAMES} from './token-sources.mjs';
@@ -62,11 +63,11 @@ function tokenAction(action,args={}){return new Promise((done,fail)=>{if(!worker
 let petState={id:'idle',source:'monitor',manual:false,expiresAt:null},gameRequests=0;
 const actionIds=new Set(PET_ACTIONS.map(a=>a.id));
 function petEvent(value){if(pet&&!pet.isDestroyed())pet.webContents.send('pet:action',value);}
-function playPet(request){const value=validatePetPlayback(request);petEvent({kind:'play',...value});audit({type:'pet-manual-action',id:value.id,lookIndex:value.lookIndex});return {ok:true,...value};}
+function playPet(request){const value=validatePetPlayback({...request,characterId:request?.characterId??petState.characterId??resolvePetCharacter(settings.preferences,themeCharacter)});petEvent({kind:'play',...value});audit({type:'pet-manual-action',id:value.id,lookIndex:value.lookIndex,characterId:value.characterId});return {ok:true,...value};}
 function petAuto(){petEvent({kind:'auto'});return {ok:true};}
 function triggerPet(id,source='event',durationMs=null){petEvent({kind:'trigger',id,source,...(durationMs===null?{}:{durationMs})});}
 function feedback(value){if(settings.preferences?.petVisible!==false)petEvent({kind:'feedback',value});}
-function chatFeedback(value){if(value.characterId!=='deepseek'||!validEmotion(value.emotion))return;feedback({eventId:value.messageId,id:EMOTIONS[value.emotion]?.actionId??null,source:'dialog',origin:value.requestId?'chat':'story',provider:provider?.currentKind??'codex',sessionKey:'whale-companion-local',turnKey:value.requestId??value.messageId,characterId:value.characterId,role:'heroine',emotion:value.emotion,emotionSource:value.emotionSource??'story-label',sequence:value.sequence,text:shortReply(value.text),cycles:1});}
+function chatFeedback(value){if(!validPetCharacter(value.characterId)||!validEmotion(value.emotion))return;feedback({eventId:value.messageId,id:EMOTIONS[value.emotion]?.actionId??null,source:'dialog',origin:value.requestId?'chat':'story',provider:provider?.currentKind??'codex',sessionKey:'whale-companion-local',turnKey:value.requestId??value.messageId,characterId:value.characterId,role:'heroine',emotion:value.emotion,emotionSource:value.emotionSource??'story-label',sequence:value.sequence,text:shortReply(value.text),cycles:1});}
 function chatCommitted(value){if(panel&&!panel.isDestroyed())panel.webContents.send('game:chat-committed',value);chatFeedback(value);}
 app.on('second-instance',()=>{audit({type:'second-instance'});reopenRequested=true;if(app.isReady()&&game)openPanel('overview',false);});
 
@@ -84,7 +85,7 @@ function moveDrag(point){
   positionPet(pet,next,settings.preferences.petScale);drag.position=next;petEvent({kind:'drag',active:true,direction:drag.direction||1});
 }
 async function saveSettings() {await settingsStore.writeText(JSON.stringify(settings));}
-function settingsView(){return {preferences:{...settings.preferences},themeCharacter,version:appVersion,build:build.split(/[\\/]/).at(-1),dataRoot,logRoots,tokenSources,defaultModel:provider?.defaultModel,modelConnections:provider?.state?connectionView(provider):null,cgConnections:cg?.state?connectionView(cg):null,systemTimeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,monitorAppliedInterval};}
+function settingsView(){return {preferences:{...settings.preferences},themeCharacter,petCharacterId:petState.characterId??'deepseek',version:appVersion,build:build.split(/[\\/]/).at(-1),dataRoot,logRoots,tokenSources,defaultModel:provider?.defaultModel,modelConnections:provider?.state?connectionView(provider):null,cgConnections:cg?.state?connectionView(cg):null,systemTimeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,monitorAppliedInterval};}
 function broadcastSettings(){const value=settingsView();for(const win of [pet,panel])if(win&&!win.isDestroyed())win.webContents.send('settings:update',value);return value;}
 function saveConnection(service,draft){
   // An unusable edit must not overwrite the currently selected profile before
@@ -187,7 +188,7 @@ ipcMain.handle('settings:action',(_,action)=>settingsAction(action));
 ipcMain.handle('pet:play',(_,request)=>playPet(request));
 ipcMain.handle('pet:auto',()=>petAuto());
 ipcMain.handle('pet:state',()=>petState);
-ipcMain.on('pet:state',(_,value)=>{if(!actionIds.has(value?.id))return;petState={id:value.id,source:String(value.source||'monitor').slice(0,20),manual:value.manual===true,expiresAt:Number.isFinite(value.expiresAt)?value.expiresAt:null};if(panel&&!panel.isDestroyed())panel.webContents.send('pet:state',petState);});
+ipcMain.on('pet:state',(event,value)=>{if(event.sender!==pet?.webContents||!actionIds.has(value?.id))return;const previous=petState.characterId;petState={id:value.id,source:String(value.source||'monitor').slice(0,20),manual:value.manual===true,expiresAt:Number.isFinite(value.expiresAt)?value.expiresAt:null,characterId:validPetCharacter(value.characterId)?value.characterId:'deepseek'};if(panel&&!panel.isDestroyed())panel.webContents.send('pet:state',petState);if(previous!==petState.characterId)broadcastSettings();});
 ipcMain.handle('chat:status',()=>provider.status());
 ipcMain.handle('chat:enabled',(_,enabled)=>{provider.setEnabled(enabled);audit({type:'chat-enabled',enabled:provider.enabled});return provider.status();});
 ipcMain.handle('models:get',()=>connectionView(provider));
@@ -213,7 +214,7 @@ ipcMain.handle('game:action',async(_,action,args)=>{
   catch(error){if(dialog)feedback({id:'fail',source:'chat-error',text:'聊天暂时失败，请重试。',cycles:1});throw error;}
   finally{if(dialog){gameRequests--;petEvent({kind:'dialog',active:gameRequests>0});}}
 });
-ipcMain.handle('pet:story-feedback',(event,value)=>{if(event.sender!==panel?.webContents||value?.characterId!=='deepseek'||!validEmotion(value.emotion)||typeof value.text!=='string'||value.text.length>4000)return false;chatFeedback({...value,messageId:'story:'+String(value.messageId).slice(0,160)});return true;});
+ipcMain.handle('pet:story-feedback',(event,value)=>{if(event.sender!==panel?.webContents||!validPetCharacter(value?.characterId)||!validEmotion(value.emotion)||typeof value.text!=='string'||value.text.length>4000)return false;chatFeedback({...value,messageId:'story:'+String(value.messageId).slice(0,160)});return true;});
 ipcMain.on('panel:open',(_,page)=>openPanel(page));
 ipcMain.on('pet:hit',(_,hit)=>{lastPetHit=!!hit;if(!drag && pet && !pet.isDestroyed())setGestureMode(gestureMode);});
 ipcMain.on('pet:drag-start',(_,point)=>{if(!Number.isFinite(point?.x)||!Number.isFinite(point?.y))point=screen.getCursorScreenPoint();const bounds=pet.getContentBounds();drag={offset:{x:point.x-bounds.x,y:point.y-bounds.y},origin:point,position:bounds,moved:false,direction:1};petEvent({kind:'drag',active:true,direction:1});ignoringMouse=false;pet.setIgnoreMouseEvents(false);audit({type:'pet-pointer-down',bounds});});
@@ -293,6 +294,9 @@ app.whenReady().then(async()=>{
   setLocale(settings.preferences.language);
   if(settings.preferences.petVisible!==(legacyGameSettings.petEnabled!==false))await game.action('pet-set',{enabled:settings.preferences.petVisible});
   await saveSettings();
+  // Resolve the saved/manual or model-following character before the first
+  // desktop greeting, even when the Galgame panel has not been opened.
+  await game.action('view');
   const area=screen.getPrimaryDisplay().workArea;
   const bounds=clamp(petBounds(settings.petBounds || {x:area.x+area.width-290,y:area.y+area.height-290},settings.preferences.petScale));
   pet=new BrowserWindow({...petWindowOptions(bounds,settings.preferences.petScale),title:APP_NAME,icon:appIconPath,webPreferences:{preload:join(build,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,partition:'whale-memory'}});
@@ -301,7 +305,7 @@ app.whenReady().then(async()=>{
   positionPet(pet,bounds,settings.preferences.petScale);pet.on('will-resize',event=>event.preventDefault());
   pet.setAlwaysOnTop(settings.preferences.alwaysOnTop,'floating');setGestureMode(false);
   pet.loadFile(join(build,'pet.html'),previewQuery);pet.once('ready-to-show',async()=>{
-    if(PET_ACTIONS.some(action=>action.sourceFrameCount))try{await pet.webContents.executeJavaScript('window.frameSequenceInspection.renderer.ready.then(()=>true)');}catch(error){rendererErrors.push(error.message);audit({type:'pet-assets-error',message:error.message});return;}
+    if(PET_ACTIONS.some(action=>action.sourceFrameCount))try{await pet.webContents.executeJavaScript('window.petCharacterReady.then(()=>window.frameSequenceInspection.renderer.ready).then(()=>true)');}catch(error){rendererErrors.push(error.message);audit({type:'pet-assets-error',message:error.message});return;}
     if(!pet.isDestroyed()){petAssetsReady=true;applyPetPreferences();}
   });
   pet.webContents.setWindowOpenHandler(()=>({action:'deny'}));

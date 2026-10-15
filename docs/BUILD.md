@@ -10,7 +10,7 @@ Development requires Windows x64 and Node.js 24. The portable app does not.
 
 Do not publish `local/`, generated `builds/`, credentials, user CGs or logs. The resource ZIP is a release asset rather than Git history to keep generated media outside Git history. Upstream/runtime licensing remains in the distributed files.
 
-Source-build output is under `builds/development`. Tests use temporary data and mock services; no paid model request is needed. The formal 1.7.7 binary additionally has branded Windows resources and a release manifest. Source tests do not certify native integration or visual acceptance.
+Source-build output is under `builds/development`. Tests use temporary data and mock services; no paid model request is needed. The formal 1.7.10 binary additionally has branded Windows resources and a release manifest. Source tests do not certify native integration or visual acceptance.
 
 Before a release, update package.json, both package-lock version fields, the current-release links and ZIP names in both READMEs, and the formal version in this guide. Run `npm run check:version`; the source build runs this same consistency check. Historical validation documents and Git commit messages retain their original versions.
 

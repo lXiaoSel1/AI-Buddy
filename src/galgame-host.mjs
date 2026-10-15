@@ -25,12 +25,13 @@ export async function createGalgame({dataRoot,provider,model,cg=null,getLanguage
   let sequence=0;
   return {
     async action(action,args={}) {
-      if(['chat','side-story','side-story-free-reply'].includes(action) && !provider.enabled) throw new Error('当前为离线模式；请先手动开启联网聊天');
+      const usesChat=action==='chat'||action==='side-story-free-reply'||action==='side-story'&&!['advance','close','choose'].includes(args.op);
+      if(usesChat && !provider.enabled) throw new Error('当前为离线模式；请先手动开启联网聊天');
       if(['cg-generate','cg-retry','skit-cg','side-story-cg'].includes(action)&&!cg?.available()) return {ok:false,error:'请在设置中选择 CG 绘图连接'};
       if(action==='settings-set')args={...args,settings:{...args.settings,sideStorySeedSource:'activity'},sideStorySeedSource:'activity'};
       const language=getLanguage();
       const run=()=>languageContext.run(language,()=>engine.handleAction(action,{...args,sessionId:privateSessionId}));
-      const result=provider.runTurn&&['chat','side-story','side-story-free-reply'].includes(action)?await provider.runTurn(run):await run();
+      const result=provider.runTurn&&usesChat?await provider.runTurn(run):await run();
       if(action==='pet-set' || action==='settings-set'){const saved=await engine.handleAction('settings-get',{});await onPetVisibility(saved.petEnabled!==false);}
       if(result?.current||result?.view?.current)onCharacter(result.current||result.view.current);
       return result;

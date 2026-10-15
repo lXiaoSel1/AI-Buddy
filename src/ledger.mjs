@@ -19,20 +19,22 @@ const fields=['input','output','cacheRead','cacheWrite','reasoning','total'];
 const maxUsage=(a,b)=>Object.fromEntries([...fields,'requests'].map(k=>[k,Math.max(num(a?.[k]),num(b?.[k]))]));
 
 export class UsageLedger {
-  constructor(serialized={}) {
+  constructor(serialized={},repository=null) {
+    this.repository=repository;
     this.sessions=new Map(serialized.sessions || []);
-    this.codex=new Map(serialized.codex || []);
-    this.claude=new Map(serialized.claude || []);
+    this.codex=repository?repository.map("codex"):new Map(serialized.codex || []);
+    this.claude=repository?repository.map("claude"):new Map(serialized.claude || []);
     this.revision=0; this.aggregationRevision=0; this.aggregateBuilds=0; this.cached=null; this.dirtySessions=new Set();this.dirtyCodex=new Set();this.dirtyClaude=new Set();
     this.requestGroups=new Map();this.dirtyRequestSessions=new Set();this.timeZone=TIME_ZONE;
     this.rebuildRequestIndex();
   }
-  rebuildRequestIndex(){this.requestGroups.clear();this.codex=new Map([...this.codex].map(([k,v])=>[v.session+':'+hash([v.timestamp,v.usage.input,v.usage.output,v.usage.cacheRead,v.usage.reasoning]),v]));for(const [k,v]of this.codex)this.indexRequest('codex',k,v);for(const[k,v]of this.claude)this.indexRequest('claude',k,v);}
-  indexRequest(kind,key,value){if(!this.requestGroups.has(value.session))this.requestGroups.set(value.session,new Map());this.requestGroups.get(value.session).set(kind+':'+key,value);this.dirtyRequestSessions.add(value.session);}
-  requestRows(key){const session=this.sessions.get(key);if(!session)return [];const samples=[...(this.requestGroups.get(key)?.entries()||[])].sort((a,b)=>Date.parse(a[1].timestamp)-Date.parse(b[1].timestamp));let previous=emptyUsage();const rows=[];
+  rebuildRequestIndex(){if(this.repository){const repo=this.repository;this.requestGroups={keys:()=>repo.groups(["codex","claude"]),clear(){},get(key){const kind=key.startsWith("codex:")?"codex":"claude";return {entries:function*(){for(const[k,v]of repo.entries(kind,{group:key,ordered:true}))yield [kind+":"+k,v];},delete(){}};}};return;}this.requestGroups.clear();this.codex=new Map([...this.codex].map(([k,v])=>[v.session+':'+hash([v.timestamp,v.usage.input,v.usage.output,v.usage.cacheRead,v.usage.reasoning]),v]));for(const [k,v]of this.codex)this.indexRequest('codex',k,v);for(const[k,v]of this.claude)this.indexRequest('claude',k,v);}
+  indexRequest(kind,key,value){if(this.repository){this.dirtyRequestSessions.add(value.session);return;}if(!this.requestGroups.has(value.session))this.requestGroups.set(value.session,new Map());this.requestGroups.get(value.session).set(kind+':'+key,value);this.dirtyRequestSessions.add(value.session);}
+  requestRows(key){return [...this.iterateRequestRows(key)];}
+  *iterateRequestRows(key){const session=this.sessions.get(key);if(!session)return;const input=this.requestGroups.get(key)?.entries()||[];const samples=this.repository?input:[...input].sort((a,b)=>Date.parse(a[1].timestamp)-Date.parse(b[1].timestamp));let previous=emptyUsage();
     for(const[id,sample]of samples){let usage=sample.usage;if(session.provider==='codex'){if(usage.total<previous.total){if(sample.startsCounter)previous=emptyUsage();else continue;}const next={...usage,...Object.fromEntries(fields.map(k=>[k,Math.max(0,usage[k]-previous[k])])),requests:1};previous=maxUsage(previous,usage);usage=next;if(!usage.total)continue;}
-      rows.push({requestId:id,sessionId:session.id,tool:session.provider,sourceId:'legacy-'+session.provider,workspace:session.workspace,model:sample.model||'',actualProvider:sample.actualProvider||'unknown',connectionIdentity:sample.connectionIdentity,timestamp:sample.timestamp,usage,knownFields:sample.knownFields||["input","output","total"],totalQuality:sample.totalQuality||'calculated',cacheIncluded:session.provider==='codex',cacheWriteIncluded:false,reasoningIncluded:true,cacheWrite1h:sample.cacheWrite1h,purpose:session.purpose|| (session.companion?(/_cg/.test(session.origin||'')?'cg':'galgame'):'work'),location:{file:session.path}});
-    }return rows;
+      yield {requestId:id,sessionId:session.id,tool:session.provider,sourceId:'legacy-'+session.provider,workspace:session.workspace,model:sample.model||'',actualProvider:sample.actualProvider||'unknown',connectionIdentity:sample.connectionIdentity,timestamp:sample.timestamp,usage,knownFields:sample.knownFields||["input","output","total"],totalQuality:sample.totalQuality||'calculated',cacheIncluded:session.provider==='codex',cacheWriteIncluded:false,reasoningIncluded:true,cacheWrite1h:sample.cacheWrite1h,purpose:session.purpose|| (session.companion?(/_cg/.test(session.origin||'')?'cg':'galgame'):'work'),location:{file:session.path}};
+    }
   }
   session(provider,id,meta={}) {
     const key=provider+':'+id;
@@ -147,10 +149,9 @@ export class UsageLedger {
       if(!projects.has(projectKey)) projects.set(projectKey,{workspace:projectKey,codex:emptyUsage(),claude:emptyUsage(),sessions:0});
       plus(projects.get(projectKey)[s.provider],usage);
     }
-    const groups=new Map();
-    for(const v of this.codex.values()) { if(!groups.has(v.session)) groups.set(v.session,[]); groups.get(v.session).push(v); }
-    for(const samples of groups.values()) {
-      samples.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
+    const groups=this.repository?this.repository.groups(['codex']):new Set([...this.codex.values()].map(v=>v.session));
+    for(const key of groups) {
+      const samples=this.repository?(function*(repo){for(const[,v]of repo.entries('codex',{group:key,ordered:true}))yield v;})(this.repository):[...this.codex.values()].filter(v=>v.session===key).sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
       let previous=emptyUsage();
       for(const sample of samples) {
         const session=sessions.get(sample.session);

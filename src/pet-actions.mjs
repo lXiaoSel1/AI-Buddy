@@ -2,6 +2,7 @@ import {ACTION_MANIFEST as manifest} from './pet-assets.mjs';
 import {frameSequence,sequenceFrameElapsed} from './frame-sequence.mjs';
 import {PetFeedbackQueue} from './pet-feedback.mjs';
 import {EMOTIONS} from './emotions.mjs';
+import {validPetCharacter} from './pet-characters.mjs';
 export const PET_ATLAS=Object.freeze({src:manifest.src,width:manifest.width,height:manifest.height,columns:manifest.columns,rows:manifest.rows,version:manifest.version});
 export const FRAME_SIZE=Object.freeze({width:manifest.frameWidth,height:manifest.frameHeight});
 const sequenceInfo=clip=>({cycleMs:clip.cycleMs,sourceFrameCount:clip.frames.length,nativeFrameCount:clip.nativeFrameCount??clip.interpolation?.nativeFrameCount??clip.frames.length,description:clip.description??'MiniMax 完整人物动画。'});
@@ -11,8 +12,9 @@ export const PET_ACTIONS=Object.freeze([...originalActions,...emotionActions]);
 export const DIRECTION_FRAMES=Object.freeze(manifest.directionFrames);
 export const DIRECTION_ANGLES=Object.freeze(manifest.directionAnglesDeg);
 const byId=new Map(PET_ACTIONS.map(action=>[action.id,action]));
+const sequenceActions=new WeakMap();
 export const DIRECTION_LABELS=Object.freeze(manifest.directionLabels);
-export function getPetAction(id){const action=byId.get(id);if(!action)throw new Error('未知桌宠动作：'+id);return action;}
+export function getPetAction(id,characterId){const action=byId.get(id);if(!action)throw new Error('未知桌宠动作：'+id);const clip=frameSequence(id,characterId);if(!clip)return action;if(!sequenceActions.has(clip))sequenceActions.set(clip,{...action,...sequenceInfo(clip),fullFrame:true,frames:clip.frames.length,frameDurationsMs:clip.frames.map((frame,index)=>(clip.frames[index+1]?.timestampMs??clip.cycleMs)-frame.timestampMs)});return sequenceActions.get(clip);}
 export function framePose(id,frame){const action=getPetAction(id);if(!Number.isInteger(frame)||frame<0||frame>=action.frames)throw new Error('无效动作帧');if(action.fullFrame)return {row:0,col:0,frame};const index=action.startFrame+frame;return {row:Math.floor(index/PET_ATLAS.columns),col:index%PET_ATLAS.columns,frame};}
 export function frameElapsed(id,frame){const clip=frameSequence(id);if(clip)return sequenceFrameElapsed(clip,frame);const action=getPetAction(id);framePose(id,frame);return action.frameDurationsMs.slice(0,frame).reduce((n,t)=>n+t,0)+.001;}
 export function actionPose(id,elapsed=0,{lookIndex=null,reducedMotion=false}={}){
@@ -39,12 +41,13 @@ export function actionSample(id,elapsed=0,options={}){
 }
 export function validatePetPlayback(request){
   if(!request||typeof request!=='object'||Array.isArray(request))throw new Error('无效动作请求');
-  for(const key of Object.keys(request))if(!['id','lookIndex','durationMs'].includes(key))throw new Error('未知动作选项：'+key);
-  const action=getPetAction(request.id),durationMs=request.durationMs??5000,lookIndex=request.lookIndex??null;
+  for(const key of Object.keys(request))if(!['id','lookIndex','durationMs','characterId'].includes(key))throw new Error('未知动作选项：'+key);
+  if(request.characterId!==undefined&&!validPetCharacter(request.characterId))throw new Error('未知桌宠角色');
+  const action=getPetAction(request.id,request.characterId),durationMs=request.durationMs??5000,lookIndex=request.lookIndex??null;
   const maximum=action.sourceFrameCount?60000:15000;
   if(!Number.isFinite(durationMs)||durationMs<500||durationMs>maximum)throw new Error('演示时长必须在 0.5–'+maximum/1000+' 秒之间');
   if(lookIndex!==null&&(action.id!=='look'||!Number.isInteger(lookIndex)||lookIndex<0||lookIndex>15))throw new Error('无效观看方向');
-  return {id:action.id,durationMs,lookIndex};
+  return {id:action.id,durationMs,lookIndex,...(request.characterId===undefined?{}:{characterId:request.characterId})};
 }
 export const wrapAngle=a=>((a%360)+360)%360;
 export const shortArc=(from,to)=>((to-from+540)%360)-180;
@@ -103,7 +106,7 @@ export class PetActionController{
   gazeWeight(now=this.now()){const b=this.gazeBlend,t=Math.max(0,Math.min(1,(now-b.at)/180)),u=t*t*(3-2*t);return b.from+(b.target-b.from)*u;}
   select(){
     const now=this.now(),manualEnd=this.manual?.expiresAt;if(this.manual&&now>=this.manual.expiresAt)this.manual=null;
-    const feedback=this.feedback.tick({paused:!this.visible||this.dragging||!!this.manual,speed:this.speed,resumedAt:manualEnd!==undefined&&manualEnd<=now?manualEnd:null});this.event=feedback;
+    const feedback=this.feedback.tick({paused:!this.visible||this.dragging||!!this.manual||!!this.holdFeedback,speed:this.speed,resumedAt:manualEnd!==undefined&&manualEnd<=now?manualEnd:null});this.event=feedback;
     let id=this.base,startedAt=this.baseAt,source='monitor',lookIndex=null,expiresAt=null;
     const wantsGaze=!!(this.followCursor&&this.base==='idle'&&this.gaze.initialized&&!this.event&&!this.manual&&!this.dragging),weight=this.gazeWeight(now);
     if(Number(wantsGaze)!==this.gazeBlend.target)this.gazeBlend={from:weight,target:Number(wantsGaze),at:now};

@@ -2,7 +2,7 @@
 
 [简体中文](README.md) · **English**
 
-**Current release: [v1.7.7](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.7)** · Fixes stutter and backward gaze when circling the pet with the mouse; see the [validation record](docs/VALIDATION-1.7.7.md)
+**Current release: [v1.7.10](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.10)** · Choose 30fps Lightweight or 60fps with the same features, 11 characters, 198 independent animations and 80 portrait expressions. The default pet size is 125%; saved custom sizes are preserved. See the [guide](docs/CHARACTER-PETS.md) and [update record](docs/VALIDATION-1.7.10.md).
 
 ## Overview
 
@@ -14,7 +14,7 @@ AI Buddy (AI 酱) is a Windows desktop app. It reads your local AI-tool logs, to
 - **11 model girls**: DeepSeek, Grok, Seed, Kimi, Qwen, MiniMax, GPT, Gemini, Claude, GLM and Hunyuan, each with her own portrait, background, personality and voice, and her own affection and CG gallery.
 - **Appearance and model are separate**: pick who appears on stage and which chat API replies independently. Qwen's look with Claude's API works fine.
 - **More work, closer bonds**: while AI Buddy runs, new work tokens slowly turn into affection for the current character, and a level-up can produce a commemorative CG.
-- **A 60fps transparent desktop pet**: it lives in a corner of the screen, jumps when a task finishes and reacts when one fails.
+- **A 30fps / 60fps transparent desktop pet**: it lives in a corner of the screen, jumps when a task finishes and reacts when one fails.
 - **11 character themes, Chinese and English**: palettes come from each portrait. Keep one fixed or let it follow the current character.
 
 ![AI Buddy Galgame with Claude's close portrait](docs/screenshots/galgame-en.png)
@@ -29,7 +29,7 @@ AI Buddy (AI 酱) is a Windows desktop app. It reads your local AI-tool logs, to
 - Each character keeps her own level, chat history, background, CG gallery, recycle bin and portrait visibility. Switching characters restores her own background.
 - Every turn offers three reply choices, or you can type freely.
 - A CG used as the background hides the portrait by default, so the same character does not appear twice. Right-click a CG in the gallery to move it to the recycle bin; undo and restore are available.
-- The history index persists, so a restart only checks new records. First indexing, replaced logs or index repair take longer.
+- History is stored in local SQLite with cursor reads and database pagination. Upgrades migrate the old index once, keeping original logs and snapshots. First indexing, replaced logs or index repair take longer.
 
 <table>
   <tr>
@@ -58,13 +58,13 @@ The level threshold is `30 + 15 × (Lv - 1)`, that is 30, 45, 60 and so on. Over
 
 While AI Buddy runs, newly observed work tokens go into one shared balance; AI Buddy's own chat and image calls do not count. Every 5,000 tokens add 1 affection point to the current character, up to 3 points per settlement, with the remainder kept for next time. Settlement happens when you open the Galgame and before each message you send. Usage from before the app started is not counted retroactively.
 
-When a log clearly records a finished task, the pet jumps twice and shows a completion bubble. When it records a failure, the pet plays the failure action once and asks you to take a look. Feedback is queued with failures first, then completions, then dialogue; each event is announced once, and events of the same kind within one second are merged. While you chat with DeepSeek in the Galgame, the pet also plays her emotion and shows a short reply in a bubble.
+When a log clearly records a finished task, the pet jumps twice and shows a completion bubble. When it records a failure, the pet plays the failure action once and asks you to take a look. Feedback is queued with failures first, then completions, then dialogue; each event is announced once, and events of the same kind within one second are merged. While you chat with any Galgame character, the current pet responds to the already parsed emotion and displays the original short reply. A fixed pet does not add a speaker-name prefix.
 
 Unlike the upstream plugin, AI Buddy does not pass tool-log text to the Galgame. Characters do not bring up the specific tasks you are working on, and Theater does not gather material automatically.
 
 ## Bundled default art
 
-The release bundles a default portrait and background for each of the 11 characters, 8 DeepSeek expression variants, and 15 transparent action videos plus 201 still frames for the pet. DeepSeek also has an optional seaside study, and 5 earlier backgrounds remain selectable. The previews below are downscaled; full-size images are in the release ZIP.
+The package includes eleven default portraits and backgrounds, DeepSeek's eight existing expressions, eighty new expressions for the other ten characters, 198 separate transparent motion videos and gaze/peak stills. DeepSeek also has an optional seaside study, and five earlier backgrounds remain selectable. The previews below are downscaled; full-size images are in the ZIP.
 
 <table>
   <tr>
@@ -112,7 +112,7 @@ Each character uses her own scene by default:
   </tr>
 </table>
 
-The pet and the Animations page share 15 transparent VP9 WebM videos at about 60fps, encoded quality-first (CRF 18), which cover 18 logical actions. Gaze directions and still emotional peaks use a small set of lossless WebP frames. The videos total about 38.8 MiB, or about 87.2 MiB with the stills.
+The pet and Animations page share transparent VP9 WebM videos at 30fps or 60fps, encoded quality-first (CRF 18). Each of eleven characters has eighteen separate motions. Idle, wave and happiness are independent; reviewing and seriousness also have separate videos. Cursor following uses the full direction bank in WebP Q95 with lossless alpha. Select a character to browse her actions, or open the portable package's “动作审核.html” comparison page directly.
 
 ![Animations](docs/screenshots/actions-en.png)
 
@@ -143,7 +143,7 @@ The artwork has different sources and terms:
 
 - DeepSeek's portrait, expression variants and the deep-sea palace and seaside study backgrounds come from upstream dsh-whale-galgame and belong to its 21 default images under CC BY-NC-SA 4.0.
 - The other ten portraits and backgrounds were generated with an image tool, using character designs from a gallery as references; they are not the gallery files. The design authors are credited, but a general redistribution license for all ten references has not been verified.
-- DeepSeek's motion videos were generated with MiniMax H3 and interpolated with RIFE. They are not claimed as MIT.
+- Character motion videos were generated with MiniMax H3 and interpolated with RIFE. New expressions and chibi designs retain their character-reference provenance; they are not universally claimed as MIT.
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for per-file notes. The Galgame layout, dialogue box and controls are adapted from upstream in [`src/adapted/galgame-client.ts`](src/adapted/galgame-client.ts) and do not depend on an unpublished UI image pack.
 
@@ -151,7 +151,7 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for per-file notes. The Gal
 
 Requires Windows 10/11 x64. AI Buddy is portable and bundles the Electron runtime; Node.js, Python and image tools are not needed.
 
-1. Download `AI-Buddy-1.7.7-Windows-x64.zip` from [Releases](https://github.com/lXiaoSel1/ai-buddy/releases). The release assets give the exact size and SHA-256, including `SHA256SUMS-1.7.7.txt`.
+1. Choose `AI-Buddy-1.7.10-Windows-x64-30fps.zip` (smaller) or `AI-Buddy-1.7.10-Windows-x64-60fps.zip` (higher animation frame rate) from [v1.7.10](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.10). Verify with `SHA256SUMS-1.7.10.txt`. Both editions have the same features, characters, save format and gaze precision.
 2. Extract the whole ZIP to a writable location. You get an `AI-Buddy` folder.
 3. Open the **AI-Buddy** folder and double-click **AI Buddy.exe** in its root. **AI Buddy.vbs / AI Buddy.cmd** are compatibility launchers that start the same program. Since 1.7.3, the root EXE validates the runtime and starts it directly, without the PowerShell `Get-FileHash` command; the 1.7.2 script launcher could exit on machines where that command is unavailable, and the old package only had the EXE under the versioned `runtime` folder.
 
@@ -160,7 +160,9 @@ Notes:
 - Do not run it from inside the ZIP or copy only the executable; keep the folder structure.
 - The executable is not commercially code-signed, so Windows may report an unknown publisher. Check the SHA-256 first if you like.
 - On first launch it looks for common log folders under the current user. No AI tools installed? The companion features still work offline.
-- This repository is private for review; downloads require access. The owner decides when to make it public.
+- The automatic GitHub **Source code** archives are source-only. Choose a release asset containing `Windows-x64` to run the app.
+- This repository and official releases are public. Release packages exclude the developer's saves, connection secrets and local logs.
+- If the 60fps edition is split, download every `.zip.partNN`, the matching `.zip.parts.json`, `Combine-AI-Buddy-1.7.10.ps1` and `Combine-AI-Buddy-1.7.10-60fps.cmd` into one folder, then double-click the `.cmd`. It verifies each part, combines them and verifies the complete ZIP before you extract it. Only the built-in Windows PowerShell is required; no Node.js or Python. Do not extract an individual part.
 
 Folder layout after extraction:
 

@@ -1,6 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {VideoSequenceRenderer} from '../src/video-sequence-renderer.mjs';
+import {VideoSequenceRenderer,directionContentRect} from '../src/video-sequence-renderer.mjs';
+
+test('transparent padding is cropped after resizing and restored at exact canvas coordinates',async t=>{
+ const original=globalThis.createImageBitmap,calls=[],closed=[];
+ globalThis.createImageBitmap=async(image,...args)=>{calls.push(args);const crop=args.length===4;return {src:image.src,width:crop?args[2]:args[0].resizeWidth,height:crop?args[3]:args[0].resizeHeight,close(){closed.push(this.width);}};};
+ t.after(()=>{globalThis.createImageBitmap=original;});
+ const {renderer:r,target,clip,sample}=fixture(t);await r.ready;
+ clip.directionContentBounds=[1,1,3,3];target.width=40;target.height=40;
+ const drawn=[];target.getContext=()=>({clearRect(){},drawImage(...args){drawn.push(args);}});
+ r.draw(target,sample(0));await pause(80);r.draw(target,sample(0));
+ const region=directionContentRect(clip,{width:40,height:40},0);assert.deepEqual(region,{x:8,y:8,width:24,height:24});
+ const image=r.directions.get(r.stillKey(clip,0,{width:40,height:40}));assert.equal(image.bytes,24*24*4);assert.deepEqual(drawn.at(-1).slice(1),[8,8,24,24]);assert(closed.includes(40));assert(calls.some(a=>a.length===4));r.dispose();await pause(30);
+});
 
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function fixture(t,options={}){
@@ -32,6 +44,13 @@ test('An uncached direction keeps the displayed frame and its hit mask until rea
  assert.equal(r.draw(target,sample(100)),false);assert.equal(r.displayedSample(target),old);assert.equal(r.alpha(old,1,1),50);
  await r.still(clip,100);assert.equal(r.draw(target,sample(100)),true);assert.equal(r.displayedSample(target).displayedSequenceFrame,100);assert.equal(r.alpha(r.displayedSample(target),1,1),150);
  r.release(target);await pause(20);
+});
+
+test('A nearest-frame fallback never freezes a known closed-eye frame',async t=>{
+ const {renderer:r,clip}=fixture(t);await r.ready;clip.directionBlinkRanges=[[50,60]];
+ await r.still(clip,60);await r.still(clip,65);
+ const found=r.nearestDirection({motion:1},clip,61,{width:4,height:4});
+ assert.equal(found.index,65);r.dispose();await pause(20);
 });
 
 test('Rapid direction changes cancel obsolete prefetch and release cannot resurrect decoded frames',async t=>{
