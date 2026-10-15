@@ -9,6 +9,8 @@
 
 **当前版本：[v1.8.0](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0)** · 同一套功能提供 30fps 轻量版和 60fps 版，包含 11 位角色、198 套独立动作、80 张表情。桌宠默认 125%，保留已保存的自定义大小。见 [使用说明](docs/CHARACTER-PETS.md) 与 [本次更新](docs/VALIDATION-1.8.0.md)。
 
+安装器约 51 MiB；全角色有效资源下载量约为 30fps **1.48 GiB**、60fps **2.01 GiB**，选装少量角色会更小。完整便携 ZIP 的分卷是另一种离线入口，无需重复下载在线资源包。
+
 ## 简介
 
 AI 在跑任务、你在等结果的间隙，看看今天烧了多少 Token，再和模型娘聊两句吧～(∠・ω< )⌒★
@@ -167,7 +169,7 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
 - 首次启动会自动查找当前用户的常见日志目录。没装任何 AI 工具也能用，陪伴功能可以离线运行。
 - GitHub 自动生成的 **Source code** 是源码包。运行软件请选择带 `Windows-x64` 的发行文件。
 - 本仓库和正式发行包已公开。发行包不包含开发者存档、连接密钥或本机日志。
-- 若 60fps 版提供分卷，请将全部 `.zip.partNN`、对应的 `.zip.parts.json`、`Combine-AI-Buddy-1.8.0.ps1` 和 `Combine-AI-Buddy-1.8.0-60fps.cmd` 下载到同一目录，双击 `.cmd`。脚本会先校验每卷，再合并并校验完整 ZIP；成功后解压运行。只需 Windows 自带 PowerShell，无需 Node.js 或 Python。不要直接解压其中一卷。
+- 1.8.0 两档便携包均采用分卷：30fps 共 2 卷，60fps 共 3 卷。请将所选档的全部 `.zip.partNN`、对应 `.zip.parts.json`、`Combine-AI-Buddy-1.8.0.ps1` 和对应 `30fps.cmd` 或 `60fps.cmd` 合并工具下载到同一目录，双击 `.cmd`。脚本会先校验每卷，再合并并校验完整 ZIP；成功后解压运行。只需 Windows 自带 PowerShell，无需 Node.js 或 Python。不要直接解压其中一卷。
 
 解压后的目录：
 

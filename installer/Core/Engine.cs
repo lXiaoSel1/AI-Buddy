@@ -20,11 +20,14 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
     public DiskEstimate Estimate(InstallOptions options) {
         var packages=Manifests.Select(m,options.Edition,options.Characters,options.InitialCharacter);
         long download=packages.Sum(p=>p.Bytes),expanded=packages.Sum(p=>p.UnpackedBytes);
-        long missing=packages.Where(p=>!File.Exists(Path.Combine(options.Cache,p.Sha256+".zip"))).Sum(p=>p.Bytes);
+        long missing=packages.Where(p=>!File.Exists(Path.Combine(options.Cache,p.Sha256+".zip"))||new FileInfo(Path.Combine(options.Cache,p.Sha256+".zip")).Length!=p.Bytes).Sum(p=>p.Bytes);
         long retained=0;var previous=Existing(options.Root);
         if(previous is not null)foreach(var dir in new[]{previous.Build,previous.Runtime}){var path=SafePaths.Under(options.Root,dir);if(Directory.Exists(path))retained+=Directory.EnumerateFiles(path,"*",SearchOption.AllDirectories).Sum(p=>new FileInfo(p).Length);}
         // Existing files remain until a validated new version has started. The stage becomes the final tree by rename.
-        return new(download,expanded,options.OfflineDirectory is null?missing:0,expanded+64*1024*1024,retained);
+        var rootBytes=packages.Where(p=>p.Mount=="root").Sum(p=>p.UnpackedBytes);
+        var managerBytes=File.Exists(selfExe)?new FileInfo(selfExe).Length:64L*1024*1024;
+        // Root files coexist in staging, the new root and the rollback backup until commit finishes.
+        return new(download,expanded,options.OfflineDirectory is null?missing:0,expanded+2*rootBytes+managerBytes+manifestBytes.LongLength+16L*1024*1024,retained);
     }
     public async Task<Installation> Install(InstallOptions requested,IProgress<InstallProgress>? progress,CancellationToken cancel) {
         Manifests.Parse(manifestBytes,manifestHash);
