@@ -28,3 +28,7 @@ README screenshots are captures of the actual application with an independent te
 [Electron](https://www.electronjs.org/) 44.6.0 and Chromium licenses ship in the runtime folder. React 19.3.0, React DOM, scheduler and esbuild licenses ship in `licenses/`. Windows executable resources are branded with [rcedit](https://github.com/electron/rcedit) 2.0.0. [RIFE](https://github.com/hzwer/ECCV2022-RIFE) was used during motion production; Python, OpenCV, RIFE and video-generation models are not required by the distributed app.
 
 AI Buddy is not an official product of the named AI providers or character artists. Service and model names identify compatibility and appearance choices.
+
+## .NET installer runtime
+The 1.8.0 self-contained installer includes Microsoft .NET and Windows Forms (MIT). See [license](licenses/DOTNET-LICENSE.txt), [third-party notices](licenses/DOTNET-THIRD-PARTY-NOTICES.txt), and [dotnet/runtime](https://github.com/dotnet/runtime). Build SDK: 10.0.402; runtime: 10.0.13.
+

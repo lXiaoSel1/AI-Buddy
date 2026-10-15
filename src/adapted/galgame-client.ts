@@ -367,7 +367,9 @@ function apiTimeoutMs(action: string): number {
 }
 
 async function api(action: string, args?: any): Promise<any> {
-  return window.whale.game(action, args || {})
+  const result = await window.whale.game(action, args || {})
+  if(result?.code === 'CHARACTER_NOT_INSTALLED') await (window as any).whale.resources.manage(result.characterIds)
+  return result
 }
 
 const MODEL_OPTIONS_CACHE_MS = 15_000
@@ -2208,7 +2210,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       characters.map((character: any, index: number) => pickerOption({
         key: String(character.id || index),
         selected: mode === 'manual' && String(selectedId) === String(character.id),
-        title: optionText(character, t("角色 ") + (index + 1)),
+        title: optionText(character, t("角色 ") + (index + 1)) + (s.resources?.characters?.find((c:any)=>c.id===character.id)?.installed===false?' · '+t('待安装'):''),
         subtitle: character.model ? String(character.model) : character.description ? String(character.description) : undefined,
         onChoose: () => updateRuntimeSettings({ characterMode: 'manual', characterId: String(character.id) }),
       })),
@@ -2856,6 +2858,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         !s.modelConfigurationCentral && pickerOverlay(chatPicker()),
       ),
       React.createElement('div', { className: 'whg-spacer' }),
+      s.resourcePendingCharacter ? React.createElement('button',{className:'whg-btn',onClick:()=> (window as any).whale.resources.manage(s.resourcePendingCharacter)},t('补装角色')+' · '+s.resourcePendingCharacter) : null,
       React.createElement('div', { className: 'whg-top-actions' },
         React.createElement('div', { className: 'whg-chip-wrap' },
           React.createElement('button', {

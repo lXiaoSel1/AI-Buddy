@@ -46,7 +46,7 @@ const ActionSprite=memo(function ActionSprite({id,characterId,motionRenderer,pla
 });
 
 export function ActionGallery({settings}){
-  const [characterId,setCharacterId]=useState(()=>settings?.petCharacterId??resolvePetCharacter(settings?.preferences,settings?.themeCharacter));
+  const [characterId,setCharacterId]=useState(()=>settings?.effectivePetCharacter??settings?.petCharacterId??resolvePetCharacter(settings?.preferences,settings?.themeCharacter));
   const [motionRenderer,setRenderer]=useState(null);
   const [playing,setPlaying]=useState(!matchMedia('(prefers-reduced-motion: reduce)').matches);
   const [error,setError]=useState(''),[visible,setVisible]=useState(!document.hidden),[assetsReady,setAssetsReady]=useState(false);
@@ -76,7 +76,7 @@ export function ActionGallery({settings}){
   const actions=PET_ACTIONS.map(a=>a.id==='reviewing'?{...a,label:t("审查中")}:a);
   return h('div',{className:'action-gallery'},
     h('div',{className:'action-heading'},h('h1',null,t("动作展示")),h('div',{className:'action-toolbar'},
-      h('select',{'aria-label':t('桌宠角色'),'data-gallery-character':true,value:characterId,onChange:e=>setCharacterId(e.target.value)},...PET_CHARACTERS.map(c=>h('option',{key:c.id,value:c.id},t(c.name)))),
+      h('select',{'aria-label':t('桌宠角色'),'data-gallery-character':true,value:characterId,onChange:async e=>{const id=e.target.value;if(settings?.resources?.characters.find(c=>c.id===id)?.installed===false){try{await window.whale.resources.manage(id);}catch(error){setError(error.message);}return;}setCharacterId(id);}},...PET_CHARACTERS.map(c=>h('option',{key:c.id,value:c.id},t(c.name)+(settings?.resources?.characters.find(r=>r.id===c.id)?.installed===false?' · '+t('待安装'):'')))),
       h('button',{'data-action':'pause-previews','aria-pressed':!playing,onClick:()=>setPlaying(!playing)},playing?t("暂停"):t("播放")))),
     error&&h('p',{className:'settings-error',role:'alert'},error),
     !assetsReady&&!error&&h('p',{className:'action-loading',role:'status'},t("正在加载…")),

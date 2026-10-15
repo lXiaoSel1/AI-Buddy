@@ -2133,7 +2133,8 @@ export function apply(
       : sel ? String(sel.model) : ''
     s.modelLabel = s.characterModelLabel
     s.modelOnline = !!(manualCharacter || sel)
-    const next = manualCharacter || heroineFor(sel, s.current)
+    const requested = manualCharacter || heroineFor(sel, s.current)
+    const next = ctx.resources?.available(requested) === false ? ctx.resources.fallback(s.current) : requested
     const changed = next !== s.current
     if (changed) {
       s.lastCurrent = s.current
@@ -2266,10 +2267,12 @@ export function apply(
   function sideStoryView(): any {
     const state = sideStoryState()
     const scene = state.scene
+    const missingCharacters = (scene?.cast || []).filter((id:string)=>ctx.resources?.available(id) === false)
     return {
+      missingCharacters,
       cooldownMs: sideStoryCooldownRemaining(),
       available: !!llm,
-      scene: scene
+      scene: scene && !missingCharacters.length
         ? {
           id: scene.id,
           seed: scene.seed,
@@ -2322,6 +2325,8 @@ export function apply(
     return {
       enabled: preferences.enabled !== false,
       current: s.current,
+      resources: ctx.resources?.status(),
+      resourcePendingCharacter: ctx.resources && !ctx.resources.available(preferences.characterMode === 'manual' ? preferences.characterId : heroineFor(currentSelectionSync(),s.current)) ? (preferences.characterMode === 'manual' ? preferences.characterId : heroineFor(currentSelectionSync(),s.current)) : null,
       name: profile.displayName,
       profileCustomized: Object.keys(profileOverridesFor(s.current)).length > 0,
       color: ch.color,
@@ -4565,6 +4570,7 @@ export function apply(
           errors.push('手动角色不能为空')
           nextCharacterMode = 'follow'
         }
+        if(nextCharacterMode === 'manual' && ctx.resources?.available(p.characterId) === false){s.preferences=originalPreferences;return {ok:false,code:'CHARACTER_NOT_INSTALLED',characterIds:[p.characterId],errors:['角色资源待安装 / Character resources need installation'],view:view()}}
         p.characterMode = nextCharacterMode
 
         let nextChatMode = p.chatMode
@@ -4939,6 +4945,8 @@ export function apply(
             return view()
           })
         }
+        const savedMissing = (sideStoryState().scene?.cast || []).filter((id:string)=>ctx.resources?.available(id) === false)
+        if(savedMissing.length)return {...view(),ok:false,code:'CHARACTER_NOT_INSTALLED',characterIds:savedMissing,sideStoryError:'角色资源待安装 / Character resources need installation'}
         if (op === 'advance') {
           return await runSerializedStateTask(async () => {
             const scene = sideStoryState().scene
@@ -4993,6 +5001,8 @@ export function apply(
         if (existing && !existing.settled) return view()
         await refreshActivityCache()
         const cast = pickSideStoryCast()
+        const missingCast = cast.filter((id:string)=>ctx.resources?.available(id) === false)
+        if(missingCast.length)return {...view(),ok:false,code:'CHARACTER_NOT_INSTALLED',characterIds:missingCast,sideStoryError:'角色资源待安装 / Character resources need installation'}
         const subject = pickSideStorySubject(cast)
         const seed = await resolveSideStorySeed(subject, typeof args.topic === 'string' ? args.topic : '')
         if (!seed) return { ...view(), sideStoryError: 'no-seed' }

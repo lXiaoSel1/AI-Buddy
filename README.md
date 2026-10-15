@@ -1,8 +1,13 @@
 # AI 酱 · AI Buddy · 本地 AI 用量监控与多角色 Galgame 陪伴
 
+## 在线安装（推荐）
+
+[下载 Windows x64 安装器](https://github.com/lXiaoSel1/AI-Buddy/releases/download/v1.8.0/AI-Buddy-Setup-1.8.0-win-x64.exe) → 选择 30fps / 60fps 和角色 → 自动下载、校验、安装。支持补装、离线导入和保留存档的回退。[安装与维护说明](docs/INSTALLER.md)。
+
+
 **简体中文** · [English](README.en.md)
 
-**当前版本：[v1.7.10](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.10)** · 同一套功能提供 30fps 轻量版和 60fps 版，包含 11 位角色、198 套独立动作、80 张表情。桌宠默认 125%，保留已保存的自定义大小。见 [使用说明](docs/CHARACTER-PETS.md) 与 [本次更新](docs/VALIDATION-1.7.10.md)。
+**当前版本：[v1.8.0](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0)** · 同一套功能提供 30fps 轻量版和 60fps 版，包含 11 位角色、198 套独立动作、80 张表情。桌宠默认 125%，保留已保存的自定义大小。见 [使用说明](docs/CHARACTER-PETS.md) 与 [本次更新](docs/VALIDATION-1.8.0.md)。
 
 ## 简介
 
@@ -151,7 +156,7 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
 
 需要 Windows 10/11 x64。AI 酱是免安装的便携版，自带 Electron 运行时，不需要另装 Node.js、Python 或绘图工具。
 
-1. 到 [v1.7.10 下载页](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.10) 选择 `AI-Buddy-1.7.10-Windows-x64-30fps.zip`（体积更小）或 `AI-Buddy-1.7.10-Windows-x64-60fps.zip`（动画帧率更高），校验文件为 `SHA256SUMS-1.7.10.txt`。两版功能、角色、存档格式和鼠标跟随精度相同。
+1. 到 [v1.8.0 下载页](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0) 选择 `AI-Buddy-1.8.0-Windows-x64-30fps.zip`（体积更小）或 `AI-Buddy-1.8.0-Windows-x64-60fps.zip`（动画帧率更高），校验文件为 `SHA256SUMS-1.8.0.txt`。两版功能、角色、存档格式和鼠标跟随精度相同。
 2. 把 ZIP 完整解压到一个可写目录，会得到一个 `AI-Buddy` 文件夹。
 3. 进入 **AI-Buddy** 文件夹，双击根目录的 **AI Buddy.exe** 启动。**AI Buddy.vbs / AI Buddy.cmd** 是兼容入口，也会启动同一个程序。从 1.7.3 起，根目录的 EXE 会直接校验运行时并启动，不再依赖 PowerShell 的 `Get-FileHash`；1.7.2 的脚本入口在缺少这条命令的电脑上可能直接退出，旧包只在 `runtime` 版本目录里有 EXE。
 
@@ -162,7 +167,7 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
 - 首次启动会自动查找当前用户的常见日志目录。没装任何 AI 工具也能用，陪伴功能可以离线运行。
 - GitHub 自动生成的 **Source code** 是源码包。运行软件请选择带 `Windows-x64` 的发行文件。
 - 本仓库和正式发行包已公开。发行包不包含开发者存档、连接密钥或本机日志。
-- 若 60fps 版提供分卷，请将全部 `.zip.partNN`、对应的 `.zip.parts.json`、`Combine-AI-Buddy-1.7.10.ps1` 和 `Combine-AI-Buddy-1.7.10-60fps.cmd` 下载到同一目录，双击 `.cmd`。脚本会先校验每卷，再合并并校验完整 ZIP；成功后解压运行。只需 Windows 自带 PowerShell，无需 Node.js 或 Python。不要直接解压其中一卷。
+- 若 60fps 版提供分卷，请将全部 `.zip.partNN`、对应的 `.zip.parts.json`、`Combine-AI-Buddy-1.8.0.ps1` 和 `Combine-AI-Buddy-1.8.0-60fps.cmd` 下载到同一目录，双击 `.cmd`。脚本会先校验每卷，再合并并校验完整 ZIP；成功后解压运行。只需 Windows 自带 PowerShell，无需 Node.js 或 Python。不要直接解压其中一卷。
 
 解压后的目录：
 

@@ -1,6 +1,7 @@
 import { contextBridge,ipcRenderer } from 'electron';
 const modelRequest=(channel,...args)=>ipcRenderer.invoke(channel,...args).catch(error=>{throw new Error(error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/,''));});
 contextBridge.exposeInMainWorld('whale',{
+  resources:{status:()=>modelRequest('resources:status'),manage:id=>modelRequest('resources:manage',id)},
   statisticsExport:args=>modelRequest('statistics:export',args),
   quotas:{action:(action,args)=>modelRequest('quotas:action',action,args),onUpdate:callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on('quotas:update',listener);return()=>ipcRenderer.removeListener('quotas:update',listener);}},
   status:()=>ipcRenderer.invoke('monitor:status'),

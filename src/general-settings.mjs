@@ -14,7 +14,7 @@ export function GeneralSettings({view,onSaved,onPage,onManage}){
   const petId=view.petCharacterId??'deepseek',petPreview=frameSequence('idle',petId)?.staticFrames?.[0]?.src??'./assets/maid-left.webp';
   async function save(patch){
     setBusy(true);setError('');setStatus(t("正在保存…"));
-    try{onSaved(await window.whale.setSettings(patch));setStatus(t("已保存 · 重启后保留"));}
+    try{if(patch.petFixedCharacter&&view.resources?.characters.find(c=>c.id===patch.petFixedCharacter)?.installed===false){await window.whale.resources.manage(patch.petFixedCharacter);setStatus(t('角色资源待安装，保持当前角色'));return;}onSaved(await window.whale.setSettings(patch));setStatus(t("已保存 · 重启后保留"));}
     catch(e){setError(e.message);setStatus(t("保存失败，请重试"));}
     finally{setBusy(false);}
   }
@@ -34,7 +34,8 @@ export function GeneralSettings({view,onSaved,onPage,onManage}){
       h('div',{className:'settings-column'},
       h('section',{className:'card settings-pet'},h('div',{className:'settings-section-heading'},h('div',null,h('h2',null,t("桌宠")),h('p',null,t("当前桌宠")+' · '+t(petCharacterName(petId))),h('p',null,t("按住角色或状态条拖动，点击打开工作面板。"))),h('div',{className:'settings-pet-preview','aria-hidden':true},h('img',{src:petPreview,alt:''}))),
         select('petCharacterMode',t('桌宠角色'),t('跟随 Galgame 最终选中的角色，与聊天 API 分开。'),[['follow',t('跟随 Galgame 角色')],['fixed',t('固定角色')]]),
-        prefs.petCharacterMode==='fixed'&&select('petFixedCharacter',t('固定角色'),t('切换 Galgame 角色时保持此桌宠。'),PET_CHARACTERS.map(c=>[c.id,t(c.name)])),
+        prefs.petCharacterMode==='fixed'&&select('petFixedCharacter',t('固定角色'),t('切换 Galgame 角色时保持此桌宠。'),PET_CHARACTERS.map(c=>[c.id,t(c.name)+(view.resources?.characters.find(r=>r.id===c.id)?.installed===false?' · '+t('待安装'):'')])),
+        h('div',{className:'settings-actions'},h('button',{'data-manage-resources':true,onClick:()=>window.whale.resources.manage().catch(e=>setError(e.message))},t('管理角色资源')),h('span',null,(view.resources?.edition??'')+' · '+(view.resources?.characters.filter(c=>c.installed).length??11)+'/11')),
         toggle('petVisible',t("显示桌宠"),t("隐藏后可从托盘重新显示。")),
         select('petScale',t("桌宠大小"),t("角色、状态条和提示气泡一起缩放。"),[[0.75,t("75% · 小")],[1,t("100% · 默认")],[1.25,t("125% · 大")],[1.5,t("150% · 更大")]]),
         select('animationSpeed',t("动作播放速度"),t("放慢动作循环；鼠标跟随和拖动仍及时响应。"),[[0.25,t("25% · 很慢")],[0.5,t("50% · 慢")],[0.75,t("75% · 默认")],[1,t("100% · 原速")]]),

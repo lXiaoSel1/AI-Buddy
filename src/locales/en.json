@@ -820,5 +820,9 @@
   "固定角色": "Fixed character",
   "跟随 Galgame 最终选中的角色，与聊天 API 分开。": "Follow the character selected in Galgame, independently of the chat API.",
   "切换 Galgame 角色时保持此桌宠。": "Keep this companion when switching Galgame characters.",
-  "角色动作加载失败，请重试。": "Character animation could not load. Please try again."
+  "角色动作加载失败，请重试。": "Character animation could not load. Please try again.",
+  "待安装": "Not installed",
+  "补装角色": "Install character",
+  "管理角色资源": "Manage character resources",
+  "角色资源待安装，保持当前角色": "Character resources are not installed; the current character is unchanged"
 }

@@ -1,8 +1,13 @@
 # AI Buddy · AI 酱 · Local AI usage monitor and multi-character Galgame companion
 
+## Online installer (recommended)
+
+[Download the Windows x64 installer](https://github.com/lXiaoSel1/AI-Buddy/releases/download/v1.8.0/AI-Buddy-Setup-1.8.0-win-x64.exe), choose 30fps / 60fps and characters, then install. Supports resumable downloads, optional characters, offline import and rollback preserving personal data. [Installation guide](docs/INSTALLER.md).
+
+
 [简体中文](README.md) · **English**
 
-**Current release: [v1.7.10](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.10)** · Choose 30fps Lightweight or 60fps with the same features, 11 characters, 198 independent animations and 80 portrait expressions. The default pet size is 125%; saved custom sizes are preserved. See the [guide](docs/CHARACTER-PETS.md) and [update record](docs/VALIDATION-1.7.10.md).
+**Current release: [v1.8.0](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0)** · Choose 30fps Lightweight or 60fps with the same features, 11 characters, 198 independent animations and 80 portrait expressions. The default pet size is 125%; saved custom sizes are preserved. See the [guide](docs/CHARACTER-PETS.md) and [update record](docs/VALIDATION-1.8.0.md).
 
 ## Overview
 
@@ -151,7 +156,7 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for per-file notes. The Gal
 
 Requires Windows 10/11 x64. AI Buddy is portable and bundles the Electron runtime; Node.js, Python and image tools are not needed.
 
-1. Choose `AI-Buddy-1.7.10-Windows-x64-30fps.zip` (smaller) or `AI-Buddy-1.7.10-Windows-x64-60fps.zip` (higher animation frame rate) from [v1.7.10](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.7.10). Verify with `SHA256SUMS-1.7.10.txt`. Both editions have the same features, characters, save format and gaze precision.
+1. Choose `AI-Buddy-1.8.0-Windows-x64-30fps.zip` (smaller) or `AI-Buddy-1.8.0-Windows-x64-60fps.zip` (higher animation frame rate) from [v1.8.0](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0). Verify with `SHA256SUMS-1.8.0.txt`. Both editions have the same features, characters, save format and gaze precision.
 2. Extract the whole ZIP to a writable location. You get an `AI-Buddy` folder.
 3. Open the **AI-Buddy** folder and double-click **AI Buddy.exe** in its root. **AI Buddy.vbs / AI Buddy.cmd** are compatibility launchers that start the same program. Since 1.7.3, the root EXE validates the runtime and starts it directly, without the PowerShell `Get-FileHash` command; the 1.7.2 script launcher could exit on machines where that command is unavailable, and the old package only had the EXE under the versioned `runtime` folder.
 
@@ -162,7 +167,7 @@ Notes:
 - On first launch it looks for common log folders under the current user. No AI tools installed? The companion features still work offline.
 - The automatic GitHub **Source code** archives are source-only. Choose a release asset containing `Windows-x64` to run the app.
 - This repository and official releases are public. Release packages exclude the developer's saves, connection secrets and local logs.
-- If the 60fps edition is split, download every `.zip.partNN`, the matching `.zip.parts.json`, `Combine-AI-Buddy-1.7.10.ps1` and `Combine-AI-Buddy-1.7.10-60fps.cmd` into one folder, then double-click the `.cmd`. It verifies each part, combines them and verifies the complete ZIP before you extract it. Only the built-in Windows PowerShell is required; no Node.js or Python. Do not extract an individual part.
+- If the 60fps edition is split, download every `.zip.partNN`, the matching `.zip.parts.json`, `Combine-AI-Buddy-1.8.0.ps1` and `Combine-AI-Buddy-1.8.0-60fps.cmd` into one folder, then double-click the `.cmd`. It verifies each part, combines them and verifies the complete ZIP before you extract it. Only the built-in Windows PowerShell is required; no Node.js or Python. Do not extract an individual part.
 
 Folder layout after extraction:
 
