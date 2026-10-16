@@ -1,15 +1,14 @@
 # AI 酱 · AI Buddy · 本地 AI 用量监控与多角色 Galgame 陪伴
 
-## 在线安装（推荐）
-
-[下载 Windows x64 安装器](https://github.com/lXiaoSel1/AI-Buddy/releases/download/v1.8.0/AI-Buddy-Setup-1.8.0-win-x64.exe) → 选择 30fps / 60fps 和角色 → 自动下载、校验、安装。支持补装、离线导入和保留存档的回退。[安装与维护说明](docs/INSTALLER.md)。
-
-
 **简体中文** · [English](README.en.md)
 
 **当前版本：[v1.8.0](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0)** · 同一套功能提供 30fps 轻量版和 60fps 版，包含 11 位角色、198 套独立动作、80 张表情。桌宠默认 125%，保留已保存的自定义大小。见 [使用说明](docs/CHARACTER-PETS.md) 与 [本次更新](docs/VALIDATION-1.8.0.md)。
 
-安装器约 51 MiB；全角色有效资源下载量约为 30fps **1.48 GiB**、60fps **2.01 GiB**，选装少量角色会更小。完整便携 ZIP 的分卷是另一种离线入口，无需重复下载在线资源包。
+## 在线安装（推荐）
+
+[下载 Windows x64 安装器](https://github.com/lXiaoSel1/AI-Buddy/releases/download/v1.8.0/AI-Buddy-Setup-1.8.0-win-x64.exe) → 选择 30fps / 60fps 和角色 → 自动下载、校验、安装。支持补装、离线导入和保留存档的回退。[安装与维护说明](docs/INSTALLER.md)。
+
+安装器约 50 MiB；全角色资源下载量约为 30fps **1.48 GiB**、60fps **2.01 GiB**，只选部分角色会更小。也可以下载完整便携 ZIP 的分卷离线安装，见下文[安装](#安装)。
 
 ## 简介
 
@@ -21,7 +20,7 @@ AI 酱（AI Buddy）是一个 Windows 桌面应用。它只读本机 AI 工具�
 - **11 位模型娘**：DeepSeek、Grok、Seed、Kimi、Qwen、MiniMax、GPT、Gemini、Claude、GLM 和混元，各有立绘、背景、性格和语气，好感度与 CG 图鉴分开记录。
 - **外观与内核解耦**：出场的角色和实际回复的聊天 API 分开选。想用 Qwen 的形象、接 Claude 的 API 聊天也可以。
 - **工作越多，羁绊越深**：开着 AI 酱工作，新增的 Token 会慢慢变成当前角色的好感；升级时还能生成一张纪念 CG。
-- **30fps / 60fps 透明桌宠**：常驻桌面一角。任务完成时跳一跳，出错时也会有反应。
+- **11 位角色都有透明桌宠**：每位 18 个动作，可选 30fps 或 60fps，默认跟着 Galgame 里的角色换。任务完成时跳一跳，出错时也会有反应。
 - **11 套角色主题，中英双语**：配色取自各角色立绘，可以固定一套，也可以跟着当前角色换。
 
 ![AI 酱的 Galgame 界面：Claude 近景立绘](docs/screenshots/galgame-zh-CN.png)
@@ -71,7 +70,7 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
 
 ## 内置默认美术
 
-发行包内置 11 位角色的默认立绘和默认背景、DeepSeek 原有的 8 张表情和其余十位新增的 80 张表情，以及 198 段独立透明动作视频和视线方向、情绪峰值静帧。DeepSeek 另有一张海边书房背景可选，5 张旧版背景也保留为可选项。下面是缩小后的预览，原尺寸图片在发行 ZIP 里。
+发行包内置 11 位角色的默认立绘、Q 版桌宠和默认背景，DeepSeek 原有的 8 张表情和其余十位新增的 80 张表情，以及 198 段独立透明动作视频和视线方向、情绪峰值静帧。DeepSeek 另有一张海边书房背景可选，5 张旧版背景也保留为可选项。下面是缩小后的预览，原尺寸图片随软件一起安装。
 
 <table>
   <tr>
@@ -90,6 +89,29 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
     <td align="center"><img src="docs/screenshots/art/portrait-claude.webp" width="160" alt="Claude 默认立绘"><br><strong>Claude</strong></td>
     <td align="center"><img src="docs/screenshots/art/portrait-glm.webp" width="160" alt="GLM 默认立绘"><br><strong>GLM</strong></td>
     <td align="center"><img src="docs/screenshots/art/portrait-hunyuan.webp" width="160" alt="混元默认立绘"><br><strong>混元</strong></td>
+    <td></td>
+  </tr>
+</table>
+
+每位角色也都有自己的 Q 版桌宠，18 个动作一一对应。下面是她们的待机姿势：
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/art/pet-deepseek.webp" width="150" alt="DeepSeek 桌宠"><br><strong>DeepSeek</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-grok.webp" width="150" alt="Grok 桌宠"><br><strong>Grok</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-seed.webp" width="150" alt="Seed 桌宠"><br><strong>Seed</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-kimi.webp" width="150" alt="Kimi 桌宠"><br><strong>Kimi</strong></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/art/pet-qwen.webp" width="150" alt="Qwen 桌宠"><br><strong>Qwen</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-minimax.webp" width="150" alt="MiniMax 桌宠"><br><strong>MiniMax</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-chatgpt.webp" width="150" alt="GPT 桌宠"><br><strong>GPT</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-gemini.webp" width="150" alt="Gemini 桌宠"><br><strong>Gemini</strong></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/art/pet-claude.webp" width="150" alt="Claude 桌宠"><br><strong>Claude</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-glm.webp" width="150" alt="GLM 桌宠"><br><strong>GLM</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-hunyuan.webp" width="150" alt="混元桌宠"><br><strong>混元</strong></td>
     <td></td>
   </tr>
 </table>
@@ -150,45 +172,68 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
 
 - DeepSeek 的立绘、表情差分以及深海宫殿、海边书房背景来自上游 dsh-whale-galgame，属于上游 21 张 CC BY-NC-SA 4.0 默认图片。
 - 其余十套立绘和背景由图像工具以图库中的角色设计为参考生成，不是图库原图。角色设计作者已经署名，但这十套参考的通用再分发授权还没有逐一核实。
+- 十位新角色的 Q 版桌宠以各自立绘为参考、按 DeepSeek 桌宠的比例生成，同样不是图库原图。
 - 各角色动作视频由 MiniMax H3 生成，再用 RIFE 补帧；新增表情及 Q 版形象沿用各自母版的来源说明，不统一声明为 MIT。
 
 逐文件说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。Galgame 的布局、对话框和控件改编自上游，代码在 [`src/adapted/galgame-client.ts`](src/adapted/galgame-client.ts)，不依赖未公开的 UI 图片包。
 
 ## 安装
 
-需要 Windows 10/11 x64。AI 酱是免安装的便携版，自带 Electron 运行时，不需要另装 Node.js、Python 或绘图工具。
+需要 Windows 10/11 x64。可以用在线安装器（推荐），也可以下载完整的便携分卷。两种方式都自带运行环境，不需要另装 Node.js、Python 或绘图工具。两档帧率的功能、角色、存档格式和鼠标跟随精度都相同，只是动作视频帧率不同；全角色装好后约 1.77 GiB（30fps）或 2.30 GiB（60fps）。
 
-1. 到 [v1.8.0 下载页](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0) 选择 `AI-Buddy-1.8.0-Windows-x64-30fps.zip`（体积更小）或 `AI-Buddy-1.8.0-Windows-x64-60fps.zip`（动画帧率更高），校验文件为 `SHA256SUMS-1.8.0.txt`。两版功能、角色、存档格式和鼠标跟随精度相同。
-2. 把 ZIP 完整解压到一个可写目录，会得到一个 `AI-Buddy` 文件夹。
-3. 进入 **AI-Buddy** 文件夹，双击根目录的 **AI Buddy.exe** 启动。**AI Buddy.vbs / AI Buddy.cmd** 是兼容入口，也会启动同一个程序。从 1.7.3 起，根目录的 EXE 会直接校验运行时并启动，不再依赖 PowerShell 的 `Get-FileHash`；1.7.2 的脚本入口在缺少这条命令的电脑上可能直接退出，旧包只在 `runtime` 版本目录里有 EXE。
+### 在线安装器（推荐）
+
+1. 到 [v1.8.0 下载页](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0) 下载 `AI-Buddy-Setup-1.8.0-win-x64.exe`（约 50 MiB）。安装器自带 .NET 运行库。
+2. 选择安装位置（默认 `%LOCALAPPDATA%\Programs\AI Buddy`）、30fps 或 60fps、要装的角色和初始角色。首次默认 30fps、全部角色、初始角色 DeepSeek。
+3. 点击安装。安装器从固定的 v1.8.0 Release 下载资源，逐包、逐文件核对 SHA-256；全角色下载量约为 30fps 1.48 GiB、60fps 2.01 GiB。下载中断了，重新运行同一个安装器、选相同位置就能接着下。
+4. 默认会创建桌面和开始菜单入口。安装器不会开启联网聊天、自动 CG、开机启动或后台自动更新。
+
+### 便携分卷（离线）
+
+1. 在同一个下载页，把所选帧率的全部分卷和合并工具下载到同一个文件夹：
+    - 30fps：`AI-Buddy-1.8.0-Windows-x64-30fps.zip.part01`、`.part02`、`AI-Buddy-1.8.0-Windows-x64-30fps.zip.parts.json`、`Combine-AI-Buddy-1.8.0.ps1` 和 `Combine-AI-Buddy-1.8.0-30fps.cmd`。
+    - 60fps：`AI-Buddy-1.8.0-Windows-x64-60fps.zip.part01` 到 `.part03`、对应的 `.zip.parts.json`、`Combine-AI-Buddy-1.8.0.ps1` 和 `Combine-AI-Buddy-1.8.0-60fps.cmd`。
+2. 双击对应的 `.cmd`。脚本先校验每一卷，再合并并校验完整的 ZIP，只用到 Windows 自带的 PowerShell。不要直接解压其中一卷。
+3. 把合并出的 ZIP 完整解压到一个可写目录，进入 `AI-Buddy` 文件夹，双击根目录的 **AI Buddy.exe**。`AI Buddy.vbs` 和 `AI Buddy.cmd` 是兼容入口，启动的是同一个程序。
+
+另一种离线方式：把 `install-manifest-1.8.0.json` 和需要的资源 ZIP 放进同一个文件夹，在安装器里选择这个“离线资源目录”，同样会逐个校验。1.7.10 的旧离线包仍保留在它原来的 Release 页面。
 
 几点注意：
 
 - 不要在 ZIP 里直接运行，也不要只复制 EXE，目录结构要保留。
-- 程序没有商业代码签名，Windows 可能提示“未知发布者”，可以先用 SHA-256 核对文件。
+- 安装器和程序都没有商业代码签名，Windows 可能提示“未知发布者”，可以先用 `SHA256SUMS-1.8.0.txt` 核对文件。
 - 首次启动会自动查找当前用户的常见日志目录。没装任何 AI 工具也能用，陪伴功能可以离线运行。
-- GitHub 自动生成的 **Source code** 是源码包。运行软件请选择带 `Windows-x64` 的发行文件。
+- GitHub 自动生成的 **Source code** 是源码包，不能直接运行。
 - 本仓库和正式发行包已公开。发行包不包含开发者存档、连接密钥或本机日志。
-- 1.8.0 两档便携包均采用分卷：30fps 共 2 卷，60fps 共 3 卷。请将所选档的全部 `.zip.partNN`、对应 `.zip.parts.json`、`Combine-AI-Buddy-1.8.0.ps1` 和对应 `30fps.cmd` 或 `60fps.cmd` 合并工具下载到同一目录，双击 `.cmd`。脚本会先校验每卷，再合并并校验完整 ZIP；成功后解压运行。只需 Windows 自带 PowerShell，无需 Node.js 或 Python。不要直接解压其中一卷。
 
-解压后的目录：
+安装后的目录：
 
 ~~~text
-AI-Buddy/
+<安装目录>/
 ├─ AI Buddy.exe / AI Buddy.vbs / AI Buddy.cmd / Start-AI-Buddy.ps1   启动入口
-├─ builds/<版本>/                                     应用代码与内置资源
-├─ runtime/AI-Buddy-<版本>/AI Buddy.exe                Electron 运行时
-├─ local/current-build.json                            当前版本指针
-├─ local/data-v003/                                    首次运行后生成的个人存档
-├─ assets/  docs/  licenses/  数据源示例/
+├─ builds/<版本>/                         应用代码、动作和角色资源
+├─ runtime/AI-Buddy-<版本>/               Electron 运行时
+├─ maintenance/1.8.0/AI Buddy Setup.exe   维护工具（在线安装才有）
+├─ local/current-build.json               当前版本指针
+├─ local/installation.json                已装的帧率和角色（在线安装才有）
+├─ local/data-v003/                       首次运行后生成的个人存档
+├─ assets/  docs/  licenses/
 └─ README.md  LICENSE.md  THIRD_PARTY_NOTICES.md
 ~~~
 
 ### 更新与卸载
 
-更新：先在托盘菜单选 **退出**，再把新版 ZIP 解压到同一位置，让新的 `AI-Buddy` 文件夹覆盖旧的，然后照常启动。个人存档在 `local/data-v003`，发行包里不带这个目录，覆盖解压不会动它；不要用空目录替换它。稳妥起见，更新前可以先备份一份 `local/data-v003`。
+在线安装：
 
-卸载：退出后删除整个 `AI-Buddy` 文件夹即可。设置、存档和界面缓存都在这个文件夹的 `local/` 里，AI 酱不会添加开机启动项。如果还想留着聊天记录和 CG，删除前先备份 `local/data-v003`。
+- 补装角色、修复文件、切换帧率：在通用设置点 **管理角色资源** 打开维护工具，或者重新运行同版本的安装器。没装的角色在界面上标为“待安装”，确认后才会打开安装器，不会自动下载。
+- 升级：运行新版本的安装器。它会先等聊天和 CG 收尾、正常关闭 AI 酱，并保留上一版程序和个人存档。
+- 回退：在安装器里点 **回退上一版**，只恢复程序和启动指针，不会用旧存档覆盖新进度。
+- 卸载：在安装器里点 **卸载…**。默认保留个人数据，也可以勾选同时删除默认目录中的个人数据（不可恢复）；自定义的数据目录不会被删除。下载缓存 `%LOCALAPPDATA%\AI Buddy\InstallerCache` 卸载后保留，用于续传和修复，不需要时可以手动删除。
+
+便携版：
+
+- 更新：先在托盘菜单选 **退出**，再把新版解压到同一位置覆盖旧文件，然后照常启动。个人存档在 `local/data-v003`，发行包里不带这个目录，覆盖解压不会动它；更新前可以先备份一份。
+- 卸载：退出后删除整个文件夹即可，AI 酱不会添加开机启动项。想保留聊天记录和 CG，删除前先备份 `local/data-v003`。
 
 ### 从源码运行
 
@@ -231,7 +276,8 @@ npm start
 | 语言 | 首次启动跟随系统语言，可选简体中文 / English |
 | 主题模式 | 固定使用 DeepSeek 主题，可改为跟随当前角色 |
 | 显示桌宠 | 开 |
-| 桌宠大小 | 100%，可选 75%–150% |
+| 桌宠角色 | 跟随 Galgame 角色；改成固定角色时默认 DeepSeek |
+| 桌宠大小 | 125%，可选 75%–150% |
 | 动作播放速度 | 75%，可选 25%–100% |
 | 保持置顶、透明区域点击穿透、跟随鼠标方向、显示状态条、任务提示气泡 | 开 |
 | 备用检查间隔 | 1 秒（文件有变化时会立即读取） |
@@ -276,6 +322,8 @@ Galgame 顶栏的 **角色来源** 决定谁出场，**实际对话** 决定由�
 ![多角色小剧场：Grok、Kimi 与 Gemini 同台](docs/screenshots/side-story-zh-CN.png)
 
 ### 内置桌宠
+
+11 位角色都有自己的桌宠。通用设置里的 **桌宠角色** 默认是 **跟随 Galgame 角色**：你在 Galgame 里换成谁，桌面上就换成谁；也可以改成 **固定角色**，一直留着同一位。没装资源的角色标为“待安装”，选中时会提示补装，不会自动下载。和任何一位角色聊天时，桌宠都会做出对应的情绪动作。
 
 桌宠默认显示在桌面上。按住角色或状态条可以拖动，透明区域可以点击穿透。通用设置里可以调整大小、动作速度、是否置顶、是否跟随鼠标方向，以及是否显示状态条（显示运行中的会话数）。拖动期间收到的任务反馈会排队，松手后再播放。隐藏桌宠后，可以从托盘菜单重新显示。
 
@@ -329,9 +377,12 @@ AI 酱能找到桌面端运行缓存、Microsoft Store 安装、常见独立安�
 - `settings.json`：偏好设置和桌宠位置。
 - `model-connections.json`、`cg-connections.json`、`quota-connections-v1.json`：已保存的连接，密钥经 safeStorage 加密。
 - `token-sources.json`、`token-index-v1.json`、`token-events-v1.jsonl` 等：数据源配置和用量索引，里面有本机项目路径。
+- `usage-ledger-v2/`：请求历史（本机 SQLite），按需分页读取。
 - `galgame/storages/dsh-whale-galgame/global.json`：Galgame 存档，包括各角色的好感、设定、聊天记录、自定义立绘、CG 图鉴和背景。
 - `cg-assets/`：生成的 CG 及缩略图。
 - `chromium/`、`crash-reports/`：界面缓存和崩溃报告。
+
+在线安装的下载缓存放在 `%LOCALAPPDATA%\AI Buddy\InstallerCache`，里面只有安装包，不含个人数据。
 
 会发到外部的内容：
 
@@ -356,7 +407,7 @@ npm start
 
 开发需要 Windows x64 和 Node.js 24，依赖 Electron 44.6.0、React 19.3.0 和 esbuild 0.28.2。`npm test` 只覆盖纯逻辑，使用临时数据和模拟服务，不需要付费请求，也不代表原生集成或视觉验收。`npm run check:version` 检查 `package.json`、`package-lock.json`、两份 README 里的下载文件名和当前版本链接，以及构建说明的版本是否一致，源码构建会先跑这项检查。构建产物在 `builds/development`。
 
-不要提交 `local/`、生成的 `builds/`、密钥、个人 CG 或日志。发布前的版本同步步骤见 [构建说明](docs/BUILD.md)。验收记录：[1.7.7](docs/VALIDATION-1.7.7.md)（鼠标绕桌宠转圈的卡顿与视线反转）、[1.7.6](docs/VALIDATION-1.7.6.md)（鼠标位置采样与方向帧预取）、[1.7.5](docs/VALIDATION-1.7.5.md)（火山方舟绘图与 Galgame 立绘参考）、[1.7.3](docs/VALIDATION-1.7.3.md)（便携启动与本机 Codex 检测；包括模拟桌面端独立安装、真实本机桌面端 / Store 程序的登录和图像能力读取，未在用户笔记本上远程验证，也未重新生成 CG）、[1.7.2](docs/VALIDATION-1.7.2.md)（近景立绘与发布检查）、[1.7.1](docs/VALIDATION-1.7.1.md)（WebM 动画与主题）、[1.7.0](docs/VALIDATION-1.7.0.md)。
+不要提交 `local/`、生成的 `builds/`、密钥、个人 CG 或日志。发布前的版本同步步骤见 [构建说明](docs/BUILD.md)。验收记录：[1.8.0](docs/VALIDATION-1.8.0.md)（在线安装器与按角色选装）、[1.7.10](docs/VALIDATION-1.7.10.md)（30fps / 60fps 双版本，请求历史改存 SQLite）、[1.7.9](docs/VALIDATION-1.7.9.md)（统一各角色显示大小，修复动作切换和点击检测）、[1.7.8](docs/VALIDATION-1.7.8.md)（11 位角色的独立桌宠和表情）、[1.7.7](docs/VALIDATION-1.7.7.md)（鼠标绕桌宠转圈的卡顿与视线反转）、[1.7.6](docs/VALIDATION-1.7.6.md)（鼠标位置采样与方向帧预取）、[1.7.5](docs/VALIDATION-1.7.5.md)（火山方舟绘图与 Galgame 立绘参考）、[1.7.3](docs/VALIDATION-1.7.3.md)（便携启动与本机 Codex 检测；包括模拟桌面端独立安装、真实本机桌面端 / Store 程序的登录和图像能力读取，未在用户笔记本上远程验证，也未重新生成 CG）、[1.7.2](docs/VALIDATION-1.7.2.md)（近景立绘与发布检查）、[1.7.1](docs/VALIDATION-1.7.1.md)（WebM 动画与主题）、[1.7.0](docs/VALIDATION-1.7.0.md)。
 
 ## 许可与致谢
 

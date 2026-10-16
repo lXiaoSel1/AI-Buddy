@@ -1,13 +1,14 @@
 # AI Buddy · AI 酱 · Local AI usage monitor and multi-character Galgame companion
 
+[简体中文](README.md) · **English**
+
+**Current release: [v1.8.0](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0)** · Choose 30fps Lightweight or 60fps with the same features, 11 characters, 198 independent animations and 80 portrait expressions. The default pet size is 125%; saved custom sizes are preserved. See the [guide](docs/CHARACTER-PETS.md) and [update record](docs/VALIDATION-1.8.0.md).
+
 ## Online installer (recommended)
 
 [Download the Windows x64 installer](https://github.com/lXiaoSel1/AI-Buddy/releases/download/v1.8.0/AI-Buddy-Setup-1.8.0-win-x64.exe), choose 30fps / 60fps and characters, then install. Supports resumable downloads, optional characters, offline import and rollback preserving personal data. [Installation guide](docs/INSTALLER.md).
 
-
-[简体中文](README.md) · **English**
-
-**Current release: [v1.8.0](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0)** · Choose 30fps Lightweight or 60fps with the same features, 11 characters, 198 independent animations and 80 portrait expressions. The default pet size is 125%; saved custom sizes are preserved. See the [guide](docs/CHARACTER-PETS.md) and [update record](docs/VALIDATION-1.8.0.md).
+The installer is about 50 MiB. Downloading every character takes about **1.48 GiB** at 30fps or **2.01 GiB** at 60fps; picking fewer characters downloads less. The complete portable ZIP, split into parts, is the offline alternative; see [Install](#install).
 
 ## Overview
 
@@ -19,7 +20,7 @@ AI Buddy (AI 酱) is a Windows desktop app. It reads your local AI-tool logs, to
 - **11 model girls**: DeepSeek, Grok, Seed, Kimi, Qwen, MiniMax, GPT, Gemini, Claude, GLM and Hunyuan, each with her own portrait, background, personality and voice, and her own affection and CG gallery.
 - **Appearance and model are separate**: pick who appears on stage and which chat API replies independently. Qwen's look with Claude's API works fine.
 - **More work, closer bonds**: while AI Buddy runs, new work tokens slowly turn into affection for the current character, and a level-up can produce a commemorative CG.
-- **A 30fps / 60fps transparent desktop pet**: it lives in a corner of the screen, jumps when a task finishes and reacts when one fails.
+- **A transparent desktop pet for each of the 11 characters**: 18 actions each, at 30fps or 60fps, switching with the Galgame character by default. She jumps when a task finishes and reacts when one fails.
 - **11 character themes, Chinese and English**: palettes come from each portrait. Keep one fixed or let it follow the current character.
 
 ![AI Buddy Galgame with Claude's close portrait](docs/screenshots/galgame-en.png)
@@ -69,7 +70,7 @@ Unlike the upstream plugin, AI Buddy does not pass tool-log text to the Galgame.
 
 ## Bundled default art
 
-The package includes eleven default portraits and backgrounds, DeepSeek's eight existing expressions, eighty new expressions for the other ten characters, 198 separate transparent motion videos and gaze/peak stills. DeepSeek also has an optional seaside study, and five earlier backgrounds remain selectable. The previews below are downscaled; full-size images are in the ZIP.
+The package includes eleven default portraits, chibi desktop pets and backgrounds, DeepSeek's eight existing expressions, eighty new expressions for the other ten characters, 198 separate transparent motion videos and gaze/peak stills. DeepSeek also has an optional seaside study, and five earlier backgrounds remain selectable. The previews below are downscaled; full-size images are installed with the app.
 
 <table>
   <tr>
@@ -88,6 +89,29 @@ The package includes eleven default portraits and backgrounds, DeepSeek's eight 
     <td align="center"><img src="docs/screenshots/art/portrait-claude.webp" width="160" alt="Claude default portrait"><br><strong>Claude</strong></td>
     <td align="center"><img src="docs/screenshots/art/portrait-glm.webp" width="160" alt="GLM default portrait"><br><strong>GLM</strong></td>
     <td align="center"><img src="docs/screenshots/art/portrait-hunyuan.webp" width="160" alt="Hunyuan default portrait"><br><strong>Hunyuan</strong></td>
+    <td></td>
+  </tr>
+</table>
+
+Each character also has her own chibi desktop pet with the same 18 actions. Here they are idling:
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/art/pet-deepseek.webp" width="150" alt="DeepSeek desktop pet"><br><strong>DeepSeek</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-grok.webp" width="150" alt="Grok desktop pet"><br><strong>Grok</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-seed.webp" width="150" alt="Seed desktop pet"><br><strong>Seed</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-kimi.webp" width="150" alt="Kimi desktop pet"><br><strong>Kimi</strong></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/art/pet-qwen.webp" width="150" alt="Qwen desktop pet"><br><strong>Qwen</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-minimax.webp" width="150" alt="MiniMax desktop pet"><br><strong>MiniMax</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-chatgpt.webp" width="150" alt="GPT desktop pet"><br><strong>GPT</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-gemini.webp" width="150" alt="Gemini desktop pet"><br><strong>Gemini</strong></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/art/pet-claude.webp" width="150" alt="Claude desktop pet"><br><strong>Claude</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-glm.webp" width="150" alt="GLM desktop pet"><br><strong>GLM</strong></td>
+    <td align="center"><img src="docs/screenshots/art/pet-hunyuan.webp" width="150" alt="Hunyuan desktop pet"><br><strong>Hunyuan</strong></td>
     <td></td>
   </tr>
 </table>
@@ -148,45 +172,68 @@ The artwork has different sources and terms:
 
 - DeepSeek's portrait, expression variants and the deep-sea palace and seaside study backgrounds come from upstream dsh-whale-galgame and belong to its 21 default images under CC BY-NC-SA 4.0.
 - The other ten portraits and backgrounds were generated with an image tool, using character designs from a gallery as references; they are not the gallery files. The design authors are credited, but a general redistribution license for all ten references has not been verified.
+- The chibi desktop pets of the ten new characters were generated from their portraits at the DeepSeek pet's proportions; they are not gallery files either.
 - Character motion videos were generated with MiniMax H3 and interpolated with RIFE. New expressions and chibi designs retain their character-reference provenance; they are not universally claimed as MIT.
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for per-file notes. The Galgame layout, dialogue box and controls are adapted from upstream in [`src/adapted/galgame-client.ts`](src/adapted/galgame-client.ts) and do not depend on an unpublished UI image pack.
 
 ## Install
 
-Requires Windows 10/11 x64. AI Buddy is portable and bundles the Electron runtime; Node.js, Python and image tools are not needed.
+Requires Windows 10/11 x64. Use the online installer (recommended) or download the complete portable split archive. Both bundle their runtime; Node.js, Python and image tools are not needed. The two frame-rate editions have the same features, characters, save format and gaze precision; only the motion videos differ. With every character installed they take about 1.77 GiB (30fps) or 2.30 GiB (60fps).
 
-1. Choose `AI-Buddy-1.8.0-Windows-x64-30fps.zip` (smaller) or `AI-Buddy-1.8.0-Windows-x64-60fps.zip` (higher animation frame rate) from [v1.8.0](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0). Verify with `SHA256SUMS-1.8.0.txt`. Both editions have the same features, characters, save format and gaze precision.
-2. Extract the whole ZIP to a writable location. You get an `AI-Buddy` folder.
-3. Open the **AI-Buddy** folder and double-click **AI Buddy.exe** in its root. **AI Buddy.vbs / AI Buddy.cmd** are compatibility launchers that start the same program. Since 1.7.3, the root EXE validates the runtime and starts it directly, without the PowerShell `Get-FileHash` command; the 1.7.2 script launcher could exit on machines where that command is unavailable, and the old package only had the EXE under the versioned `runtime` folder.
+### Online installer (recommended)
+
+1. Download `AI-Buddy-Setup-1.8.0-win-x64.exe` (about 50 MiB) from the [v1.8.0 page](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0). It includes its own .NET runtime.
+2. Choose the installation folder (default `%LOCALAPPDATA%\Programs\AI Buddy`), 30fps or 60fps, the characters to install and the initial character. The first-run defaults are 30fps, every character and DeepSeek.
+3. Click install. The installer downloads from the pinned v1.8.0 release and checks SHA-256 for every package and file; every character takes about 1.48 GiB at 30fps or 2.01 GiB at 60fps. If a download is interrupted, run the same installer again with the same folder to resume.
+4. Desktop and Start menu shortcuts are created by default. The installer does not turn on online chat, automatic CG, startup registration or background updates.
+
+### Portable split archive (offline)
+
+1. From the same page, download every part of your edition plus the merge tools into one folder:
+    - 30fps: `AI-Buddy-1.8.0-Windows-x64-30fps.zip.part01`, `.part02`, `AI-Buddy-1.8.0-Windows-x64-30fps.zip.parts.json`, `Combine-AI-Buddy-1.8.0.ps1` and `Combine-AI-Buddy-1.8.0-30fps.cmd`.
+    - 60fps: `AI-Buddy-1.8.0-Windows-x64-60fps.zip.part01` to `.part03`, the matching `.zip.parts.json`, `Combine-AI-Buddy-1.8.0.ps1` and `Combine-AI-Buddy-1.8.0-60fps.cmd`.
+2. Double-click the matching `.cmd`. It verifies each part, combines them and verifies the complete ZIP, using only the built-in Windows PowerShell. Do not extract an individual part.
+3. Extract the combined ZIP to a writable location, open the `AI-Buddy` folder and double-click **AI Buddy.exe** in its root. `AI Buddy.vbs` and `AI Buddy.cmd` are compatibility launchers that start the same program.
+
+Another offline route: put `install-manifest-1.8.0.json` and the resource ZIPs you need in one folder and select it as the installer's "Offline resource folder"; the same checks apply. The 1.7.10 offline packages remain on their original release page.
 
 Notes:
 
 - Do not run it from inside the ZIP or copy only the executable; keep the folder structure.
-- The executable is not commercially code-signed, so Windows may report an unknown publisher. Check the SHA-256 first if you like.
+- Neither the installer nor the app is commercially code-signed, so Windows may report an unknown publisher. Check `SHA256SUMS-1.8.0.txt` first if you like.
 - On first launch it looks for common log folders under the current user. No AI tools installed? The companion features still work offline.
-- The automatic GitHub **Source code** archives are source-only. Choose a release asset containing `Windows-x64` to run the app.
+- The automatic GitHub **Source code** archives are source-only and do not run.
 - This repository and official releases are public. Release packages exclude the developer's saves, connection secrets and local logs.
-- Both 1.8.0 portable editions are split: 2 parts for 30fps and 3 for 60fps. Download every `.zip.partNN` for your edition, its `.zip.parts.json`, `Combine-AI-Buddy-1.8.0.ps1` and the matching `30fps.cmd` or `60fps.cmd` merge tool into one folder, then double-click the `.cmd`. It verifies each part, combines them and verifies the complete ZIP before you extract it. Only the built-in Windows PowerShell is required; no Node.js or Python. Do not extract an individual part.
 
-Folder layout after extraction:
+Folder layout after installation:
 
 ~~~text
-AI-Buddy/
+<install folder>/
 ├─ AI Buddy.exe / AI Buddy.vbs / AI Buddy.cmd / Start-AI-Buddy.ps1   launchers
-├─ builds/<version>/                                  app code and bundled resources
-├─ runtime/AI-Buddy-<version>/AI Buddy.exe             Electron runtime
-├─ local/current-build.json                            current version pointer
-├─ local/data-v003/                                    your data, created on first run
-├─ assets/  docs/  licenses/  数据源示例/ (source examples)
+├─ builds/<version>/                       app code, motions and character resources
+├─ runtime/AI-Buddy-<version>/             Electron runtime
+├─ maintenance/1.8.0/AI Buddy Setup.exe    maintenance tool (online install only)
+├─ local/current-build.json                current version pointer
+├─ local/installation.json                 installed edition and characters (online install only)
+├─ local/data-v003/                        your data, created on first run
+├─ assets/  docs/  licenses/
 └─ README.md  LICENSE.md  THIRD_PARTY_NOTICES.md
 ~~~
 
 ### Update and remove
 
-To update, choose **Quit** from the tray menu, extract the new ZIP to the same place so the new `AI-Buddy` folder overwrites the old one, and start it as usual. Your data lives in `local/data-v003`; the release package does not contain that folder, so extracting over it leaves it alone. Never replace it with an empty folder. Backing up `local/data-v003` before updating is a good habit.
+Online install:
 
-To remove, quit and delete the whole `AI-Buddy` folder. Settings, data and interface caches all live under its `local/` folder, and AI Buddy adds no startup entry. Back up `local/data-v003` first if you want to keep chats and CGs.
+- Add characters, repair files or switch frame rate: click **Manage character resources** in General settings to open the maintenance tool, or run the same-version installer again. Characters that are not installed show as "Not installed" and open the installer only after you confirm; nothing downloads automatically.
+- Upgrade: run the newer installer. It waits for chat and CG to finish, closes AI Buddy normally, and keeps the previous program version and your personal data.
+- Roll back: click **Roll back** in the installer. It restores the program and launch pointer only and never overwrites newer progress with old saves.
+- Remove: click **Uninstall…** in the installer. Personal data is kept by default; you can also tick deleting the default personal data (irreversible). A custom data folder is never deleted. The download cache `%LOCALAPPDATA%\AI Buddy\InstallerCache` stays for resuming and repair; delete it manually if you no longer need it.
+
+Portable:
+
+- Update: choose **Quit** from the tray menu, extract the new version over the same location and start it as usual. Your data lives in `local/data-v003`; the release package does not contain that folder, so extracting over it leaves it alone. Back it up before updating if you like.
+- Remove: quit and delete the whole folder; AI Buddy adds no startup entry. Back up `local/data-v003` first if you want to keep chats and CGs.
 
 ### Run from source
 
@@ -229,7 +276,8 @@ Portable editors, WSL or other users' folders must be added manually: in **Token
 | Language | Follows the system language on first launch; Simplified Chinese or English |
 | Theme mode | Fixed DeepSeek theme; can follow the current character instead |
 | Show desktop pet | On |
-| Pet size | 100%, from 75% to 150% |
+| Companion character | Follow Galgame character; DeepSeek when switched to a fixed character |
+| Pet size | 125%, from 75% to 150% |
 | Animation speed | 75%, from 25% to 100% |
 | Always on top, Click through transparent areas, Follow the pointer, Show status bar, Task feedback bubbles | On |
 | Fallback polling interval | 1 second (file changes are read immediately) |
@@ -274,6 +322,8 @@ A scene has at most 10 lines. Each choice adds or removes 1 affection point for 
 ![Theater with Grok, Kimi and Gemini on stage](docs/screenshots/side-story-en.png)
 
 ### Built-in desktop pet
+
+Each of the 11 characters has her own pet. **Companion character** in General settings defaults to **Follow Galgame character**: whoever you switch to in the Galgame appears on the desktop. Choose **Fixed character** to keep the same one. Characters without installed resources show as "Not installed" and prompt you to add them; nothing downloads automatically. Chatting with any character makes the pet play the matching emotion.
 
 The pet is shown on the desktop by default. Drag her by the character or the status bar, and click through the transparent areas. General settings adjusts size, animation speed, always-on-top, pointer following and the status bar, which shows the number of running sessions. Task feedback that arrives while you drag is queued and plays after you let go. A hidden pet can be shown again from the tray menu.
 
@@ -327,9 +377,12 @@ All runtime data lives under `local/data-v003` in the app folder. Treat it as pr
 - `settings.json`: preferences and the pet position.
 - `model-connections.json`, `cg-connections.json`, `quota-connections-v1.json`: saved connections, with keys encrypted by safeStorage.
 - `token-sources.json`, `token-index-v1.json`, `token-events-v1.jsonl` and related files: source settings and the usage index, which contain local project paths.
+- `usage-ledger-v2/`: request history (local SQLite), read page by page on demand.
 - `galgame/storages/dsh-whale-galgame/global.json`: the Galgame save, including each character's affection, profile, chat history, custom portrait, CG gallery and background.
 - `cg-assets/`: generated CGs and thumbnails.
 - `chromium/`, `crash-reports/`: interface cache and crash reports.
+
+The online installer's download cache is `%LOCALAPPDATA%\AI Buddy\InstallerCache`; it holds only install packages, no personal data.
 
 What leaves your machine:
 
@@ -354,7 +407,7 @@ npm start
 
 Development needs Windows x64 and Node.js 24, with Electron 44.6.0, React 19.3.0 and esbuild 0.28.2. `npm test` covers pure logic with temporary data and mock services; it needs no paid requests and does not certify native integration or visual acceptance. `npm run check:version` checks that `package.json`, `package-lock.json`, the download names and current-release links in both READMEs, and the build guide agree; the source build runs the same check first. Build output goes to `builds/development`.
 
-Do not commit `local/`, generated `builds/`, keys, personal CGs or logs. Release version steps are in [BUILD.md](docs/BUILD.md). Validation records: [1.7.7](docs/VALIDATION-1.7.7.md) (stutter and backward gaze when circling the pet), [1.7.6](docs/VALIDATION-1.7.6.md) (pointer sampling and direction-frame prefetch), [1.7.5](docs/VALIDATION-1.7.5.md) (Volcengine Ark drawing and Galgame portrait references), [1.7.3](docs/VALIDATION-1.7.3.md) (portable startup and local Codex discovery; covers simulated desktop-only installations and real local desktop/Store sign-in and image-capability checks, with no remote test on the user's laptop and no new CG generated), [1.7.2](docs/VALIDATION-1.7.2.md) (close portraits and release checks), [1.7.1](docs/VALIDATION-1.7.1.md) (WebM animations and themes), [1.7.0](docs/VALIDATION-1.7.0.md).
+Do not commit `local/`, generated `builds/`, keys, personal CGs or logs. Release version steps are in [BUILD.md](docs/BUILD.md). Validation records: [1.8.0](docs/VALIDATION-1.8.0.md) (online installer and per-character packages), [1.7.10](docs/VALIDATION-1.7.10.md) (30fps / 60fps editions, request history in SQLite), [1.7.9](docs/VALIDATION-1.7.9.md) (consistent character size, action switching and hit-test fixes), [1.7.8](docs/VALIDATION-1.7.8.md) (separate desktop pets and expressions for all 11 characters), [1.7.7](docs/VALIDATION-1.7.7.md) (stutter and backward gaze when circling the pet), [1.7.6](docs/VALIDATION-1.7.6.md) (pointer sampling and direction-frame prefetch), [1.7.5](docs/VALIDATION-1.7.5.md) (Volcengine Ark drawing and Galgame portrait references), [1.7.3](docs/VALIDATION-1.7.3.md) (portable startup and local Codex discovery; covers simulated desktop-only installations and real local desktop/Store sign-in and image-capability checks, with no remote test on the user's laptop and no new CG generated), [1.7.2](docs/VALIDATION-1.7.2.md) (close portraits and release checks), [1.7.1](docs/VALIDATION-1.7.1.md) (WebM animations and themes), [1.7.0](docs/VALIDATION-1.7.0.md).
 
 ## License and credits
 
