@@ -360,7 +360,7 @@ Galgame 顶栏的 **角色来源** 决定谁出场，**实际对话** 决定由�
 
 ### 使用本机 Codex 绘图
 
-“Codex 内置图像”用的是这台电脑上 Codex 的绘图能力。AI 酱不自带 Codex，也不带登录账号。请先在这台电脑上安装、打开并登录 Codex 桌面端，再到 **API 配置 → CG 绘图 → Codex** 点 **测试连接（不出图）**；测试连接不会生成图片。
+“Codex 内置图像”用的是这台电脑上 Codex 的绘图能力。AI 酱不自带 Codex，也不带登录账号。请先在这台电脑上安装、打开并登录 Codex 桌面端，再到 **API 配置 → CG 绘图 → Codex** 点 **测试连接（不出图）**。
 
 AI 酱能找到桌面端运行缓存、Microsoft Store 安装、常见独立安装和 npm 原生程序里的 Codex，不需要为了路径检测单独安装 npm CLI。自定义安装可以把环境变量 `AI_BUDDY_CODEX_PATH` 设为原生 `codex.exe` 的完整路径，重启 AI 酱后再试。自定义 Codex 配置目录遵循 `CODEX_HOME`；缺少可选的 `config.toml` 不再导致启动失败。
 
@@ -435,4 +435,4 @@ DeepSeek、Grok、Seed、Kimi、Qwen、MiniMax、GPT、Gemini、Claude、GLM、�
 - [dsh-deepseek-girl-pet](https://github.com/f0909172434/dsh-deepseek-girl-pet) - DSH 鲸鱼娘桌宠
 - [gal-view](https://github.com/Ayase34/gal-view) - DSH Web GUI 会话页的 Galgame 风格对话视图 + 场景元素可视化编辑器
 - [dsh-galgame](https://github.com/Lanxing6480/dsh-galgame) - Galgame 模式界面插件
-- [AutoWebUI](https://github.com/FynnReinhardt/deepseek-harness-galgame) - DSH galgame模式
+- [AutoWebUI](https://github.com/FynnReinhardt/deepseek-harness-galgame) - DSH galgame 模式
