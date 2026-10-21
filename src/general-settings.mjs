@@ -18,6 +18,16 @@ export function OutputLimitSetting({value,disabled,onSave}){
     h('span',{className:'output-limit-controls'},h('select',{'data-setting':'maxOutputTokensMode','aria-label':t('模型最多输出（tokens）'),value:auto?'auto':'custom',disabled,onChange:e=>{if(e.target.value==='auto')onSave({maxOutputTokens:'auto'});else onSave({maxOutputTokens:parseOutputLimit(draft)??OUTPUT_LIMIT.fallback});}},h('option',{value:'auto'},t('自动')),h('option',{value:'custom'},t('自定义'))),
       !auto&&h('input',{'data-setting':'maxOutputTokens',type:'number',inputMode:'numeric',min:OUTPUT_LIMIT.min,max:OUTPUT_LIMIT.max,step:256,value:draft,disabled,'aria-label':t('最多输出的 token 数'),'aria-invalid':invalid||undefined,'aria-describedby':invalid?'output-limit-error':undefined,onChange:e=>{setDraft(e.target.value);setInvalid(false);},onBlur:commit,onKeyDown:e=>{if(e.key==='Enter'){e.preventDefault();commit();}}})));
 }
+// Copyright and license summary. The source address is plain text: the panel blocks external navigation.
+export function AboutCard(){
+  return h('section',{className:'card settings-about','data-settings-about':true},h('h2',null,t('关于')),
+    h('dl',{className:'settings-about-list'},
+      h('dt',null,t('版权')),h('dd',null,'© 2026 lXiaoSel1'),
+      h('dt',null,t('许可')),h('dd',null,t('Apache-2.0 + Commons Clause —— 可以免费使用、修改和转发，未经授权不得售卖')),
+      h('dt',null,t('源码')),h('dd',null,h('code',null,'github.com/lXiaoSel1/AI-Buddy'))),
+    h('p',{className:'settings-note'},t('许可全文和第三方声明见安装目录里的 LICENSE.md 和 THIRD_PARTY_NOTICES.md。')),
+    h('p',{className:'settings-note'},t('本软件按“原样”提供，不提供任何担保。')));
+}
 export function GeneralSettings({view,onSaved,onPage,onManage}){
   const [busy,setBusy]=useState(false),[status,setStatus]=useState(t("修改会立即生效并自动保存")),[error,setError]=useState('');
   if(!view)return h('p',null,t("正在读取本地设置…"));
@@ -75,5 +85,6 @@ export function GeneralSettings({view,onSaved,onPage,onManage}){
           h('p',{className:'settings-note'},t("本地监控不调用模型，在线额度在 API 配置中单独启用。")),
           h('div',{className:'settings-actions'},h('button',{'data-action':'refresh',disabled:busy,onClick:()=>{void action('refresh');}},t("立即刷新日志")))))),
     h('details',{className:'card settings-install'},h('summary',null,t("本地安装"),h('span',null,t("AI 酱 ")+view.version)),h('dl',{className:'settings-info'},h('dt',null,t("版本")),h('dd',null,view.version+' · '+view.build),h('dt',null,t("数据目录")),h('dd',null,view.dataRoot),h('dt',null,t("日志来源")),h('dd',null,...view.logRoots.map((r,i)=>h('div',{key:i},h('span',null,providerName(r.provider)),h('code',null,r.path))))),h('p',{className:'settings-note'},t("设置保存为版本快照；旧版本、用量与陪伴历史继续保留。"))),
+    h(AboutCard),
     h('div',{className:'settings-footer'},h('span',null,t("恢复默认仅调整这些选项，保留位置、用量和 Galgame 存档。")),h('button',{'data-action':'defaults',disabled:busy,onClick:()=>{void action('defaults');}},t("恢复默认设置"))));
 }

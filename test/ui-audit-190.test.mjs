@@ -5,7 +5,7 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {CompanionManager,LifeRecoveryBanner,modelErrorText,modelOutputTruncated,groupStatusText,GROUP_BUSY_STATUSES} from '../src/companion-ui.mjs';
 import {MissingCgDialog,MemorySyncNotice} from '../src/companion-life-ui.mjs';
 import {companionImage,isStoredImage,isMediaImage} from '../src/companion-image.mjs';
-import {OutputLimitSetting,parseOutputLimit,OUTPUT_LIMIT} from '../src/general-settings.mjs';
+import {OutputLimitSetting,parseOutputLimit,OUTPUT_LIMIT,AboutCard} from '../src/general-settings.mjs';
 import {SafeModePage} from '../src/safe-mode-page.mjs';
 import {setLocale} from '../src/i18n.mjs';
 
@@ -81,6 +81,16 @@ test('B3/B5: queued and life-save waits count as busy and say what is happening'
 test('B7: a memory sync error shows a one-line notice',()=>{
  assert.match(render(MemorySyncNotice,{error:{at:1,message:'记录未标日期'}}),/日终整理已暂停[\s\S]*记录未标日期/);
  assert.equal(render(MemorySyncNotice,{error:null}),'');
+});
+
+test('About shows copyright, license, source as plain text, notices and the warranty line',()=>{
+ const html=render(AboutCard,{});
+ assert.ok(html.includes('© 2026 lXiaoSel1'));assert.ok(html.includes('Apache-2.0 + Commons Clause —— 可以免费使用、修改和转发，未经授权不得售卖'));
+ assert.ok(html.includes('github.com/lXiaoSel1/AI-Buddy'));assert.doesNotMatch(html,/<a[\s>]/,'no link: the panel blocks external navigation');
+ assert.ok(html.includes('LICENSE.md 和 THIRD_PARTY_NOTICES.md'));assert.ok(html.includes('按“原样”提供，不提供任何担保'));
+ setLocale('en');
+ try{const en=render(AboutCard,{});assert.match(en,/>About</);assert.match(en,/not for sale without permission/);assert.match(en,/without warranty of any kind/);assert.match(en,/© 2026 lXiaoSel1/);}
+ finally{setLocale('zh-CN');}
 });
 
 test('new strings have English text',()=>{

@@ -1342,5 +1342,12 @@
   "查看工作概览": "View overview",
   "陪伴功能已停用（安全模式），桌宠和用量监控照常可用。": "Companion features are off (safe mode). The desktop pet and usage monitoring keep working.",
   "查看原因": "See why",
-  "鼠标移到卡片上或用 Tab 选中时播放预览。": "Previews play when you point at a card or select it with Tab."
+  "鼠标移到卡片上或用 Tab 选中时播放预览。": "Previews play when you point at a card or select it with Tab.",
+  "关于": "About",
+  "版权": "Copyright",
+  "许可": "License",
+  "源码": "Source code",
+  "Apache-2.0 + Commons Clause —— 可以免费使用、修改和转发，未经授权不得售卖": "Apache-2.0 + Commons Clause — free to use, modify and share; not for sale without permission",
+  "许可全文和第三方声明见安装目录里的 LICENSE.md 和 THIRD_PARTY_NOTICES.md。": "The full license and third-party notices are in LICENSE.md and THIRD_PARTY_NOTICES.md in the installation folder.",
+  "本软件按“原样”提供，不提供任何担保。": "This software is provided “as is”, without warranty of any kind."
 }
