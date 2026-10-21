@@ -1,4 +1,4 @@
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import {groupPhotoPlanner,validatePhotoPlanner} from './group-cg-planner.mjs';
 import {defaultContextCapacity} from './context-capacity.mjs';
 import {AsyncLocalStorage} from 'node:async_hooks';
@@ -8,6 +8,8 @@ import {assertCardEditAllowed,enableGrowth,applyGrowthCandidates,growthView} fro
 import {createCompanionLives} from './companion-life-service.mjs';
 import {replyEmotion,groupDialogueText} from './group-stage.mjs';
 import {resolveMentionIds} from './group-mentions.mjs';
+import {planLegacyDedupe,applyLegacyDedupe} from './legacy-dedupe.mjs';
+import {createMaintenance} from './maintenance.mjs';
 import {DEFAULT_PERSONA_ID,CARD_FIELDS,migrateCharacterTalkativeness,effectiveCard,makeCard,relationshipFor,conversationFor,progress,visibleGroupMessages,groupSpeakers,safeMessage,validTime,companionId,restoreCompanionExport,companionText as text,companionCopy as copy} from './companion-store.mjs';
 
 const affectionDelta=value=>/喜欢|爱|可爱|想你|陪你|晚安|早安|抱抱|亲亲|约会|月圆/.test(value)?1:/讨厌|烦|滚|走开|无聊|再见/.test(value)?-1:0;
@@ -53,7 +55,24 @@ export async function createCompanionService({store,engine,provider,dataRoot=nul
    // Import the last legacy options once; later starts must not revive consumed
    // choices or expose another Persona's options through the character store.
    if(!state.migrated&&(row.personaId??DEFAULT_PERSONA_ID)===DEFAULT_PERSONA_ID&&Array.isArray(row.choices))conversationFor(state,row.id,DEFAULT_PERSONA_ID).choices=copy(row.choices);
-   if((!state.lifeMigration||state.lives?.[row.id]?.legacyImportEnabled===true)&&row.history?.length){const conv=conversationFor(state,row.id,DEFAULT_PERSONA_ID),used=new Set();for(const [index,m]of row.history.entries()){if(m.personaId||m.conversationId||!m.text)continue;const role=m.who==='user'?'user':m.who==='heroine'?'assistant':'narrator';const found=conv.messages.findIndex((entry,position)=>!used.has(position)&&(m.id?entry.id===m.id:entry.legacy&&entry.role===role&&entry.text===m.text));if(found>=0){used.add(found);continue;}conv.messages.push({id:m.id||'legacy-'+row.id+'-'+index+'-'+randomUUID(),role,text:m.text,characterId:row.id,personaId:DEFAULT_PERSONA_ID,createdAt:validTime(Number(m.at))?Number(m.at):0,legacy:true,revisions:[],emotion:m.emotion,emotionSource:m.emotionSource});used.add(conv.messages.length-1);}}}
+   // Each legacy line is imported once. A per-character ledger counts the copies of
+   // every line already imported, so a new or archived conversation, or a deleted
+   // copy, never brings a line back; lines the engine adds later (greetings,
+   // time-away notes) still arrive once.
+   if((!state.lifeMigration||state.lives?.[row.id]?.legacyImportEnabled===true)&&row.history?.length){
+    const conv=conversationFor(state,row.id,DEFAULT_PERSONA_ID),lineKey=(id,role,text)=>createHash('sha256').update(id?'id:'+id:'line:'+role+'\u0000'+text).digest('hex').slice(0,24);
+    const lines=[...row.history.entries()].filter(([,m])=>!m.personaId&&!m.conversationId&&m.text).map(([index,m])=>{const role=m.who==='user'?'user':m.who==='heroine'?'assistant':'narrator';return {index,m,role,key:lineKey(m.id,role,m.text)};});
+    state.legacyImports??={};
+    if(!state.legacyImports[row.id]){
+     // First start with a ledger: copies already in any of the character's
+     // conversations, archived ones too, count as imported (at most once per line).
+     const present=new Map(),wanted=new Map(),add=(map,k)=>map.set(k,(map.get(k)??0)+1);
+     for(const c of Object.values(state.conversations))if(c.characterId===row.id)for(const entry of c.messages){if(entry.id)add(present,lineKey(entry.id));if(entry.legacy)add(present,lineKey(null,entry.role,entry.text));}
+     for(const line of lines)add(wanted,line.key);
+     state.legacyImports[row.id]=Object.fromEntries([...wanted].map(([k,n])=>[k,Math.min(n,present.get(k)??0)]).filter(([,n])=>n>0));
+    }
+    const ledger=state.legacyImports[row.id],seen=new Map();
+    for(const {index,m,role,key}of lines){const n=(seen.get(key)??0)+1;seen.set(key,n);if(n<=(ledger[key]??0))continue;ledger[key]=n;conv.messages.push({id:m.id||'legacy-'+row.id+'-'+index+'-'+randomUUID(),role,text:m.text,characterId:row.id,personaId:DEFAULT_PERSONA_ID,createdAt:validTime(Number(m.at))?Number(m.at):0,legacy:true,revisions:[],emotion:m.emotion,emotionSource:m.emotionSource});}}}
   migrateCharacterTalkativeness(state,now());
   if(!state.migrated){state.activeCharacterId=legacy.current;state.migrated=true;}
   if(!Object.hasOwn(state.personas,state.defaultPersonaId??''))state.defaultPersonaId=DEFAULT_PERSONA_ID;
@@ -330,7 +349,11 @@ export async function createCompanionService({store,engine,provider,dataRoot=nul
   }
   return reply();
  }
- return {action,chat,touch,decorate,context,followCharacter,viewState,progress:(characterId,personaId)=>progress(relationshipFor(copy(store.state),characterId,personaId)),hasCharacter:id=>typeof id==='string'&&Object.hasOwn(store.state.cards,id)&&!store.state.cards[id].draft,history(characterId,personaId){return lifeConversations(store.state,characterId,personaId).flatMap(row=>row.messages).sort((a,b)=>a.createdAt-b.createdAt);},async reflectLegacy(action,args,result){
+ const ACTIVE_GROUP=['queued','generating','waiting-model','waiting-life-save'];
+ const maintenance=createMaintenance({store,dataRoot,audit,now,
+  isBusy:()=>privateBusy.size>0||[...runtime.values()].some(live=>ACTIVE_GROUP.includes(live.status))||!!store.state.lifeTransaction||Object.keys(store.state.cards).some(id=>lives?.isBusy(id)),
+  tasks:{'legacy-dedupe':{plan:planLegacyDedupe,apply:applyLegacyDedupe,summary:({task,planId,total,characters,removals})=>({task,planId,total,characters,conversations:removals.map(row=>({conversationId:row.conversationId,characterId:row.characterId,count:row.messages.length}))})}}});
+ return {action,chat,touch,decorate,context,followCharacter,viewState,maintenance,progress:(characterId,personaId)=>progress(relationshipFor(copy(store.state),characterId,personaId)),hasCharacter:id=>typeof id==='string'&&Object.hasOwn(store.state.cards,id)&&!store.state.cards[id].draft,history(characterId,personaId){return lifeConversations(store.state,characterId,personaId).flatMap(row=>row.messages).sort((a,b)=>a.createdAt-b.createdAt);},async reflectLegacy(action,args,result){
   if(action==='settings-set'&&result?.ok!==false&&(args.characterId||args.settings?.characterId)){const id=args.characterId??args.settings.characterId;if(store.state.cards[id])await select(id,store.state.activePersonaId,null,result.characterMode??args.characterMode??args.settings?.characterMode??'manual');}
   if(action==='view'&&result.characterMode==='follow'&&store.state.cards[result.current]&&store.state.activeCharacterId!==result.current)await store.mutate(state=>{state.activeCharacterId=result.current;state.activeConversationId=conversationFor(state).id;});
   if(action==='profile-set'||action==='profile-reset'){const id=args.characterId??store.state.activeCharacterId;await store.mutate(state=>{const card=state.cards[id];if(!card)return;if(action==='profile-reset'){card.fields={};card.name=card.defaultName??card.name;card.nameCustomized=false;}else for(const [legacy,value]of Object.entries(args.overrides??{})){if(legacy==='displayName'){if(value)card.name=value;continue;}const field=({persona:'personality',tone:'tone',address:'address',greeting:'greeting',visual:'visual'})[legacy];if(field)card.fields[field]=value?{mode:'custom',value}:{mode:'inherit'};}card.revision++;});await syncCard(store.state.cards[id]);}

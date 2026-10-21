@@ -75,6 +75,7 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
       bus.emit('session/event',{header:{id:'local-work-ledger',cwd:root}},{type:'assistant/message',seq:++sequence,time:Date.now(),data:{id:'local-ledger-'+Date.now()+'-'+sequence,usage:{inputTokens:amount,outputTokens:0}}});
     },
     flushWorkLedger:()=>engine.flushWorkLedger(),
+    maintenance:companion.maintenance,
     close(){if(ledgerTimer)try{writeLedger();}catch{}void engine.flushWorkLedger().catch(()=>{});companion.close();for(const fn of effects)fn();},
   };
 }

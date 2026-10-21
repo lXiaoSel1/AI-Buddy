@@ -354,6 +354,9 @@ const control=createLocalControlServer({
       else if(request.command==='installation-status')result={version:appVersion,build,dataRoot,processId:process.pid,ready:(!!game||!!startupFailure)&&petAssetsReady,safeMode:!!startupFailure,startupFailure,busy:!!(gameRequests||provider?.status().busy||cg?.status().busy),resources:resources.status()};
       else if(request.command==='installation-quit'){if(request.expectedBuild!==build)result={ok:false,error:'Different installation'};else if(gameRequests||provider?.status().busy||cg?.status().busy)result={ok:false,busy:true};else{result={ok:true};setTimeout(()=>{void shutdown();},100);}}
       else if(request.command==='resources-status')result=resources.status(true);
+      // One-time repairs: plan is read-only; apply needs the planId the user confirmed.
+      else if(request.command==='maintenance-plan'){if(!game)throw Error('陪伴功能未启动');result=game.maintenance.plan(request.task);}
+      else if(request.command==='maintenance-apply'){if(!game)throw Error('陪伴功能未启动');if(gameRequests||provider?.status().busy||cg?.status().busy)result={ok:false,busy:true};else result=await game.maintenance.apply(request.task,request.planId);}
       else if(request.command==='validation-window'&&arg('validation')==='1'){
         if(!panel||panel.isDestroyed())openPanel('galgame',false);
         if(![900,1180,1600,1920].includes(request.width))throw Error('Validation width outside test matrix');
