@@ -2,10 +2,11 @@ import React,{useEffect,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
 import {stageCapacity,stageWindow,stableMembers} from './group-stage.mjs';
 import {t} from './i18n.mjs';
+import {isStoredImage} from './companion-image.mjs';
 const h=React.createElement;
 const name=c=>c?.name||c?.id||'';
 const image=(c,resolve)=>Object.hasOwn(c?.effective||{},'sprite')?c.effective.sprite||null:resolve(c?.sprite)||null;
-const thumb=c=>c?.avatar?.startsWith('data:')?c.avatar:c?.builtin?`assets/group-thumbnails/${c.id}.png`:null;
+const thumb=c=>isStoredImage(c?.avatar)?c.avatar:c?.builtin?`assets/group-thumbnails/${c.id}.png`:null;
 const button=(label,onClick,props={})=>h('button',{type:'button',className:'whg-btn',onClick,...props},t(label));
 export const GroupStageCSS=`
 .whg-stage.buddy-stage{display:block;inset:126px 20px 300px!important;pointer-events:none;overflow:visible;min-height:145px;container-type:inline-size}
