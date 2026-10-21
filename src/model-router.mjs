@@ -43,7 +43,7 @@ export class ModelRouter{
     }
     return profile;
   }
-  unlocked(id){if(this.activeTurns&&(id===undefined||id===this.executingProfile||this.turnQueue?.some(turn=>turn.profile.id===id)||id===this.state.activeId))throw Error('请等待当前对话完成后再修改或切换连接');}
+  unlocked(id){if(this.activeTurns&&(id===undefined||[...(this.lanes?.values()??[])].some(lane=>lane.executing===id||lane.queue.some(turn=>turn.profile.id===id))||id===this.state.activeId))throw Error('请等待当前对话完成后再修改或切换连接');}
   async save(draft){return this.mutate(state=>{const previous=draft.id?state.profiles.find(profile=>profile.id===draft.id):null;if(draft.id&&!previous)throw Error('连接不存在');this.unlocked(previous?.id??'new');const profile=this.validateDraft(draft,previous);const index=state.profiles.findIndex(value=>value.id===profile.id);if(index<0)state.profiles.push(profile);else state.profiles[index]=profile;return this.publicProfile(profile);});}
   async remove(id){return this.mutate(state=>{this.unlocked(id);if(!state.profiles.some(profile=>profile.id===id))throw Error('连接不存在');state.profiles=state.profiles.filter(profile=>profile.id!==id);if(state.activeId===id){state.activeId=null;this.setEnabled(false);}});}
   materialize(profile){if(!profile||!profile.model)throw Error('请先选择连接并填写模型 ID');if(profile.kind==='codex')return {...profile};let key='';if(profile.keyCiphertext){try{key=this.crypto.decryptString(Buffer.from(profile.keyCiphertext,'base64'));}catch{throw Error('API Key 无法解密，请重新填写');}}if(!key&&!(profile.kind==='custom'&&localEndpoint(profile.baseUrl)))throw Error('请先填写 API Key');return {...profile,key};}
@@ -52,7 +52,7 @@ export class ModelRouter{
   listProviders(){return this.state.profiles.map(profile=>({id:profile.id,name:profile.name}));}
   listModels(id){const profile=this.state.profiles.find(value=>value.id===id);if(!profile)return [];return [...(profile.models??[]),...(profile.model&&!(profile.models??[]).some(value=>value.id===profile.model)?[{id:profile.model,name:profile.model}]:[])];}
   resolveModelInfo(providerId,modelId){const profile=this.selected()?.id===providerId?this.selected():this.state.profiles.find(p=>p.id===providerId),effort=profileEffort(profile);return {reasoning:{efforts:effort?[{id:effort}]:[]}};}
-  async runTurn(fn,signal){await this.ready;return this.scheduleTurn(this.selected(),fn,0,signal);}
+  async runTurn(fn,signal,{background=false}={}){await this.ready;return this.scheduleTurn(this.selected(),fn,background?1:0,signal);}
   resolveConnection(binding){const dedicated=binding?.enabled===true,profile=dedicated?this.state?.profiles.find(p=>p.id===binding.connectionId):this.selected();const error=!profile?(dedicated?'角色关联的聊天连接已删除，请重新选择':'尚未选择全局聊天连接'):profile.enabled===false?'角色关联的聊天连接已停用':profile.capabilities?.chat===false?'该连接不支持聊天':!profile.model?'聊天连接未设置模型':null;return {mode:dedicated?'character':'global',connectionId:profile?.id??binding?.connectionId??null,name:profile?.name??'',model:profile?.model??'',error};}
   resolveContextCapacity(binding){
     const profile=binding?.enabled?this.state?.profiles.find(p=>p.id===binding.connectionId):this.selected(),model=profile?.models?.find(m=>m.id===profile.model||m.model===profile.model);
@@ -61,18 +61,22 @@ export class ModelRouter{
     if(Number.isSafeInteger(declared)&&declared>=2048&&declared<=2000000)return {tokens:declared,source:'model-catalog',verified:true};
     return defaultContextCapacity();
   }
-  async runProfile(id,fn,signal){await this.ready;const profile=this.state.profiles.find(p=>p.id===id);if(!profile)throw Error('角色关联的聊天连接不存在');const route=this.resolveConnection({enabled:true,connectionId:id});if(route.error)throw Error(route.error);return this.scheduleTurn(profile,fn,0,signal);}
+  async runProfile(id,fn,signal,{background=false}={}){await this.ready;const profile=this.state.profiles.find(p=>p.id===id);if(!profile)throw Error('角色关联的聊天连接不存在');const route=this.resolveConnection({enabled:true,connectionId:id});if(route.error)throw Error(route.error);return this.scheduleTurn(profile,fn,background?1:0,signal);}
   async runBackground(profile,fn,signal){await this.ready;return this.scheduleTurn(profile,fn,1,signal);}
+  // One serial lane per connection: a background job on one provider never
+  // delays chat on another, and chat (priority 0) runs before queued
+  // background work (priority 1) on the same connection.
   scheduleTurn(profile,fn,priority,signal){
     const captured=structuredClone(profile);this.materialize(captured);
-    this.turnQueue??=[];this.activeTurns++;this.onChange(this.view());
-    return new Promise((resolve,reject)=>{this.turnQueue.push({profile:captured,fn,priority,signal,resolve,reject});queueMicrotask(()=>this.pumpTurns());});
+    this.lanes??=new Map();const key=captured.id??captured.kind??'default';let lane=this.lanes.get(key);if(!lane)this.lanes.set(key,lane={queue:[],running:false,executing:null});
+    this.activeTurns++;this.onChange(this.view());
+    return new Promise((resolve,reject)=>{lane.queue.push({profile:captured,fn,priority,signal,resolve,reject});queueMicrotask(()=>this.pumpTurns(lane));});
   }
-  async pumpTurns(){
-    if(this.runningTurn)return;this.runningTurn=true;
-    try{while(this.turnQueue?.length){this.turnQueue.sort((a,b)=>a.priority-b.priority);const turn=this.turnQueue.shift();this.executingProfile=turn.profile.id;
-      try{if(turn.signal?.aborted)throw Error('主题准备已取消');turn.resolve(await this.context.run({profile:this.materialize(turn.profile)},turn.fn));}catch(error){turn.reject(error);}finally{this.executingProfile=null;this.activeTurns--;this.onChange(this.view());}
-    }}finally{this.runningTurn=false;}
+  async pumpTurns(lane){
+    if(lane.running)return;lane.running=true;
+    try{while(lane.queue.length){lane.queue.sort((a,b)=>a.priority-b.priority);const turn=lane.queue.shift();lane.executing=turn.profile.id;
+      try{if(turn.signal?.aborted)throw Error('主题准备已取消');turn.resolve(await this.context.run({profile:this.materialize(turn.profile)},turn.fn));}catch(error){turn.reject(error);}finally{lane.executing=null;this.activeTurns--;this.onChange(this.view());}
+    }}finally{lane.running=false;}
   }
   requestController(signal,timeout=this.timeoutMs){const controller=new AbortController(),abort=()=>controller.abort();if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});const timer=setTimeout(abort,timeout);this.controllers.add(controller);return {controller,dispose:()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);this.controllers.delete(controller);}};}
   async *stream(options){

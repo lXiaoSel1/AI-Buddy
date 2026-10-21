@@ -86,8 +86,19 @@ export async function createCompanionLives({store,dataRoot,imageCodec,call,syncC
  // A replay that keeps failing must not stop the app: the transaction stays,
  // only this character is locked, and the user chooses how to resolve it.
  if(store.state.lifeTransaction){const transaction=copy(store.state.lifeTransaction);try{await complete(transaction);}catch(error){await markReplayFailed(transaction,error);}}
+ const isBusy=id=>switching.has(id)||store.state.lifeTransaction?.characterId===id;
  return {
-  busy,save,
+  busy,save,isBusy,
+  // Wait for a save or switch of this character to finish. A failed replay
+  // needs the user's decision, so it is reported instead of waited for.
+  async whenIdle(id,timeoutMs=60000){
+   const until=Date.now()+timeoutMs;
+   while(isBusy(id)){
+    if(store.state.lifeTransaction?.replayFailed&&store.state.lifeTransaction.characterId===id)busy(id);
+    if(Date.now()>=until)throw Error('人生存档保存超过 60 秒仍未完成，请稍后重发');
+    await new Promise(resolve=>setTimeout(resolve,200));
+   }
+  },
   recovery(){const t=store.state.lifeTransaction;if(!t?.replayFailed)return null;return {characterId:t.characterId,kind:t.kind,at:t.replayFailed.at,error:t.replayFailed.error,attempts:t.replayFailed.attempts,archiveAvailable:!!(t.archiveId&&store.state.lifeArchives[t.archiveId]&&repository.has(t.archiveId))};},
   async recover(characterId,action){
    const transaction=copy(store.state.lifeTransaction??null);if(!transaction?.replayFailed||transaction.characterId!==characterId)throw Error('该角色没有待处理的人生切换');
