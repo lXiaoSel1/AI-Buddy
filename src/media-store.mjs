@@ -1,6 +1,7 @@
-import {createHash,randomUUID} from 'node:crypto';
-import {mkdirSync,existsSync,readFileSync,writeFileSync,openSync,fsyncSync,closeSync,renameSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {mkdirSync,existsSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {writeAtomic} from './atomic-write.mjs';
 
 // B4: pictures of the companion store live in galgame/media/<sha256>.<ext>, and the
 // state keeps the short URL buddy-media://<sha256>.<ext>. The panel loads that URL
@@ -25,6 +26,7 @@ export function* imageSlots(state){
  }
  for(const [id,persona]of Object.entries(state?.personas??{}))if(persona&&typeof persona==='object')yield [persona,'avatar','personas/'+id+'/avatar'];
  for(const [id,group]of Object.entries(state?.groups??{}))if(group&&typeof group==='object')yield [group,'background','groups/'+id+'/background'];
+ for(const [id,archive]of Object.entries(state?.lifeArchives??{}))if(archive&&typeof archive==='object')yield [archive,'avatar','lifeArchives/'+id+'/avatar'];
 }
 
 export function createMediaStore(dataRoot){
@@ -35,8 +37,7 @@ export function createMediaStore(dataRoot){
   if(!canonicalImage(value))return null;const match=CANONICAL.exec(value),bytes=Buffer.from(match[2],'base64');
   const name=createHash('sha256').update(bytes).digest('hex')+'.'+match[1],target=file(name);
   if(!existsSync(target)){
-   mkdirSync(directory,{recursive:true});const temp=target+'.'+randomUUID()+'.partial';
-   writeFileSync(temp,bytes,{flag:'wx'});const fd=openSync(temp,'r+');try{fsyncSync(fd);}finally{closeSync(fd);}renameSync(temp,target);
+   mkdirSync(directory,{recursive:true});writeAtomic(target,bytes);
   }
   return MEDIA_SCHEME+'://'+name;
  }
@@ -56,8 +57,10 @@ export function resolveCardImages(media,effective){
  return value;
 }
 // A copy of a store-shaped object (state or export) with every media URL resolved.
+// A missing picture file is an error, so an export never drops it silently.
 export function resolveStateImages(media,value){
- if(!media)return value;const copy=structuredClone(value);
- for(const [holder,key]of imageSlots(copy))if(isMediaUrl(holder[key]))holder[key]=media.resolve(holder[key]);
+ if(!media)return value;const copy=structuredClone(value),missing=[];
+ for(const [holder,key,path]of imageSlots(copy))if(isMediaUrl(holder[key])){const data=media.resolve(holder[key],{missing:null});if(data===null)missing.push(path);else holder[key]=data;}
+ if(missing.length)throw Object.assign(Error('有 '+missing.length+' 张图片文件已丢失，导出没有完成：'+missing.slice(0,5).join('，')),{code:'MEDIA_FILE_MISSING',missing});
  return copy;
 }

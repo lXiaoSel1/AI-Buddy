@@ -14,7 +14,7 @@ import { Worker } from 'node:worker_threads';
 import { join,resolve,dirname } from 'node:path';
 import { readFileSync,mkdirSync,appendFileSync,writeFileSync,existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { MEDIA_SCHEME,MEDIA_MIME,mediaName } from './media-store.mjs';
+import { MEDIA_SCHEME,MEDIA_MIME,mediaName,createMediaStore } from './media-store.mjs';
 import { createSnapshotStorage,readJson } from './storage.mjs';
 import { createGalgame } from './galgame-host.mjs';
 import { CodexProvider } from './codex-provider.mjs';
@@ -446,7 +446,7 @@ app.whenReady().then(async()=>{
   // Read-only, by content name only: 64 hex characters and an image extension.
   netSession.protocol.handle(MEDIA_SCHEME,async request=>{
     const name=mediaName(request.url);if(!name)return new Response(null,{status:404});
-    try{return new Response(await readFile(join(dataRoot,'galgame','media',name)),{headers:{'content-type':MEDIA_MIME[name.split('.').at(-1)],'cache-control':'max-age=31536000, immutable','access-control-allow-origin':'*'}});}
+    try{return new Response(await readFile(createMediaStore(dataRoot).file(name)),{headers:{'content-type':MEDIA_MIME[name.split('.').at(-1)],'cache-control':'max-age=31536000, immutable','access-control-allow-origin':'*'}});}
     catch{return new Response(null,{status:404});}
   });
   const home=process.env.USERPROFILE;

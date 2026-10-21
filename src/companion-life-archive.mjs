@@ -96,13 +96,17 @@ export function createLifeArchiveRepository({dataRoot,imageCodec=null,imageConve
  // PNG before packing; the manifest lists which fields were converted.
  async function convertImages(snapshot){
   const pending=new Map(),walk=(value,key='',parentKey='')=>{
-   if(typeof value==='string'){const mime=imageField(key,parentKey)&&/^data:image\/([^;,]+)/i.exec(value)?.[1].toLowerCase();if(mime&&!CODEC_READS.includes(mime))pending.set(value,{mime,field:key==='value'?parentKey:key});}
+   if(typeof value==='string'&&imageField(key,parentKey)){
+    const field=key==='value'?parentKey:key,mime=/^data:image\/([^;,]+)/i.exec(value)?.[1].toLowerCase(),stored=mediaName(value)?.split('.').at(-1);
+    if(mime&&!CODEC_READS.includes(mime))pending.set(value,{mime,field,dataUrl:value});
+    else if(stored&&!CODEC_READS.includes(stored)&&media?.has(value))pending.set(value,{mime:stored,field,dataUrl:media.resolve(value)});
+   }
    else if(Array.isArray(value))for(const item of value)walk(item,'',key);
    else if(value&&typeof value==='object')for(const [field,item]of Object.entries(value))walk(item,field,key);
   };
   if(imageConverter)walk(snapshot);
   const converted=new Map();
-  for(const [dataUrl,{mime,field}]of pending){let png=null;try{png=await imageConverter(dataUrl);}catch{}if(png?.length)converted.set(dataUrl,{png:Buffer.from(png),note:{field,from:mime,to:'png'}});}
+  for(const [value,{mime,field,dataUrl}]of pending){let png=null;try{png=await imageConverter(dataUrl);}catch{}if(png?.length)converted.set(value,{png:Buffer.from(png),note:{field,from:mime,to:'png'}});}
   return converted;
  }
  function separate(value,files,ctx,key='',parentKey='',parent=null){

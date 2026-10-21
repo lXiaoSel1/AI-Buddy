@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import {openCompanionStore,effectiveCard} from './companion-store.mjs';
 import {createCompanionService} from './companion-service.mjs';
 import {writePortableImages} from './companion-media.mjs';
-import {createMediaStore,resolveCardImages} from './media-store.mjs';
+import {createMediaStore} from './media-store.mjs';
 import {createDraftStore} from './draft-store.mjs';
 
 export async function createGalgame({dataRoot,provider,model,cg=null,resources=null,getLanguage=()=> 'zh-CN',onCharacter=()=>{},onPetVisibility=()=>{},onChatCommitted=()=>{},onCgUpdated=()=>{},onActivity=()=>{},audit=()=>{},imageConverter=null}) {
@@ -22,7 +22,7 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
   const scope={fs:restrictedFileService(root),sandboxPolicy:{resolve:()=>({workspaceRoot:root})},sessions:{list:()=>[privateHeader]},workspaceRegistry:{list:()=>[{path:root}]},agentDefaultModel:{currentSelection:()=>provider.currentSelection?provider.currentSelection():({provider:'codex',model})},sessionQuery:{listSessions:async()=>[privateHeader],listEvents:async()=>[]}};
   bus.on('galgame/chat-committed',onChatCommitted);
   bus.on('galgame/cg-updated',onCgUpdated);
-  const ctx={llm:provider,cg,resources,writePortableImages:files=>writePortableImages(dataRoot,cg?.imageCodec,files),companionCards:Object.values(companionStore.state.cards).map(card=>({...card,effective:resolveCardImages(media,effectiveCard(card))})),language:()=>languageContext.getStore()||getLanguage(),emit:(event,value)=>bus.emit(event,value),dshHomePath:(...parts)=>join(dataRoot,'galgame',...parts),inject:(_,fn)=>fn(scope),on:(event,fn)=>bus.on(event,fn),effect:fn=>{const cleanup=fn();if(typeof cleanup==='function')effects.push(cleanup);}};
+  const ctx={llm:provider,cg,resources,writePortableImages:files=>writePortableImages(dataRoot,cg?.imageCodec,files),companionCards:Object.values(companionStore.state.cards).map(card=>({...card,effective:effectiveCard(card)})),language:()=>languageContext.getStore()||getLanguage(),emit:(event,value)=>bus.emit(event,value),dshHomePath:(...parts)=>join(dataRoot,'galgame',...parts),inject:(_,fn)=>fn(scope),on:(event,fn)=>bus.on(event,fn),effect:fn=>{const cleanup=fn();if(typeof cleanup==='function')effects.push(cleanup);}};
   // Work-token counter: a few bytes rewritten atomically at most every 2 s,
   // instead of a full global save per token delta.
   const ledgerPath=join(dataRoot,'galgame','storages','dsh-whale-galgame','work-tokens.json');

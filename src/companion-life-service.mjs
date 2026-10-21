@@ -12,7 +12,7 @@ function repairTimes(target){
  if(target.life&&Array.isArray(target.life.personalEvents))target.life.personalEvents=messages(target.life.personalEvents);
  return target;
 }
-export async function createCompanionLives({store,dataRoot,imageCodec,imageConverter=null,media=null,call,syncCard,projectPersona,quiesce=async()=>{},onChanged=()=>{},enableGrowth,now=Date.now,audit=()=>{}}){
+export async function createCompanionLives({store,dataRoot,imageCodec,imageConverter=null,media=null,drafts=null,call,syncCard,projectPersona,quiesce=async()=>{},onChanged=()=>{},enableGrowth,now=Date.now,audit=()=>{}}){
  const repository=createLifeArchiveRepository({dataRoot,imageCodec,imageConverter,media}),switching=new Set();
  const knownCard=id=>{companionId(id);if(!store.state.cards[id])throw Error('角色不存在');return id;};
  const busy=id=>{if(store.state.lifeTransaction?.replayFailed&&store.state.lifeTransaction.characterId===id)throw Error('该角色的人生切换没有完成，请先选择重试、回到切换前或放弃这次切换');if(switching.has(id)||store.state.lifeTransaction?.characterId===id)throw Error('正在保存或切换此角色人生，请稍候');};
@@ -30,7 +30,7 @@ export async function createCompanionLives({store,dataRoot,imageCodec,imageConve
   // Seal the old open intervals at this precise snapshot cutoff. Restore will
   // reopen at the present boundary, never grant knowledge of the gap.
   life.groupIntervals=Object.fromEntries(groupEvidence.map(g=>[g.id,g.intervals]));life.selectedCgIds=[...new Set([...(content.content?.cgs??[]),...(content.content?.sharedCgs??[])].map(cg=>cg.id))];
-  return {format:'ai-buddy-life-state',version:1,characterId,savedAt:now(),card:copy(state.cards[characterId]),life,relationships:copy(state.relationships[characterId]??{mode:'independent',byPersona:{}}),personas:Object.fromEntries([...personaIds].filter(id=>state.personas[id]).map(id=>[id,{...copy(state.personas[id]),relationships:{[characterId]:copy(state.personas[id].relationships?.[characterId]??{})}}])),conversations:copy(conversations),groupEvidence,content:copy(content?.content??{}),dependencies:[{type:'builtin-character-resources',version:'1.8.0',characterId,optional:state.cards[characterId].builtin!==true}]};
+  return {format:'ai-buddy-life-state',version:1,characterId,savedAt:now(),card:copy(state.cards[characterId]),life,relationships:copy(state.relationships[characterId]??{mode:'independent',byPersona:{}}),personas:Object.fromEntries([...personaIds].filter(id=>state.personas[id]).map(id=>[id,{...copy(state.personas[id]),relationships:{[characterId]:copy(state.personas[id].relationships?.[characterId]??{})}}])),conversations:copy(conversations).map(row=>({...row,draft:drafts?.get(row.id)??row.draft??''})),groupEvidence,content:copy(content?.content??{}),dependencies:[{type:'builtin-character-resources',version:'1.8.0',characterId,optional:state.cards[characterId].builtin!==true}]};
  }
  async function save(characterId,args={}){knownCard(characterId);busy(characterId);switching.add(characterId);try{await quiesce(characterId,{snapshot:true});const value=await snapshot(characterId),file=await repository.save(value),archive=metadata(value,file,args);await store.mutate(state=>{assertLife(state,characterId,{lifeId:value.life.id,operationId:value.life.operationId});state.lifeArchives[archive.id]=archive;});return archive;}finally{switching.delete(characterId);}}
  function validateTarget(target,characterId){
@@ -41,6 +41,8 @@ export async function createCompanionLives({store,dataRoot,imageCodec,imageConve
  }
  async function complete(transaction){
   const {characterId,target}=transaction;validateTarget(target,characterId);
+  // The character's conversations are replaced; their drafts come from the archive.
+  const replaced=new Set([...Object.values(store.state.conversations).filter(row=>row.characterId===characterId).map(row=>row.id),...target.conversations.map(row=>row.id)]);
   await checked('companion-life-project',{characterId,content:target.content,operationId:transaction.operationId});
   await store.mutate(state=>{
    if(state.lifeTransaction?.id!==transaction.id)throw Error('人生事务已失效');
@@ -59,6 +61,7 @@ export async function createCompanionLives({store,dataRoot,imageCodec,imageConve
    for(const [id,draft]of Object.entries(state.draftCards))if(id===characterId||draft.id===characterId)delete state.draftCards[id];
    state.lastLifeTransaction={id:transaction.id,characterId,at:now(),archiveId:transaction.archiveId,kind:transaction.kind,status:'committed'};delete state.lifeTransaction;
   });
+  for(const id of replaced)drafts?.delete(id);
   await syncCard(store.state.cards[characterId]);await projectPersona(store.state.activePersonaId);onChanged(characterId);
  }
  // Restore the exact verified pre-switch character (never whole-account data).

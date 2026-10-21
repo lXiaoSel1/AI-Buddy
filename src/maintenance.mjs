@@ -1,6 +1,6 @@
-import {mkdirSync,writeFileSync,openSync,fsyncSync,closeSync,renameSync} from 'node:fs';
+import {mkdirSync} from 'node:fs';
 import {join} from 'node:path';
-import {randomUUID} from 'node:crypto';
+import {writeAtomic} from './atomic-write.mjs';
 
 // One-time repair tools behind the control pipe. "plan" is read-only and returns a
 // planId. "apply" takes that planId, refuses while replies or life switches run,
@@ -11,9 +11,7 @@ export function createMaintenance({store,dataRoot,tasks,isBusy=()=>false,audit=(
  const tool=task=>{if(typeof task!=='string'||!Object.hasOwn(tasks,task))throw Error('未知维护任务：'+task);return tasks[task];};
  function backup(task,planId){
   const directory=join(dataRoot,'galgame','maintenance');mkdirSync(directory,{recursive:true});
-  const target=join(directory,`${task}-${planId}-${now()}.json`),temp=target+'.'+randomUUID()+'.partial';
-  writeFileSync(temp,JSON.stringify(store.snapshot()),{flag:'wx'});const fd=openSync(temp,'r+');try{fsyncSync(fd);}finally{closeSync(fd);}
-  renameSync(temp,target);return target;
+  const target=join(directory,`${task}-${planId}-${now()}.json`);writeAtomic(target,JSON.stringify(store.snapshot()));return target;
  }
  return {
   plan(task){const {plan,summary}=tool(task);return summary(plan(store.state));},

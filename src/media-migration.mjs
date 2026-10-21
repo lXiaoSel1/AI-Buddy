@@ -31,14 +31,14 @@ export function mediaMaintenanceTasks({media,drafts=null}){
  function revertPlan(state){
   const rows=[],missing=[];
   for(const [holder,key,path]of imageSlots(state))if(isMediaUrl(holder[key])){rows.push({path,name:mediaName(holder[key])});if(!media.has(holder[key]))missing.push(path);}
-  const draftRows=(drafts?.entries()??[]).filter(([id])=>state.conversations?.[id]).map(([id,text])=>({conversationId:id,sha256:sha(text)}));
+  const draftRows=(drafts?.entries()??[]).filter(([id])=>Object.hasOwn(state.conversations??{},id)).map(([id,text])=>({conversationId:id,sha256:sha(text)}));
   return {task:'media-revert',planId:planId({task:'media-revert',rows,draftRows}),total:rows.length,drafts:draftRows.length,missing,rows};
  }
  function revert(state,id){
   const plan=revertPlan(state);if(plan.planId!==id)throw changed();
   if(plan.missing.length)throw Error('有 '+plan.missing.length+' 张图片文件已丢失，不能还原：'+plan.missing.slice(0,5).join('，'));
   for(const [holder,key]of imageSlots(state))if(isMediaUrl(holder[key]))holder[key]=media.resolve(holder[key],{missing:null});
-  for(const [conversationId,text]of drafts?.entries()??[])if(state.conversations?.[conversationId])state.conversations[conversationId].draft=text;
+  for(const [conversationId,text]of drafts?.entries()??[])if(Object.hasOwn(state.conversations??{},conversationId))state.conversations[conversationId].draft=text;
   return plan;
  }
  return {

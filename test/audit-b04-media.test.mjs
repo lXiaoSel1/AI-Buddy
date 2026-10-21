@@ -98,3 +98,38 @@ test('T2: migration moves canonical pictures, keeps the rest, and expands back t
  assert.deepEqual(app.drafts.entries(),[]);
  await app.service.action('companion-title-set',{characterId:'claude',title:'x'});assert.equal(app.store.state.cards.claude.avatar,url(BIG),'an unrelated change does not move it again');
 });
+
+test('B4 review: every conversation row shows the drafts file value, and sending clears it',async t=>{
+ const root=await seeded(t,state=>{state.conversations.conversation.draft='旧草稿';}),app=await launch(root);t.after(app.close);
+ const id='conversation';await app.service.action('companion-conversation-update',{id,draft:'新草稿'});
+ const state=(await app.service.action('companion-state')).companion;
+ assert.equal(state.conversations.find(row=>row.id===id).draft,'新草稿');
+ assert.equal((await app.service.action('companion-conversation-list',{})).conversations.find(row=>row.id===id).draft,'新草稿');
+ const failing={...provider,enabled:true,resolveConnection:()=>({mode:'global',connectionId:'p1',name:'p1',model:'m',error:null}),async *stream(){throw Error('offline fixture');}};
+ const chatApp=await createCompanionService({store:app.store,engine:syntheticEngine({getStore:()=>app.store}).engine,provider:failing,dataRoot:root,now:Date.now,media:app.media,drafts:app.drafts});t.after(()=>chatApp.close());
+ await chatApp.action('companion-conversation-select',{id}).catch(()=>{});
+ assert.equal(app.drafts.get(id),'新草稿');await chatApp.chat({text:'新草稿'}).catch(()=>{});
+ assert.equal(app.store.state.activeConversationId,id);assert.equal(app.drafts.get(id),'','the sent text does not come back as a draft');
+});
+
+test('B4 review: an export with a lost picture file fails instead of dropping it',async t=>{
+ const root=await seeded(t),app=await launch(root);t.after(app.close);
+ await app.service.action('companion-persona-save',{id:'default',name:'默认身份',avatar:url(PNG)});
+ const {rmSync}=await import('node:fs');rmSync(app.media.file(app.store.state.personas.default.avatar.slice('buddy-media://'.length)));
+ await assert.rejects(app.service.action('companion-conversation-export',{}),/图片文件已丢失/);
+});
+
+test('B4 review: archive avatars are media too, AVIF pictures are converted for life archives, and a restore drops the replaced drafts',async t=>{
+ const AVIF='data:image/avif;base64,'+Buffer.from('ftyp-avif-fixture').toString('base64');
+ const root=await seeded(t),media=createMediaStore(root),drafts=createDraftStore(root),store=await openCompanionStore(root,{media}),{engine}=syntheticEngine({getStore:()=>store,hooks:{call(action){if(action==='companion-register'||action==='companion-life-project')return {ok:true};}}});
+ const service=await createCompanionService({store,engine,provider,dataRoot:root,now:Date.now,media,drafts,imageCodec:bytes=>{if(!bytes.equals(PNG))throw Error('codec cannot read this');return {};},imageConverter:async()=>PNG});
+ t.after(async()=>{service.close();await store.flush();});
+ await service.action('companion-character-save',{...copy(store.state.cards.claude),avatar:AVIF});
+ assert.match(store.state.cards.claude.avatar,/\.avif$/);
+ await service.action('companion-conversation-update',{id:'conversation',draft:'切换前的草稿'});
+ const archive=(await service.action('companion-life-save',{characterId:'claude'})).archive;
+ assert.match(store.state.lifeArchives[archive.id].avatar,/^buddy-media:\/\//);
+ const back=service.maintenance.plan('media-revert');assert.ok(back.total>=2,'card and archive avatars');
+ await service.action('companion-life-reset',{characterId:'claude',mode:'normal'});
+ assert.equal(drafts.get('conversation'),undefined,'the replaced conversation keeps no stale draft');
+});
