@@ -502,7 +502,7 @@ app.whenReady().then(async()=>{
   superviseWorker(()=>{
   worker=new Worker(join(build,'monitor-worker.cjs'),{workerData:{roots:arg('roots')?logRoots:undefined,home,env:process.env,dataRoot,refreshIntervalMs:settings.preferences.monitorRefreshMs,statisticsTimeZone:settings.preferences.statisticsTimeZone,autoPriceUpdates:settings.preferences.autoPriceUpdates}});
   worker.on('message',message=>{if(message.type==='sources'){tokenSources=message.value;if(panel&&!panel.isDestroyed())panel.webContents.send('tokens:update',message.value);}if(message.type==='source-result'){const pending=sourceRequests.get(message.id);if(pending){clearTimeout(pending.timer);sourceRequests.delete(message.id);message.error?pending.fail(Error(message.error)):pending.done(message.value);}}if(message.type==='snapshot')publish(message.value);if(message.type==='configured'){monitorAppliedInterval=message.refreshIntervalMs;broadcastSettings();}if(message.type==='refreshed')broadcastSettings();if(message.type==='error')audit({type:'monitor-error',message:message.message});});
-  worker.on('message',message=>{if(message.type==='task-feedback'&&!quitting)feedback(message.value);});
+  worker.on('message',message=>{if(message.type==='task-feedback'&&!quitting)feedback(message.value);if(message.type==='audit'&&message.value?.type)audit({...message.value,type:String(message.value.type)});});
   worker.on('error',error=>audit({type:'monitor-worker-error',message:error.stack}));
   return worker;
   },{shouldRestart:()=>!quitting,onExit:code=>{if(!quitting)audit({type:'monitor-worker-exit',code});}});

@@ -11,8 +11,8 @@ import { MONITOR_INTERVALS } from './preferences.mjs';
 import { replayMonitorDelta, orphanMonitorDeltas } from './monitor-cache.mjs';
 
 export class LocalMonitor {
-  constructor({roots,dataRoot,onUpdate=()=>{},refreshIntervalMs=1000,persistentHistory=false}) {
-    this.roots=roots; this.dataRoot=dataRoot; this.onUpdate=onUpdate;
+  constructor({roots,dataRoot,onUpdate=()=>{},onAudit=()=>{},refreshIntervalMs=1000,persistentHistory=false}) {
+    this.roots=roots; this.dataRoot=dataRoot; this.onUpdate=onUpdate; this.onAudit=onAudit;
     this.repository=persistentHistory?new UsageRepository(join(dataRoot,"usage-ledger-v2","legacy.sqlite")):null;
     this.files=new Map(); this.ledger=new UsageLedger({},this.repository); this.errors=new Map(); this.watchers=[]; this.closed=false; this.busy=false; this.indexing=true;
     this.startedAt=Date.now();this.ledger.workStartedAt=this.startedAt;
@@ -123,7 +123,11 @@ export class LocalMonitor {
   async readFile({path,provider}) {
     const info=await stat(path);
     const old=this.files.get(path);
-    if(old && old.size===info.size && old.mtime===info.mtimeMs){if(this.indexing)this.startup.unchangedFiles++;return;}
+    // Records written since scan:2 store the size actually read, so an interrupted
+    // read differs from the file and resumes. Older records kept the full size with
+    // a smaller offset: such a file is read on from its offset once (D2-4).
+    const legacyGap=old&&old.scan!==2&&old.offset<old.size;
+    if(old && old.size===info.size && old.mtime===info.mtimeMs && !legacyGap){if(this.indexing)this.startup.unchangedFiles++;return;}
     let offset=old?.offset || 0;
     if(!old || info.size<offset || (info.size===old.size && info.mtimeMs!==old.mtime)) offset=0;
     let id=old?.sessionId || (provider==='codex' ? basename(path,'.jsonl').match(/[a-f0-9]{8}-[a-f0-9-]{27}$/i)?.[0] : basename(path,'.jsonl')) || basename(path,'.jsonl');
@@ -163,7 +167,8 @@ export class LocalMonitor {
         await new Promise(r=>setImmediate(r));
       }
       const headLength=Math.min(committed,4096),head=await fingerprint(0,headLength),anchor=await fingerprint(Math.max(0,committed-4096),Math.min(committed,4096));
-      this.files.set(path,{provider,size:info.size,mtime:info.mtimeMs,offset:committed,sessionId:id,headLength,head,anchor});
+      if(legacyGap&&offset===old.offset&&committed>offset)this.onAudit({type:'monitor-resume',path,from:offset,to:committed,size:info.size});
+      this.files.set(path,{provider,size:position<info.size?committed:info.size,mtime:info.mtimeMs,offset:committed,sessionId:id,headLength,head,anchor,scan:2});
     } finally {await handle.close();}
     this.dirtyFiles.add(path);
   }
@@ -204,5 +209,6 @@ export class LocalMonitor {
     })();
     try{await this.persisting;}finally{this.persisting=null;}
   }
-  async close() { this.closed=true; clearInterval(this.timer); clearInterval(this.persistTimer); clearTimeout(this.debounce); for(const w of this.watchers) w.close(); await this.starting;while(this.busy)await new Promise(r=>setTimeout(r,10));await this.persisting;await this.persist();this.repository?.close(); }
+  // A failed start must not stop close() from saving and releasing the repository (D2-6).
+  async close() { this.closed=true; clearInterval(this.timer); clearInterval(this.persistTimer); clearTimeout(this.debounce); for(const w of this.watchers) w.close(); await this.starting?.catch(()=>{});while(this.busy)await new Promise(r=>setTimeout(r,10));await this.persisting;await this.persist();this.repository?.close(); }
 }
