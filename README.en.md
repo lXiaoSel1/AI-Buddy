@@ -411,7 +411,17 @@ Do not commit `local/`, generated `builds/`, keys, personal CGs or logs. Release
 
 ## License and credits
 
-Code, the Galgame UI implementation and documentation are under the [MIT License](LICENSE.md). **Artwork is not universally MIT**: the 21 default images inherited from upstream are [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/), and the upstream pet atlas remains MIT; terms for the ten new portraits and backgrounds and for DeepSeek's motion videos are described under "Bundled default art" above. The attribution chain, per-file boundaries and license texts are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [`licenses/`](licenses/). Confirm each source before a public or commercial release.
+AI Buddy's code, Galgame UI implementation and documentation are copyright **lXiaoSel1** and licensed under the [Apache License 2.0 with the Commons Clause](LICENSE.md):
+
+- You may use, copy, modify and share it free of charge, including inside a company.
+- **You may not sell it without written permission from lXiaoSel1.** This covers any paid product or service whose value derives mainly from AI Buddy, including paid downloads, subscriptions, paid hosting, and paid installation, setup or support. To ask for a license, [open an issue](https://github.com/lXiaoSel1/AI-Buddy/issues) or message lXiaoSel1 on GitHub.
+- Under the Open Source Initiative's definition this is a source-available license, not an open-source license.
+- Version 1.8.0 and earlier were released under the MIT License; copies obtained under it remain MIT.
+- Portions adapted from the upstream dsh-whale-galgame keep their original MIT notice in [`licenses/upstream/`](licenses/upstream/).
+- The license does not grant use of the "AI 酱 / AI Buddy" name.
+- Read the contributor agreement in [CONTRIBUTING.md](CONTRIBUTING.md) before submitting code.
+
+**Artwork has its own terms**: the 21 default images inherited from upstream are [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/), and the upstream pet atlas remains MIT; terms for the ten new portraits and backgrounds and for DeepSeek's motion videos are described under "Bundled default art" above. The attribution chain, per-file boundaries and license texts are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [`licenses/`](licenses/). Confirm each source before a public or commercial release.
 
 Thanks to these creators and projects:
 
