@@ -5,6 +5,8 @@ import {subscribeAnimationClock} from './animation-clock.mjs';
 import {prepareCharacterRenderer} from './motion-renderer.mjs';
 import {PET_CHARACTERS,resolvePetCharacter} from './pet-characters.mjs';
 import {frameSequence,sequenceSampleFrame} from './frame-sequence.mjs';
+import {themeAsset} from './appearance.mjs';
+import {Icon} from './ui-icons.mjs';
 const h=React.createElement;
 
 // M-2: every card shows one still; only the card under the pointer or keyboard focus
@@ -119,17 +121,21 @@ export function ActionGallery({settings}){
     }catch{playbackError();}
   }
   const leave=id=>setActiveId(current=>current===id?null:current);
-  const actions=[...PET_ACTIONS,...PET_INTERACTION_ACTIONS.filter(a=>frameSequence(a.id,characterId))].map(a=>a.id==='reviewing'?{...a,label:t("审查中")}:a);
-  return h('div',{className:'action-gallery'},
-    h('div',{className:'action-heading'},h('div',null,h('h1',null,t("动作展示")),h('p',{className:'action-hint'},t("鼠标移到卡片上或用 Tab 选中时播放预览。"))),h('div',{className:'action-toolbar'},
-      h('select',{'aria-label':t('桌宠角色'),'data-gallery-character':true,value:characterId,onChange:async e=>{const id=e.target.value;if(settings?.resources?.characters.find(c=>c.id===id)?.installed===false){try{await window.whale.resources.manage(id);}catch(error){setError(error.message);}return;}setCharacterId(id);}},...PET_CHARACTERS.map(c=>h('option',{key:c.id,value:c.id},t(c.name)+(settings?.resources?.characters.find(r=>r.id===c.id)?.installed===false?' · '+t('待安装'):'')))),
-      h('button',{'data-action':'pause-previews','aria-pressed':!playing,onClick:()=>setPlaying(!playing)},playing?t("暂停"):t("播放")))),
-    error&&h('p',{className:'settings-error',role:'alert'},error),
-    shown&&!assetsReady&&!error&&h('p',{className:'action-loading',role:'status'},t("正在加载…")),
-    shown&&assetsReady&&h('div',{className:'action-grid'},...actions.map(action=>h('section',{className:'action-card',key:action.id,'data-action-card':action.id,
-        onPointerEnter:()=>setActiveId(action.id),onPointerLeave:()=>leave(action.id),
-        onFocus:()=>setActiveId(action.id),onBlur:e=>{if(!e.currentTarget.contains(e.relatedTarget))leave(action.id);}},
-      h('div',{className:'action-card-title'},h('h2',null,t(action.label))),
-      h(ActionSprite,{id:action.id,label:t(action.label),characterId,motionRenderer,active:activeId===action.id,playing,speed,onError:playbackError}),
-      h('button',{'data-pet-play':action.id,disabled:hidden,onClick:()=>{void play(action.id);}},t("在桌宠播放"))))));
+  const name=action=>action.id==='reviewing'?t("审查中"):t(action.label);
+  const groups=[[t("日常动作"),PET_ACTIONS,null],[t("互动动作"),PET_INTERACTION_ACTIONS.filter(a=>frameSequence(a.id,characterId)),t("睡眠、抛掷时自动播放")]].filter(([,list])=>list.length);
+  const pet=PET_CHARACTERS.find(c=>c.id===characterId);
+  const card=action=>h('section',{className:'ws-card ws-act action-card'+(activeId===action.id?' playing':''),key:action.id,'data-action-card':action.id,
+      onPointerEnter:()=>setActiveId(action.id),onPointerLeave:()=>leave(action.id),
+      onFocus:()=>setActiveId(action.id),onBlur:e=>{if(!e.currentTarget.contains(e.relatedTarget))leave(action.id);}},
+    h('div',{className:'ws-act-stage'},h(ActionSprite,{id:action.id,label:name(action),characterId,motionRenderer,active:activeId===action.id,playing,speed,onError:playbackError})),
+    h('div',{className:'ws-act-foot action-card-title'},h('h2',null,name(action)),h('button',{type:'button',className:'ui-icon-btn sm','data-pet-play':action.id,disabled:hidden,'aria-label':t("在桌宠播放")+' · '+name(action),title:hidden?t("桌宠已隐藏，暂时不能在桌宠上播放。"):t("在桌宠播放"),onClick:()=>{void play(action.id);}},Icon('play',{size:14}))));
+  return h('div',{className:'action-gallery ws-page'},
+    h('div',{className:'ws-page-head action-heading'},h('div',null,h('h1',{className:'ws-ptitle'},t("动作展示")),h('p',{className:'ws-meta action-hint'},t("预览 ")+t(pet?.name||'')+t(" 的全部桌宠动作，点 ▶ 在桌宠上播放一遍。")+' '+t("鼠标移到卡片上或用 Tab 选中时播放预览。"))),h('div',{className:'ws-row-btns action-toolbar'},
+      h('span',{className:'ws-select-face'},h('img',{src:'./'+themeAsset(characterId,'head.webp'),alt:''}),h('select',{'aria-label':t('桌宠角色'),'data-gallery-character':true,value:characterId,onChange:async e=>{const id=e.target.value;if(settings?.resources?.characters.find(c=>c.id===id)?.installed===false){try{await window.whale.resources.manage(id);}catch(error){setError(error.message);}return;}setCharacterId(id);}},...PET_CHARACTERS.map(c=>h('option',{key:c.id,value:c.id},t(c.name)+(settings?.resources?.characters.find(r=>r.id===c.id)?.installed===false?' · '+t('待安装'):''))))),
+      h('button',{className:'ui-btn','data-action':'pause-previews','aria-pressed':!playing,onClick:()=>setPlaying(!playing)},Icon(playing?'pause':'play'),playing?t("暂停预览"):t("播放预览")))),
+    hidden&&h('div',{className:'ui-note',role:'status'},Icon('info',{size:16}),h('div',{className:'spacer'},h('b',null,t("桌宠已隐藏，暂时不能在桌宠上播放。")),' ',t("预览照常播放。")),h('button',{className:'ui-btn sm',onClick:()=>{void window.whale.setSettings({petVisible:true}).catch(e=>setError(e.message));}},t("显示桌宠"))),
+    error&&h('p',{className:'settings-error ws-errtxt',role:'alert'},error),
+    shown&&!assetsReady&&!error&&h('div',{className:'ws-actgrid action-loading',role:'status','aria-label':t("正在加载…")},...[0,1,2,3,4,5].map(i=>h('span',{key:i,className:'ui-skel ws-act-skel'}))),
+    shown&&assetsReady&&h(React.Fragment,null,...groups.map(([title,list,note])=>h('section',{key:title,className:'ws-act-group'},h('h3',{className:'ws-sub-h'},title+' · '+list.length,note&&h('span',{className:'ws-muted'},note)),h('div',{className:'ws-actgrid action-grid'},...list.map(card))))));
 }
+

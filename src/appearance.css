@@ -15,15 +15,15 @@ html[data-theme="hunyuan"]{--buddy-chrome:#141B26;--buddy-side-bg:#18202C;--budd
 /* Older surface rules on theme tokens (formerly limited to non-DeepSeek tones). Character art is untouched. */
 :root{color-scheme:var(--buddy-scheme)}
 body{color:var(--buddy-text)}
-:is(h1,h2,h3,h4,label,td,strong,.setting-label,.stats-range,.stats-title,.settings-heading,.api-heading){color:var(--buddy-text)}
-:is(p,small,.muted,.hero p,.stats-range,.setting-label small,.stats-pagination,.table-wrap,.price-pagination,.api-description,.token-note){color:var(--buddy-muted)}
-:is(.card,.metric,.token-form,.quota-editor,.api-card,.api-form,.connection-form,.action-card,.settings-card,.table-wrap,.token-source-card){background:var(--buddy-surface);border-color:var(--buddy-border)}
+:is(h1,h2,h3,h4,label,td,strong,.setting-label,.stats-range,.stats-title,.api-heading){color:var(--buddy-text)}
+:is(p,small,.muted,.hero p,.stats-range,.setting-label small,.stats-pagination,.table-wrap,.api-description,.token-note){color:var(--buddy-muted)}
+:is(.card,.metric,.api-card,.api-form,.connection-form,.settings-card,.table-wrap){background:var(--buddy-surface);border-color:var(--buddy-border)}
 :is(input,select,textarea){color:var(--buddy-text);background:var(--buddy-bg);border-color:var(--buddy-border)}
 :is(input,textarea)::placeholder{color:var(--buddy-muted);opacity:.9}
-:is(.stats-toolbar button,.settings-actions button,.settings-row button,.setting-row button,.api-actions button,.settings-heading button,.action-card button,.action-toolbar button,.connection-selection button,.settings button,.token-settings button,.api-settings button,.api-config button){background:var(--buddy-raised);color:var(--buddy-text);border-color:var(--buddy-border)}
-:is(button.accent,.api-tabs button.active){background:var(--buddy-raised);color:var(--buddy-accent);border-color:var(--buddy-accent)}
+:is(.stats-toolbar button,.settings-actions button,.settings-row button,.setting-row button,.api-actions button,.connection-selection button,.settings button,.api-config button){background:var(--buddy-raised);color:var(--buddy-text);border-color:var(--buddy-border)}
+:is(button.accent){background:var(--buddy-raised);color:var(--buddy-accent);border-color:var(--buddy-accent)}
 :is(th,.dropdown-menu){color:var(--buddy-text);background:var(--buddy-raised);border-color:var(--buddy-border)}
-:is(.setting-row,.settings-row,td,th,.statistics-row,.price-pagination){border-color:var(--buddy-border)}
+:is(.setting-row,.settings-row,td,th,.statistics-row){border-color:var(--buddy-border)}
 :is(.hero){background:linear-gradient(110deg,var(--buddy-raised),var(--buddy-surface));border-color:var(--buddy-border)}
 :is(.metric.primary strong){color:var(--buddy-accent)}
 :is(.state.completed,.settings-success){color:var(--buddy-success);background:color-mix(in srgb,var(--buddy-success) 10%,var(--buddy-surface))}
