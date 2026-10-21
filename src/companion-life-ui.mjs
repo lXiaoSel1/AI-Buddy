@@ -44,7 +44,7 @@ export function MemoryContent({memory,section='core',search=''}){
 }
 export function MemoryCapacityInfo({capacity}){
  if(!capacity?.tokens)return null;
- const source={'connection-setting':'用户填写的接口容量','model-catalog':'模型目录声明','conservative-fallback-unknown-capacity':'未知容量，使用保守上限','conservative-unknown':'未知容量，使用保守上限'}[capacity.source]||capacity.source||'未知容量，使用保守上限';
+ const source={'connection-setting':'用户填写的接口容量','model-catalog':'模型目录声明','application-default':'应用默认容量（模型未声明）','conservative-fallback-unknown-capacity':'未知容量，使用保守上限','conservative-unknown':'未知容量，使用保守上限'}[capacity.source]||capacity.source||'未知容量，使用保守上限';
  return h('div',{className:'buddy-memory-scope','data-memory-capacity':true},h('strong',null,t('当前上下文规划容量')+' · '+Number(capacity.tokens).toLocaleString()+' tokens'),h('p',{className:'buddy-note'},t(source)),note('组装请求时另预留回复空间；容量声明不代表此接口已通过极限实测。'));
 }
 export function MemoryJobStatus({jobs,onRetry,busy=false}){

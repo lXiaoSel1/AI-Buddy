@@ -4,12 +4,14 @@ import {motionRenderer,prepareCharacterRenderer,adoptCharacterRenderer} from './
 import {currentPetCharacter,CHARACTER_SEQUENCES} from './frame-sequence.mjs';
 import {resolvePetCharacter} from './pet-characters.mjs';
 import {PetCharacterSwitch} from './pet-character-switch.mjs';
-import {interactionPresentation,gloveCursor} from './pet-interaction-view.mjs';
+import {interactionPresentation} from './pet-interaction-view.mjs';
+import {PetGloveController,gloveCursorV2,preloadGloveArtwork} from './pet-glove.mjs';
 import {petPresentation,petActionPresentation} from './pet-presentation.mjs';
 import {APP_NAME} from './app-brand.mjs';
 import {applyAppearance} from './appearance.mjs';
 import {t} from './i18n.mjs';
 const sprite=document.querySelector('.sprite'),bubble=document.querySelector('.bubble'),badge=document.querySelector('.badge');
+const badgeLabel=badge.querySelector('.badge-label'),badgeClose=badge.querySelector('.badge-close');
 const surface=document.createElement('canvas');surface.width=FRAME_SIZE.width;surface.height=FRAME_SIZE.height;surface.setAttribute('aria-hidden','true');sprite.append(surface);
 const image=new Image();image.src=PET_ATLAS.src;
 sprite.style.backgroundImage=`url('${PET_ATLAS.src}')`;sprite.style.backgroundSize=PET_ATLAS.width+'px '+PET_ATLAS.height+'px';
@@ -17,13 +19,16 @@ const controller=new PetActionController({ready:(id,elapsed)=>motionRenderer.isR
 controller.holdFeedback=true;
 let presentedBubble=null;
 let pixels=null,mode='idle',row=0,col=0,down=false,lastOpaque=null,bodyOpaque=false,interaction=null,bubbleTimer,frameTimer=null,dialogActive=false,lastCursor=null,lastBackground='',lastState='',badgeText=APP_NAME+' · 离线陪伴';
-const glove={open:gloveCursor('open'),closed:gloveCursor('closed'),grab:gloveCursor('grab')};
 let gestureId=null,capturedPointer=null,readySent=null,ownerButton=null,releaseButton=null,chordRequest=null,suppressedButtons=0,observedButtons=0;
 let currentSample=actionSample('idle',0);
 let geometry=null;
 function petGeometry(){if(!geometry)geometry={sprite:sprite.getBoundingClientRect(),badge:badge.getBoundingClientRect()};return geometry;}
 window.addEventListener('resize',()=>{geometry=null;motionRenderer.invalidate?.(surface);});
 const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
+const gloveState=new PetGloveController({highDpi:CSS.supports('cursor',gloveCursorV2('open'))});
+const gloveArtwork=preloadGloveArtwork();gloveState.setContext({artReady:false});
+let lastGloveCss=null,gloveDisposed=false;
+window.petGloveArtworkReady=gloveArtwork.ready.then(state=>{if(!gloveDisposed){gloveState.setContext(state);updateGlove();}return state;});
 let preferences={petScale:1.25,animationSpeed:.75,showStatusBadge:true,followCursor:true,completionBubbles:true};
 let configuredCharacter=currentPetCharacter(),demoRequest=null,demoActive=false,settingsReady=false,characterError=null;
 let appliedPresentation=null;
@@ -34,8 +39,8 @@ applyCharacterPresentation(currentPetCharacter());
 let initialCharacterReady=false,resolveInitialCharacter;
 window.petCharacterReady=new Promise(resolve=>{resolveInitialCharacter=resolve;});
 async function finishInitialCharacter(){await motionRenderer.ready;if(initialCharacterReady||characterSwitch.loading||characterSwitch.current!==characterSwitch.target)return;motionRenderer.draw(surface,actionSample('idle',0,{reducedMotion:true}));currentSample=motionRenderer.displayedSample?.(surface)??actionSample('idle',0);initialCharacterReady=true;resolveInitialCharacter(true);}
-const characterSwitch=new PetCharacterSwitch({current:currentPetCharacter(),prepare:prepareCharacterRenderer,commit:(id,next)=>{adoptCharacterRenderer(id,next);applyCharacterPresentation(id);controller.baseAt=controller.animationNow();controller.lookAt=-Infinity;controller.gaze.initialized=false;controller.gaze.unwrapped=null;controller.gazeBlend={from:0,target:0,at:Date.now()};currentSample=actionSample('idle',0);lastOpaque=null;geometry=null;},onPrepared:()=>{if(!initialCharacterReady){characterSwitch.advance();void finishInitialCharacter();}},onError:error=>{window.petMotionError=error.message;characterError=t('角色动作加载失败，请重试。',preferences.language);demoRequest=null;demoActive=false;controller.holdFeedback=false;if(!initialCharacterReady)void finishInitialCharacter();}});
-function requestCharacter(id){characterSwitch.request(id);if(!initialCharacterReady&&!characterSwitch.loading)void finishInitialCharacter();}
+const characterSwitch=new PetCharacterSwitch({current:currentPetCharacter(),prepare:prepareCharacterRenderer,commit:(id,next)=>{gloveState.cancel('character-change');adoptCharacterRenderer(id,next);applyCharacterPresentation(id);controller.baseAt=controller.animationNow();controller.lookAt=-Infinity;controller.gaze.initialized=false;controller.gaze.unwrapped=null;controller.gazeBlend={from:0,target:0,at:Date.now()};currentSample=actionSample('idle',0);lastOpaque=null;geometry=null;},onPrepared:()=>{if(!initialCharacterReady){characterSwitch.advance();void finishInitialCharacter();}},onError:error=>{window.petMotionError=error.message;characterError=t('角色动作加载失败，请重试。',preferences.language);demoRequest=null;demoActive=false;controller.holdFeedback=false;if(!initialCharacterReady)void finishInitialCharacter();}});
+function requestCharacter(id){if(id!==currentPetCharacter())gloveState.cancel('character-switch');characterSwitch.request(id);if(!initialCharacterReady&&!characterSwitch.loading)void finishInitialCharacter();}
 function applySettings(value){
   preferences=value.preferences;
   settingsReady=true;
@@ -46,6 +51,7 @@ function applySettings(value){
   document.body.style.setProperty('--pet-scale',preferences.petScale);
   geometry=null;motionRenderer.invalidate?.(surface);
   badgeLayout=null;badge.hidden=!preferences.showStatusBadge;
+  badgeClose.setAttribute('aria-label',t('关闭状态条',preferences.language));badgeClose.title=t('关闭状态条',preferences.language);
   controller.followCursor=preferences.followCursor;
   controller.setVisible(preferences.petVisible!==false&&!document.hidden);
   if(!preferences.completionBubbles){bubble.hidden=true;clearTimeout(bubbleTimer);presentedBubble=null;}
@@ -85,8 +91,16 @@ window.whale.onCursor(point=>{
 });
 window.whale.onPetAction(value=>{
   if(value.kind==='interaction')interaction=value.value;
-  if(value.kind==='gesture-reset'&&(!value.gestureId||value.gestureId===gestureId)){if(Number.isInteger(value.buttons))suppressedButtons=value.buttons;clearPointer();}
-  if(value.kind==='feedback')controller.enqueueFeedback(value.value);
+  if(value.kind==='gesture-reset'&&(!value.gestureId||value.gestureId===gestureId)){
+    if(Number.isInteger(value.buttons))suppressedButtons=value.buttons;
+    // Native release may beat DOM pointerup. Keep this gesture eligible for
+    // its following confirmed touch; cancellation must invalidate it instead.
+    clearPointer(value.reason??'cancelled',value.gestureId??gestureId);
+  }
+  if(value.kind==='feedback'){
+    if(value.value?.source==='touch'){updateGlove();gloveState.touch(value.value);}
+    controller.enqueueFeedback(value.value);
+  }
   if(value.kind==='play'){demoRequest={id:value.id,lookIndex:value.lookIndex,durationMs:value.durationMs,characterId:value.characterId??currentPetCharacter()};requestCharacter(demoRequest.characterId);}
   if(value.kind==='auto'){demoRequest=null;demoActive=false;requestCharacter(configuredCharacter);controller.holdFeedback=characterSwitch.target!==characterSwitch.current;controller.automatic();}
   if(value.kind==='trigger')controller.trigger(value.id,{source:value.source,durationMs:value.durationMs});
@@ -133,7 +147,8 @@ function render(){
   }
   placeStatusBadge();
   if(lastCursor&&!characterChanged&&!registrationChanged)hitAt(lastCursor.x,lastCursor.y,rect,b);
-  const text=state.manual?'演示 · '+getPetAction(state.id).label:badgeText;if(badge.textContent!==text)badge.textContent=text;
+  updateGlove();
+  const text=state.manual?'演示 · '+getPetAction(state.id).label:badgeText;if(badgeLabel.textContent!==text)badgeLabel.textContent=text;
   const label=APP_NAME+' · '+getPetAction(state.id).label;if(sprite.getAttribute('aria-label')!==label)sprite.setAttribute('aria-label',label);
   window.petActionDiagnostic={...state,...pose,interaction,interactionView,characterId:currentPetCharacter(),targetCharacterId:characterSwitch.target,presentation:appliedPresentation??petPresentation(currentPetCharacter()),renderer:motionRenderer.backend,displayedActionId:currentSample.actionId,sequenceFrame:motionRenderer.sequences?.[state.id]?currentSample.displayedSequenceFrame??null:null,sourceFrameCount:motionRenderer.sequences?.[state.id]?.frames.length??getPetAction(state.id).frames,draws:motionRenderer.draws,rigDraws:motionRenderer.rigDraws??0,rigResizes:motionRenderer.rigResizes??0,canvasSize:[surface.width,surface.height],geometryReads:motionRenderer.geometryReads??0};
   const report={id:state.id,source:state.source,manual:state.manual,expiresAt:state.expiresAt,characterId:currentPetCharacter()},key=JSON.stringify(report);
@@ -145,16 +160,32 @@ function hitAt(clientX,clientY,rect=petGeometry().sprite,b=petGeometry().badge){
     const x=(clientX-rect.left)/rect.width*FRAME_SIZE.width,y=(clientY-rect.top)/rect.height*FRAME_SIZE.height;
     hit=motionRenderer.pixels?motionRenderer.alpha(currentSample,x,y)>25:pixels[((Math.floor(y)+row*FRAME_SIZE.height)*image.width+Math.floor(x)+col*FRAME_SIZE.width)*4+3]>25;
   }
-  bodyOpaque=hit;sprite.style.cursor=bodyOpaque?(down?(['dragging','charging'].includes(interaction?.motion?.mode)?glove.grab:glove.closed):glove.open):'default';
+  bodyOpaque=hit;updateGlove();
   if(!badge.hidden&&clientX>=b.left&&clientX<b.right&&clientY>=b.top&&clientY<b.bottom)hit=true;
   if(!bubble.hidden){const br=bubble.getBoundingClientRect();if(clientX>=br.left&&clientX<br.right&&clientY>=br.top&&clientY<br.bottom)hit=true;}
   if(hit!==lastOpaque){lastOpaque=hit;window.whale.hit(hit);}
 }
-function clearPointer(){
-  down=false;gestureId=null;ownerButton=null;releaseButton=null;chordRequest=null;sprite.style.cursor=bodyOpaque?glove.open:'default';controller.drag(false);
+// This control can overlap the sprite's transparent/opaque area. Consume its
+// own button events before the document's drag, touch and chord handlers.
+for(const type of ['pointerdown','mousedown'])badge.addEventListener(type,event=>{event.stopPropagation();event.preventDefault();});
+for(const type of ['pointerdown','mousedown','pointerup','mouseup','dblclick','contextmenu'])badgeClose.addEventListener(type,event=>{event.stopPropagation();if(['pointerdown','mousedown','contextmenu'].includes(type))event.preventDefault();});
+badgeClose.addEventListener('click',async event=>{
+  event.preventDefault();event.stopPropagation();if(badgeClose.disabled)return;badgeClose.disabled=true;
+  try{applySettings(await window.whale.setSettings({showStatusBadge:false}));hitAt(event.clientX,event.clientY);}
+  catch{badgeClose.title=t('关闭失败，请重试',preferences.language);}
+  finally{badgeClose.disabled=false;}
+});
+function updateGlove(){
+  const state=gloveState.setContext({opaque:bodyOpaque,down,mode:interaction?.motion?.mode??'rest',characterId:currentPetCharacter(),visible:preferences.petVisible!==false&&!document.hidden,reducedMotion:reducedMotion.matches});
+  if(lastGloveCss!==state.cursorCss){lastGloveCss=state.cursorCss;sprite.style.cursor=state.cursorCss;}
+  window.petGloveDiagnostic=state;return state;
+}
+function clearPointer(reason='released',id=gestureId){
+  if(id)gloveState.releaseGesture(id,{reason});else if(reason!=='released')gloveState.cancel(reason);
+  down=false;gestureId=null;ownerButton=null;releaseButton=null;chordRequest=null;controller.drag(false);updateGlove();
   const captured=capturedPointer;capturedPointer=null;if(captured)try{captured.target.releasePointerCapture(captured.id);}catch{}
 }
-function cancelPointer(reason){if(!down)return;const id=gestureId;suppressedButtons=observedButtons;clearPointer();void window.whale.cancelPetGesture({gestureId:id,reason});}
+function cancelPointer(reason){gloveState.cancel(reason);if(!down){updateGlove();return;}const id=gestureId;suppressedButtons=observedButtons;clearPointer(reason);void window.whale.cancelPetGesture({gestureId:id,reason});}
 document.addEventListener('mousemove',event=>{
  observedButtons=event.buttons;suppressedButtons&=event.buttons;window.petInputDiagnostic.move++;window.petInputDiagnostic.cursor={x:event.clientX,y:event.clientY};hitAt(event.clientX,event.clientY);
  if(down&&!chordRequest&&!(event.buttons&(releaseButton===2?2:1)))cancelPointer('button-lost');else if(down)window.whale.dragMove({gestureId});
@@ -163,7 +194,7 @@ document.addEventListener('pointerdown',event=>{
  // Native pointerdown occurs only on the transition from no buttons to held.
  // It proves a prior out-of-window release occurred, unlike chord mousedown.
  observedButtons=event.buttons;if(!down)suppressedButtons=0;if(![0,2].includes(event.button)||down)return;hitAt(event.clientX,event.clientY);if(!bodyOpaque)return;
- down=true;ownerButton=event.button;releaseButton=ownerButton;gestureId=crypto.randomUUID();sprite.style.cursor=glove.closed;window.petInputDiagnostic.down++;
+ down=true;ownerButton=event.button;releaseButton=ownerButton;gestureId=crypto.randomUUID();gloveState.beginGesture(gestureId,{characterId:currentPetCharacter()});updateGlove();window.petInputDiagnostic.down++;
  window.whale.dragStart({gestureId,button:ownerButton,local:{x:event.clientX/innerWidth,y:event.clientY/innerHeight}});
  try{event.target.setPointerCapture(event.pointerId);capturedPointer={target:event.target,id:event.pointerId};}catch{cancelPointer('capture-failed');}
 });
@@ -187,6 +218,7 @@ document.addEventListener('lostpointercapture',()=>{
  // Chromium implicitly releases capture after the last button-up. If that
  // up is buffered behind a chord acknowledgement, resolve it before treating
  // capture loss as cancellation. Genuine loss still cancels a held gesture.
+ if(!down)return;
  if(chordRequest?.releases.length){chordRequest.captureLost=true;capturedPointer=null;return;}
  cancelPointer('capture-lost');
 });
@@ -198,6 +230,6 @@ document.addEventListener('keydown',event=>{if(event.key==='Escape'&&down){event
 window.whale.status().then(updateSnapshot);
 function clock(){frameTimer?.();frameTimer=null;const wasVisible=controller.visible;controller.setVisible(!document.hidden&&preferences.petVisible!==false);if(!document.hidden){if(!wasVisible)controller.trigger('wave',{source:'show'});render();frameTimer=subscribeAnimationClock(render);}else motionRenderer.release?.(surface);}
 document.addEventListener('visibilitychange',clock);
-window.addEventListener('pagehide',()=>{frameTimer?.();characterSwitch.dispose();motionRenderer.dispose?.();});
+window.addEventListener('pagehide',()=>{gloveDisposed=true;gloveState.cancel('pagehide');frameTimer?.();characterSwitch.dispose();motionRenderer.dispose?.();});
 reducedMotion.addEventListener('change',render);
 clock();

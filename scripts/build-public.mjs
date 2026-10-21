@@ -32,6 +32,7 @@ mkdirSync(out,{recursive:true});copyAssets(join(source,'assets'),join(out,'asset
 buildPetButtons(root,out);
 if(existsSync(join(root,'assets/group-thumbnails')))copyAssets(join(root,'assets/group-thumbnails'),join(out,'assets/group-thumbnails'));
 if(existsSync(join(root,'assets/group-scene')))copyAssets(join(root,'assets/group-scene'),join(out,'assets/group-scene'));
+if(existsSync(join(root,'assets/pet-glove-v2')))copyAssets(join(root,'assets/pet-glove-v2'),join(out,'assets/pet-glove-v2'));
 for(const file of sampleFiles){mkdirSync(dirname(file.to),{recursive:true});if(existsSync(file.to)){if(createHash('sha256').update(readFileSync(file.to)).digest('hex')!==file.sha256)throw Error('Existing candidate sample differs; use a new candidate output');}else linkSync(file.from,file.to);}
 // These generated manifests belong to this candidate. Never overwrite an inherited hardlink.
 function ownedJson(name,value){const file=join(out,'assets',name);if(existsSync(file))unlinkSync(file);writeFileSync(file,JSON.stringify(value));}
@@ -41,6 +42,7 @@ const indexedFile=path=>{const bytes=readFileSync(join(out,path));return {path,b
 installIndex.shared=installIndex.shared.map(file=>['assets/frame-sequence-manifest.json','assets/character-sequence-manifest.json'].includes(file.path)?indexedFile(file.path):file);
 for(const name of readdirSync(join(root,'assets/group-thumbnails'))){const path='assets/group-thumbnails/'+name;if(!installIndex.shared.some(file=>file.path===path))installIndex.shared.push(indexedFile(path));}
 for(const name of readdirSync(join(root,'assets/group-scene'))){const path='assets/group-scene/'+name;if(!installIndex.shared.some(file=>file.path===path))installIndex.shared.push(indexedFile(path));}
+if(existsSync(join(root,'assets/pet-glove-v2')))for(const name of readdirSync(join(root,'assets/pet-glove-v2'))){const path='assets/pet-glove-v2/'+name,entry=indexedFile(path),index=installIndex.shared.findIndex(file=>file.path===path);if(index<0)installIndex.shared.push(entry);else installIndex.shared[index]=entry;}
 for(const file of sampleFiles){const path=file.to.slice(out.length+1).replaceAll('\\','/');if(!installIndex.characters[file.characterId].some(entry=>entry.path===path))installIndex.characters[file.characterId].push(indexedFile(path));}
 ownedJson('install-resource-index.json',installIndex);
 const shared={bundle:true,logLevel:'info',legalComments:'eof'};

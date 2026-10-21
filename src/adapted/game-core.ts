@@ -5263,6 +5263,11 @@ export function apply(
         if (!Array.isArray(ids)||!ids.length||ids.some((id:string)=>!ROSTER[id])) return {ok:false,error:'合影角色无效'}
         const existing=allCgs(true).find((row:any)=>row.sourceEventId===source.sourceEventId)
         if(existing)return {ok:true,cgId:existing.id}
+        // Lock the planning connection before asynchronous reference checks.
+        // An in-flight task must retain the model and effort it was submitted
+        // with, even if settings change while references are being decoded.
+        const themeConnection=ctx.cg.themePlanner?.capture(source.themeBinding)
+        if(source.photoPlannerBinding?.enabled&&(!themeConnection?.enabled||!themeConnection.profile?.model||themeConnection.profile.id!==source.photoPlannerBinding.connectionId))return {ok:false,error:'提示词策划连接已变化，请重新选择后生成'}
         const characters=cgCharacters(ids), scene=source.scene
         // Validate references before persisting a queued item or calling a model.
         if(ctx.cg.validateReferences)await ctx.cg.validateReferences(characters,scene)
@@ -5270,7 +5275,7 @@ export function apply(
         const record:any={id,charId,lifeIds:ctx.companionLifeIds?.(ids),personaId:source.personaId,groupId:source.groupId,kind:'group',status:'queued',level:s.characters[charId].level,at:Date.now(),seen:true,automatic:false,sourceEventId:source.sourceEventId,groupSource:source,characters,scene,prompt:'',label:'群聊合影 · '+source.groupName}
         record.themeBrief={kind:'group',charId,level:record.level,language:ctx.language?.()||'zh-CN',profile,visual:profile.visual,scene,characters,groupName:source.groupName,recentContext:source.messages.map((m:any)=>({id:m.id,speaker:m.characterName||m.personaName,text:m.text})),history:[]}
         s.characters[charId].cgs.push(record);await save('global')
-        try{await ctx.cg.enqueue({id,sourceEventId:record.sourceEventId,kind:'group',label:record.label,prompt:'',characters,scene,themeBrief:record.themeBrief,themeConnection:ctx.cg.themePlanner?.capture(source.themeBinding)})}
+        try{await ctx.cg.enqueue({id,sourceEventId:record.sourceEventId,kind:'group',label:record.label,prompt:'',characters,scene,themeBrief:record.themeBrief,themeConnection})}
         catch(error:any){record.status='failed';record.error=error.message;await save('global');return {ok:false,error:error.message,cgId:id}}
         return {ok:true,cgId:id}
       }

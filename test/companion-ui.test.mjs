@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {setLocale} from '../src/i18n.mjs';
-import {CompanionManager,CompanionGroupStage,CompanionGroupDialogue,companionCardDraft,companionImage,groupCurrentMessage} from '../src/companion-ui.mjs';
+import {CompanionManager,CompanionGroupStage,CompanionGroupDialogue,companionCardDraft,companionImage,groupCurrentMessage,GroupPhotoPlannerFields,groupPhotoPlannerBinding} from '../src/companion-ui.mjs';
 
 const state=()=>({
  characters:[{id:'qwen',name:'Qwen',builtin:true,fields:{tone:{mode:'empty'},personality:{mode:'custom',value:'第一段\n\n第二段'}},effective:{tone:'',personality:'第一段\n\n第二段'}},{id:'custom-a',name:'新朋友',builtin:false,fields:{},effective:{}}],
@@ -44,4 +44,26 @@ test('English management panels translate new controls without replacing charact
 
 test('image references reject remote executable and traversing paths while accepting registered assets',()=>{
  assert.equal(companionImage('javascript:alert(1)'),null);assert.equal(companionImage('https://untrusted.invalid/person.png'),null);assert.equal(companionImage('assets/../secret.png'),null);assert.equal(companionImage('assets/characters/qwen/portrait.png'),'assets/characters/qwen/portrait.png');assert.equal(companionImage('known',key=>key==='known'?'assets/known.webp':null),'assets/known.webp');
+});
+
+const photoPlanner=()=>({binding:{enabled:false,connectionId:null},enabled:true,effective:{connectionId:'grok',name:'Grok',model:'grok-4.6',reasoningEffort:'low',error:null},options:[{id:'grok',name:'Grok',model:'grok-4.6',reasoningEffort:'low',available:true},{id:'codex',name:'本机 Codex',model:'gpt-6.1-sol',reasoningEffort:'high',available:true},{id:'broken',name:'Broken',model:'old-model',available:false,error:'连接已停用'}]});
+const plannerFields=(planner,value='')=>renderToStaticMarkup(React.createElement(GroupPhotoPlannerFields,{planner,value,onChange(){}}));
+test('group photo planner defaults to automatic, identifies the actual chat model, and separates image generation',()=>{
+ setLocale('zh-CN');const before=photoPlanner(),html=plannerFields(before);
+ assert.match(html,/data-group-photo-planner-select/);assert.match(html,/<option value="" selected="">自动（沿用入口角色／全局规则）/);
+ assert.match(html,/本次策划模型：Grok · grok-4.6 · 推理强度（effort）: low/);
+ assert.match(html,/本机 Codex · gpt-6.1-sol · 推理强度（effort）: high/);assert.match(html,/实际出图仍使用 CG 绘图连接/);
+ assert.match(html,/已有任务和重试保留原任务的模型与提示词/);assert.equal(before.binding.enabled,false);
+ assert.deepEqual(groupPhotoPlannerBinding(''),{enabled:false,connectionId:null});assert.deepEqual(groupPhotoPlannerBinding('codex'),{enabled:true,connectionId:'codex'});
+});
+test('planner draft shows its selected model, keeps missing selections visible and never reports an old custom model as automatic',()=>{
+ setLocale('zh-CN');let html=plannerFields(photoPlanner(),'codex');assert.match(html,/<option value="codex" selected="">/);assert.match(html,/本次策划模型：本机 Codex · gpt-6.1-sol · 推理强度（effort）: high/);
+ html=plannerFields(photoPlanner(),'deleted');assert.match(html,/已失效的连接 · deleted/);assert.match(html,/所选提示词连接已不存在/);assert.match(html,/aria-invalid="true"/);
+ html=plannerFields(photoPlanner(),'broken');assert.match(html,/连接已停用/);assert.match(html,/aria-invalid="true"/);
+ const planner=photoPlanner();planner.binding={enabled:true,connectionId:'codex'};planner.effective=planner.options[1];html=plannerFields(planner,'');assert.match(html,/保存或生成时按入口角色／全局规则解析/);assert.doesNotMatch(html,/data-group-photo-effective-planner/);
+});
+test('planner offline and English states explain local fallback while leaving character/model names intact',()=>{
+ const planner=photoPlanner();planner.enabled=false;setLocale('zh-CN');assert.match(plannerFields(planner),/联网聊天未开启：本次使用本地提示词/);
+ const explicitOffline=plannerFields(planner,'codex');assert.match(explicitOffline,/联网聊天未开启：请先开启后再使用指定的策划模型/);assert.doesNotMatch(explicitOffline,/本次使用本地提示词/);
+ try{setLocale('en');const html=plannerFields(planner);assert.match(html,/Prompt planning model/);assert.match(html,/Automatic \(entry character \/ global connection\)/);assert.match(html,/Online chat is off/);assert.match(plannerFields(planner,'codex'),/enable it before using the selected planning model/);assert.match(html,/Grok · grok-4.6/);assert.doesNotMatch(html,/提示词策划模型/);}finally{setLocale('zh-CN');}
 });

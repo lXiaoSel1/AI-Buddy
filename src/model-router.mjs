@@ -1,4 +1,5 @@
 import {connectionIdentity} from './service-identity.mjs';
+import {defaultContextCapacity} from './context-capacity.mjs';
 import {randomUUID} from 'node:crypto';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {join} from 'node:path';
@@ -58,7 +59,7 @@ export class ModelRouter{
     if(profile?.contextTokens)return {tokens:profile.contextTokens,source:'connection-setting',verified:false};
     const declared=model?.contextWindow??model?.context_window??model?.contextLength??model?.inputTokenLimit??model?.max_input_tokens;
     if(Number.isSafeInteger(declared)&&declared>=2048&&declared<=2000000)return {tokens:declared,source:'model-catalog',verified:true};
-    return {tokens:8192,source:'conservative-fallback-unknown-capacity',verified:false};
+    return defaultContextCapacity();
   }
   async runProfile(id,fn,signal){await this.ready;const profile=this.state.profiles.find(p=>p.id===id);if(!profile)throw Error('角色关联的聊天连接不存在');const route=this.resolveConnection({enabled:true,connectionId:id});if(route.error)throw Error(route.error);return this.scheduleTurn(profile,fn,0,signal);}
   async runBackground(profile,fn,signal){await this.ready;return this.scheduleTurn(profile,fn,1,signal);}

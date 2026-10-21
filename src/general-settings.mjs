@@ -42,7 +42,7 @@ export function GeneralSettings({view,onSaved,onPage,onManage}){
         toggle('alwaysOnTop',t("保持置顶"),t("显示在其他窗口上方。")),
         toggle('clickThrough',t("透明区域点击穿透"),t("开启后可点击角色周围的桌面内容。")),
         toggle('followCursor',t("跟随鼠标方向"),t("待机时看向鼠标所在的位置。")),
-        toggle('showStatusBadge',t("显示状态条"),t("在桌宠下方显示运行中的会话数。")),
+        toggle('showStatusBadge',t("显示状态条"),t("显示工作会话数；可点击状态条右侧关闭，在这里重新开启。")),
         toggle('completionBubbles',t("任务提示气泡"),t("日志明确记录完成或错误时显示提示。")),
         h('p',{className:'hint'},prefs.language==='en'?'Left-click to pet and play an expression. +1 affection at most once per 60 seconds, up to 30 per character daily. Right-click without dragging opens the workspace menu.':'左键单击触发表情并摸摸：同一角色每 60 秒最多 +1 好感，每天最多 30 点。右键单击打开工作空间菜单。'),
         toggle('autoSleep',prefs.language==='en'?'Automatic sleep':'自动睡眠',prefs.language==='en'?'Sleep after five quiet minutes. Real chat/image requests keep the pet awake.':'五分钟无活动后入睡；真实聊天和绘图执行期间保持清醒。'),

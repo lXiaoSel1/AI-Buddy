@@ -1,0 +1,828 @@
+{
+  "schema": 1,
+  "id": "ai-buddy-glove-v2",
+  "logicalSize": 32,
+  "hotspot": [
+    8,
+    8
+  ],
+  "durationMs": 200,
+  "frameMs": 20,
+  "phases": {
+    "extend": [
+      0,
+      1
+    ],
+    "contact": [
+      2,
+      3,
+      4
+    ],
+    "retract": [
+      5,
+      6,
+      7,
+      8,
+      9
+    ]
+  },
+  "nativeCursor": true,
+  "contactHold": "Output frame04 intentionally holds source03. Source04 begins recoil early and is retained only as an unused generated candidate.",
+  "resize": "BICUBIC premultiplied-alpha",
+  "creativeGeneration": "built-in imagegen, 2 generated original sheets; mechanical crop/register/export only",
+  "sources": [
+    {
+      "name": "glove-sheet-v1.png",
+      "sha256": "468f729a33fcb8a7ad0edc7ee5f83c9a0e380e9b66aadabf35fc88c333fb2034",
+      "bytes": 1534610
+    },
+    {
+      "name": "poke-sheet-v1.png",
+      "sha256": "a74c0282195cd71b11ea6f8a199c58d1cd51a7274e1af919adcc461210fad42e",
+      "bytes": 1018653
+    }
+  ],
+  "files": [
+    {
+      "file": "open.png",
+      "bytes": 1002,
+      "sha256": "5e9b1f4befa872f45e35a59421525ec6398f6afe93620ab609662dfe79d935c0",
+      "density": 1,
+      "size": [
+        32,
+        32
+      ],
+      "alphaBBox": [
+        10,
+        8,
+        31,
+        29
+      ],
+      "source": "glove-sheet-v1.png",
+      "cell": [
+        0,
+        0
+      ],
+      "anchor": [
+        397,
+        383
+      ],
+      "scale": 0.06,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "open@2x.png",
+      "bytes": 3320,
+      "sha256": "37822b9d51269f4935c0ce77c44365c0e92c1ced7703d62066a20e6c2d063350",
+      "density": 2,
+      "size": [
+        64,
+        64
+      ],
+      "alphaBBox": [
+        20,
+        15,
+        62,
+        59
+      ],
+      "source": "glove-sheet-v1.png",
+      "cell": [
+        0,
+        0
+      ],
+      "anchor": [
+        397,
+        383
+      ],
+      "scale": 0.06,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "closed.png",
+      "bytes": 947,
+      "sha256": "c90de6c1638ccc9570b6fdd1a1abae47fdbc4dfe94b549be7611f54b16003bba",
+      "density": 1,
+      "size": [
+        32,
+        32
+      ],
+      "alphaBBox": [
+        8,
+        7,
+        31,
+        29
+      ],
+      "source": "glove-sheet-v1.png",
+      "cell": [
+        1,
+        0
+      ],
+      "anchor": [
+        394,
+        385
+      ],
+      "scale": 0.06,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "closed@2x.png",
+      "bytes": 3031,
+      "sha256": "a546cf975a551a9925ebc2281798f478fe56f44d3c36cb56f13b773efaa606b6",
+      "density": 2,
+      "size": [
+        64,
+        64
+      ],
+      "alphaBBox": [
+        17,
+        14,
+        62,
+        59
+      ],
+      "source": "glove-sheet-v1.png",
+      "cell": [
+        1,
+        0
+      ],
+      "anchor": [
+        394,
+        385
+      ],
+      "scale": 0.06,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "grab.png",
+      "bytes": 846,
+      "sha256": "ddf9f3608817095c14285b6cd438b32b2df8fbc1a43b7b07f45e8cc1d6d8dad8",
+      "density": 1,
+      "size": [
+        32,
+        32
+      ],
+      "alphaBBox": [
+        11,
+        11,
+        31,
+        29
+      ],
+      "source": "glove-sheet-v1.png",
+      "cell": [
+        2,
+        0
+      ],
+      "anchor": [
+        363,
+        387
+      ],
+      "scale": 0.06,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "grab@2x.png",
+      "bytes": 2664,
+      "sha256": "fff78f9dcaf6258ce2b5a5f3da8b90726541bd7bec0eb5cb4ded114c5e4db0b2",
+      "density": 2,
+      "size": [
+        64,
+        64
+      ],
+      "alphaBBox": [
+        22,
+        22,
+        62,
+        59
+      ],
+      "source": "glove-sheet-v1.png",
+      "cell": [
+        2,
+        0
+      ],
+      "anchor": [
+        363,
+        387
+      ],
+      "scale": 0.06,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-00.png",
+      "bytes": 1104,
+      "sha256": "a1c57baf64baea206f52659ded24794aa783be8e46a07bacaad6562b23b8046e",
+      "density": 1,
+      "size": [
+        32,
+        32
+      ],
+      "alphaBBox": [
+        8,
+        8,
+        31,
+        30
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        0,
+        0
+      ],
+      "anchor": [
+        330,
+        300
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-00@2x.png",
+      "bytes": 3636,
+      "sha256": "bbd6d58be1abff645709ddad786cb4de4855deef9b8910dd7e6e6306e4b70b80",
+      "density": 2,
+      "size": [
+        64,
+        64
+      ],
+      "alphaBBox": [
+        17,
+        16,
+        63,
+        61
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        0,
+        0
+      ],
+      "anchor": [
+        330,
+        300
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-01.png",
+      "bytes": 1047,
+      "sha256": "b939ef88893bec962b9f4e663e064d0683b621071beb340a481daf365df8ab33",
+      "density": 1,
+      "size": [
+        32,
+        32
+      ],
+      "alphaBBox": [
+        8,
+        7,
+        31,
+        30
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        1,
+        0
+      ],
+      "anchor": [
+        325,
+        300
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-01@2x.png",
+      "bytes": 3517,
+      "sha256": "b20325ffd3d5753b5ec01f4febcc71f86012f4b01a23d69237a5d325f6acb093",
+      "density": 2,
+      "size": [
+        64,
+        64
+      ],
+      "alphaBBox": [
+        16,
+        11,
+        63,
+        60
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        1,
+        0
+      ],
+      "anchor": [
+        325,
+        300
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-02.png",
+      "bytes": 1058,
+      "sha256": "5f16004b83907591308aaf6be94f855b95bfd9ac4bd0a84cc0ef229e5759fffc",
+      "density": 1,
+      "size": [
+        32,
+        32
+      ],
+      "alphaBBox": [
+        7,
+        7,
+        31,
+        30
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        2,
+        0
+      ],
+      "anchor": [
+        312,
+        300
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-02@2x.png",
+      "bytes": 3541,
+      "sha256": "12528d08c418d39b62bc2eb5590419d0061cae07219c5aebbbfe154050df3bfd",
+      "density": 2,
+      "size": [
+        64,
+        64
+      ],
+      "alphaBBox": [
+        13,
+        14,
+        63,
+        61
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        2,
+        0
+      ],
+      "anchor": [
+        312,
+        300
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-03.png",
+      "bytes": 1075,
+      "sha256": "db5299c940398463720774b82f8f44f9a14e94b2ea350ecd8b9b26e38731fbf5",
+      "density": 1,
+      "size": [
+        32,
+        32
+      ],
+      "alphaBBox": [
+        7,
+        7,
+        31,
+        30
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        3,
+        0
+      ],
+      "anchor": [
+        301,
+        297
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-03@2x.png",
+      "bytes": 3496,
+      "sha256": "1c4fca28facc3832767cfe36a4e8b722ca6f5b17234841252035601652027d38",
+      "density": 2,
+      "size": [
+        64,
+        64
+      ],
+      "alphaBBox": [
+        14,
+        14,
+        62,
+        61
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        3,
+        0
+      ],
+      "anchor": [
+        301,
+        297
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-04.png",
+      "bytes": 1075,
+      "sha256": "db5299c940398463720774b82f8f44f9a14e94b2ea350ecd8b9b26e38731fbf5",
+      "density": 1,
+      "size": [
+        32,
+        32
+      ],
+      "alphaBBox": [
+        7,
+        7,
+        31,
+        30
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        3,
+        0
+      ],
+      "anchor": [
+        301,
+        297
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-04@2x.png",
+      "bytes": 3496,
+      "sha256": "1c4fca28facc3832767cfe36a4e8b722ca6f5b17234841252035601652027d38",
+      "density": 2,
+      "size": [
+        64,
+        64
+      ],
+      "alphaBBox": [
+        14,
+        14,
+        62,
+        61
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        3,
+        0
+      ],
+      "anchor": [
+        301,
+        297
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-05.png",
+      "bytes": 1068,
+      "sha256": "0f2dd7493d45df69f4a485fe6c1e058c07bb846265c438be6cee512cb2bc656f",
+      "density": 1,
+      "size": [
+        32,
+        32
+      ],
+      "alphaBBox": [
+        8,
+        7,
+        31,
+        30
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        0,
+        1
+      ],
+      "anchor": [
+        335,
+        277
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-05@2x.png",
+      "bytes": 3458,
+      "sha256": "9209aa72dd773374182193a96b55956a7ecdae4915ce413803b12892f2e5abfd",
+      "density": 2,
+      "size": [
+        64,
+        64
+      ],
+      "alphaBBox": [
+        16,
+        14,
+        63,
+        61
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        0,
+        1
+      ],
+      "anchor": [
+        335,
+        277
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-06.png",
+      "bytes": 1058,
+      "sha256": "f263e57c2c770d38e6076cb99a2e5af16c954b540f4e9b191e5efdfc68666adb",
+      "density": 1,
+      "size": [
+        32,
+        32
+      ],
+      "alphaBBox": [
+        8,
+        8,
+        31,
+        30
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        1,
+        1
+      ],
+      "anchor": [
+        336,
+        276
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-06@2x.png",
+      "bytes": 3580,
+      "sha256": "227f6b1a350a268a790f47e14e82da2dd9a5436dd80811218e67f4b3d882f5f5",
+      "density": 2,
+      "size": [
+        64,
+        64
+      ],
+      "alphaBBox": [
+        15,
+        15,
+        62,
+        60
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        1,
+        1
+      ],
+      "anchor": [
+        336,
+        276
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-07.png",
+      "bytes": 1088,
+      "sha256": "f5fa4b55ddccc603668ca63b9d0966bafff26de660dfb6efa43a0c928e394e65",
+      "density": 1,
+      "size": [
+        32,
+        32
+      ],
+      "alphaBBox": [
+        8,
+        8,
+        31,
+        30
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        2,
+        1
+      ],
+      "anchor": [
+        320,
+        277
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-07@2x.png",
+      "bytes": 3560,
+      "sha256": "77c347d7fa8a87f1f0addff2da1882b711e413e660ae9af99178394019c850fb",
+      "density": 2,
+      "size": [
+        64,
+        64
+      ],
+      "alphaBBox": [
+        16,
+        16,
+        63,
+        60
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        2,
+        1
+      ],
+      "anchor": [
+        320,
+        277
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-08.png",
+      "bytes": 1109,
+      "sha256": "96360071e802944596f711a9fb9996273ccd1af897c14fda179054ecd7152777",
+      "density": 1,
+      "size": [
+        32,
+        32
+      ],
+      "alphaBBox": [
+        8,
+        9,
+        31,
+        30
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        3,
+        1
+      ],
+      "anchor": [
+        315,
+        277
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-08@2x.png",
+      "bytes": 3545,
+      "sha256": "9fa2202dc7f03ad7a80374248811064239e33320e731be9e2e08a688187ab335",
+      "density": 2,
+      "size": [
+        64,
+        64
+      ],
+      "alphaBBox": [
+        17,
+        16,
+        63,
+        60
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        3,
+        1
+      ],
+      "anchor": [
+        315,
+        277
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-09.png",
+      "bytes": 1062,
+      "sha256": "5a03955e5b93e34dcb519342ee905103c7a59edd41d0a871e4eb8056bd6a9b45",
+      "density": 1,
+      "size": [
+        32,
+        32
+      ],
+      "alphaBBox": [
+        8,
+        8,
+        31,
+        30
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        4,
+        1
+      ],
+      "anchor": [
+        301,
+        278
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "poke-09@2x.png",
+      "bytes": 3522,
+      "sha256": "b414714cd91f6970ce1ae71d509f2b83791fdccc04af6d8dbc6b04f27396abc5",
+      "density": 2,
+      "size": [
+        64,
+        64
+      ],
+      "alphaBBox": [
+        16,
+        16,
+        63,
+        60
+      ],
+      "source": "poke-sheet-v1.png",
+      "cell": [
+        4,
+        1
+      ],
+      "anchor": [
+        301,
+        278
+      ],
+      "scale": 0.075,
+      "hotspot": [
+        8,
+        8
+      ]
+    }
+  ],
+  "totalBytes": 57905
+}

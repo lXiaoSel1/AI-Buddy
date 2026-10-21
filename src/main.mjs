@@ -284,7 +284,8 @@ ipcMain.on('pet:drag-start',(event,message)=>{
  const button=message?.button??0;if(button!==0&&button!==2)return;
  petMotion.bounds={...bounds};const begin=petMotion.begin(point,{button});
  const wakeOnly=activityClock.wake('touch');
- drag={gestureId,button,origin:point,moved:false,characterId:petState.characterId??effectivePetCharacter(),personaId:game.context?.().personaId,eventId:'touch:'+process.pid+':'+Date.now()+':'+begin.serial,caught:begin.caught,wakeOnly};
+ const capturedAt=Date.now();
+ drag={gestureId,button,origin:point,moved:false,characterId:petState.characterId??effectivePetCharacter(),personaId:game.context?.().personaId,eventId:'touch:'+process.pid+':'+capturedAt+':'+begin.serial,capturedAt,caught:begin.caught,wakeOnly};
  nativeButtons=button===2?2:1;buttonObserver?.start(gestureId);ignoringMouse=false;pet.setIgnoreMouseEvents(false);moveDrag(cursor);publishInteraction(true);audit({type:'pet-pointer-down',gestureId,button,point,cursor,bounds});
 });
 ipcMain.on('pet:drag-move',(event,message)=>{if(event.sender===pet?.webContents&&gestureMatches(message))moveDrag(gesturePoint(message));});
@@ -295,7 +296,7 @@ async function finishPetGesture(message){
  // position for placement/tap classification, without adding a velocity sample.
  if(arg('cursor')!=='manual')petMotion.move(screen.getCursorScreenPoint(),{sample:false});
  const captured=drag,result=petMotion.release(null,{button:message?.button??petMotion.releaseButton??drag.button});if(result.ignored)return result;drag=null;buttonObserver?.stop();petEvent({kind:'gesture-reset',gestureId:captured.gestureId,reason:'released',buttons:nativeButtons});petEvent({kind:'drag',active:false});publishInteraction(true);setGestureMode(gestureMode);
- if(result.touch){activityClock.activity('touch');const id=touchExpressions.next(captured.characterId);petEvent({kind:'feedback',value:{id,source:'touch',cycles:1,eventId:captured.eventId,characterId:captured.characterId}});const awarded=await game.touch?.({characterId:captured.characterId,personaId:captured.personaId,eventId:captured.eventId});audit({type:'pet-touch',characterId:captured.characterId,personaId:captured.personaId,expression:id,awarded:awarded?.awarded??false,reason:awarded?.reason});}
+ if(result.touch){activityClock.activity('touch');const id=touchExpressions.next(captured.characterId);petEvent({kind:'feedback',value:{id,source:'touch',cycles:1,eventId:captured.eventId,gestureId:captured.gestureId,capturedAt:captured.capturedAt,confirmedAt:Date.now(),characterId:captured.characterId}});const awarded=await game.touch?.({characterId:captured.characterId,personaId:captured.personaId,eventId:captured.eventId});audit({type:'pet-touch',characterId:captured.characterId,personaId:captured.personaId,expression:id,awarded:awarded?.awarded??false,reason:awarded?.reason});}
  if(captured.wakeOnly){result.wakeOnly=true;result.context=false;}
  else if(result.context)petContextMenu();
  settings.petBounds=petBounds(pet.getContentBounds(),settings.preferences.petScale);audit({type:'pet-pointer-up',gestureId:captured.gestureId,...result,bounds:settings.petBounds});await saveSettings();return result;

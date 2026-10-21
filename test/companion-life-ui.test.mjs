@@ -90,6 +90,8 @@ test('context capacity distinguishes user settings from unknown fallback and avo
  assert.match(fallback,/未知容量，使用保守上限/);assert.match(fallback,/8,192/);assert.match(fallback,/不代表此接口已通过极限实测/);
  const manual=render(MemoryCapacityInfo,{capacity:{tokens:16384,source:'connection-setting',verified:false}});
  assert.match(manual,/用户填写的接口容量/);assert.doesNotMatch(manual,/未知容量，使用保守上限/);
+ const appDefault=render(MemoryCapacityInfo,{capacity:{tokens:272000,source:'application-default',verified:false}});
+ assert.match(appDefault,/272,000/);assert.match(appDefault,/应用默认容量（模型未声明）/);assert.doesNotMatch(appDefault,/模型目录声明/);assert.match(appDefault,/不代表此接口已通过极限实测/);
 });
 
 test('failed daily consolidation offers explicit retry but running and committed days do not expose a duplicate action',()=>{
