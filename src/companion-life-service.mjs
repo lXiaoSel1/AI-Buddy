@@ -6,7 +6,7 @@ import {createLifeArchiveRepository} from './companion-life-archive.mjs';
 const copy=value=>structuredClone(value);
 // Message times in an archive are checked like any other import (see repairMessageTimes).
 function repairTimes(target){
- const now=Date.now(),messages=rows=>Array.isArray(rows)?rows.map(row=>row&&typeof row==='object'?repairMessageTimes(row,now):row):rows;
+ const now=Date.now(),messages=rows=>Array.isArray(rows)?rows.map(row=>row&&typeof row==='object'?repairMessageTimes(row,now,{unknown:true}):row):rows;
  for(const row of target.conversations??[])row.messages=messages(row.messages);
  for(const group of [...(target.groupEvidence??[]),...(target.life?.restoredGroupEvidence??[])])group.messages=messages(group.messages);
  if(target.life&&Array.isArray(target.life.personalEvents))target.life.personalEvents=messages(target.life.personalEvents);
@@ -72,7 +72,7 @@ export async function createCompanionLives({store,dataRoot,imageCodec,imageConve
   audit({type:'life-transaction-replay-failed',characterId:transaction.characterId,transactionId:transaction.id,message:String(error?.message??error)});
  }
  async function change(characterId,targetFactory,kind,args={}){
-  knownCard(characterId);busy(characterId);if(switching.size||store.state.lifeTransaction)throw Error('已有一次人生存档操作正在执行，请完成后再操作');switching.add(characterId);let transaction;
+  knownCard(characterId);busy(characterId);if(store.state.lifeTransaction?.replayFailed)throw Error('另一个角色（'+(store.state.cards[store.state.lifeTransaction.characterId]?.name??store.state.lifeTransaction.characterId)+'）的人生切换还没有处理。请先对它选择重试、回到切换前或放弃，再切换其他角色的人生');if(switching.size||store.state.lifeTransaction)throw Error('已有一次人生存档操作正在执行，请完成后再操作');switching.add(characterId);let transaction;
   try{
    await quiesce(characterId);const before=await snapshot(characterId),beforeFile=await repository.save(before),archive=metadata(before,beforeFile,{name:args.name??before.card.name+' · '+(kind==='restore'?'恢复前':'重置前')});
    const target=repairTimes(await targetFactory(copy(before)));validateTarget(target,characterId);

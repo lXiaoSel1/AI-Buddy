@@ -118,6 +118,7 @@ export function createLifeArchiveRepository({dataRoot,imageCodec=null,imageConve
    if(assetKey(key)&&value){
     const root=realpathSync(dataRoot),normalized=value.replaceAll('\\','/');
     if(isAbsolute(value)||!normalized.startsWith('cg-assets/'))throw Error('存档图片路径越界');
+    if(!existsSync(resolve(root,value))&&key==='thumbnailRef'&&typeof parent?.assetRef==='string'&&parent.assetRef!==value&&existsSync(resolve(root,parent.assetRef)))return separate(parent.assetRef,files,ctx,'assetRef',parentKey,parent);
     if(!existsSync(resolve(root,value))){ctx.missing.push({cgId:parent?.id??null,label:parent?.label??null,at:parent?.at??null,level:parent?.level??null,kind:parent?.kind??null,groupId:parent?.groupId??null,ref:normalized});return value;}
     const file=realpathSync(resolve(root,value)),rel=relative(root,file);if(rel.startsWith('..')||isAbsolute(rel))throw Error('存档图片路径越界');
     const bytes=readFileSync(file);return image(bytes,sniff(bytes),files);

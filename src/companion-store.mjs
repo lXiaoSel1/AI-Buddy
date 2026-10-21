@@ -46,12 +46,14 @@ export function conversationFor(state,characterId=state.activeCharacterId,person
 // Times read from a file are kept only when they are real dates: inside the Date
 // range, positive and at most a day ahead. Others become the import time (revision
 // times become 0, the existing "date unknown" value) and the message is flagged.
+// With unknown:true (life archives) createdAt 0 stays and bad values become 0, so
+// no date is invented for a restored message.
 export const validTime=(value,now=Date.now())=>typeof value==='number'&&Number.isFinite(value)&&value>0&&value<=Math.min(8.64e15,now+86400000);
 export const importTime=(value,now=Date.now())=>validTime(Number(value),now)?Number(value):now;
-export function repairMessageTimes(raw,now=Date.now()){
- const given=key=>raw[key]!==undefined&&raw[key]!==null,bad=key=>given(key)&&!validTime(Number(raw[key]),now);let repaired=false;
- const createdAt=importTime(raw.createdAt,now),message={...raw,createdAt};if(bad('createdAt'))repaired=true;
- for(const key of ['editedAt','updatedAt','presentedAt','recordedAt'])if(bad(key)){message[key]=key==='recordedAt'?now:createdAt;repaired=true;}
+export function repairMessageTimes(raw,now=Date.now(),{unknown=false}={}){
+ const given=key=>raw[key]!==undefined&&raw[key]!==null,bad=key=>given(key)&&!validTime(Number(raw[key]),now)&&!(unknown&&key==='createdAt'&&Number(raw[key])===0);let repaired=false;
+ const createdAt=bad('createdAt')?(unknown?0:now):unknown&&(!given('createdAt')||Number(raw.createdAt)===0)?raw.createdAt:importTime(raw.createdAt,now),message={...raw,createdAt};if(bad('createdAt'))repaired=true;
+ for(const key of ['editedAt','updatedAt','presentedAt','recordedAt'])if(bad(key)){if(unknown)delete message[key];else message[key]=key==='recordedAt'?now:createdAt;repaired=true;}
  if(Array.isArray(raw.revisions))message.revisions=raw.revisions.map(row=>{const at=Number(row?.at)||0;if(at&&!validTime(at,now)){repaired=true;return {...row,at:0};}return {...row,at};});
  if(repaired)message.timeRepaired=true;return message;
 }

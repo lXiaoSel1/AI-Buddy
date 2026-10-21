@@ -22,6 +22,9 @@ test('B7: imported times outside the Date range, non-positive, non-numeric or fa
  const fine=repairMessageTimes({role:'user',text:'x',createdAt:now-1000,editedAt:BAD,presentedAt:now-500,revisions:[{text:'a',at:BAD},{text:'b',at:now-2000}]},now);
  assert.equal(fine.createdAt,now-1000);assert.equal(fine.editedAt,now-1000);assert.equal(fine.presentedAt,now-500);assert.deepEqual(fine.revisions.map(r=>r.at),[0,now-2000]);assert.equal(fine.timeRepaired,true);
  const untouched=repairMessageTimes({role:'user',text:'x',createdAt:now-1000},now);assert.equal(untouched.timeRepaired,undefined);
+ // Life archives: 0 means "date unknown" and stays; a bad time becomes unknown, not today.
+ const undated=repairMessageTimes({role:'assistant',text:'x',createdAt:0,legacy:true},now,{unknown:true});assert.equal(undated.createdAt,0);assert.equal(undated.timeRepaired,undefined);
+ const broken=repairMessageTimes({role:'assistant',text:'x',createdAt:BAD,editedAt:BAD},now,{unknown:true});assert.equal(broken.createdAt,0);assert.equal('editedAt' in broken,false);assert.equal(broken.timeRepaired,true);
 });
 
 test('B7: a conversation imported with createdAt=9e15 keeps the character usable',async t=>{
@@ -51,6 +54,7 @@ test('B7: one character that cannot be read is reported; the others are still co
  assert.ok(summaries(store,'gpt')>=1,'gpt is consolidated');assert.equal(calls.includes('claude'),false);
  assert.ok(errors.some(row=>row.type==='memory-sync-error'&&row.characterId==='claude'));
  assert.match(store.state.lives.claude.memory.syncError.message,/未标日期/);
+ const view=await memory.view({characterId:'claude',personaId:'default'});assert.match(view.syncError.message,/未标日期/);assert.deepEqual(view.events,[]);
 });
 
 // B9: a reply generated at 23:59:30 on D is presented only after midnight.

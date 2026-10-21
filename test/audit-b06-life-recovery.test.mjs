@@ -35,6 +35,8 @@ test('a replay that keeps failing starts the service, locks only that character 
   await assert.rejects(service.action('companion-growth-mode',{characterId:'claude',mode:'seed'}),/人生切换没有完成/);
   await service.action('companion-character-select',{id:'gpt'});
   if(attempt===1)await service.action('companion-growth-mode',{characterId:'gpt',mode:'seed'});
+  // The single transaction slot is still held, so another character's switch says what to do.
+  await assert.rejects(service.action('companion-life-reset',{characterId:'gpt',mode:'blank'}),/另一个角色（claude）的人生切换还没有处理/);
   service.close();await store.flush();
  }
 });

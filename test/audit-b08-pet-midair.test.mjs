@@ -36,3 +36,9 @@ test('B8: a left-button drag still rests wherever it is dropped',()=>{
  const y=motion.bounds.y;run({motion,clock},{3:m=>m.recover()},200);
  assert.equal(motion.mode,'rest');assert.equal(motion.bounds.y,y);assert.ok(y<FLOOR-100);
 });
+
+test('B8: turning physics off during a throw lands the pet instead of freezing or flying on',()=>{
+ const {motion,clock}=thrown();clock.now+=64;motion.tick();assert.equal(motion.mode,'flying');
+ motion.configure({enabled:false});assert.ok(onFloor(motion),JSON.stringify({mode:motion.mode,y:motion.bounds.y}));
+ const y=motion.bounds.y;run({motion,clock},{2:m=>m.recover()},50);assert.equal(motion.mode,'rest');assert.equal(motion.bounds.y,y);
+});

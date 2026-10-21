@@ -8,9 +8,10 @@ const lineKey=message=>message.role+'\u0000'+message.text;
 const sha=value=>createHash('sha256').update(value).digest('hex');
 
 // Longest run keys[from..] that occurs contiguously in seen; returns {length,at}.
-function longestMatch(seen,keys,from){
+// positions maps a key to the indexes where it occurs in seen.
+function longestMatch(seen,positions,keys,from){
  let best={length:0,at:-1};
- for(let at=0;at<seen.length;at++){if(seen[at].key!==keys[from])continue;let length=1;while(from+length<keys.length&&at+length<seen.length&&seen[at+length].key===keys[from+length])length++;if(length>best.length)best={length,at};}
+ for(const at of positions.get(keys[from])??[]){let length=1;while(from+length<keys.length&&at+length<seen.length&&seen[at+length].key===keys[from+length])length++;if(length>best.length)best={length,at};}
  return best;
 }
 
@@ -20,7 +21,7 @@ export function planLegacyDedupe(state){
  const removals=[],characters={};
  for(const conversations of groups.values()){
   conversations.sort((a,b)=>(a.createdAt??0)-(b.createdAt??0)||String(a.id).localeCompare(String(b.id)));
-  const seen=[];
+  const seen=[],positions=new Map();
   for(const conversation of conversations){
    const runs=[];let run=null;
    for(const message of conversation.messages){if(message.legacy===true&&typeof message.text==='string'){if(!run)runs.push(run=[]);run.push(message);}else run=null;}
@@ -28,13 +29,13 @@ export function planLegacyDedupe(state){
    for(const rows of runs){
     const keys=rows.map(lineKey);
     for(let index=0;index<keys.length;){
-     const match=longestMatch(seen,keys,index);
+     const match=longestMatch(seen,positions,keys,index);
      // One equal line alone is not a copy: the engine can write the same line twice.
      if(match.length>=2){for(let k=0;k<match.length;k++)removed.push({messageId:rows[index+k].id,keptConversationId:seen[match.at+k].conversationId,keptMessageId:seen[match.at+k].messageId});index+=match.length;}
      else{kept.push(rows[index]);index++;}
     }
    }
-   for(const message of kept)seen.push({key:lineKey(message),conversationId:conversation.id,messageId:message.id});
+   for(const message of kept){const key=lineKey(message);if(!positions.has(key))positions.set(key,[]);positions.get(key).push(seen.length);seen.push({key,conversationId:conversation.id,messageId:message.id});}
    if(removed.length){
     removals.push({conversationId:conversation.id,characterId:conversation.characterId,lifeId:conversation.lifeId??null,messages:removed});
     const row=characters[conversation.characterId]??={duplicates:0,conversations:0};row.duplicates+=removed.length;row.conversations++;

@@ -59,7 +59,7 @@ export class PetMotion{
     if(!Number.isFinite(speed)||speed<=0)throw Error('Invalid animation speed');
     const nextInsets=collisionInsets(insets,this.bounds);
     const now=this.now();this.animationElapsed=this.animationNow(now);this.animationAt=now;this.speed=speed;
-    this.enabled=!!enabled;this.landDurationMs=landDurationMs;this.collisionInsets=nextInsets;if(Object.hasOwn(PET_STRENGTHS,strength))this.strength=strength;if(!this.enabled&&['flying','landing','charging'].includes(this.mode))this.cancel();else this.contain();
+    this.enabled=!!enabled;this.landDurationMs=landDurationMs;this.collisionInsets=nextInsets;if(Object.hasOwn(PET_STRENGTHS,strength))this.strength=strength;if(!this.enabled&&this.mode==='flying')this.stop();else if(!this.enabled&&['landing','charging'].includes(this.mode))this.cancel();else this.contain();
   }
   setMode(mode){if(mode===this.mode)return;this.mode=mode;this.since=this.now();this.animationAt=this.since;this.animationElapsed=0;this.animationEpoch++;this.animationWaiting=this.requireReady&&['flying','landing'].includes(mode);this.onState(this.state());}
   state(){return {mode:this.mode,button:this.button,releaseButton:this.releaseButton,walkDirection:this.walkDirection??1,animationEpoch:this.animationEpoch,animationWaiting:this.animationWaiting,bounds:{...this.bounds},collisionInsets:{...this.collisionInsets},collisionBounds:this.collisionRect(),velocity:{...this.velocity},since:this.since??this.now(),animationElapsedMs:this.animationNow(),snapshotSpeed:this.speed,anchor:this.anchor?{...this.anchor}:null,pull:this.pull?{...this.pull}:null};}
@@ -195,8 +195,9 @@ export class PetMotion{
     this.commit(this.bounds.x,this.bounds.y);
     return this.state();
   }
-  // A throw keeps falling under gravity; only gesture state is cleared (B8).
-  stop(){this.pull=null;this.anchor=null;this.samples=[];if(this.mode==='flying')return;this.velocity={x:0,y:0};this.setMode('rest');this.contain();}
+  // A throw that has to stop (physics turned off, flight animation failed) lands
+  // straight below instead of resting in mid-air (B8).
+  stop(){if(this.mode==='flying'){const floor=this.sweep('y',this.bounds.y+100000);this.bounds.y=floor.value;}this.velocity={x:0,y:0};this.pull=null;this.anchor=null;this.samples=[];this.setMode('rest');this.contain();}
   // Drop straight down from the current position. The new animation epoch makes
   // media messages for the interrupted flight stale.
   fall(){this.velocity={x:0,y:0};this.pull=null;this.anchor=null;this.samples=[];this.contain();this.mode='rest';this.setMode('flying');this.flightAt=this.now();this.lastTick=this.now();}
@@ -205,7 +206,7 @@ export class PetMotion{
     // The OS may have moved the native window independently (DPI, display or
     // resume). Reapply the recovered position even when it equals our cache.
     this.lastPosition=null;
-    if(this.mode==='flying'){this.fall();return;}
+    if(this.mode==='flying'&&this.enabled){this.fall();return;}
     this.stop();this.lastTick=this.now();
   }
 }

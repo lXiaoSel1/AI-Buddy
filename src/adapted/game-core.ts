@@ -5524,7 +5524,7 @@ export function apply(
           if(!Array.isArray(rows))continue
           s.characters[charId].cgs=rows.filter((cg:any)=>{
             if(!cg||!wanted.has(cg.id)||!(cg.charId===id||cg.characters?.some((c:any)=>c.id===id)))return true
-            if(![cg.assetRef,cg.thumbnailRef].some((ref:any)=>typeof ref==='string'&&ref&&ctx.cgAssetExists?.(ref)===false))return true
+            if(!(typeof cg.assetRef==='string'&&cg.assetRef&&ctx.cgAssetExists?.(cg.assetRef)===false))return true
             removed.push(cg.id);return false
           })
         }

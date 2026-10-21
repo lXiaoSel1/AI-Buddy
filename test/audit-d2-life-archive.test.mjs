@@ -89,7 +89,7 @@ test('D2-3 end to end: save answers with the missing list; cleanup drops only re
  await cg.ready;let game=await createGalgame({dataRoot,provider,model:'fixture',cg});game.close();
  const global=createSnapshotStorage(join(dataRoot,'galgame/storages/dsh-whale-galgame/global.json')),state=await readJson(global);
  mkdirSync(join(dataRoot,'cg-assets','kept'),{recursive:true});writeFileSync(join(dataRoot,'cg-assets','kept','image.png'),PNG);
- state.characters.claude.cgs=[{id:'gone',status:'ready',at:5,level:2,label:'丢失的图',assetRef:'cg-assets/gone/image.png'},{id:'kept',status:'ready',at:6,level:2,assetRef:'cg-assets/kept/image.png'}];
+ state.characters.claude.cgs=[{id:'gone',status:'ready',at:5,level:2,label:'丢失的图',assetRef:'cg-assets/gone/image.png'},{id:'kept',status:'ready',at:6,level:2,assetRef:'cg-assets/kept/image.png',thumbnailRef:'cg-assets/kept/thumbnail.png'}];
  await global.writeText(JSON.stringify(state));
  game=await createGalgame({dataRoot,provider,model:'fixture',cg});let open=true;t.after(async()=>{if(open)game.close();await cg.close();});
  const failed=await game.action('companion-life-save',{characterId:'claude'});
@@ -101,4 +101,11 @@ test('D2-3 end to end: save answers with the missing list; cleanup drops only re
  assert.deepEqual((await game.action('companion-life-list',{characterId:'claude'})).archives.find(row=>row.id===saved.archive.id).unlocks.map(row=>row.id),['kept']);
  game.close();open=false;
  assert.deepEqual((await readJson(createSnapshotStorage(join(dataRoot,'galgame/storages/dsh-whale-galgame/global.json')))).characters.claude.cgs.map(cg=>cg.id),['kept']);
+});
+
+test('D2-3: a CG whose thumbnail alone is lost is saved with its full image',async t=>{
+ const {root,repo}=repository(t);mkdirSync(join(root,'cg-assets','kept'),{recursive:true});writeFileSync(join(root,'cg-assets','kept','image.png'),PNG);
+ const raw=snapshot();raw.content.cgs=[{id:'kept',assetRef:'cg-assets/kept/image.png',thumbnailRef:'cg-assets/kept/thumbnail.png'}];
+ const saved=await repo.save(raw),cg=repo.read(saved.id,saved.sha256).snapshot.content.cgs[0];
+ assert.deepEqual(cg.thumbnailRef,cg.assetRef);
 });

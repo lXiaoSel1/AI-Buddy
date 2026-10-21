@@ -79,7 +79,7 @@ test('a truncated reply is retried once with twice the limit, then reported as t
 });
 
 test('group chat never stores or shows a raw JSON fragment',async t=>{
- assert.equal(lenientReplyText(CUT),'今天我们一起去海边散步，然后');assert.equal(lenientReplyText('普通台词'),null);assert.equal(lenientReplyText('{"emotion":"x"'),'');
+ assert.equal(lenientReplyText(CUT),'今天我们一起去海边散步，然后');assert.equal(lenientReplyText('普通台词'),null);assert.equal(lenientReplyText('{叹气} 好吧，听你的。'),null);assert.equal(lenientReplyText('{"emotion":"x"'),'');
  const store=memoryStore(await companionFixture()),{engine}=syntheticEngine({getStore:()=>store});
  let reply=CUT;const provider={enabled:true,currentSelection:()=>({provider:'p1',model:'m'}),resolveConnection:()=>({mode:'global',connectionId:'p1',name:'p1',model:'m',error:null}),resolveContextCapacity:()=>({tokens:128000,source:'fixture',verified:true}),runTurn:async fn=>fn(),
   async *stream(){yield {type:'text-delta',text:reply};yield {type:'finish',reason:{kind:'stop'}};}};
@@ -94,4 +94,13 @@ test('group chat never stores or shows a raw JSON fragment',async t=>{
  reply='{"emotion":"cheerful"';await service.action('companion-group-send',{id:group.id,text:'再说一次',forceCharacterId:'claude'});
  for(let n=0;n<40&&service.viewState().groupRuntime.status!=='failed';n++)await sleep(25);
  assert.equal(service.viewState().groupRuntime.status,'failed');assert.match(service.viewState().groupRuntime.error,/格式不完整/);
+});
+
+test('a truncation after half the request time is reported instead of retried',async t=>{
+ const requests=[];
+ const value=new ModelRouter({codex:stubCodex(),dataRoot:tmpDir('b02-late',{t}),crypto:fakeCrypto,timeoutMs:400,outputLimit:()=>8192,fetchImpl:async(_,init)=>{requests.push(JSON.parse(init.body));await sleep(250);return truncated['chat-completions'](8192);}});
+ await value.ready;t.after(()=>value.close());
+ const saved=await value.save({kind:'custom',name:'A',protocol:'chat-completions',baseUrl:'https://fixture.invalid/v1',model:'m',key:'k',contextTokens:128000});await value.activate(saved.id);value.setEnabled(true);
+ const result=await drain(value.stream({messages:[{role:'user',content:'hi'}],maxTokens:1200,userLimit:true}));
+ assert.equal(result.error?.code,'MODEL_OUTPUT_TRUNCATED');assert.equal(requests.length,1);
 });

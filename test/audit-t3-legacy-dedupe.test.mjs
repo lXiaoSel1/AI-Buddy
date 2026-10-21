@@ -54,3 +54,10 @@ test('T3 through maintenance: plan is read-only, apply backs up first and refuse
  assert.deepEqual(texts(store.state,'third'),[]);assert.equal(audit[0].type,'maintenance-apply');
  assert.throws(()=>tool.plan('unknown'),/未知维护任务/);
 });
+
+test('T3: thousands of legacy lines plan in well under a second',()=>{
+ const history=Array.from({length:3000},(_,i)=>line('h'+i,i%2?'assistant':'user','第 '+i+' 句'));
+ const state={cards:{claude:{id:'claude'}},lives:{claude:{id:'life-1',memory:{events:{}}}},conversations:Object.fromEntries(Array.from({length:6},(_,c)=>['c'+c,conversation('c'+c,c,history.map(m=>({...m,id:m.id+'-'+c})))]))};
+ const started=performance.now(),plan=planLegacyDedupe(state);
+ assert.equal(plan.total,3000*5);assert.ok(performance.now()-started<1000,String(performance.now()-started));
+});

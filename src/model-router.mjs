@@ -102,13 +102,14 @@ export class ModelRouter{
   // A response cut off by the output limit is retried once with twice the
   // limit (16384 under 'auto'); a second cut-off is an error, never a reply.
   async *streamWithRetry(profile,options,signal){
-    let maxTokens=this.outputBudget(profile,options);
+    let maxTokens=this.outputBudget(profile,options);const started=Date.now();
     for(let attempt=0;;attempt++){
       const parts=[];let finish=null;
       for await(const part of this.transport.stream(profile,{...options,maxTokens,signal}))if(part.type==='finish')finish=part;else parts.push(part);
       if(finish?.reason?.kind!=='length'){yield* parts;if(finish)yield finish;return;}
       this.audit({type:'model-output-truncated',profileId:profile.id,model:profile.model,purpose:options.purpose??'galgame',maxTokens,attempt});
-      if(attempt>=1)throw Object.assign(Error('回复被截断：模型输出达到上限，可以调高通用设置里的“模型最多输出”后重试'),{code:'MODEL_OUTPUT_TRUNCATED'});
+      // A retry needs time: past half the request timeout it would only be cut off.
+      if(attempt>=1||Date.now()-started>this.timeoutMs/2)throw Object.assign(Error('回复被截断：模型输出达到上限，可以调高通用设置里的“模型最多输出”后重试'),{code:'MODEL_OUTPUT_TRUNCATED'});
       const ceiling=this.outputCeiling(profile,options);
       maxTokens=maxTokens==='auto'?Math.min(16384,ceiling):Math.min(ceiling,Math.max(256,(Number(maxTokens)||2048)*2));
     }
