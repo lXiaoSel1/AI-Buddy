@@ -4,10 +4,10 @@ import {conversationFor,effectiveCard,progress,relationshipFor,companionId} from
 import {createLifeArchiveRepository} from './companion-life-archive.mjs';
 
 const copy=value=>structuredClone(value);
-export async function createCompanionLives({store,dataRoot,imageCodec,call,syncCard,projectPersona,quiesce=async()=>{},onChanged=()=>{},enableGrowth,now=Date.now}){
+export async function createCompanionLives({store,dataRoot,imageCodec,call,syncCard,projectPersona,quiesce=async()=>{},onChanged=()=>{},enableGrowth,now=Date.now,audit=()=>{}}){
  const repository=createLifeArchiveRepository({dataRoot,imageCodec}),switching=new Set();
  const knownCard=id=>{companionId(id);if(!store.state.cards[id])throw Error('角色不存在');return id;};
- const busy=id=>{if(switching.has(id)||store.state.lifeTransaction?.characterId===id)throw Error('正在保存或切换此角色人生，请稍候');};
+ const busy=id=>{if(store.state.lifeTransaction?.replayFailed&&store.state.lifeTransaction.characterId===id)throw Error('该角色的人生切换没有完成，请先选择重试、回到切换前或放弃这次切换');if(switching.has(id)||store.state.lifeTransaction?.characterId===id)throw Error('正在保存或切换此角色人生，请稍候');};
  const checked=async(action,args)=>{const result=await call(action,args);if(result?.ok===false)throw Error(result.error??'人生内容验证或保存失败');return result;};
  function metadata(snapshot,file,{name,note}={}){
   const relations=copy(snapshot.relationships),personas=Object.values(snapshot.personas??{}).map(p=>({id:p.id,name:p.name,nickname:p.nickname}));
@@ -53,6 +53,16 @@ export async function createCompanionLives({store,dataRoot,imageCodec,call,syncC
   });
   await syncCard(store.state.cards[characterId]);await projectPersona(store.state.activePersonaId);onChanged(characterId);
  }
+ // Restore the exact verified pre-switch character (never whole-account data).
+ async function rollbackTransaction(transaction,reason){
+  const {characterId}=transaction,before=repository.read(transaction.archiveId,store.state.lifeArchives[transaction.archiveId]?.sha256).snapshot;
+  await checked('companion-life-project',{characterId,content:before.content,operationId:randomUUID()});
+  await store.mutate(state=>{state.lives[characterId].operationId=randomUUID();state.lastLifeTransaction={id:transaction.id,characterId,at:now(),status:'rolled-back',error:String(reason?.message??reason??'')};delete state.lifeTransaction;});
+ }
+ async function markReplayFailed(transaction,error){
+  await store.mutate(state=>{if(state.lifeTransaction?.id!==transaction.id)return;state.lifeTransaction.replayFailed={at:now(),error:String(error?.message??error).slice(0,2000),attempts:(state.lifeTransaction.replayFailed?.attempts??0)+1};});
+  audit({type:'life-transaction-replay-failed',characterId:transaction.characterId,transactionId:transaction.id,message:String(error?.message??error)});
+ }
  async function change(characterId,targetFactory,kind,args={}){
   knownCard(characterId);busy(characterId);if(switching.size||store.state.lifeTransaction)throw Error('已有一次人生存档操作正在执行，请完成后再操作');switching.add(characterId);let transaction;
   try{
@@ -68,14 +78,28 @@ export async function createCompanionLives({store,dataRoot,imageCodec,call,syncC
    // If the target projection failed before publication, restore the exact
    // verified pre-switch character (never whole-account data).
    if(transaction&&store.state.lifeTransaction?.id===transaction.id){
-    try{const before=repository.read(transaction.archiveId,store.state.lifeArchives[transaction.archiveId]?.sha256).snapshot;await checked('companion-life-project',{characterId,content:before.content,operationId:randomUUID()});await store.mutate(state=>{state.lives[characterId].operationId=randomUUID();state.lastLifeTransaction={id:transaction.id,characterId,at:now(),status:'rolled-back',error:String(error.message)};delete state.lifeTransaction;});}catch(rollback){throw Error('人生切换失败，恢复待完成；重启将重试事务：'+rollback.message);}
+    try{await rollbackTransaction(transaction,error);}catch(rollback){throw Error('人生切换失败，恢复待完成；重启将重试事务：'+rollback.message);}
    }
    throw error;
   }finally{switching.delete(characterId);}
  }
- if(store.state.lifeTransaction)await complete(copy(store.state.lifeTransaction));
+ // A replay that keeps failing must not stop the app: the transaction stays,
+ // only this character is locked, and the user chooses how to resolve it.
+ if(store.state.lifeTransaction){const transaction=copy(store.state.lifeTransaction);try{await complete(transaction);}catch(error){await markReplayFailed(transaction,error);}}
  return {
   busy,save,
+  recovery(){const t=store.state.lifeTransaction;if(!t?.replayFailed)return null;return {characterId:t.characterId,kind:t.kind,at:t.replayFailed.at,error:t.replayFailed.error,attempts:t.replayFailed.attempts,archiveAvailable:!!(t.archiveId&&store.state.lifeArchives[t.archiveId]&&repository.has(t.archiveId))};},
+  async recover(characterId,action){
+   const transaction=copy(store.state.lifeTransaction??null);if(!transaction?.replayFailed||transaction.characterId!==characterId)throw Error('该角色没有待处理的人生切换');
+   if(switching.size)throw Error('已有一次人生存档操作正在执行，请稍候');switching.add(characterId);
+   try{
+    if(action==='retry'){try{await complete(transaction);}catch(error){await markReplayFailed(transaction,error);throw error;}}
+    else if(action==='rollback')await rollbackTransaction(transaction,transaction.replayFailed.error);
+    else if(action==='abandon')await store.mutate(state=>{if(state.lifeTransaction?.id!==transaction.id)throw Error('人生事务已失效');state.lives[characterId].operationId=randomUUID();state.lastLifeTransaction={id:transaction.id,characterId,at:now(),archiveId:transaction.archiveId,kind:transaction.kind,status:'abandoned',error:transaction.replayFailed.error};delete state.lifeTransaction;});
+    else throw Error('未知的人生恢复操作');
+    audit({type:'life-transaction-'+action,characterId,transactionId:transaction.id});onChanged(characterId);
+   }finally{switching.delete(characterId);}
+  },
   list(characterId){knownCard(characterId);return Object.values(store.state.lifeArchives).filter(a=>a.characterId===characterId).map(copy).sort((a,b)=>b.createdAt-a.createdAt);},
   preview(id){const meta=store.state.lifeArchives[id];if(!meta)throw Error('人生存档不存在');const {snapshot}=repository.read(id,meta.sha256);return {...copy(meta),...snapshot};},
   async label(id,args){if(!store.state.lifeArchives[id])throw Error('人生存档不存在');await store.mutate(state=>{if(args.name!==undefined)state.lifeArchives[id].name=String(args.name).slice(0,200);if(args.note!==undefined)state.lifeArchives[id].note=String(args.note).slice(0,4000);});},
