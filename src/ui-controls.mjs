@@ -13,7 +13,7 @@ export function Segmented({value,options,onChange,disabled=false,size='',label,.
 export function Switch({checked,onChange,disabled=false,label,...rest}){
  return h('button',{type:'button',className:'ui-switch',role:'switch','aria-checked':!!checked,'aria-label':label,disabled,onClick:()=>onChange?.(!checked),...pick(rest)});
 }
-// tone: ok | warn | err | busy | idle
+// tone: ok | warn | err | info | busy | idle
 export function StatusPill({tone='idle',children,...rest}){
  return h('span',{className:'ui-pill'+(tone==='idle'?'':' '+tone),...pick(rest)},tone==='busy'?h('span',{className:'ui-spinner','aria-hidden':true}):h('span',{className:'ui-dot','aria-hidden':true}),children);
 }
@@ -36,7 +36,7 @@ export function Snackbar({children,actionLabel,onAction,...rest}){
  return h('div',{className:'ui-snackbar',role:'status',...pick(rest)},h('span',{style:{flex:1}},children),actionLabel&&h('button',{type:'button',onClick:onAction},actionLabel));
 }
 // items: [{label,icon,onSelect,danger,disabled,checked}] or 'separator'
-export function Menu({items,label,style,onClose}){
+export function Menu({items,label,style,onClose,className=''}){
  const keys=event=>{if(event.key==='Escape'){event.preventDefault();onClose?.();return;}if(!['ArrowDown','ArrowUp'].includes(event.key))return;event.preventDefault();const list=[...event.currentTarget.querySelectorAll('[role^=menuitem]:not(:disabled)')],i=list.indexOf(document.activeElement);list[(i+(event.key==='ArrowDown'?1:list.length-1))%list.length]?.focus();};
- return h('div',{className:'ui-menu',role:'menu','aria-label':label,style,onKeyDown:keys},...items.map((item,index)=>item==='separator'?h('hr',{key:'s'+index}):h('button',{key:item.label,type:'button',role:item.checked===undefined?'menuitem':'menuitemcheckbox','aria-checked':item.checked===undefined?undefined:!!item.checked,className:item.danger?'danger':undefined,disabled:item.disabled,onClick:()=>{item.onSelect?.();onClose?.();}},item.icon&&Icon(item.icon,{size:16}),item.label,item.shortcut&&h('kbd',null,item.shortcut))));
+ return h('div',{className:'ui-menu'+(className?' '+className:''),role:'menu','aria-label':label,style,onKeyDown:keys},...items.map((item,index)=>item==='separator'?h('hr',{key:'s'+index}):h('button',{key:item.label,type:'button',role:item.checked===undefined?'menuitem':'menuitemcheckbox','aria-checked':item.checked===undefined?undefined:!!item.checked,className:item.danger?'danger':undefined,disabled:item.disabled,onClick:()=>{item.onSelect?.();onClose?.();}},item.icon&&Icon(item.icon,{size:16}),item.label,item.shortcut&&h('kbd',null,item.shortcut))));
 }

@@ -14,6 +14,8 @@ export const chromeColor=id=>palette(id).colors.chrome;
 // Caption buttons drawn by Windows over the title bar: dark on the light themes.
 export const chromeSymbolColor=id=>palette(id).colors.sideText;
 export const windowBackground=id=>palette(id).colors.bg;
+// Per-character pictures (head crop, portrait, icons) live beside each theme in assets/theme/<id>/.
+export const themeAsset=(id,name)=>'assets/theme/'+(THEMES[id]?id:'deepseek')+'/'+name;
 export function themeVariables(id='deepseek'){
  const p=palette(id),c=p.colors,light=p.mode==='light',vars={};
  for(const [key,value] of Object.entries(c))vars[kebab(key)]=value;

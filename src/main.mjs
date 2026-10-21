@@ -37,6 +37,7 @@ import {lockPageZoom} from './page-zoom.mjs';
 import {TOOL_NAMES} from './token-sources.mjs';
 import {resolveCodexBinary,codexHome} from './runtime-discovery.mjs';
 import {APP_NAME,APP_ID,APP_ICON_ICO,APP_ICON_PNG} from './app-brand.mjs';
+import {brandIcons,brandTooltip} from './brand-icons.mjs';
 
 const build=__dirname;
 const appVersion=JSON.parse(readFileSync(join(build,'package.json'),'utf8')).version;
@@ -159,6 +160,8 @@ function saveConnection(service,draft){
   if(draft?.useAfterSave===true&&draft.id===service.state.activeId)service.materialize(service.draftProfile(draft));
   return service.save(draft);
 }
+// Panel, taskbar and tray wear the current pet's round head; the pet window keeps the app icon.
+function syncBrandIcons(){const id=effectivePetCharacter(),icons=brandIcons(build,id);if(panel&&!panel.isDestroyed())panel.setIcon(icons?.window??appIcon);if(tray&&!tray.isDestroyed()&&arg('rig')!=='working'){tray.setImage(icons?.tray??appIcon.resize({width:32,height:32}));tray.setToolTip(brandTooltip(id,settings.preferences?.language));}}
 function updateTray(){
   if(!tray)return;
   tray.setContextMenu(Menu.buildFromTemplate([{label:t('工作概览'),click:()=>openPanel('overview')},{label:t('通用设置'),click:()=>openPanel('settings')},{label:t('动作展示'),click:()=>openPanel('actions')},{label:settings.preferences.language==='en'?'Open Galgame':'打开 Galgame',click:()=>openPanel('galgame')},{label:t('显示桌宠'),type:'checkbox',checked:settings.preferences.petVisible,click:item=>{void setPreferences({petVisible:item.checked}).catch(e=>audit({type:'settings-error',message:e.message}));}},{label:settings.preferences.language==='en'?'Drag mode (whole pet window)':'拖动模式（整个窗口可拖动）',type:'checkbox',checked:gestureMode,click:item=>{setGestureMode(item.checked);updateTray();}},{type:'separator'},{label:settings.preferences.language==='en'?'Quit':'退出',click:()=>{void shutdown();}}]));
@@ -206,7 +209,7 @@ async function settingsAction(action){
   if(action==='refresh'){worker?.postMessage({type:'refresh'});return settingsView();}
   throw new Error('未知设置操作');
 }
-function applyChrome(character){if(character&&character!==themeCharacter){const previousPet=effectivePetCharacter();themeCharacter=character;if(effectivePetCharacter()!==previousPet)cancelGesture('character-change');if(settings.preferences?.petCharacterMode!=='fixed'){activityClock.resume();publishInteraction(true);}broadcastSettings();}setLocale(settings.preferences?.language);if(panel&&!panel.isDestroyed()){panel.setTitle(workspaceTitle());const theme=resolvedTheme(settings.preferences,themeCharacter);panel.setBackgroundColor(windowBackground(theme));if(process.platform==='win32')panel.setTitleBarOverlay({color:chromeColor(theme),symbolColor:chromeSymbolColor(theme),height:34});}if(tray){tray.setToolTip(settings.preferences?.language==='en'?'AI Buddy':'AI 酱');updateTray();}}
+function applyChrome(character){if(character&&character!==themeCharacter){const previousPet=effectivePetCharacter();themeCharacter=character;if(effectivePetCharacter()!==previousPet)cancelGesture('character-change');if(settings.preferences?.petCharacterMode!=='fixed'){activityClock.resume();publishInteraction(true);}broadcastSettings();}setLocale(settings.preferences?.language);if(panel&&!panel.isDestroyed()){panel.setTitle(workspaceTitle());const theme=resolvedTheme(settings.preferences,themeCharacter);panel.setBackgroundColor(windowBackground(theme));if(process.platform==='win32')panel.setTitleBarOverlay({color:chromeColor(theme),symbolColor:chromeSymbolColor(theme),height:34});}syncBrandIcons();if(tray)updateTray();}
 let themeCharacter=resources.fallback('deepseek');
 function openPanel(page='overview',focus=true) {
   if(page==='sessions')page='overview';
@@ -216,7 +219,7 @@ function openPanel(page='overview',focus=true) {
       webPreferences:{preload:join(build,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,partition:'whale-memory'}});
     brandWindow(panel);applyChrome();
     lockPageZoom(panel,error=>audit({type:'zoom-policy-error',message:error.message}));
-    panel.setMenuBarVisibility(false);panel.loadFile(join(build,'index.html'),{hash:page,...previewQuery,query:{...previewQuery.query,theme:resolvedTheme(settings.preferences,themeCharacter),petCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter))}});
+    panel.setMenuBarVisibility(false);syncBrandIcons();panel.loadFile(join(build,'index.html'),{hash:page,...previewQuery,query:{...previewQuery.query,theme:resolvedTheme(settings.preferences,themeCharacter),petCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter))}});
     panel.on('close',event=>{if(!quitting){event.preventDefault();petAuto();panel.hide();}});
     // Lets the panel release heavy media (action gallery decoders, stills) while hidden.
     for(const [name,visible] of [['hide',false],['show',true]])panel.on(name,()=>{if(panel&&!panel.isDestroyed())panel.webContents.send('panel:visibility',{visible});});
@@ -260,7 +263,7 @@ ipcMain.handle('settings:action',(_,action)=>settingsAction(action));
 ipcMain.handle('pet:play',(_,request)=>playPet(request));
 ipcMain.handle('pet:auto',()=>petAuto());
 ipcMain.handle('pet:state',()=>petState);
-ipcMain.on('pet:state',(event,value)=>{if(event.sender!==pet?.webContents||!actionIds.has(value?.id))return;const previous=petState.characterId;petState={id:value.id,source:String(value.source||'monitor').slice(0,20),manual:value.manual===true,expiresAt:Number.isFinite(value.expiresAt)?value.expiresAt:null,characterId:validPetCharacter(value.characterId)?value.characterId:'deepseek'};if(panel&&!panel.isDestroyed())panel.webContents.send('pet:state',petState);if(previous!==petState.characterId){configurePetInteractions();broadcastSettings();}});
+ipcMain.on('pet:state',(event,value)=>{if(event.sender!==pet?.webContents||!actionIds.has(value?.id))return;const previous=petState.characterId;petState={id:value.id,source:String(value.source||'monitor').slice(0,20),manual:value.manual===true,expiresAt:Number.isFinite(value.expiresAt)?value.expiresAt:null,characterId:validPetCharacter(value.characterId)?value.characterId:'deepseek'};if(panel&&!panel.isDestroyed())panel.webContents.send('pet:state',petState);if(previous!==petState.characterId){configurePetInteractions();broadcastSettings();syncBrandIcons();}});
 async function manageResources(characterId){
   const manager=resources.manager();if(!manager)throw Error('请下载此版本的在线安装器进行管理 / Download this version’s installer to manage resources');
   const ids=(Array.isArray(characterId)?characterId:[characterId]).filter(Boolean);if(ids.some(id=>!validPetCharacter(id)))throw Error('Unknown character');
@@ -489,7 +492,7 @@ app.whenReady().then(async()=>{
     if(!pet.isDestroyed()){petAssetsReady=true;applyPetPreferences();}
   });
   pet.webContents.setWindowOpenHandler(()=>({action:'deny'}));
-  tray=new Tray(appIcon.resize({width:32,height:32}));tray.setToolTip(arg('rig')==='working'?APP_NAME+' · 工作动作小样（独立预览）':APP_NAME+' · 本地 AI 用量监控与桌面陪伴');
+  tray=new Tray(appIcon.resize({width:32,height:32}));tray.setToolTip(arg('rig')==='working'?APP_NAME+' · 工作动作小样（独立预览）':APP_NAME+' · 本地 AI 用量监控与桌面陪伴');syncBrandIcons();
   updateTray();tray.on('double-click',()=>openPanel());
   const recoverPet=()=>{if(!pet||pet.isDestroyed())return;cancelGesture('system-recovery');petMotion?.recover(clamp(petBounds(pet.getContentBounds(),settings.preferences.petScale)));publishInteraction(true);};
   pet.on('hide',()=>cancelGesture('window-hidden'));pet.webContents.on('render-process-gone',()=>cancelGesture('renderer-lost'));

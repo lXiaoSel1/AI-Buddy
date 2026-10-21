@@ -5,9 +5,9 @@ import {THEME_PALETTES} from '../src/theme-palettes.mjs';
 
 const file=(id,name)=>new URL(`../assets/theme/${id}/${name}`,import.meta.url);
 
-test('every theme ships its backdrop, ornament, head and round icons',()=>{
+test('every theme ships its backdrop, ornament, head, portrait and round icons',()=>{
  for(const {id} of THEME_PALETTES){
-  for(const name of ['bg.webp','orn.webp','head.webp']){
+  for(const name of ['bg.webp','orn.webp','head.webp','portrait.webp']){
    const bytes=readFileSync(file(id,name));
    assert.equal(bytes.toString('latin1',0,4)+bytes.toString('latin1',8,12),'RIFFWEBP',id+' '+name);
   }
@@ -22,7 +22,7 @@ test('every theme ships its backdrop, ornament, head and round icons',()=>{
 });
 
 test('theme assets stay small and the public build copies them',()=>{
- let total=0;for(const {id} of THEME_PALETTES)for(const name of ['bg.webp','orn.webp','head.webp','icon-256.png','tray-16.png','tray-24.png','tray-32.png'])total+=statSync(file(id,name)).size;
+ let total=0;for(const {id} of THEME_PALETTES)for(const name of ['bg.webp','orn.webp','head.webp','portrait.webp','icon-256.png','tray-16.png','tray-24.png','tray-32.png'])total+=statSync(file(id,name)).size;
  assert.ok(total<4*1024*1024,`theme assets total ${total} bytes`);
  const build=readFileSync(new URL('../scripts/build-public.mjs',import.meta.url),'utf8');
  assert.match(build,/assets','theme'|assets\/theme/);

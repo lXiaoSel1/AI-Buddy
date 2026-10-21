@@ -26,9 +26,10 @@ test('every var(--x) without a fallback is defined somewhere',()=>{
  assert.deepEqual([...used].filter(([name])=>!defined.has(name)),[]);
 });
 
-// Ceilings only go down. What is left is mostly black shadows and the plate fallbacks.
+// Ceilings only go down. What is left is mostly black shadows, the plate fallbacks and a few
+// per-theme ornament tints in workspace.css (Grok gold, Seed blue, Gemini pinks).
 const CEILINGS={
- 'src/dashboard.css':4,'src/appearance.css':6,'src/adapted/galgame-client.ts':25,'src/companion-ui.mjs':3,'src/companion-life-ui.mjs':0,
+ 'src/dashboard.css':2,'src/appearance.css':6,'src/workspace.css':27,'src/adapted/galgame-client.ts':25,'src/companion-ui.mjs':3,'src/companion-life-ui.mjs':0,
  'src/group-stage-ui.mjs':2,'src/group-header.mjs':0,'src/group-cg-ui.mjs':0,'src/cg-image-viewer.mjs':1,'src/pet.html':2,'src/pet-trajectory.mjs':2,
 };
 test('hard-coded colours stay under each file\'s ceiling',()=>{

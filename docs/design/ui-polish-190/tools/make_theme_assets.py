@@ -2,6 +2,7 @@
 
 bg.webp / orn.webp  - Codex-painted backdrop and portrait-accessory ornament (design sources, copied as-is)
 head.webp           - 160 px head crop centred between the eyes (faces.py coordinates)
+portrait.webp       - the Galgame portrait trimmed and fitted into 300x480, bottom-aligned (overview card)
 icon-256.png        - round head on a light tint of the theme accent, for window icons
 tray-16/24/32.png   - the same, rendered at tray sizes
 
@@ -45,6 +46,18 @@ def head_crop(theme_id):
     return canvas.crop(box)  # areas outside the still come back transparent
 
 
+def portrait(theme_id):
+    """Same framing as the design preview: alpha-trimmed, contained in 300x480, centred and bottom-aligned."""
+    path = os.path.join(resources, 'maid-left.webp') if theme_id == 'deepseek' else os.path.join(resources, 'characters', 'v167', 'gpt' if theme_id == 'chatgpt' else theme_id, 'portrait.png')
+    image = Image.open(path).convert('RGBA')
+    image = image.crop(image.getchannel('A').getbbox())
+    scale = min(300 / image.width, 480 / image.height)
+    image = image.resize((round(image.width * scale), round(image.height * scale)), Image.LANCZOS)
+    canvas = Image.new('RGBA', (300, 480), (0, 0, 0, 0))
+    canvas.alpha_composite(image, ((300 - image.width) // 2, 480 - image.height))
+    return canvas
+
+
 def hex_rgb(value):
     value = value.lstrip('#')
     return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
@@ -75,6 +88,7 @@ for theme_id in faces.EYES:
     shutil.copyfile(os.path.join(gen, theme_id + '-orn.webp'), os.path.join(folder, 'orn.webp'))
     head = head_crop(theme_id)
     head.resize((160, 160), Image.LANCZOS).save(os.path.join(folder, 'head.webp'), 'WEBP', quality=90, method=6)
+    portrait(theme_id).save(os.path.join(folder, 'portrait.webp'), 'WEBP', quality=88, method=6)
     round_icon(head, theme_id, 256).save(os.path.join(folder, 'icon-256.png'), optimize=True)
     for size in (16, 24, 32):
         round_icon(head, theme_id, size).save(os.path.join(folder, 'tray-%d.png' % size), optimize=True)

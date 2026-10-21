@@ -26,7 +26,11 @@ else writeFileSync(target,body);
 // The same palettes as CSS, so a page paints in its theme before any script runs
 // (the panel also receives ?theme=). DeepSeek is the :root default.
 const {themeVariables}=await import(new URL('../src/appearance.mjs',import.meta.url).href+'?'+Date.now());
-const block=(selector,id)=>selector+'{'+Object.entries(themeVariables(id)).map(([k,v])=>k+':'+v).join(';')+';--buddy-bg-image:url(assets/theme/'+id+'/bg.webp);--buddy-orn-image:url(assets/theme/'+id+'/orn.webp);--buddy-head-image:url(assets/theme/'+id+'/head.webp)}';
+// SVG ornaments of the approved (painted-backdrop) variant; the other variants' artwork is left out.
+const ornaments=Function('"use strict";const svgUrl = s=>'+between(preview,'const svgUrl = s=>','const HEAD = {')+';return Object.fromEntries(Object.entries(ORN).map(([id,o])=>[id,Object.fromEntries(Object.entries(o).map(([k,s])=>[k,svgUrl(s)]))]));')();
+const SIDE_PATTERN={kimi:'--pat-main',gemini:'--pat-main',claude:'--pat-main',hunyuan:'--pat-side'},USED=['--orn-star','--orn-tassel','--orn-film','--orn-sparkles','--orn-flower','--orn-brush','--orn-claw'];
+const ornamentVars=id=>{const o=ornaments[id]||{};return (SIDE_PATTERN[id]?';--buddy-side-pattern:'+o[SIDE_PATTERN[id]]:'')+USED.filter(k=>o[k]).map(k=>';--buddy-'+k.slice(2)+':'+o[k]).join('');};
+const block=(selector,id)=>selector+'{'+Object.entries(themeVariables(id)).map(([k,v])=>k+':'+v).join(';')+';--buddy-bg-image:url(assets/theme/'+id+'/bg.webp);--buddy-orn-image:url(assets/theme/'+id+'/orn.webp);--buddy-head-image:url(assets/theme/'+id+'/head.webp)'+ornamentVars(id)+'}';
 const START='/* @generated theme-tokens: scripts/extract-theme-palettes.mjs */',END='/* @end theme-tokens */';
 const region=[START,block(':root','deepseek'),...palettes.map(p=>block(`html[data-theme="${p.id}"]`,p.id)),END].join('\n');
 const cssFile=join(root,'src/appearance.css'),css=readFileSync(cssFile,'utf8'),eol=css.includes('\r\n')?'\r\n':'\n';
