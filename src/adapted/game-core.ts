@@ -2863,6 +2863,7 @@ export function apply(
         purpose: 'choices',
         temperature: 0.8,
         maxTokens: 300,
+        userLimit: true,
       }, signal)
       const m = out.match(/\{[\s\S]*\}/)
       if (m) {
@@ -3152,6 +3153,7 @@ export function apply(
         // The old 1200 budget silently truncated the JSON mid-array, which
         // surfaced as an intermittent "generation-failed".
         maxTokens: 4000,
+        userLimit: true,
       }, signal)
       const match = out.match(/\{[\s\S]*\}/)
       if (!match) {
@@ -3352,6 +3354,7 @@ export function apply(
         purpose: 'side-story-reply',
         temperature: 0.9,
         maxTokens: 500,
+        userLimit: true,
       }, signal)
       const match = out.match(/\{[\s\S]*\}/)
       if (!match) return neutral
@@ -5122,6 +5125,7 @@ export function apply(
                     + '\n未提供的其他身份经历、私聊与群聊内容均不可获知，不编造。可在回复末尾用 [[emotion:标签]] 标记你实际表达的情绪，标签限 normal,cheerful,shy,serious,confused,angry,frightened,exasperated,starry。\n'+(companionContext.memoryText||'')  : ''),
                 temperature: 0.9,
                 maxTokens: 1200,
+                userLimit: true,
               }, signal)
             } catch (err: any) {
               console.error('whale-galgame llm call failed:', err && err.message ? err.message : String(err))
@@ -5307,12 +5311,12 @@ export function apply(
         if(source.photoPlannerBinding?.enabled&&(!themeConnection?.enabled||!themeConnection.profile?.model||themeConnection.profile.id!==source.photoPlannerBinding.connectionId))return {ok:false,error:'提示词策划连接已变化，请重新选择后生成'}
         const characters=cgCharacters(ids), scene=source.scene
         // Validate references before persisting a queued item or calling a model.
-        if(ctx.cg.validateReferences)await ctx.cg.validateReferences(characters,scene)
+        const resolvedRefs=ctx.cg.validateReferences?await ctx.cg.validateReferences(characters,scene):null
         const id=makeId('cg'),charId=ids[0],profile=effectiveProfileFor(charId)
         const record:any={id,charId,lifeIds:ctx.companionLifeIds?.(ids),personaId:source.personaId,groupId:source.groupId,kind:'group',status:'queued',level:s.characters[charId].level,at:Date.now(),seen:true,automatic:false,sourceEventId:source.sourceEventId,groupSource:source,characters,scene,prompt:'',label:'群聊合影 · '+source.groupName}
         record.themeBrief={kind:'group',charId,level:record.level,language:ctx.language?.()||'zh-CN',profile,visual:profile.visual,scene,characters,groupName:source.groupName,recentContext:source.messages.map((m:any)=>({id:m.id,speaker:m.characterName||m.personaName,text:m.text})),history:[]}
         s.characters[charId].cgs.push(record);await save('global')
-        try{await ctx.cg.enqueue({id,sourceEventId:record.sourceEventId,kind:'group',label:record.label,prompt:'',characters,scene,themeBrief:record.themeBrief,themeConnection})}
+        try{await ctx.cg.enqueue({id,sourceEventId:record.sourceEventId,kind:'group',label:record.label,prompt:'',characters,scene,themeBrief:record.themeBrief,themeConnection,resolvedRefs})}
         catch(error:any){record.status='failed';record.error=error.message;await save('global');return {ok:false,error:error.message,cgId:id}}
         return {ok:true,cgId:id}
       }
@@ -5510,6 +5514,30 @@ export function apply(
         await persistBackgroundMutation(snapshot)
         return { ok: true, view: view() }
       }
+      case 'cg-prune-missing': {
+        // A life archive refuses CG records whose image file is gone; the user can drop
+        // them here. Each record is re-checked, so a CG whose file is present stays.
+        const id=String(args.characterId),wanted=new Set((Array.isArray(args.cgIds)?args.cgIds:[]).map(String)),removed:string[]=[]
+        if(!s.characters[id])throw Error('角色不存在')
+        for(const charId of ROSTER_IDS){
+          const rows=s.characters[charId]?.cgs
+          if(!Array.isArray(rows))continue
+          s.characters[charId].cgs=rows.filter((cg:any)=>{
+            if(!cg||!wanted.has(cg.id)||!(cg.charId===id||cg.characters?.some((c:any)=>c.id===id)))return true
+            if(!(typeof cg.assetRef==='string'&&cg.assetRef&&ctx.cgAssetExists?.(cg.assetRef)===false))return true
+            removed.push(cg.id);return false
+          })
+        }
+        if(!removed.length)return {ok:true,removed}
+        for(const roleId of Object.keys(s.characters))if(removed.some(cgId=>characterBackground(s,roleId)==='cg:'+cgId)){
+          setCharacterBackground(s,null,roleId);ensurePreferences().customBgName='';bumpBackgroundRevision();claimGlobalValue('bg');claimGlobalPreferences(['customBgName'])
+        }
+        if(s.cg&&removed.includes(s.cg.cgId)){s.cg=null;claimGlobalValue('cg')}
+        for(const cgId of removed)await ctx.cg?.trashJob(cgId)
+        await save('global')
+        for(const cgId of removed)ctx.emit('galgame/cg-updated',{id:cgId,removed:true})
+        return {ok:true,removed,view:view()}
+      }
       case 'cg-trash':
       case 'cg-restore': {
           const cg = findCg(shortSetting(args.id))
@@ -5696,6 +5724,7 @@ export function apply(
       'cg-clear-bg',
       'cg-trash',
       'cg-restore',
+      'cg-prune-missing',
       'pet-set',
       'reset',
     ])
@@ -5769,6 +5798,7 @@ export function apply(
       'cg-clear-bg',
       'cg-trash',
       'cg-restore',
+      'cg-prune-missing',
       'pet-set',
       'reset',
     ])

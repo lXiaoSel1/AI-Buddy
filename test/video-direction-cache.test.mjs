@@ -17,8 +17,13 @@ test('transparent padding is cropped after resizing and restored at exact canvas
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function fixture(t,options={}){
  const originalImage=globalThis.Image,originalDocument=globalThis.document;
- const loads={active:0,max:0,started:0};
- globalThis.Image=class{naturalWidth=4;naturalHeight=4;async decode(){loads.started++;loads.active++;loads.max=Math.max(loads.max,loads.active);await pause(4);loads.active--;}};
+ const loads={active:0,max:0,started:0,decodes:0};
+ // Loads start when src is set with an onload handler (direction stills) or on decode().
+ globalThis.Image=class{naturalWidth=4;naturalHeight=4;#src='';
+  get src(){return this.#src;}
+  set src(value){this.#src=value;if(value&&this.onload)void this.load().then(()=>this.onload());}
+  async load(){loads.started++;loads.active++;loads.max=Math.max(loads.max,loads.active);await pause(4);loads.active--;}
+  async decode(){loads.decodes++;this.decoded=true;await this.load();}};
  globalThis.document={createElement:()=>({muted:true,paused:true,videoWidth:4,videoHeight:4,duration:3,currentTime:0,handlers:{},addEventListener(name,fn){this.handlers[name]=fn;},load(){if(this.src)setTimeout(()=>this.handlers.loadeddata?.(),0);},pause(){this.paused=true;},play(){this.paused=false;return Promise.resolve();},removeAttribute(){this.src='';},getVideoPlaybackQuality(){return {totalVideoFrames:0,droppedVideoFrames:0};}})};
  t.after(()=>{globalThis.Image=originalImage;globalThis.document=originalDocument;});
  const count=176,clip={actionId:'look',backend:'webm-alpha',canvas:{width:4,height:4},cycleMs:count*16,frames:Array.from({length:count},(_,i)=>({timestampMs:i*16})),directionFrames:Array.from({length:16},(_,i)=>i*11),video:{src:'look.webm',codec:'vp9-alpha',durationMs:count*16},staticFrames:Object.fromEntries(Array.from({length:count},(_,i)=>[i,{src:'still-'+i}]))};
@@ -120,4 +125,13 @@ test('Scaled direction bitmaps stay within the byte budget and hit tests read on
  target.reads.length=0;assert.equal(r.alpha(shown,1,1),220);assert.equal(r.alpha(shown,1,1),220);
  assert.equal(target.reads.length,1);assert.deepEqual(target.reads[0].slice(2),[1,1]);
  r.release(target);await pause(20);assert.equal(r.inspect().directionBytes,0);
+});
+
+test('Direction stills load without decode(), so no full-size compositor copy is kept (M-3)',async t=>{
+ const original=globalThis.createImageBitmap,scaled=[];globalThis.createImageBitmap=async(image,{resizeWidth,resizeHeight})=>{scaled.push(!!image.decoded);return {src:image.src,width:resizeWidth,height:resizeHeight,close(){}};};
+ t.after(()=>{globalThis.createImageBitmap=original;});
+ const {renderer:r,target,sample,loads}=fixture(t);await r.ready;
+ for(let i=0;i<40;i+=4){r.draw(target,sample(i));await pause(12);}
+ await pause(60);assert.ok(scaled.length>0);assert.deepEqual(scaled.filter(Boolean),[],'direction stills are scaled straight from the loaded image');assert.ok(r.inspect().directionBytes>0);
+ r.dispose();await pause(60);
 });

@@ -27,7 +27,8 @@ test('Connection effort persists across restart, per-role selection and queued r
  const first=router.runProfile(deep.id,async()=>{assert.equal(router.resolveModelInfo(deep.id,'deep-model').reasoning.efforts[0].id,'high');await gate;await drain(router.stream({messages:[],reasoningEffort:'low'}));});
  const second=router.runProfile(fast.id,()=>drain(router.stream({messages:[],reasoningEffort:'max'})));
  await assert.rejects(router.save({...deep,reasoningEffort:'max'}),/等待/);release();await Promise.all([first,second]);
- const sent=calls.filter(x=>x.kind==='turn');assert.deepEqual(sent.map(x=>[x.model,x.reasoningEffort]),[['deep-model','high'],['fast-model','low']]);assert.equal(router.defaultModel,'fast-model');
+ // Each connection has its own lane: the fast connection no longer waits for the held deep turn.
+ const sent=calls.filter(x=>x.kind==='turn');assert.deepEqual(sent.map(x=>[x.model,x.reasoningEffort]),[['fast-model','low'],['deep-model','high']]);assert.equal(router.defaultModel,'fast-model');
  const restarted=new ModelRouter({dataRoot,codex,crypto});await restarted.ready;t.after(()=>restarted.close());assert.equal(restarted.enabled,false);assert.equal(restarted.view().profiles.find(p=>p.id===deep.id).reasoningEffort,'high');
  await router.save({...deep,reasoningEffort:null});await router.runProfile(deep.id,()=>drain(router.stream({messages:[],reasoningEffort:'low'})));assert.equal(calls.at(-1).reasoningEffort,null);
 });

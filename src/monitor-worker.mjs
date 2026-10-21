@@ -2,7 +2,7 @@ import { parentPort,workerData } from 'node:worker_threads';
 import { TokenMonitor } from './token-monitor.mjs';
 import { appendFile,mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-const monitor=new TokenMonitor({...workerData,onSources:value=>parentPort.postMessage({type:'sources',value}),onUpdate:value=>parentPort.postMessage({type:'snapshot',value}),onTaskFeedback:value=>parentPort.postMessage({type:'task-feedback',value})});
+const monitor=new TokenMonitor({...workerData,onSources:value=>parentPort.postMessage({type:'sources',value}),onUpdate:value=>parentPort.postMessage({type:'snapshot',value}),onTaskFeedback:value=>parentPort.postMessage({type:'task-feedback',value}),onAudit:value=>parentPort.postMessage({type:'audit',value})});
 parentPort.on('message',async message=>{
   try{
     if(message.type==='source-action'){await ready;const value=await monitor.action(message.action,message.args);parentPort.postMessage({type:'source-result',id:message.id,value});}

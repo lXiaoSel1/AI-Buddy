@@ -22,8 +22,8 @@ test('portable archive roundtrip separates and deduplicates images; preserves in
  assert.equal(manifest.files.filter(row=>row.path.startsWith('images/')).length,1);assert.deepEqual(restored,raw);assert.equal(manifest.files.find(row=>row.path==='text/state.json').bytes<bytes.length*10,true);
  const portable=JSON.parse(new Map(unpack(bytes)).get('text/state.json'));assert.deepEqual(portable.card.avatar,portable.card.fields.sprite.value);assert.equal(JSON.stringify(portable).includes('data:image/'),false);
 });
-test('save, hash-checked read and duplicate import create independent immutable ZIP identities',t=>{
- const {root,repo}=setup(t),saved=repo.save(snapshot()),read=repo.read(saved.id,saved.sha256),one=repo.import(read.bytes),two=repo.import(read.bytes);
+test('save, hash-checked read and duplicate import create independent immutable ZIP identities',async t=>{
+ const {root,repo}=setup(t),saved=await repo.save(snapshot()),read=repo.read(saved.id,saved.sha256),one=await repo.import(read.bytes),two=await repo.import(read.bytes);
  assert.notEqual(saved.id,one.id);assert.notEqual(one.id,two.id);assert.equal(one.sha256,saved.sha256);assert.equal(two.sha256,saved.sha256);assert.ok(existsSync(join(root,'galgame','life-archives',saved.fileName)));assert.throws(()=>repo.read(saved.id,'0'.repeat(64)),/哈希不匹配/);
 });
 test('CG images are embedded so another machine can restore without the original asset directory',t=>{
@@ -35,16 +35,16 @@ test('portable archives strip credentials while retaining connection references 
  for(const key of ['apiKey','cookie','keyCiphertext','authorization','accessToken','themeConnection'])assert.equal(JSON.stringify(decoded).includes('"'+key+'":'),false);assert.equal(decoded.card.modelBinding.connectionId,'profile-1');assert.equal(decoded.content.text,raw.content.text);
 });
 test('missing local CG assets fail backup before an archive is committed',t=>{
- const {root,repo}=setup(t),raw=snapshot();raw.content.cgs=[{assetRef:'cg-assets/missing.png'}];assert.throws(()=>repo.save(raw),/ENOENT/);assert.equal(existsSync(join(root,'cg-assets','missing.png')),false);
+ const {root,repo}=setup(t),raw=snapshot();raw.content.cgs=[{assetRef:'cg-assets/missing.png'}];assert.throws(()=>repo.prepare(raw),error=>error.code==='LIFE_ARCHIVE_MISSING_CG');assert.equal(existsSync(join(root,'cg-assets','missing.png')),false);
 });
 test('invalid/undecodable images fail prepare and import, not silently become valid archives',t=>{
  const {repo}=setup(t),raw=snapshot();raw.card.avatar='data:image/png;base64,'+Buffer.from('invalid').toString('base64');assert.throws(()=>repo.prepare(raw),/decoder rejected/);
  const good=repo.prepare(snapshot()),rejecting=setup(t,()=>false).repo;assert.throws(()=>rejecting.decode(good),/无法解码/);assert.throws(()=>setup(t,null).repo.decode(good),/解码器/);
 });
-test('CRC, SHA-256 and whole-file hash corruption are separate checked failures',t=>{
+test('CRC, SHA-256 and whole-file hash corruption are separate checked failures',async t=>{
  const {repo}=setup(t),bytes=repo.prepare(snapshot()),rows=unpack(bytes),stored=pack(rows),bad=Buffer.from(stored);bad[30+Buffer.byteLength(rows[0][0])+2]^=1;assert.throws(()=>repo.decode(bad),/内容校验/);
  const hashBad=changedArchive(bytes,(_files,state)=>{state.card.name='a changed name';});assert.throws(()=>repo.decode(hashBad),/哈希不匹配/);
- const saved=repo.save(snapshot()),path=join(setup(t).root,'unrelated');assert.equal(existsSync(path),false);assert.throws(()=>repo.read(saved.id,'f'.repeat(64)),/本地人生存档哈希/);
+ const saved=await repo.save(snapshot()),path=join(setup(t).root,'unrelated');assert.equal(existsSync(path),false);assert.throws(()=>repo.read(saved.id,'f'.repeat(64)),/本地人生存档哈希/);
 });
 test('ZIP traversal, drive paths, absolute paths, duplicate names and symlink attributes are rejected',t=>{
  const {repo}=setup(t),rows=unpack(repo.prepare(snapshot()));for(const name of ['../outside','C:/outside','/outside','images/../outside','text\\state.json'])assert.throws(()=>repo.decode(pack([...rows,[name,Buffer.from('x')]])),/路径/);
