@@ -62,8 +62,12 @@ export class VideoSequenceRenderer{
  pumpStills(){
   this.staticQueue.sort((a,b)=>a.priority-b.priority||b.order-a.order);
   while(this.staticActive<this.staticConcurrency&&this.staticQueue.length){
-   const job=this.staticQueue.shift(),image=new Image();this.staticActive++;image.src=job.record.src;
-   image.decode().then(async()=>{
+   const job=this.staticQueue.shift(),image=new Image();this.staticActive++;
+   // Direction stills are only read by createImageBitmap, which decodes them itself.
+   // decode() would also keep a full-size compositor copy of every still (M-3).
+   const loaded=job.size?new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=()=>reject(Error('Animation still failed to load'));}):null;
+   image.src=job.record.src;
+   (loaded??image.decode()).then(async()=>{
     if(image.naturalWidth!==job.clip.canvas.width||image.naturalHeight!==job.clip.canvas.height)throw Error('Animation still dimensions differ');
     if(!job.size){if(job.epoch===this.staticEpoch){this.stills.set(job.key,{image,used:++this.serial});this.trimStills();}else image.src='';job.done(image);return;}
     let frame=image;
