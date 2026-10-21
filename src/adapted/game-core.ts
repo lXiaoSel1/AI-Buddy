@@ -5514,6 +5514,30 @@ export function apply(
         await persistBackgroundMutation(snapshot)
         return { ok: true, view: view() }
       }
+      case 'cg-prune-missing': {
+        // A life archive refuses CG records whose image file is gone; the user can drop
+        // them here. Each record is re-checked, so a CG whose file is present stays.
+        const id=String(args.characterId),wanted=new Set((Array.isArray(args.cgIds)?args.cgIds:[]).map(String)),removed:string[]=[]
+        if(!s.characters[id])throw Error('角色不存在')
+        for(const charId of ROSTER_IDS){
+          const rows=s.characters[charId]?.cgs
+          if(!Array.isArray(rows))continue
+          s.characters[charId].cgs=rows.filter((cg:any)=>{
+            if(!cg||!wanted.has(cg.id)||!(cg.charId===id||cg.characters?.some((c:any)=>c.id===id)))return true
+            if(![cg.assetRef,cg.thumbnailRef].some((ref:any)=>typeof ref==='string'&&ref&&ctx.cgAssetExists?.(ref)===false))return true
+            removed.push(cg.id);return false
+          })
+        }
+        if(!removed.length)return {ok:true,removed}
+        for(const roleId of Object.keys(s.characters))if(removed.some(cgId=>characterBackground(s,roleId)==='cg:'+cgId)){
+          setCharacterBackground(s,null,roleId);ensurePreferences().customBgName='';bumpBackgroundRevision();claimGlobalValue('bg');claimGlobalPreferences(['customBgName'])
+        }
+        if(s.cg&&removed.includes(s.cg.cgId)){s.cg=null;claimGlobalValue('cg')}
+        for(const cgId of removed)await ctx.cg?.trashJob(cgId)
+        await save('global')
+        for(const cgId of removed)ctx.emit('galgame/cg-updated',{id:cgId,removed:true})
+        return {ok:true,removed,view:view()}
+      }
       case 'cg-trash':
       case 'cg-restore': {
           const cg = findCg(shortSetting(args.id))
@@ -5700,6 +5724,7 @@ export function apply(
       'cg-clear-bg',
       'cg-trash',
       'cg-restore',
+      'cg-prune-missing',
       'pet-set',
       'reset',
     ])
@@ -5773,6 +5798,7 @@ export function apply(
       'cg-clear-bg',
       'cg-trash',
       'cg-restore',
+      'cg-prune-missing',
       'pet-set',
       'reset',
     ])

@@ -119,6 +119,20 @@ function chatFeedback(value){if(!game?.hasCharacter?.(value.characterId)||!valid
 function chatCommitted(value){if(panel&&!panel.isDestroyed())panel.webContents.send('game:chat-committed',value);chatFeedback(value);}
 app.on('second-instance',()=>{audit({type:'second-instance'});reopenRequested=true;if(app.isReady()&&(game||startupFailure))openPanel(game?'overview':'safe-mode',false);});
 
+// Life archives store pictures as PNG/JPEG/WebP. A GIF (first frame), SVG or other
+// format is rasterized here: nativeImage first, otherwise Chromium in a hidden
+// sandboxed window with an in-memory session and no node access.
+async function rasterizeImage(dataUrl){
+ const direct=nativeImage.createFromDataURL(dataUrl);if(!direct.isEmpty())return direct.toPNG();
+ const view=new BrowserWindow({show:false,width:64,height:64,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,partition:'ai-buddy-rasterize',offscreen:true}});
+ let timer;
+ try{
+  await view.loadURL('about:blank');
+  const draw=view.webContents.executeJavaScript(`new Promise((done,fail)=>{const img=new Image();img.onload=()=>{const w=img.naturalWidth||1024,h=img.naturalHeight||1024,scale=Math.min(1,4096/Math.max(w,h)),c=document.createElement('canvas');c.width=Math.max(1,Math.round(w*scale));c.height=Math.max(1,Math.round(h*scale));c.getContext('2d').drawImage(img,0,0,c.width,c.height);done(c.toDataURL('image/png'));};img.onerror=()=>fail(new Error('decode'));img.src=${JSON.stringify(dataUrl)};})`,true);
+  const png=await Promise.race([draw,new Promise((_,fail)=>{timer=setTimeout(()=>fail(Error('rasterize timeout')),30000);})]);
+  return Buffer.from(String(png).split(',')[1]??'','base64');
+ }finally{clearTimeout(timer);if(!view.isDestroyed())view.destroy();}
+}
 function clamp(bounds) {
   if(settings.preferences?.petPhysics&&interactionMediaReady()){
     const character=petState.characterId??effectivePetCharacter(),probe=new PetMotion({bounds,collisionInsets:petCollisionInsets(character,settings.preferences.petScale,CHARACTER_SEQUENCES[character]),displays:()=>screen.getAllDisplays()});probe.contain();
@@ -435,7 +449,7 @@ app.whenReady().then(async()=>{
   await cg.ready;
   let legacyGameSettings={};
   try{
-  game=await createGalgame({dataRoot,provider,model,cg,resources,audit,onActivity:internalActivity,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value);}});
+  game=await createGalgame({dataRoot,provider,model,cg,resources,audit,imageConverter:rasterizeImage,onActivity:internalActivity,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value);}});
   cg.start();
   legacyGameSettings=await game.action('settings-get');
   }catch(error){try{game?.close();}catch{}game=null;noteStartupFailure('companion',error);}

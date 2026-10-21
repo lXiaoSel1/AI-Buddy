@@ -1,14 +1,14 @@
 import { apply } from './adapted/game-core.ts';
 import { restrictedFileService } from './storage.mjs';
-import { join, dirname } from 'node:path';
-import { mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { join, dirname, resolve } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import {openCompanionStore,effectiveCard} from './companion-store.mjs';
 import {createCompanionService} from './companion-service.mjs';
 import {writePortableImages} from './companion-media.mjs';
 
-export async function createGalgame({dataRoot,provider,model,cg=null,resources=null,getLanguage=()=> 'zh-CN',onCharacter=()=>{},onPetVisibility=()=>{},onChatCommitted=()=>{},onCgUpdated=()=>{},onActivity=()=>{},audit=()=>{}}) {
+export async function createGalgame({dataRoot,provider,model,cg=null,resources=null,getLanguage=()=> 'zh-CN',onCharacter=()=>{},onPetVisibility=()=>{},onChatCommitted=()=>{},onCgUpdated=()=>{},onActivity=()=>{},audit=()=>{},imageConverter=null}) {
   const companionStore=await openCompanionStore(dataRoot);
   const languageContext=new AsyncLocalStorage();
   const personaContext=new AsyncLocalStorage();
@@ -34,11 +34,12 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
     const view=await engine.handleAction('view',{});
     await engine.handleAction('settings-set',{characterMode:'manual',characterId:resources?.fallback(resources.status().initialCharacter)??(provider.currentSelection?view.current||'deepseek':'deepseek'),sideStorySeedSource:'activity',...(!provider.currentSelection?{chatMode:'manual',chatProvider:'codex',chatModel:model}:{})});
   }
-  const companion=await createCompanionService({store:companionStore,engine,provider,dataRoot,imageCodec:cg?.imageCodec,resources,onCharacter,onChatCommitted,onActivity,getLanguage,audit});
+  const companion=await createCompanionService({store:companionStore,engine,provider,dataRoot,imageCodec:cg?.imageCodec,imageConverter,resources,onCharacter,onChatCommitted,onActivity,getLanguage,audit});
   ctx.assertCompanionLife=(id,token)=>companion.assertLife(id,token);
   ctx.guardCompanionProfile=(action,args)=>companion.guardProfile(action,args);
   ctx.companionLifeIds=ids=>Object.fromEntries(ids.filter(id=>companionStore.state.lives?.[id]).map(id=>[id,companionStore.state.lives[id].id]));
   ctx.companionCgVisible=(cg,id)=>{const life=companionStore.state.lives?.[id];return !life||cg.lifeIds?.[id]? !life||cg.lifeIds[id]===life.id : life.legacyImportEnabled===true||(life.selectedCgIds??[]).includes(cg.id);};
+  ctx.cgAssetExists=ref=>!(typeof ref==='string'&&ref.replaceAll('\\','/').startsWith('cg-assets/'))||existsSync(resolve(dataRoot,ref));
   ctx.companionHistory=(characterId,personaId)=>companion.history(characterId,personaId);
   ctx.companionPersonaId=()=>personaContext.getStore()||companion.context().personaId;
   ctx.companionProgress=(characterId,personaId)=>companion.progress(characterId,personaId);
