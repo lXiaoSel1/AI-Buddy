@@ -427,7 +427,7 @@ app.whenReady().then(async()=>{
   const model=config.match(/^model\s*=\s*"([^"]+)"/m)?.[1] || 'gpt-6.1-sol';
   const binary=()=>resolveCodexBinary({root,explicit:arg('codex')});
   const codex=new CodexProvider({binary,defaultModel:model,dataRoot,onUsage:usage=>worker?.postMessage({type:'companion-usage',...usage}),audit});
-  provider=new ModelRouter({codex,dataRoot,crypto:safeStorage,legacy:existsSync(settingsStore.target+'.snapshots'),onActivity:internalActivity,onChange:()=>broadcastSettings(),onUsage:usage=>{appendFileSync(join(dataRoot,'api-usage.jsonl'),JSON.stringify(usage)+'\n');worker?.postMessage({type:'refresh'});},audit});
+  provider=new ModelRouter({codex,dataRoot,crypto:safeStorage,outputLimit:()=>settings.preferences?.maxOutputTokens??8192,legacy:existsSync(settingsStore.target+'.snapshots'),onActivity:internalActivity,onChange:()=>broadcastSettings(),onUsage:usage=>{appendFileSync(join(dataRoot,'api-usage.jsonl'),JSON.stringify(usage)+'\n');worker?.postMessage({type:'refresh'});},audit});
   await provider.ready;
   quotas=new QuotaService({dataRoot,home,crypto:safeStorage,binary,onChange:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('quotas:update',value);}});await quotas.ready;quotas.start();
   const cgUsage=usage=>{appendFileSync(join(dataRoot,'cg-usage.jsonl'),JSON.stringify({timestamp:new Date().toISOString(),...usage})+'\n');worker?.postMessage({type:'refresh'});};

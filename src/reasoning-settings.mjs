@@ -22,5 +22,6 @@ export function cleanModelCatalog(rows){
   ...(REASONING_EFFORTS.includes(row.defaultReasoningEffort)?{defaultReasoningEffort:row.defaultReasoningEffort}:{}),
   ...(typeof row.isDefault==='boolean'?{isDefault:row.isDefault}:{})
   ,...Object.fromEntries(['contextWindow','context_window','contextLength','inputTokenLimit','max_input_tokens'].filter(key=>Number.isSafeInteger(row[key])&&row[key]>=2048&&row[key]<=2000000).map(key=>[key,row[key]]))
+  ,...Object.fromEntries(['maxOutputTokens','max_output_tokens','outputTokenLimit'].filter(key=>Number.isSafeInteger(row[key])&&row[key]>=256&&row[key]<=2000000).map(key=>[key,row[key]]))
  }));
 }

@@ -2863,6 +2863,7 @@ export function apply(
         purpose: 'choices',
         temperature: 0.8,
         maxTokens: 300,
+        userLimit: true,
       }, signal)
       const m = out.match(/\{[\s\S]*\}/)
       if (m) {
@@ -3152,6 +3153,7 @@ export function apply(
         // The old 1200 budget silently truncated the JSON mid-array, which
         // surfaced as an intermittent "generation-failed".
         maxTokens: 4000,
+        userLimit: true,
       }, signal)
       const match = out.match(/\{[\s\S]*\}/)
       if (!match) {
@@ -3352,6 +3354,7 @@ export function apply(
         purpose: 'side-story-reply',
         temperature: 0.9,
         maxTokens: 500,
+        userLimit: true,
       }, signal)
       const match = out.match(/\{[\s\S]*\}/)
       if (!match) return neutral
@@ -5122,6 +5125,7 @@ export function apply(
                     + '\n未提供的其他身份经历、私聊与群聊内容均不可获知，不编造。可在回复末尾用 [[emotion:标签]] 标记你实际表达的情绪，标签限 normal,cheerful,shy,serious,confused,angry,frightened,exasperated,starry。\n'+(companionContext.memoryText||'')  : ''),
                 temperature: 0.9,
                 maxTokens: 1200,
+                userLimit: true,
               }, signal)
             } catch (err: any) {
               console.error('whale-galgame llm call failed:', err && err.message ? err.message : String(err))

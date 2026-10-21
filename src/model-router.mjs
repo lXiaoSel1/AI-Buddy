@@ -8,8 +8,8 @@ import {MODEL_PRESETS,API_PROTOCOLS,presetFor,apiBaseUrl,localEndpoint} from './
 import {ApiTransport} from './api-transport.mjs';
 import {REASONING_EFFORTS,profileEffort,modelEfforts,effortProtocol,cleanModelCatalog} from './reasoning-settings.mjs';
 export class ModelRouter{
-  constructor({codex,dataRoot,crypto,legacy=false,onChange=()=>{},onUsage=()=>{},onActivity=()=>{},audit=()=>{},fetchImpl,timeoutMs=110000,storeName='model-connections.json',presets=MODEL_PRESETS,protocols=API_PROTOCOLS}){
-    Object.assign(this,{codex,dataRoot,crypto,onChange,onActivity,audit,timeoutMs,presets,protocols});this.store=createSnapshotStorage(join(dataRoot,storeName));this.enabled=false;this.activeTurns=0;this.controllers=new Set();this.context=new AsyncLocalStorage();this.tail=Promise.resolve();this.transport=new ApiTransport({fetchImpl,onUsage,audit});
+  constructor({codex,dataRoot,crypto,legacy=false,onChange=()=>{},onUsage=()=>{},onActivity=()=>{},audit=()=>{},fetchImpl,timeoutMs=110000,storeName='model-connections.json',presets=MODEL_PRESETS,protocols=API_PROTOCOLS,outputLimit=()=>8192}){
+    Object.assign(this,{codex,dataRoot,crypto,onChange,onActivity,audit,timeoutMs,presets,protocols,outputLimit});this.store=createSnapshotStorage(join(dataRoot,storeName));this.enabled=false;this.activeTurns=0;this.controllers=new Set();this.context=new AsyncLocalStorage();this.tail=Promise.resolve();this.transport=new ApiTransport({fetchImpl,onUsage,audit});
     this.ready=readJson(this.store,null).then(async value=>{this.state=value??{version:1,activeId:legacy?'codex':null,profiles:legacy?[{id:'codex',kind:'codex',name:'本机 Codex 登录',protocol:'codex',baseUrl:'',model:codex.defaultModel,models:[]}]:[]};if(!value)await this.store.writeText(JSON.stringify(this.state));return this;});
   }
   selected(){return this.context.getStore()?.profile??this.state?.profiles.find(profile=>profile.id===this.state.activeId)??null;}
@@ -82,7 +82,36 @@ export class ModelRouter{
   async *stream(options){
     await this.ready;if(!this.enabled)throw Error('联网聊天已关闭');const profile=this.materialize(this.selected());const request=this.requestController(options.signal);
     const activityId='chat:'+randomUUID();this.onActivity({id:activityId,active:true,kind:options.purpose==='cg-theme'?'cg-theme':'chat'});
-    try{if(profile.kind==='codex'){this.codex.setEnabled(true);yield* this.codex.stream({...options,connectionIdentity:connectionIdentity(profile),model:profile.model,reasoningEffort:profileEffort(profile),signal:request.controller.signal});}else yield* this.transport.stream(profile,{...options,signal:request.controller.signal});}finally{request.controller.abort();request.dispose();this.onActivity({id:activityId,active:false,kind:'chat'});}
+    try{if(profile.kind==='codex'){this.codex.setEnabled(true);yield* this.codex.stream({...options,connectionIdentity:connectionIdentity(profile),model:profile.model,reasoningEffort:profileEffort(profile),signal:request.controller.signal});}else yield* this.streamWithRetry(profile,options,request.controller.signal);}finally{request.controller.abort();request.dispose();this.onActivity({id:activityId,active:false,kind:'chat'});}
+  }
+  // Output limit for one request: the user's setting ('auto' or 256-65536) for
+  // callers that follow it, never below the caller's own floor, and never above
+  // the model's declared output limit, 65536 or what the context window leaves.
+  outputCeiling(profile,options){
+    const model=profile.models?.find(m=>m.id===profile.model||m.model===profile.model),declared=Number(model?.maxOutputTokens??model?.max_output_tokens??model?.outputTokenLimit)||65536;
+    const capacity=this.resolveContextCapacity({enabled:true,connectionId:profile.id}).tokens,input=Buffer.byteLength(JSON.stringify([options.system??'',options.messages??[]]),'utf8')+12;
+    return Math.min(declared,65536,Math.max(256,capacity-input-64));
+  }
+  outputBudget(profile,options){
+    if(!options.userLimit)return options.maxTokens;
+    const ceiling=this.outputCeiling(profile,options);
+    const setting=this.outputLimit();
+    if(setting==='auto')return 'auto';
+    return Math.max(1,Math.min(Math.max(Number(setting)||8192,Number(options.maxTokens)||0),ceiling));
+  }
+  // A response cut off by the output limit is retried once with twice the
+  // limit (16384 under 'auto'); a second cut-off is an error, never a reply.
+  async *streamWithRetry(profile,options,signal){
+    let maxTokens=this.outputBudget(profile,options);
+    for(let attempt=0;;attempt++){
+      const parts=[];let finish=null;
+      for await(const part of this.transport.stream(profile,{...options,maxTokens,signal}))if(part.type==='finish')finish=part;else parts.push(part);
+      if(finish?.reason?.kind!=='length'){yield* parts;if(finish)yield finish;return;}
+      this.audit({type:'model-output-truncated',profileId:profile.id,model:profile.model,purpose:options.purpose??'galgame',maxTokens,attempt});
+      if(attempt>=1)throw Object.assign(Error('回复被截断：模型输出达到上限，可以调高通用设置里的“模型最多输出”后重试'),{code:'MODEL_OUTPUT_TRUNCATED'});
+      const ceiling=this.outputCeiling(profile,options);
+      maxTokens=maxTokens==='auto'?Math.min(16384,ceiling):Math.min(ceiling,Math.max(256,(Number(maxTokens)||2048)*2));
+    }
   }
   draftProfile(draft){const previous=draft.id?this.state.profiles.find(profile=>profile.id===draft.id):null;return this.validateDraft(draft,previous);}
   async fetchModels(draft){await this.ready;const profile=this.draftProfile({...draft,reasoningEffort:null});if(profile.kind==='codex')return cleanModelCatalog(await this.codex.fetchModels());const request=this.requestController(null,15000);try{return await this.transport.listModels({...this.materialize({...profile,model:profile.model||'model-list'})},request.controller.signal);}finally{request.dispose();}}
