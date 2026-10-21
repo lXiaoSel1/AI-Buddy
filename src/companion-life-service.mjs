@@ -1,9 +1,17 @@
 import {randomUUID} from 'node:crypto';
 import {currentLife,ensureLives,lifeToken,assertLife,makeLife,lifeConversations,resetGroupKnowledge} from './companion-life.mjs';
-import {conversationFor,effectiveCard,progress,relationshipFor,companionId} from './companion-store.mjs';
+import {conversationFor,effectiveCard,progress,relationshipFor,companionId,repairMessageTimes} from './companion-store.mjs';
 import {createLifeArchiveRepository} from './companion-life-archive.mjs';
 
 const copy=value=>structuredClone(value);
+// Message times in an archive are checked like any other import (see repairMessageTimes).
+function repairTimes(target){
+ const now=Date.now(),messages=rows=>Array.isArray(rows)?rows.map(row=>row&&typeof row==='object'?repairMessageTimes(row,now):row):rows;
+ for(const row of target.conversations??[])row.messages=messages(row.messages);
+ for(const group of [...(target.groupEvidence??[]),...(target.life?.restoredGroupEvidence??[])])group.messages=messages(group.messages);
+ if(target.life&&Array.isArray(target.life.personalEvents))target.life.personalEvents=messages(target.life.personalEvents);
+ return target;
+}
 export async function createCompanionLives({store,dataRoot,imageCodec,imageConverter=null,call,syncCard,projectPersona,quiesce=async()=>{},onChanged=()=>{},enableGrowth,now=Date.now,audit=()=>{}}){
  const repository=createLifeArchiveRepository({dataRoot,imageCodec,imageConverter}),switching=new Set();
  const knownCard=id=>{companionId(id);if(!store.state.cards[id])throw Error('角色不存在');return id;};
@@ -67,7 +75,7 @@ export async function createCompanionLives({store,dataRoot,imageCodec,imageConve
   knownCard(characterId);busy(characterId);if(switching.size||store.state.lifeTransaction)throw Error('已有一次人生存档操作正在执行，请完成后再操作');switching.add(characterId);let transaction;
   try{
    await quiesce(characterId);const before=await snapshot(characterId),beforeFile=await repository.save(before),archive=metadata(before,beforeFile,{name:args.name??before.card.name+' · '+(kind==='restore'?'恢复前':'重置前')});
-   const target=await targetFactory(copy(before));validateTarget(target,characterId);
+   const target=repairTimes(await targetFactory(copy(before)));validateTarget(target,characterId);
    // Content decoder validates the whole target before changing either store.
    await checked('companion-life-validate',{characterId,content:target.content});
    transaction={id:randomUUID(),characterId,operationId:randomUUID(),kind,archiveId:archive.id,target,at:now()};

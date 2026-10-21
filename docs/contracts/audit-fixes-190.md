@@ -23,6 +23,7 @@
 | B2 输出上限 | 偏好项 `maxOutputTokens`，取值为 `'auto'` 或 256–65536 的整数，默认 8192，通过现有的 `settings:set` 读写 | 通用设置新增"模型最多输出（tokens）"：数字输入框，外加"自动"选项。说明文字：按实际输出计费；数值越大越不容易被截断；"自动"表示交给模型自己的默认值 |
 | B2 截断 | 再次截断时，流式请求抛出 `MODEL_OUTPUT_TRUNCATED`（error.message 中带说明） | 显示"回复被截断，可以调高通用设置里的输出上限后重试" |
 | B3 / B5 群聊状态 | `groupRuntime.status` 新增 `'waiting-model'`（排队中）和 `'waiting-life-save'`（附 `waitDeadline`）；超时后状态为 `failed`，并带 `canRetry` | 分别显示"排队中"和"正在保存人生存档，稍后自动发送"（可附倒计时）；失败时提供重试 |
+| B7 记忆读取失败 | `companion-memory-view` 返回的 `memory.syncError`：`{at, message}` 或 `null`。某个角色的原文无法读取时，日终整理会跳过这个角色，其他角色照常整理；导入时被修正过时间的消息带 `timeRepaired: true` | 记忆面板在 `syncError` 不为空时显示一行提示（例如"这个角色有记录无法读取，日终整理已暂停"）。`timeRepaired` 可以不显示 |
 | M-1 面板隐藏 | preload 提供 `whale.onPanelVisibility(cb)`，cb 收到 `{visible:boolean}`，在面板 hide 和 show 时触发 | 隐藏时释放动作图库渲染器的全部 target 和 prepared 资源、暂停预览、清空静帧缓存；显示时按需重建 |
 | M-2 动作图库 | 无 | 卡片默认显示一张静帧；pointerenter 或键盘 focus 时开始播放，pointerleave、blur 或移出视口时释放。同一时间只有 1 个解码器 |
 | B4 图片 | 视图中的图片字段可能是 `data:` URL，也可能是 `buddy-media://<sha256>.<ext>`（受限协议，由后端注册，CSP 也由后端添加）。上传仍然发送 data URL，由后端负责转换 | `companion-ui`、`companion-life-ui`、`group-stage-ui`、`group-mention-input`、`pet-interaction-view` 都要能显示这两种格式。判断"是不是图片"时不要只认 `data:` 前缀 |
