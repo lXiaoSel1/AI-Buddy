@@ -12,8 +12,8 @@ function repairTimes(target){
  if(target.life&&Array.isArray(target.life.personalEvents))target.life.personalEvents=messages(target.life.personalEvents);
  return target;
 }
-export async function createCompanionLives({store,dataRoot,imageCodec,imageConverter=null,call,syncCard,projectPersona,quiesce=async()=>{},onChanged=()=>{},enableGrowth,now=Date.now,audit=()=>{}}){
- const repository=createLifeArchiveRepository({dataRoot,imageCodec,imageConverter}),switching=new Set();
+export async function createCompanionLives({store,dataRoot,imageCodec,imageConverter=null,media=null,call,syncCard,projectPersona,quiesce=async()=>{},onChanged=()=>{},enableGrowth,now=Date.now,audit=()=>{}}){
+ const repository=createLifeArchiveRepository({dataRoot,imageCodec,imageConverter,media}),switching=new Set();
  const knownCard=id=>{companionId(id);if(!store.state.cards[id])throw Error('角色不存在');return id;};
  const busy=id=>{if(store.state.lifeTransaction?.replayFailed&&store.state.lifeTransaction.characterId===id)throw Error('该角色的人生切换没有完成，请先选择重试、回到切换前或放弃这次切换');if(switching.has(id)||store.state.lifeTransaction?.characterId===id)throw Error('正在保存或切换此角色人生，请稍候');};
  const checked=async(action,args)=>{const result=await call(action,args);if(result?.ok===false)throw Error(result.error??'人生内容验证或保存失败');return result;};

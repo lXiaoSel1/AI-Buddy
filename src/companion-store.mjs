@@ -3,6 +3,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {createSnapshotStorage,readJson} from './storage.mjs';
 import {currentLife} from './companion-life.mjs';
 import {normalizePhotoPlannerBinding} from './group-cg-planner.mjs';
+import {imageSlots,isMediaUrl} from './media-store.mjs';
 
 export const DEFAULT_PERSONA_ID='default';
 export function companionId(value){if(typeof value!=='string'||!/^[a-zA-Z0-9_:.-]{1,200}$/.test(value)||value==='prototype'||Object.hasOwn(Object.prototype,value))throw Error('身份或记录 ID 格式无效');return value;}
@@ -22,16 +23,25 @@ export const progress=(value={})=>({level:Math.max(1,Math.floor(Number(value.lev
 export const cap=level=>30+(Math.max(1,level)-1)*15;
 export function advanceProgress(value,delta){const next=progress(value);next.affection=Math.max(0,next.affection+delta);const levels=[];while(next.affection>=cap(next.level)){next.affection-=cap(next.level);next.level++;levels.push(next.level);}return {...next,levels};}
 function initial(){return {schema:1,migrated:false,activeCharacterId:'deepseek',activePersonaId:DEFAULT_PERSONA_ID,activeConversationId:null,activeGroupId:null,cards:{},personas:{[DEFAULT_PERSONA_ID]:{id:DEFAULT_PERSONA_ID,name:'默认身份',nickname:'你',createdAt:Date.now(),relationships:{}}},relationships:{},conversations:{},groups:{},touchQuotas:{},events:{},draftCards:{},settings:{allowUserMessageEdit:false}};}
-export async function openCompanionStore(dataRoot){
+export async function openCompanionStore(dataRoot,{media=null}={}){
  const disk=createSnapshotStorage(join(dataRoot,'galgame','companion.json'));let state=await readJson(disk,null);if(!state)state=initial();if(state.schema!==1)throw Error('不支持的角色／身份存档版本');
- let tail=Promise.resolve();
- const api={get state(){return state;},async mutate(fn){const task=tail.then(async()=>{const next=copy(state);const result=await fn(next);if(JSON.stringify(next)===JSON.stringify(state))return result;next.revision=(Number(state.revision)||0)+1;await disk.writeText(JSON.stringify(next));state=next;return result;});tail=task.catch(()=>{});return task;},async flush(){await tail;},snapshot:()=>copy(state)};
+ // One serialization per change (B4): the body is compared without the revision,
+ // which is then written first.
+ const body=value=>{const {revision,...rest}=value;return JSON.stringify(rest);};
+ let tail=Promise.resolve(),current=body(state);
+ // A picture newly set as a data URL is stored as a media file and replaced by its
+ // URL. Pictures already in the state stay until the T2 migration moves them.
+ function storeImages(next){
+  if(!media)return;const before=new Map();for(const [holder,key,path]of imageSlots(state))before.set(path,holder[key]);
+  for(const [holder,key,path]of imageSlots(next)){const value=holder[key];if(typeof value!=='string'||!value.startsWith('data:image/')||before.get(path)===value)continue;const url=media.put(value);if(url)holder[key]=url;}
+ }
+ const api={get state(){return state;},async mutate(fn,{storeImages:convert=true}={}){const task=tail.then(async()=>{const next=copy(state);const result=await fn(next);if(convert)storeImages(next);const text=body(next);if(text===current)return result;next.revision=(Number(state.revision)||0)+1;await disk.writeText('{"revision":'+next.revision+(text==='{}'?'}':','+text.slice(1)));state=next;current=text;return result;});tail=task.catch(()=>{});return task;},async flush(){await tail;},snapshot:()=>copy(state)};
  return api;
 }
 export function makeCard(raw,previous=null,{draft=false}={}){
  if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('角色卡格式无效');const name=text(raw.name??previous?.name??'',80).trim();if(!name&&!draft)throw Error('角色名称必填');
  const id=previous?.id??raw.id??'custom-'+randomUUID();if(!/^[a-zA-Z0-9_-]{1,100}$/.test(id)||id==='prototype'||Object.hasOwn(Object.prototype,id))throw Error('角色身份格式无效');
- const fields=copy(previous?.fields??{});if(raw.fields!==undefined){if(!raw.fields||typeof raw.fields!=='object'||Array.isArray(raw.fields))throw Error('角色字段格式无效');for(const [key,field]of Object.entries(raw.fields)){if(!CARD_FIELDS.includes(key))throw Error('未知角色字段：'+key);if(!field||!['inherit','custom','empty'].includes(field.mode))throw Error('角色字段需要选择继承／自定义／清空');const value=field.mode==='custom'?text(field.value??'',key.endsWith('Image')||key==='sprite'?26_000_000:20000):'';if((key.endsWith('Image')||key==='sprite')&&value&&!/^data:image\/(?:png|jpeg|webp|avif);base64,[a-zA-Z0-9+/=\s]+$/.test(value))throw Error('形象字段只接受 PNG、JPEG、WebP 或 AVIF 图片');fields[key]={mode:field.mode,...(field.mode==='custom'?{value}:{})};}}
+ const fields=copy(previous?.fields??{});if(raw.fields!==undefined){if(!raw.fields||typeof raw.fields!=='object'||Array.isArray(raw.fields))throw Error('角色字段格式无效');for(const [key,field]of Object.entries(raw.fields)){if(!CARD_FIELDS.includes(key))throw Error('未知角色字段：'+key);if(!field||!['inherit','custom','empty'].includes(field.mode))throw Error('角色字段需要选择继承／自定义／清空');const value=field.mode==='custom'?text(field.value??'',key.endsWith('Image')||key==='sprite'?26_000_000:20000):'';if((key.endsWith('Image')||key==='sprite')&&value&&!isMediaUrl(value)&&!/^data:image\/(?:png|jpeg|webp|avif);base64,[a-zA-Z0-9+/=\s]+$/.test(value))throw Error('形象字段只接受 PNG、JPEG、WebP 或 AVIF 图片');fields[key]={mode:field.mode,...(field.mode==='custom'?{value}:{})};}}
  const examples=raw.examples===undefined?copy(previous?.examples??[]):raw.examples;if(!Array.isArray(examples)||examples.length>100)throw Error('示例对话格式无效');
  const binding=raw.modelBinding??previous?.modelBinding??{enabled:false,connectionId:null};if(typeof binding.enabled!=='boolean'||binding.enabled&&!String(binding.connectionId||'').trim())throw Error('请选择角色关联的聊天连接');
  return {...previous,id,name,nameCustomized:previous?.nameCustomized===true||!!previous&&name!==previous.name,builtin:previous?.builtin===true,talkativeness:cardTalkativeness(Object.hasOwn(raw,'talkativeness')?raw.talkativeness:previous?.talkativeness??.5),fields,examples:examples.map(row=>({scene:text(row.scene??'',5000),speaker:text(row.speaker??'',100),text:text(row.text??'',20000)})),modelBinding:{enabled:binding.enabled,connectionId:binding.enabled?text(binding.connectionId,200):null},avatar:text(raw.avatar??previous?.avatar??'',26_000_000),revision:(previous?.revision??0)+1,updatedAt:Date.now(),draft};

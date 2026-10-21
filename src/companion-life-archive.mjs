@@ -5,6 +5,7 @@ import * as crypto from 'node:crypto';
 import {Worker} from 'node:worker_threads';
 import {mkdirSync,readFileSync,realpathSync,existsSync,rmSync} from 'node:fs';
 import {join,resolve,relative,isAbsolute} from 'node:path';
+import {isMediaUrl,mediaName} from './media-store.mjs';
 
 const LIMITS=Object.freeze({MAX_TOTAL:512*1024*1024,MAX_IMAGE:32*1024*1024,MAX_TEXT:64*1024*1024});
 const {MAX_TOTAL,MAX_IMAGE,MAX_TEXT}=LIMITS;
@@ -81,13 +82,13 @@ const secrets=/^(?:apiKey|keyCiphertext|cookie|authorization|accessToken|refresh
 const connectionLike=value=>['baseUrl','protocol','keyCiphertext','apiKey'].some(field=>Object.hasOwn(value,field));
 // Fields that hold pictures, directly or as a {mode,value} wrapper (card.fields.sprite.value).
 // Other strings are text, even when they happen to start with "data:image/".
-const IMAGE_FIELDS=new Set(['avatar','sprite','background','backgroundOverride','backgroundImage','customSprite','dataUrl','image','thumbnail','portrait','cover','icon']);
+const IMAGE_FIELDS=new Set(['avatar','sprite','background','backgroundOverride','backgroundImage','referenceImage','customSprite','dataUrl','image','thumbnail','portrait','cover','icon']);
 const imageField=(key,parentKey)=>IMAGE_FIELDS.has(key)||key==='value'&&IMAGE_FIELDS.has(parentKey);
 const SUPPORTED=['png','jpeg','webp','avif'],CODEC_READS=['png','jpeg','jpg','webp'];
 const dataImage=/^data:image\/([a-z0-9.+-]+)((?:;[a-z0-9-]+=[^;,]*)*);base64,([a-zA-Z0-9+/=\s]+)$/i;
 const sniff=bytes=>bytes[0]===0xff&&bytes[1]===0xd8?'jpeg':bytes.toString('ascii',0,4)==='RIFF'&&bytes.toString('ascii',8,12)==='WEBP'?'webp':bytes.toString('ascii',4,12)==='ftypavif'?'avif':'png';
 
-export function createLifeArchiveRepository({dataRoot,imageCodec=null,imageConverter=null,worker=true}){
+export function createLifeArchiveRepository({dataRoot,imageCodec=null,imageConverter=null,media=null,worker=true}){
  const directory=join(dataRoot,'galgame','life-archives');mkdirSync(directory,{recursive:true});
  function checkImage(bytes){if(!imageCodec)throw Error('图片解码器尚未就绪，未创建不完整备份');const decoded=imageCodec(bytes);if(decoded===false||decoded&&typeof decoded.isEmpty==='function'&&decoded.isEmpty())throw Error('存档图片无法解码');}
  function image(bytes,mime,files){if(bytes.length>MAX_IMAGE)throw Error('存档图片超过 32 MiB');checkImage(bytes);const extension=mime==='jpg'?'jpeg':mime;if(!SUPPORTED.includes(extension))throw Error('存档图片格式不支持');const path='images/'+archiveHash(bytes)+'.'+extension;files.set(path,bytes);return {$image:path};}
@@ -108,6 +109,8 @@ export function createLifeArchiveRepository({dataRoot,imageCodec=null,imageConve
   if(typeof value==='string'){
    const isImage=imageField(key,parentKey);
    if(isImage&&ctx.converted.has(value)){const {png,note}=ctx.converted.get(value);if(!ctx.notes.some(row=>row.field===note.field&&row.from===note.from))ctx.notes.push(note);return image(png,'png',files);}
+   // Pictures the store keeps as media files (B4) are packed from their bytes.
+   if(isImage&&isMediaUrl(value)){if(!media)throw Error('图片文件服务尚未就绪，未创建不完整备份');let bytes;try{bytes=media.read(value);}catch(error){if(error.code==='ENOENT')throw Error('图片文件已丢失：'+mediaName(value));throw error;}return image(bytes,mediaName(value).split('.').at(-1),files);}
    const embedded=dataImage.exec(value),mime=embedded?.[1].toLowerCase();
    if(isImage&&/^data:image\//i.test(value)){
     if(!embedded||!SUPPORTED.includes(mime==='jpg'?'jpeg':mime))throw Error('存档图片格式不支持：'+(mime??/^data:image\/([^;,]+)/i.exec(value)?.[1]??'未知')+'（'+(key==='value'?parentKey:key)+'），请换成 PNG、JPEG 或 WebP');

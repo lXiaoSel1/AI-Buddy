@@ -5,7 +5,7 @@ import {chromeColor,resolvedTheme} from './appearance.mjs';
 import {CgThemePlanner} from './cg-theme.mjs';
 import {createCharacterReferenceResolver} from './cg-reference-registry.mjs';
 import {monitorView} from './monitor-view.mjs';
-import { app,BrowserWindow,Tray,Menu,ipcMain,nativeImage,screen,session,safeStorage,dialog,powerMonitor } from 'electron';
+import { app,BrowserWindow,Tray,Menu,ipcMain,nativeImage,screen,session,safeStorage,dialog,powerMonitor,protocol } from 'electron';
 import {PetActivityClock,PetMotion} from './pet-interactions.mjs';
 import {createPetButtonObserver} from './pet-buttons.mjs';
 import {PetTouchExpressions} from './pet-touch.mjs';
@@ -13,6 +13,8 @@ import {frameSequence,CHARACTER_SEQUENCES} from './frame-sequence.mjs';
 import { Worker } from 'node:worker_threads';
 import { join,resolve,dirname } from 'node:path';
 import { readFileSync,mkdirSync,appendFileSync,writeFileSync,existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { MEDIA_SCHEME,MEDIA_MIME,mediaName } from './media-store.mjs';
 import { createSnapshotStorage,readJson } from './storage.mjs';
 import { createGalgame } from './galgame-host.mjs';
 import { CodexProvider } from './codex-provider.mjs';
@@ -53,6 +55,8 @@ const workspaceTitle=()=>localizedTitle()+(arg('candidate')==='1'?(settings.pref
 const previewQuery=arg('rig')==='working'?{query:{workingRig:'1'}}:arg('rig')==='all'?{query:{allActionRigs:'1'}}:arg('rig')==='source'?{query:{sourcePreview:'1'}}:{};
 const resources=createInstalledResources({root,build});
 const dataRoot=resolve(arg('data') || resources.installation?.dataPath || join(root,'local/data-v003'));
+// B4: companion pictures are served as buddy-media://<sha256>.<ext> (see media-store.mjs).
+protocol.registerSchemesAsPrivileged([{scheme:MEDIA_SCHEME,privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true}}]);
 if(!resources.fallback())throw Error('没有完整角色资源，请运行安装器修复 / No complete character resources; run installer repair');
 mkdirSync(dataRoot,{recursive:true});
 app.setPath('userData',join(dataRoot,'chromium'));
@@ -439,6 +443,12 @@ app.whenReady().then(async()=>{
   const netSession=session.fromPartition('whale-memory');
   netSession.webRequest.onBeforeRequest({urls:['http://*/*','https://*/*']},(details,callback)=>{audit({type:'renderer-external-blocked',scheme:details.url.split(':')[0]});callback({cancel:true});});
   netSession.setPermissionRequestHandler((_,__,callback)=>callback(false));
+  // Read-only, by content name only: 64 hex characters and an image extension.
+  netSession.protocol.handle(MEDIA_SCHEME,async request=>{
+    const name=mediaName(request.url);if(!name)return new Response(null,{status:404});
+    try{return new Response(await readFile(join(dataRoot,'galgame','media',name)),{headers:{'content-type':MEDIA_MIME[name.split('.').at(-1)],'cache-control':'max-age=31536000, immutable','access-control-allow-origin':'*'}});}
+    catch{return new Response(null,{status:404});}
+  });
   const home=process.env.USERPROFILE;
   let config='';try{config=readFileSync(join(codexHome(),'config.toml'),'utf8');}catch(error){if(error.code!=='ENOENT')throw error;}
   const model=config.match(/^model\s*=\s*"([^"]+)"/m)?.[1] || 'gpt-6.1-sol';
