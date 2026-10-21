@@ -42,14 +42,15 @@ export class CgService extends ModelRouter{
  async restoreJob(id){await this.ready;return this.jobsMutate(()=>{delete this.tombstones[id];const job=this.job(id);if(job){job.deletedAt=null;return this.publicJob(job);}});}
  job(id){return this.jobs.find(job=>job.id===id);}
  async validateReferences(characters,scene){await this.ready;this.resourceCheck(characters.map(c=>c.id));const profile=structuredClone(this.selected());this.materialize(profile);const refs=profile.options?.references===false?[]:await this.referenceResolver(characters,scene);return fitReferences(profile,refs);}
- async enqueue({id=randomUUID(),sourceEventId,kind='level',label='',prompt,characters=[],scene=null,automatic=false,retryOf=null,draft=null,themeBrief=null,theme=null,themeConnection=undefined}){
+ async enqueue({id=randomUUID(),sourceEventId,kind='level',label='',prompt,characters=[],scene=null,automatic=false,retryOf=null,draft=null,themeBrief=null,theme=null,themeConnection=undefined,resolvedRefs=null}){
   await this.ready;if(automatic&&!this.enabled)return {skipped:true};
   const prior=this.jobs.find(job=>job.sourceEventId===sourceEventId);if(prior)return this.publicJob(prior);
   this.resourceCheck(characters.map(c=>c.id));
   const profile=draft?this.draftProfile(draft):structuredClone(this.selected());this.materialize(profile);
   const directory=join(this.dataRoot,'cg-assets',id);if(!/^[a-zA-Z0-9_-]{1,180}$/.test(id))throw Error('CG 标识无效');mkdirSync(directory,{recursive:true});
   const old=retryOf?this.job(retryOf):null;
-  const requestedRefs=old?.references??(profile.options?.references===false?[]:await this.referenceResolver(characters,scene));
+  // Group photos validate references first; reuse them instead of resolving every image twice.
+  const requestedRefs=old?.references??(profile.options?.references===false?[]:resolvedRefs??await this.referenceResolver(characters,scene));
   const references=fitReferences(profile,requestedRefs);
   const storedRefs=[];for(let index=0;index<references.length;index++){
    const ref=references[index],bytes=ref.buffer??readFileSync(ref.path);const normalized=this.imageCodec(bytes,{reference:true});const path=join(directory,'reference-'+index+'.png');writeFileSync(path,normalized.png,{flag:'wx'});storedRefs.push({path,mime:'image/png',sha256:sha(normalized.png),sourceSha256:ref.sourceSha256||sha(bytes),role:ref.role||'character',characterId:ref.characterId||characters[index]?.id||null,name:ref.name||characters[index]?.name||null,resourceVersion:ref.resourceVersion||null,ignoreCharacters:ref.role==='environment'});
@@ -66,15 +67,16 @@ export class CgService extends ModelRouter{
  async runQueue(){
   while(!this.closed){const job=this.jobs.find(value=>value.status==='queued');if(!job)break;
    if(!await this.jobsMutate(()=>{if(job.status!=='queued'||job.deletedAt)return false;job.status=job.themeBrief&&!job.prompt?'planning':'generating';job.error=null;return true;}))continue;const controller=new AbortController();this.currentController=controller;this.currentJob=job;const timer=setTimeout(()=>controller.abort(),this.timeoutMs);
-   this.onActivity({id:'cg:'+job.id,active:true,kind:'cg'});
    try{
+    this.onActivity({id:'cg:'+job.id,active:true,kind:'cg'});
     if(job.themeBrief&&!job.prompt){
      const history=[...this.jobs.filter(x=>x.id!==job.id&&x.themeBrief?.charId===job.themeBrief.charId&&x.theme).sort((a,b)=>b.at-a.at).map(x=>x.theme),...(job.themeBrief.history??[])].slice(0,6);
      const prepared=this.themePlanner?await this.themePlanner.prepare(job.themeBrief,history,job.themeConnection,controller.signal):(()=>{const theme=localTheme(job.themeBrief,history);return {theme,prompt:themePrompt(job.themeBrief,theme)};})();
      if(controller.signal.aborted)throw Error('主题准备已中断');
      await this.jobsMutate(()=>{job.theme=prepared.theme;job.prompt=prepared.prompt;job.basePrompt=prepared.prompt;});
     }
-    if(job.status==='cancelled'||job.deletedAt||(job.automatic&&!this.enabled&&!job.submittedAt))continue;
+    // A job that will not run must not stay 'planning'/'generating', or the queue looks busy forever.
+    if(job.status==='cancelled'||job.deletedAt||(job.automatic&&!this.enabled&&!job.submittedAt)){if(pending(job))await this.jobsMutate(()=>{job.status='cancelled';job.error??=job.deletedAt?'已移入回收站':'自动生成已关闭';});continue;}
     await this.jobsMutate(()=>{job.status='generating';if(!job.remoteTask){if(!job.referencePolicyVersion){job.originalPrompt??=job.prompt;job.prompt=[job.prompt,referenceInstructions(job.references)].join('\n');job.referencePolicyVersion=1;}const prompt=constrainCgPrompt(job.prompt);if(prompt!==job.prompt){job.originalPrompt??=job.prompt;job.prompt=prompt;}job.compositionPolicyVersion=CG_COMPOSITION_VERSION;}});
     const profile=this.materialize(job.profile);
     const options={prompt:job.prompt,references:job.references,directory:job.directory,remoteTask:job.remoteTask,signal:controller.signal,onRemoteTask:task=>this.jobsMutate(()=>{job.remoteTask=task;}),onSubmit:()=>this.jobsMutate(()=>{if(job.status==='cancelled'||(job.automatic&&!this.enabled))throw Error('自动生成已关闭');job.submittedAt=Date.now();})};
@@ -83,7 +85,7 @@ export class CgService extends ModelRouter{
     writeFileSync(raw,result.buffer,{flag:'wx'});writeFileSync(path,decoded.png,{flag:'wx'});writeFileSync(thumb,decoded.thumbnail,{flag:'wx'});
     await this.jobsMutate(()=>Object.assign(job,{status:'ready',error:null,assetRef:relative(this.dataRoot,path).replaceAll('\\','/'),thumbnailRef:relative(this.dataRoot,thumb).replaceAll('\\','/'),originalRef:relative(this.dataRoot,raw).replaceAll('\\','/'),width:decoded.width,height:decoded.height,sha256:sha(decoded.png),revisedPrompt:result.revisedPrompt??null,completedAt:Date.now()}));
    }catch(error){await this.jobsMutate(()=>{job.status=job.status==='cancelled'?'cancelled':this.closed&&job.remoteTask?'queued':'failed';job.error=error.message?.slice(0,1800)??'CG 生成失败，请重试';job.errorDetails=error.details??null;});}
-   finally{clearTimeout(timer);this.currentController=null;this.currentJob=null;this.codex.close();this.onActivity({id:'cg:'+job.id,active:false,kind:'cg'});}
+   finally{clearTimeout(timer);this.currentController=null;this.currentJob=null;this.codex.close();try{this.onActivity({id:'cg:'+job.id,active:false,kind:'cg'});}catch{}}
   }
  }
  readAsset(ref){if(typeof ref!=='string'||!ref.startsWith('cg-assets/'))throw Error('CG 文件引用无效');const root=realpathSync(join(this.dataRoot,'cg-assets')),path=realpathSync(resolve(this.dataRoot,ref)),rel=relative(root,path);if(rel.startsWith('..')||isAbsolute(rel))throw Error('CG 文件引用无效');const bytes=readFileSync(path),mime=bytes[0]===255&&bytes[1]===216?'jpeg':bytes.toString('ascii',0,4)==='RIFF'&&bytes.toString('ascii',8,12)==='WEBP'?'webp':'png';return 'data:image/'+mime+';base64,'+bytes.toString('base64');}

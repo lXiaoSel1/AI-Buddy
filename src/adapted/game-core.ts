@@ -5311,12 +5311,12 @@ export function apply(
         if(source.photoPlannerBinding?.enabled&&(!themeConnection?.enabled||!themeConnection.profile?.model||themeConnection.profile.id!==source.photoPlannerBinding.connectionId))return {ok:false,error:'提示词策划连接已变化，请重新选择后生成'}
         const characters=cgCharacters(ids), scene=source.scene
         // Validate references before persisting a queued item or calling a model.
-        if(ctx.cg.validateReferences)await ctx.cg.validateReferences(characters,scene)
+        const resolvedRefs=ctx.cg.validateReferences?await ctx.cg.validateReferences(characters,scene):null
         const id=makeId('cg'),charId=ids[0],profile=effectiveProfileFor(charId)
         const record:any={id,charId,lifeIds:ctx.companionLifeIds?.(ids),personaId:source.personaId,groupId:source.groupId,kind:'group',status:'queued',level:s.characters[charId].level,at:Date.now(),seen:true,automatic:false,sourceEventId:source.sourceEventId,groupSource:source,characters,scene,prompt:'',label:'群聊合影 · '+source.groupName}
         record.themeBrief={kind:'group',charId,level:record.level,language:ctx.language?.()||'zh-CN',profile,visual:profile.visual,scene,characters,groupName:source.groupName,recentContext:source.messages.map((m:any)=>({id:m.id,speaker:m.characterName||m.personaName,text:m.text})),history:[]}
         s.characters[charId].cgs.push(record);await save('global')
-        try{await ctx.cg.enqueue({id,sourceEventId:record.sourceEventId,kind:'group',label:record.label,prompt:'',characters,scene,themeBrief:record.themeBrief,themeConnection})}
+        try{await ctx.cg.enqueue({id,sourceEventId:record.sourceEventId,kind:'group',label:record.label,prompt:'',characters,scene,themeBrief:record.themeBrief,themeConnection,resolvedRefs})}
         catch(error:any){record.status='failed';record.error=error.message;await save('global');return {ok:false,error:error.message,cgId:id}}
         return {ok:true,cgId:id}
       }
