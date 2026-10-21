@@ -411,7 +411,17 @@ npm start
 
 ## 许可与致谢
 
-代码、Galgame UI 实现与文档采用 [MIT License](LICENSE.md)。**图片不统一适用 MIT**：继承自上游的 21 张默认图片采用 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)，上游桌宠图集沿用 MIT；十套新增立绘与背景、DeepSeek 动作视频的条件见上文“内置默认美术”。作者链、逐文件边界和许可原文见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [`licenses/`](licenses/)。公开发布或商用前，请按来源分别确认。
+AI 酱的代码、Galgame UI 实现与文档版权归 **lXiaoSel1** 所有，采用 [Apache License 2.0 + Commons Clause](LICENSE.md) 许可：
+
+- 可以免费使用、复制、修改和转发，公司内部使用也可以。
+- **未经 lXiaoSel1 书面授权，不得售卖。** 凡是价值主要来自本软件的收费产品或服务都不行，包括付费下载、付费订阅、付费托管，以及收费安装、代装或技术支持。需要授权请在[本仓库提交 Issue](https://github.com/lXiaoSel1/AI-Buddy/issues)，或在 GitHub 私信 lXiaoSel1。
+- 按开源促进会（OSI）的定义，这属于“源码公开”许可，不是“开源”许可。
+- 1.8.0 及更早的版本按 MIT 发布，已经按 MIT 取得的副本仍适用 MIT。
+- 改编自上游 dsh-whale-galgame 的部分保留原来的 MIT 声明，见 [`licenses/upstream/`](licenses/upstream/)。
+- 许可不包括使用“AI 酱 / AI Buddy”名称的权利。
+- 提交代码前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 中的贡献协议。
+
+**图片另有许可**：继承自上游的 21 张默认图片采用 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)，上游桌宠图集沿用 MIT；十套新增立绘与背景、DeepSeek 动作视频的条件见上文“内置默认美术”。作者链、逐文件边界和许可原文见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [`licenses/`](licenses/)。公开发布或商用前，请按来源分别确认。
 
 感谢以下创作者和项目：
 
