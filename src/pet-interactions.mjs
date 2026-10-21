@@ -153,7 +153,8 @@ export class PetMotion{
     if(this.mode!=='dragging'||!this.enabled)return false;
     this.anchor={x:this.bounds.x,y:this.bounds.y};this.chargePoint={...p};this.pull={x:0,y:0};this.releaseButton=0;this.setMode('charging');return true;
   }
-  cancel(){if(this.anchor)this.commit(this.anchor.x,this.anchor.y);this.velocity={x:0,y:0};this.pull=null;this.anchor=null;this.samples=[];this.setMode('rest');this.contain();return {moved:true,cancelled:true};}
+  // Cancelling a gesture never freezes a throw that is already in the air (B8).
+  cancel(){if(this.mode==='flying')return {moved:false,cancelled:false,flying:true};if(this.anchor)this.commit(this.anchor.x,this.anchor.y);this.velocity={x:0,y:0};this.pull=null;this.anchor=null;this.samples=[];this.setMode('rest');this.contain();return {moved:true,cancelled:true};}
   release(p,{cancelled=false,button=this.releaseButton??this.button}={}){
     if(cancelled)return this.cancel();
     if(!['pressed','dragging','charging'].includes(this.mode))return {moved:true,ignored:true};
@@ -179,8 +180,9 @@ export class PetMotion{
     const now=this.now(),elapsed=now-this.lastTick;this.lastTick=now;
     if(this.mode==='landing'){if(this.animationNow(now)>=(this.landDurationMs??4000))this.setMode('rest');return this.state();}
     if(this.mode!=='flying')return this.state();
-    if(elapsed>500){this.stop();return this.state();}
-    let remaining=Math.max(0,elapsed)/1000;
+    // After a stall longer than 500 ms (busy main thread, hidden window) the throw
+    // advances 50 ms and carries on; it never stops in mid-air (B8).
+    let remaining=(elapsed>500?50:Math.max(0,elapsed))/1000;
     while(remaining>0&&this.mode==='flying'){
       const dt=Math.min(remaining,1/120);remaining-=dt;
       this.velocity.y+=1400*dt;this.velocity.x*=Math.exp(-.35*dt);
@@ -193,11 +195,17 @@ export class PetMotion{
     this.commit(this.bounds.x,this.bounds.y);
     return this.state();
   }
-  stop(){this.velocity={x:0,y:0};this.pull=null;this.anchor=null;this.samples=[];this.setMode('rest');this.contain();}
+  // A throw keeps falling under gravity; only gesture state is cleared (B8).
+  stop(){this.pull=null;this.anchor=null;this.samples=[];if(this.mode==='flying')return;this.velocity={x:0,y:0};this.setMode('rest');this.contain();}
+  // Drop straight down from the current position. The new animation epoch makes
+  // media messages for the interrupted flight stale.
+  fall(){this.velocity={x:0,y:0};this.pull=null;this.anchor=null;this.samples=[];this.contain();this.mode='rest';this.setMode('flying');this.flightAt=this.now();this.lastTick=this.now();}
   recover(bounds){
     if(bounds)this.bounds={...bounds};
     // The OS may have moved the native window independently (DPI, display or
     // resume). Reapply the recovered position even when it equals our cache.
-    this.lastPosition=null;this.stop();this.lastTick=this.now();
+    this.lastPosition=null;
+    if(this.mode==='flying'){this.fall();return;}
+    this.stop();this.lastTick=this.now();
   }
 }
