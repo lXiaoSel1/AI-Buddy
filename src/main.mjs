@@ -402,7 +402,7 @@ control.on('error',error=>{
 });
 
 async function shutdown() {
-  if(quitting)return;quitting=true;buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();provider?.close();await cg?.close();game?.close();
+  if(quitting)return;quitting=true;buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();provider?.close();await cg?.close();await game?.flushWorkLedger?.().catch(()=>{});game?.close();
   if(worker){worker.postMessage({type:'close'});await Promise.race([new Promise(r=>{worker.once('exit',r);worker.on('message',m=>{if(m.type==='closed')r();});}),new Promise(r=>setTimeout(r,5000))]);}
   control.close();app.exit(0);
 }

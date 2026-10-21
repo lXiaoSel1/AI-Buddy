@@ -290,6 +290,7 @@ const ACTIVITY_SESSION_LIMIT = 16
 const ACTIVITY_EVENT_LIMIT = 240
 const MAX_GLOBAL_ACTIVITIES = 64
 const MAX_USAGE_FINGERPRINTS = 2048
+const WORK_LEDGER_SESSION = 'local-work-ledger'
 const PROFILE_FIELDS = ['displayName', 'address', 'greeting', 'persona', 'tone', 'visual'] as const
 const PROFILE_LIMITS: Record<(typeof PROFILE_FIELDS)[number], number> = {
   displayName: 32,
@@ -1074,6 +1075,7 @@ export function apply(
     return {
       bank: raw && typeof raw.bank === 'number' ? Math.max(0, raw.bank) : 0,
       seenUsage,
+      workFolded: raw && Number.isFinite(raw.workFolded) ? Math.max(0, raw.workFolded) : 0,
     }
   }
 
@@ -1787,6 +1789,33 @@ export function apply(
     return true
   }
 
+  // Local work tokens are counted in a small sidecar owned by the host, so a
+  // busy Codex/Claude session no longer rewrites the whole global save. The
+  // global save records how much of that counter is already in the bank;
+  // bank and workFolded are always persisted together.
+  function foldWorkLedger(): boolean {
+    if (!globalState || typeof ctx.workLedgerTotal !== 'function') return false
+    const total = Math.max(0, Number(ctx.workLedgerTotal()) || 0)
+    globalState.tokens = normalizeGlobalTokens(globalState.tokens)
+    const folded = globalState.tokens.workFolded
+    if (total === folded) return false
+    const enabled = !(globalState.preferences && globalState.preferences.enabled === false)
+    if (total > folded && enabled) {
+      globalState.tokens.bank += total - folded
+      pendingUsageSettlement = true
+    }
+    globalState.tokens.workFolded = total
+    return true
+  }
+
+  async function flushWorkLedger(): Promise<void> {
+    if (!splitStorageActive() || !globalState) return
+    await runSerializedStateTask(async () => {
+      foldWorkLedger()
+      await writeGlobalState()
+    })
+  }
+
   function scheduleGlobalEventFlush(delayMs = 250): void {
     if (!splitStorageActive() || !globalState) return
     globalEventDirty = true
@@ -1818,7 +1847,11 @@ export function apply(
         sessionWorkspaceCache.set(header.id, { root, key })
       }
       const type = String(event && event.type || '')
-      if (type === 'assistant/message') {
+      if (type === 'assistant/message' && header.id === WORK_LEDGER_SESSION) {
+        void ensureGlobalReady().then(() => runSerializedStateTask(async () => {
+          foldWorkLedger()
+        })).catch(() => { /* the sidecar keeps the count; folded on the next event or load */ })
+      } else if (type === 'assistant/message') {
         void ensureGlobalReady().then(() => runSerializedStateTask(async () => {
           if (globalState && globalState.preferences && globalState.preferences.enabled === false) return
           if (recordGlobalUsage(session, event)) scheduleGlobalEventFlush()
@@ -4325,6 +4358,7 @@ export function apply(
         }
         if (text === null) {
           globalState = freshGlobalState()
+          foldWorkLedger()
           return
         }
         let parsed: any
@@ -4338,6 +4372,7 @@ export function apply(
           throw new Error('Galgame 全局存档版本或结构无法识别；为避免覆盖原文件，已停止加载。')
         }
         globalState = hydrated
+        foldWorkLedger()
         if (parsed.v !== GLOBAL_SAVE_VERSION || !validBackgroundRevision(parsed.backgroundRevision)) {
           // Global v2 moves the complete game timeline and token ledger into
           // one durable save. Persist the in-memory upgrade before any
@@ -4532,6 +4567,7 @@ export function apply(
             s.lastModel = s.chatModelLabel
           }
           const heroineChanged = syncHeroine()
+          foldWorkLedger()
           const redeem = pendingUsageSettlement
           pendingUsageSettlement = false
           const settled = redeem ? settle() : { changed: false }
@@ -4566,6 +4602,7 @@ export function apply(
         s.lastModel = s.chatModelLabel
       }
       const heroineChanged = syncHeroine()
+      foldWorkLedger()
       const redeem = pendingUsageSettlement
       pendingUsageSettlement = false
       const settled = redeem ? settle() : { changed: false }
@@ -5795,5 +5832,5 @@ export function apply(
     }).catch(() => undefined)
   }))
 
-  return { handleAction }
+  return { handleAction, flushWorkLedger }
 }
