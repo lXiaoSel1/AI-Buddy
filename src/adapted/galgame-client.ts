@@ -20,6 +20,11 @@ import { CHARACTER_ART } from '../character-catalog.mjs'
 import { ExpressionPortrait, CastPortrait } from './character-portrait'
 import {validPetCharacter} from '../pet-characters.mjs'
 import {plateVars} from '../plate-colors.mjs'
+import {Icon} from '../ui-icons.mjs'
+import {Switch} from '../ui-controls.mjs'
+import {themeAsset,THEMES} from '../appearance.mjs'
+import {THEME_PALETTES} from '../theme-palettes.mjs'
+import {GalgameDesignCSS} from '../galgame-design.mjs'
 import {CompanionCSS,CompanionManager,CompanionGroupStage,CompanionGroupDialogue,LifeRecoveryBanner,activeCompanionGroup,companionCharacterName,companionImage,modelErrorText,modelOutputTruncated} from '../companion-ui.mjs'
 const WHALE_ART = { ...LEGACY_ART, ...CHARACTER_ART }
 
@@ -276,6 +281,7 @@ const CSS = [
   '@media (max-width:900px){.whg-top{gap:6px;padding:10px 12px;flex-wrap:wrap}.whg-title{font-size:14px}.whg-chip{padding:3px 8px}.whg-spacer{display:none}.whg-top-actions{width:100%;justify-content:flex-end}.whg-btn{padding:5px 9px;font-size:12px}.whg-archive{width:min(470px,calc(100% - 12px))}.whg-archive-spine{display:none}}',
   '@media (max-width:560px){.whg-chip-wrap{max-width:calc(50% - 4px)}.whg-chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.whg-picker{position:fixed;top:92px;right:10px;left:10px;width:auto;max-height:55vh}.whg-top-actions{gap:5px;overflow-x:auto;padding-bottom:2px}.whg-archive{width:100%;border-left:0}.whg-archive-head{padding:18px 16px 14px}.whg-archive-body{padding:14px 14px 24px}.whg-gallery{grid-template-columns:1fr}.whg-history-row{grid-template-columns:38px minmax(0,1fr);gap:8px}.whg-archive-title{font-size:21px}.whg-profile-head-fields,.whg-profile-main-fields,.whg-profile-secondary-fields{grid-template-columns:1fr}.whg-profile-section-head{align-items:flex-start;flex-direction:column;gap:3px}.whg-profile-message{flex-basis:100%;text-align:left}.whg-settings-row{grid-template-columns:1fr;gap:8px}.whg-settings-toggle{justify-self:start}.whg-settings-head{padding:13px}.whg-settings-body{margin:0 13px}}',
   '@media (prefers-reduced-motion:reduce){.whg-archive-scrim,.whg-archive{animation:none}.whg-gallery-card:hover{transform:none}}',
+  GalgameDesignCSS,
 ].join('\n')
 
 function art(key: any): string | undefined {
@@ -325,7 +331,13 @@ function CgThumbnail({ item, sessionId }: any): React.ReactElement {
     return () => { alive = false; observer.disconnect() }
   }, [item.id, item.status, item.thumbnailRef, image, sessionId])
   const label = item.status === 'planning' ? t("正在设计主题") : item.status === 'queued' ? t("排队中") : item.status === 'generating' ? t("绘制中") : item.status === 'failed' ? t("生成失败 · 点击重试") : item.status === 'cancelled' ? t("已取消 · 点击重试") : 'CG'
-  return React.createElement('div', { ref, className: 'whg-gallery-thumb whg-gallery-placeholder' }, image ? React.createElement('img', { className: 'whg-gallery-thumb', src: image, alt: '', loading: 'lazy' }) : label)
+  if (image) return React.createElement('div', { ref, className: 'gx-cg-img' }, React.createElement('img', { src: image, alt: '', loading: 'lazy' }))
+  const step = item.status === 'planning' ? 1 : item.status === 'queued' ? 2 : item.status === 'generating' ? 3 : 0
+  const failed = item.status === 'failed' || item.status === 'cancelled'
+  return React.createElement('div', { ref, className: 'gx-cg-img ' + (failed ? 'fail' : step ? 'wait' : 'idle') },
+    failed ? Icon('alert', { size: 20 }) : step ? React.createElement('span', { className: 'ui-spinner', 'aria-hidden': 'true' }) : null,
+    React.createElement('span', null, label),
+    step ? React.createElement('span', { className: 'gx-steps', 'aria-hidden': 'true' }, [1, 2, 3].map(n => React.createElement('i', { key: n, className: n < step ? 'd' : n === step ? 'n' : '' }))) : null)
 }
 
 function galleryDetailItem(result: any, fallback: any): any | null {
@@ -698,272 +710,8 @@ function assertApiResult(result: any, fallback: string): void {
   throw new Error(errors || fallback)
 }
 
-function PluginSettingsCard(): React.ReactElement {
-  const [open, setOpen] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [settings, setSettings] = useState<any>(null)
-  const [options, setOptions] = useState<any>({ characters: [], models: [] })
-  const [message, setMessage] = useState('')
-  const [error, setError] = useState('')
-  const [catalogError, setCatalogError] = useState('')
 
-  useEffect(() => {
-    let alive = true
-    api('settings-get').then((nextSettings) => {
-      if (!alive) return
-      setSettings(settingsFromResult(nextSettings) || nextSettings)
-      setError('')
-    }).catch((err) => {
-      if (alive) setError(t("插件设置读取失败：") + String(err && err.message ? err.message : err))
-    }).finally(() => {
-      if (alive) setLoading(false)
-    })
-    requestModelOptions().then((nextOptions) => {
-      if (!alive) return
-      setOptions(nextOptions && typeof nextOptions === 'object' ? nextOptions : { characters: [], models: [] })
-      setCatalogError('')
-    }).catch((err) => {
-      if (alive) setCatalogError(t("模型目录暂时不可用：") + String(err && err.message ? err.message : err))
-    })
-    return () => { alive = false }
-  }, [])
-
-  useEffect(() => {
-    const onSettingsChanged = (event: Event) => {
-      const detail = (event as CustomEvent).detail
-      if (detail && detail.settings) setSettings(detail.settings)
-      requestModelOptions(undefined, true).then((nextOptions) => {
-        if (nextOptions && typeof nextOptions === 'object') {
-          setOptions(nextOptions)
-          setCatalogError('')
-        }
-      }).catch(() => { /* keep the last usable catalog */ })
-    }
-    window.addEventListener('whg:settings-changed', onSettingsChanged)
-    return () => window.removeEventListener('whg:settings-changed', onSettingsChanged)
-  }, [])
-
-  useEffect(() => {
-    const onPetSetting = (event: Event) => {
-      const enabled = (event as CustomEvent).detail
-      if (typeof enabled === 'boolean') {
-        setSettings((prev: any) => prev ? { ...prev, petEnabled: enabled } : prev)
-      }
-    }
-    window.addEventListener('whg:pet-setting', onPetSetting)
-    return () => window.removeEventListener('whg:pet-setting', onPetSetting)
-  }, [])
-
-  useEffect(() => {
-    if (!open) return undefined
-    let alive = true
-    api('settings-get').then((nextSettings) => {
-      if (!alive) return
-      setSettings(settingsFromResult(nextSettings) || nextSettings)
-      setError('')
-    }).catch(() => { /* keep the last readable settings */ })
-    requestModelOptions().then((nextOptions) => {
-      if (!alive) return
-      if (nextOptions && typeof nextOptions === 'object') {
-        setOptions(nextOptions)
-        setCatalogError('')
-      }
-    }).catch(() => { /* the card already shows the last usable catalog */ })
-    return () => { alive = false }
-  }, [open])
-
-  function save(patch: any): void {
-    if (saving) return
-    setSaving(true)
-    setMessage(t("正在保存…"))
-    setError('')
-    api('settings-set', patch).then(async (result) => {
-      assertApiResult(result, t("设置未被接受"))
-      let nextSettings = settingsFromResult(result)
-      if (!nextSettings) {
-        const refreshed = await api('settings-get')
-        nextSettings = settingsFromResult(refreshed) || refreshed
-      }
-      setSettings(nextSettings)
-      setMessage(t("已保存"))
-      if (Object.prototype.hasOwnProperty.call(patch, 'petEnabled')
-        && typeof nextSettings?.petEnabled === 'boolean') {
-        window.dispatchEvent(new CustomEvent('whg:pet-setting', { detail: nextSettings.petEnabled }))
-      }
-      window.dispatchEvent(new CustomEvent('whg:settings-changed', {
-        detail: { settings: nextSettings, view: viewFromResult(result), sourceSessionId: null },
-      }))
-    }).catch((err) => {
-      setMessage('')
-      setError(t("保存失败：") + String(err && err.message ? err.message : err))
-    }).finally(() => setSaving(false))
-  }
-
-  const characters: any[] = Array.isArray(options && options.characters) ? options.characters : []
-  const models: any[] = Array.isArray(options && options.models) ? options.models : []
-  const characterValue = settings && settings.characterMode === 'manual' && settings.characterId
-    ? 'character:' + String(settings.characterId)
-    : 'follow'
-  const chatValue = settings && settings.chatMode === 'manual' && settings.chatSelection
-    ? 'model:' + selectionKey(settings.chatSelection)
-    : settings && settings.chatMode === 'main' ? 'main' : 'configured'
-  const enabled = !settings || settings.enabled !== false
-  const petEnabled = !settings || settings.petEnabled !== false
-  const configuredModel = optionText(
-    (options && options.configuredSelection) || (settings && settings.configuredSelection),
-    t("插件配置模型"),
-  )
-
-  return React.createElement('li', { className: 'whg-settings-card', 'data-open': String(open) },
-    React.createElement('button', {
-      'aria-expanded': open,
-      'aria-label': (open ? t("收起") : t("展开")) + t("AI娘 Galgame 设置"),
-      className: 'whg-settings-head',
-      onClick: () => setOpen(!open),
-      type: 'button',
-    },
-      React.createElement('span', { className: 'whg-settings-heading' },
-        React.createElement('span', { className: 'whg-settings-name' }, t("AI娘 Galgame")),
-        React.createElement('span', { className: 'whg-settings-desc' }, t("控制插件、桌宠显示、出场角色与台词模型。")),
-      ),
-      React.createElement('span', { className: 'whg-settings-status' }, loading ? t("读取中") : error ? t("不可用") : enabled ? t("已启用") : t("已关闭")),
-      React.createElement('span', { className: 'whg-settings-chevron', 'aria-hidden': 'true' }, '▼'),
-    ),
-    open
-      ? React.createElement('div', { className: 'whg-settings-body' },
-        React.createElement('div', { className: 'whg-settings-row' },
-          React.createElement('span', { className: 'whg-settings-copy' },
-            React.createElement('strong', null, t("启用插件")),
-            React.createElement('small', null, t("关闭后隐藏桌宠，并暂停 galgame 对话入口内容。")),
-          ),
-          React.createElement('button', {
-            'aria-checked': enabled,
-            className: 'whg-settings-toggle',
-            disabled: loading || saving || !settings,
-            onClick: () => save({ enabled: !enabled }),
-            role: 'switch',
-            type: 'button',
-          }, enabled ? t("已开启") : t("已关闭")),
-        ),
-        React.createElement('div', { className: 'whg-settings-row' },
-          React.createElement('span', { className: 'whg-settings-copy' },
-            React.createElement('strong', null, t("显示桌宠")),
-            React.createElement('small', null, t("关闭后仍可从会话顶部的 galgame 页签进入，并在这里重新开启。")),
-          ),
-          React.createElement('button', {
-            'aria-checked': petEnabled,
-            'aria-label': t("显示桌宠"),
-            className: 'whg-settings-toggle',
-            disabled: loading || saving || !settings,
-            onClick: () => save({ petEnabled: !petEnabled }),
-            role: 'switch',
-            type: 'button',
-          }, petEnabled ? t("已显示") : t("已隐藏")),
-        ),
-        React.createElement('label', { className: 'whg-settings-row' },
-          React.createElement('span', { className: 'whg-settings-copy' },
-            React.createElement('strong', null, t("小剧场取材")),
-            React.createElement('small', null,
-              settings && settings.sideStoryWebAvailable === false
-                ? t("当前环境没有可用的联网检索，只会使用本地任务类别。")
-                : t("联网检索只发送角色对应的模型名与题材词，不含你的对话或工作内容。")),
-          ),
-          React.createElement('select', {
-            className: 'whg-settings-select',
-            disabled: loading || saving || !settings,
-            onChange: (event: any) => { save({ sideStorySeedSource: String(event.target.value) }) },
-            value: settings && settings.sideStorySeedSource === 'activity' ? 'activity' : 'auto',
-          },
-            React.createElement('option', { value: 'auto' }, t("优先联网检索，失败回落本地")),
-            React.createElement('option', { value: 'activity' }, t("只用本地任务类别（不联网）")),
-          ),
-        ),
-        React.createElement('label', { className: 'whg-settings-row' },
-          React.createElement('span', { className: 'whg-settings-copy' },
-            React.createElement('strong', null, t("小剧场冷却")),
-            React.createElement('small', null, t("两场小剧场之间要等多少分钟。填 0 表示不限制。")),
-          ),
-          React.createElement('input', {
-            className: 'whg-settings-select',
-            type: 'number',
-            min: 0,
-            max: settings && settings.sideStoryCooldownMax ? settings.sideStoryCooldownMax : 1440,
-            step: 5,
-            disabled: loading || saving || !settings,
-            defaultValue: settings && Number.isFinite(Number(settings.sideStoryCooldownMinutes))
-              ? Number(settings.sideStoryCooldownMinutes)
-              : 30,
-            key: 'skit-cooldown-' + String(settings && settings.sideStoryCooldownMinutes),
-            onBlur: (event: any) => {
-              const minutes = Number(event.target.value)
-              if (!Number.isFinite(minutes) || minutes < 0) return
-              if (settings && Number(settings.sideStoryCooldownMinutes) === Math.round(minutes)) return
-              save({ sideStoryCooldownMinutes: Math.round(minutes) })
-            },
-          }),
-        ),
-        React.createElement('label', { className: 'whg-settings-row' },
-          React.createElement('span', { className: 'whg-settings-copy' },
-            React.createElement('strong', null, t("角色来源")),
-            React.createElement('small', null, t("默认跟随工作区模型，也可固定为某位模型娘。")),
-          ),
-          React.createElement('select', {
-            className: 'whg-settings-select',
-            disabled: loading || saving || !settings,
-            onChange: (event: any) => {
-              const value = String(event.target.value)
-              if (value === 'follow') save({ characterMode: 'follow', characterId: null })
-              else if (value.startsWith('character:')) save({ characterMode: 'manual', characterId: value.slice(10) })
-            },
-            value: characterValue,
-          },
-            React.createElement('option', { value: 'follow' }, t("跟随工作区 · ") + mainModelText(options)),
-            characters.map((character: any, index: number) => React.createElement('option', {
-              key: String(character.id || index),
-              value: 'character:' + String(character.id || ''),
-            }, optionText(character, t("角色 ") + (index + 1)))),
-          ),
-        ),
-        React.createElement('label', { className: 'whg-settings-row' },
-          React.createElement('span', { className: 'whg-settings-copy' },
-            React.createElement('strong', null, t("对话模型")),
-            React.createElement('small', null, settings?.modelConfigurationCentral ? t("统一使用通用设置中选定的模型。") : t("可继续使用插件默认模型、跟随工作区，或单独指定。")),
-          ),
-          settings?.modelConfigurationCentral ? React.createElement('button', {
-            className: 'whg-settings-select', onClick: () => (window as any).whale?.open('settings'),
-          }, t("配置模型与 API")) : React.createElement('select', {
-            className: 'whg-settings-select',
-            disabled: loading || saving || !settings,
-            onChange: (event: any) => {
-              const value = String(event.target.value)
-              if (value === 'configured') save({ chatMode: 'configured', chatSelection: null })
-              else if (value === 'main') save({ chatMode: 'main', chatSelection: null })
-              else if (value.startsWith('model:')) {
-                const selection = parseSelectionKey(value.slice(6))
-                if (selection) save({ chatMode: 'manual', chatSelection: selection })
-              }
-            },
-            value: chatValue,
-          },
-            React.createElement('option', { value: 'configured' }, t("使用插件默认 · ") + configuredModel),
-            React.createElement('option', { value: 'main' }, t("跟随工作区 · ") + mainModelText(options)),
-            models.map((model: any, index: number) => React.createElement('option', {
-              key: selectionKey(model) || String(index),
-              value: 'model:' + selectionKey(model),
-            }, optionText(model, t("模型 ") + (index + 1)))),
-          ),
-        ),
-        React.createElement('p', {
-          className: 'whg-settings-message' + (error ? ' error' : ''),
-          role: error ? 'alert' : 'status',
-        }, error || message || catalogError || t("角色、模型和素材设置会在所有工作区共享，顶部标签也可以随时快捷切换。")),
-      )
-      : null,
-  )
-}
-
-function App(props: { useSessions: any; variant?: string; sessionId?: string; hideSpriteOnCg?: boolean; onCharacter?: (id: string) => void; onDisplayMode?: (mode: string) => void }): React.ReactElement {
+function App(props: { useSessions: any; variant?: string; sessionId?: string; hideSpriteOnCg?: boolean; onCharacter?: (id: string) => void; onDisplayMode?: (mode: string) => void; chat?: any; onToggleChat?: () => void; onManage?: (type: string) => void }): React.ReactElement {
   const callApi = (action: string, args?: any) => api(action, props.sessionId
     ? { ...(args && typeof args === 'object' ? args : {}), sessionId: props.sessionId }
     : args)
@@ -1015,6 +763,18 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   const [text, setText] = useState('')
   const [skitText, setSkitText] = useState('')
   const [armReset, setArmReset] = useState(false)
+  const [pendingChat, setPendingChat] = useState<any>(null)
+  const [failedChat, setFailedChat] = useState<any>(null)
+  const resetRef = useRef<HTMLSpanElement | null>(null)
+  // the restart bubble closes on Escape or a click elsewhere
+  useEffect(() => {
+    if (!armReset) return
+    const away = (event: any) => { if (!resetRef.current?.contains(event.target)) setArmReset(false) }
+    const key = (event: any) => { if (event.key === 'Escape') setArmReset(false) }
+    document.addEventListener('pointerdown', away, true)
+    document.addEventListener('keydown', key)
+    return () => { document.removeEventListener('pointerdown', away, true); document.removeEventListener('keydown', key) }
+  }, [armReset])
   const [imgFail, setImgFail] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
   const [settled, setSettled] = useState(false)
@@ -1128,14 +888,14 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     window.addEventListener('pointerdown', outside)
     return () => {cancelAnimationFrame(frame);window.removeEventListener('pointerdown',outside)}
   }, [cgMenu])
-  useEffect(() => {if (!cgUndo) return;const timer=setTimeout(()=>setCgUndo(null),8000);return()=>clearTimeout(timer)},[cgUndo])
+  const [undoLeft, setUndoLeft] = useState(8)
+  useEffect(() => {if (!cgUndo) return;setUndoLeft(8);const started=Date.now(),tick=setInterval(()=>setUndoLeft(Math.max(1,8-Math.floor((Date.now()-started)/1000))),250),timer=setTimeout(()=>setCgUndo(null),8000);return()=>{clearTimeout(timer);clearInterval(tick)}},[cgUndo])
   useEffect(() => (window as any).whale?.onChatCommitted(() => {
     callApi('view').then((value) => { setS(value); setApiError(null) }).catch(() => {})
   }), [props.sessionId])
   useEffect(() => (window as any).whale?.onCgUpdated(() => {
     callApi('view').then(setS).catch(() => {})
     if (archivePanel === 'gallery') loadGallery()
-    if (archivePanel === 'skits') loadSkitLog()
   }), [props.sessionId, archivePanel, galleryTrash, s && s.current])
   useEffect(() => {
     if ((!open && props.variant !== 'tab') || !currentStory?.beats?.length) return
@@ -1344,20 +1104,6 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       const eventView = scopedEventView(detail, props.sessionId)
       const characterId = String(detail.characterId || detail.charId || (eventView && eventView.current) || currentId)
       const nextProfile = profileFromResult(detail)
-      if (archivePanel === 'profile' && characterId && characterId === (profileCharacterId || currentId)) {
-        if (nextProfile) {
-          const nextBuiltIn = builtInProfileFromResult(detail)
-          setProfileDraft(nextProfile)
-          setProfileBaseline(nextProfile)
-          if (nextBuiltIn) setProfileBuiltIn(nextBuiltIn)
-          setProfileLoaded(true)
-          setProfileLoading(false)
-          setProfileHasOverrides(profileHasOverridesFromResult(detail, profileHasOverrides))
-          setProfileError('')
-        } else {
-          loadCharacterProfile(characterId)
-        }
-      }
       if (eventView) {
         setS(eventView)
       } else {
@@ -1536,12 +1282,6 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       setArchivePanel(null)
     }
   }, [s && s.enabled])
-
-  useEffect(() => {
-    if (archivePanel !== 'profile') return
-    const currentId = String(s && s.current ? s.current : '')
-    if (currentId && currentId !== profileCharacterId && !profileLoading) loadCharacterProfile(currentId)
-  }, [archivePanel, profileCharacterId, profileLoading, s && s.current])
 
   useEffect(() => {
     if (archivePanel !== 'history') return
@@ -1844,161 +1584,15 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     }).finally(() => setPickerLoading(false))
   }
 
-  function loadCharacterProfile(characterId: string): void {
-    if (!characterId) {
-      setProfileLoaded(false)
-      setProfileLoading(false)
-      setProfileError(t("当前角色未识别，暂时无法读取角色设定。"))
-      return
-    }
-    const requestId = ++profileRequestSeq.current
-    setProfileCharacterId(characterId)
-    setProfileLoaded(false)
-    setProfileLoading(true)
-    setProfileError('')
-    setProfileMessage('')
-    callApi('profile-get', { characterId }).then((result) => {
-      assertApiResult(result, t("角色设定读取失败"))
-      if (requestId !== profileRequestSeq.current) return
-      const profile = profileFromResult(result)
-      if (!profile) throw new Error(t("服务未返回可编辑的角色设定"))
-      const returnedId = String(result && (result.charId || result.characterId) ? (result.charId || result.characterId) : characterId)
-      const builtIn = builtInProfileFromResult(result) || profile
-      setProfileCharacterId(returnedId)
-      setProfileDraft(profile)
-      setProfileBaseline(profile)
-      setProfileBuiltIn(builtIn)
-      setProfileHasOverrides(profileHasOverridesFromResult(result, false))
-      setProfileLoaded(true)
-    }).catch((err) => {
-      if (requestId !== profileRequestSeq.current) return
-      setProfileError(t("角色设定读取失败：") + String(err && err.message ? err.message : err))
-    }).finally(() => {
-      if (requestId === profileRequestSeq.current) setProfileLoading(false)
-    })
-  }
 
-  function updateProfileField(key: ProfileKey, value: string): void {
-    setProfileDraft((current) => ({ ...current, [key]: value }))
-    setProfileMessage('')
-    setProfileError('')
-  }
 
-  function saveCharacterProfile(): void {
-    const characterId = String(s && s.current ? s.current : profileCharacterId)
-    if (!characterId || !profileLoaded || profileSaving) return
-    if (profileCharacterId && characterId !== profileCharacterId) {
-      loadCharacterProfile(characterId)
-      return
-    }
-    const overrides: Partial<Record<ProfileKey, string | null>> = {}
-    PROFILE_KEYS.forEach((key) => {
-      overrides[key] = profileDraft[key] === profileBuiltIn[key] ? null : profileDraft[key]
-    })
-    setProfileSaving(true)
-    setProfileError('')
-    setProfileMessage('')
-    callApi('profile-set', { characterId, overrides }).then(async (result) => {
-      assertApiResult(result, t("角色设定未保存"))
-      const returnedId = String(result && (result.charId || result.characterId) ? (result.charId || result.characterId) : characterId)
-      const effective = profileFromResult(result) || { ...profileDraft }
-      const builtIn = builtInProfileFromResult(result) || profileBuiltIn
-      let nextView = viewFromResult(result)
-      let refreshError = ''
-      if (!nextView) {
-        try {
-          nextView = await callApi('view')
-        } catch (err: any) {
-          refreshError = t("设定已保存，但画面刷新失败：") + String(err && err.message ? err.message : err)
-        }
-      }
-      setProfileCharacterId(returnedId)
-      setProfileDraft(effective)
-      setProfileBaseline(effective)
-      setProfileBuiltIn(builtIn)
-      setProfileHasOverrides(profileHasOverridesFromResult(result, true))
-      setProfileLoaded(true)
-      if (nextView && typeof nextView === 'object') setS(nextView)
-      window.dispatchEvent(new CustomEvent('whg:profile-changed', {
-        detail: {
-          characterId: returnedId,
-          builtIn,
-          effective,
-          overrides: profileOverridesFromResult(result) || Object.fromEntries(
-            PROFILE_KEYS.filter((key) => overrides[key] !== null).map((key) => [key, overrides[key]]),
-          ),
-          view: nextView,
-          sourceSessionId: broadcastSessionId,
-        },
-      }))
-      setProfileMessage(refreshError ? t("设定已保存；画面会在服务恢复后自动同步。") : t("角色设定已保存。"))
-      setProfileError(refreshError)
-    }).catch((err) => {
-      setProfileError(t("角色设定保存失败：") + String(err && err.message ? err.message : err))
-    }).finally(() => setProfileSaving(false))
-  }
 
-  function resetCharacterProfile(): void {
-    const characterId = String(s && s.current ? s.current : profileCharacterId)
-    if (!characterId || profileSaving) return
-    setProfileSaving(true)
-    setProfileError('')
-    setProfileMessage('')
-    callApi('profile-reset', { characterId }).then(async (result) => {
-      assertApiResult(result, t("默认角色设定未恢复"))
-      const returnedId = String(result && (result.charId || result.characterId) ? (result.charId || result.characterId) : characterId)
-      let effective = profileFromResult(result)
-      let builtIn = builtInProfileFromResult(result)
-      let refreshError = ''
-      if (!effective) {
-        try {
-          const refreshed = await callApi('profile-get', { characterId: returnedId })
-          assertApiResult(refreshed, t("默认角色设定读取失败"))
-          effective = profileFromResult(refreshed)
-          builtIn = builtInProfileFromResult(refreshed)
-        } catch (err: any) {
-          refreshError = t("默认设定已恢复，但内容刷新失败：") + String(err && err.message ? err.message : err)
-        }
-      }
-      let nextView = viewFromResult(result)
-      if (!nextView) {
-        try {
-          nextView = await callApi('view')
-        } catch (err: any) {
-          refreshError = refreshError || (t("默认设定已恢复，但画面刷新失败：") + String(err && err.message ? err.message : err))
-        }
-      }
-      if (effective) {
-        setProfileDraft(effective)
-        setProfileBaseline(effective)
-        setProfileBuiltIn(builtIn || effective)
-        setProfileLoaded(true)
-      }
-      setProfileCharacterId(returnedId)
-      setProfileHasOverrides(false)
-      if (nextView && typeof nextView === 'object') setS(nextView)
-      window.dispatchEvent(new CustomEvent('whg:profile-changed', {
-        detail: {
-          characterId: returnedId,
-          builtIn: builtIn || effective,
-          effective,
-          overrides: {},
-          view: nextView,
-          sourceSessionId: broadcastSessionId,
-        },
-      }))
-      setProfileMessage(refreshError ? t("默认设定已恢复；内容会在服务恢复后自动同步。") : t("已恢复该角色的默认设定。"))
-      setProfileError(refreshError)
-    }).catch((err) => {
-      setProfileError(t("恢复默认设定失败：") + String(err && err.message ? err.message : err))
-    }).finally(() => setProfileSaving(false))
-  }
 
   function send(): void {
     const t = text
     if (!t.trim()) return
     setText('')
-    act('chat', { text: t })
+    say({ text: t }, t)
   }
 
   // whale-girl emotion sprites: filename = emotion (local asset keys)
@@ -2140,7 +1734,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   function openCgMenu(event: any, item: any): void {
     event.preventDefault(); event.stopPropagation(); cgMenuTarget.current = event.currentTarget
     const rect = event.currentTarget.getBoundingClientRect()
-    setCgMenu({item,x:Math.max(8,Math.min(event.clientX || rect.left,window.innerWidth-244)),y:Math.max(8,Math.min(event.clientY || rect.bottom,window.innerHeight-104))})
+    setCgMenu({item,x:Math.max(8,Math.min(event.clientX || rect.left,window.innerWidth-224)),y:Math.max(8,Math.min(event.clientY || rect.bottom,window.innerHeight-170))})
   }
   async function recycleCg(id: string, restore = false): Promise<void> {
     if (busy) return
@@ -2196,16 +1790,6 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     })
   }
 
-  function loadSkitLog(): void {
-    setSkitLogLoading(true)
-    setSkitLogError(null)
-    callApi('side-story-log').then((result: any) => {
-      setSkitLog(Array.isArray(result && result.skits) ? result.skits : [])
-      setSkitCgAvailable(!!(result && result.cgAvailable))
-    }).catch((err: any) => {
-      setSkitLogError(String(err && err.message ? err.message : err))
-    }).finally(() => { setSkitLogLoading(false) })
-  }
 
   function openArchive(kind: 'history' | 'gallery' | 'profile', trigger: HTMLElement): void {
     setPickerPanel(null)
@@ -2214,7 +1798,6 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     closeGalleryDetail()
     setArchivePanel(kind)
     if (kind === 'gallery') loadGallery()
-    if (kind === 'profile') loadCharacterProfile(String(s && s.current ? s.current : ''))
   }
 
   function saveGalleryBackground(item: any): void {
@@ -2255,32 +1838,37 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     const characters: any[] = Array.isArray(s?.companion?.characters) ? s.companion.characters : Array.isArray(modelOptions && modelOptions.characters) ? modelOptions.characters : []
     const mode = (pluginSettings && pluginSettings.characterMode) || s.characterMode || 'follow'
     const selectedId = (pluginSettings && pluginSettings.characterId) || s.characterId || s.current
+    const followMode = mode !== 'manual'
     return React.createElement('div', {
       'aria-label': t("选择出场角色"),
-      className: 'whg-picker',
+      className: 'whg-picker gx-pop gx-pop-wide',
       id: 'whg-character-picker-' + appScope,
       ref: pickerRef,
       role: 'listbox',
     },
-      React.createElement('div', { className: 'whg-picker-head' },
-        React.createElement('span', null, 'CHARACTER SOURCE'),
-        React.createElement('span', null, pickerCatalogLoading ? t("读取中…") : String(characters.length + 1).padStart(2, '0')),
-      ),
-      pickerOption({
-        selected: mode !== 'manual',
-        title: t("跟随工作区"),
-        subtitle: mainModelText(modelOptions),
-        onChoose: () => updateRuntimeSettings({ characterMode: 'follow', characterId: null }),
-      }),
-      characters.map((character: any, index: number) => pickerOption({
-        key: String(character.id || index),
-        selected: mode === 'manual' && String(selectedId) === String(character.id),
-        title: (s?.companion ? companionCharacterName(character) : optionText(character, t("角色 ") + (index + 1))) + (s.resources?.characters?.find((c:any)=>c.id===character.id)?.installed===false?' · '+t('待安装'):''),
-        subtitle: character.model ? String(character.model) : character.description ? String(character.description) : undefined,
-        onChoose: () => { if (s?.companion) { closePicker(); companionRequest('companion-character-select', { id: String(character.id) }).catch((error: any) => setApiError(error.message)) } else updateRuntimeSettings({ characterMode: 'manual', characterId: String(character.id) }) },
-      })),
-      React.createElement('button', { className: 'whg-picker-option', type: 'button', onClick: () => openCompanion('characters') }, t('管理角色')),
-      pickerError ? React.createElement('div', { className: 'whg-bg-error', role: 'alert' }, pickerError) : null,
+      React.createElement('div', { className: 'gx-pop-h' }, t("出场角色"), React.createElement('small', null, pickerCatalogLoading ? t("读取中…") : characters.length + t(" 个"))),
+      React.createElement('div', { className: 'gx-pop-b' },
+        React.createElement('button', { type: 'button', role: 'option', 'aria-selected': followMode, className: 'gx-follow' + (followMode ? ' sel' : ''), disabled: pickerLoading, onClick: () => updateRuntimeSettings({ characterMode: 'follow', characterId: null }) },
+          Icon('refresh', { size: 16 }),
+          React.createElement('span', null, React.createElement('b', null, t("跟随工作区")), React.createElement('small', null, t("按当前工作区的模型自动换角色") + (mainModelText(modelOptions) ? ' · ' + t("现在是 ") + mainModelText(modelOptions) : ''))),
+          followMode ? Icon('check', { size: 16 }) : null),
+        React.createElement('div', { className: 'gx-cgrid' },
+          characters.map((character: any, index: number) => {
+            const id = String(character.id || index)
+            const chosen = s?.companion ? id === String(s.current) : mode === 'manual' && String(selectedId) === id
+            const role = THEME_PALETTES.find((row: any) => row.id === id)?.zh || character.description || character.model || ''
+            return React.createElement('button', {
+              key: id,
+              type: 'button',
+              role: 'option',
+              'aria-selected': chosen,
+              className: 'gx-copt' + (chosen ? ' sel' : ''),
+              disabled: pickerLoading,
+              onClick: () => { if (s?.companion) { closePicker(); companionRequest('companion-character-select', { id: String(character.id) }).catch((error: any) => setApiError(error.message)) } else updateRuntimeSettings({ characterMode: 'manual', characterId: String(character.id) }) },
+            }, face(id), React.createElement('span', null, React.createElement('b', null, (s?.companion ? companionCharacterName(character) : optionText(character, t("角色 ") + (index + 1))) + (s.resources?.characters?.find((c:any)=>c.id===character.id)?.installed===false?' · '+t('待安装'):'')), role ? React.createElement('small', null, t(role)) : null), chosen ? Icon('check', { size: 16 }) : null)
+          })),
+        pickerError ? React.createElement('div', { className: 'whg-bg-error', role: 'alert' }, pickerError) : null),
+      React.createElement('div', { className: 'gx-pop-f' }, React.createElement('span', { className: 'grow' }, t("点角色就切换，聊天记录按角色分开保存")), React.createElement('button', { type: 'button', className: 'ui-btn sm', onClick: () => openCompanion('characters') }, Icon('users', { size: 14 }), t('管理角色'))),
     )
   }
 
@@ -2350,10 +1938,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     const visiblePreview = backgroundPreview || currentActual
     const builtinSection = builtinOptions.length > 0
       ? React.createElement('section', { className: 'whg-bg-builtins', 'aria-label': (s && s.name ? s.name : t("当前角色")) + t("的内置背景") },
-        React.createElement('div', { className: 'whg-bg-builtins-head' },
-          React.createElement('span', null, t("角色内置背景")),
-          React.createElement('span', { className: 'whg-bg-builtins-role' }, s && s.name ? s.name : ''),
-        ),
+        React.createElement('p', { className: 'gx-sec' }, t("内置背景")),
         hasSavedBackground
           ? React.createElement('div', { className: 'whg-bg-override-note' },
             backgroundMode === 'cg' ? t("特殊 CG 正在覆盖角色背景。选择下方背景会退出 CG 覆盖。") : t("自定义图片正在覆盖角色背景。选择下方背景会退出自定义覆盖。"),
@@ -2390,20 +1975,19 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       : null
     return React.createElement('div', {
       'aria-label': t("修改 galgame 背景图"),
-      className: 'whg-picker right whg-bg-picker',
+      className: 'whg-picker right whg-bg-picker gx-pop gx-pop-wide',
       id: 'whg-background-picker-' + appScope,
       ref: pickerRef,
       role: 'dialog',
     },
-      React.createElement('div', { className: 'whg-picker-head' },
-        React.createElement('span', null, 'BACKGROUND FILE'),
-        React.createElement('span', null, backgroundPreview ? t("预览") : hasSavedBackground ? t("覆盖中") : t("角色背景")),
-      ),
+      React.createElement('div', { className: 'gx-pop-h' }, t("背景图"), React.createElement('small', null, (s && s.name ? s.name : t("当前角色")) + t(" 专用")), React.createElement('span', { className: 'grow' }), React.createElement('span', { className: 'ws-tag' }, backgroundPreview ? t("预览") : backgroundMode === 'cg' ? t("CG 覆盖") : backgroundMode === 'custom' ? t("自定义图片") : t("角色背景"))),
+      React.createElement('div', { className: 'gx-pop-b' },
       visiblePreview
-        ? React.createElement('img', { className: 'whg-bg-preview', src: visiblePreview, alt: backgroundPreview ? t("待应用背景预览") : t("当前 galgame 背景") })
+        ? React.createElement('div', { className: 'gx-prev' }, React.createElement('img', { className: 'whg-bg-preview', src: visiblePreview, alt: backgroundPreview ? t("待应用背景预览") : t("当前 galgame 背景") }), React.createElement('span', { className: 'ws-tag' }, backgroundPreview ? t("预览") : t("正在使用")))
         : React.createElement('div', { className: 'whg-bg-empty' }, t("选择一张本地图片后在这里预览")),
       builtinSection,
-      React.createElement('div', { className: 'whg-picker-note' }, t("上传背景和 CG 背景仅用于当前角色，切换角色不会改变其他角色的背景。")),
+      React.createElement('p', { className: 'gx-hint' }, t("上传的图片和 CG 背景只用在 ") + (s && s.name ? s.name : t("当前角色")) + t(" 身上，换角色不影响别人。支持 PNG、JPG、WebP、AVIF，12 MB 以内。")),
+      pickerError ? React.createElement('div', { className: 'whg-bg-error', role: 'alert' }, pickerError) : null),
       React.createElement('input', {
         accept: 'image/png,image/jpeg,image/webp,image/avif',
         className: 'whg-bg-file',
@@ -2411,83 +1995,19 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         ref: bgFileRef,
         type: 'file',
       }),
-      React.createElement('div', { className: 'whg-bg-actions' },
-        React.createElement('button', {
-          className: 'whg-btn',
-          disabled: pickerLoading,
-          onClick: () => bgFileRef.current?.click(),
-          type: 'button',
-        }, backgroundPreview ? t("重新选择") : t("上传图片")),
+      React.createElement('div', { className: 'gx-pop-f' },
+        React.createElement('button', { className: 'ui-btn sm', disabled: pickerLoading, onClick: () => bgFileRef.current?.click(), type: 'button' }, Icon('upload', { size: 14 }), backgroundPreview ? t("重新选择") : t("上传图片")),
+        React.createElement('span', { className: 'grow' }),
         backgroundPreview
-          ? React.createElement('button', {
-            className: 'whg-cg-btn',
-            disabled: pickerLoading,
-            onClick: applyBackgroundUpload,
-            type: 'button',
-          }, pickerLoading ? t("保存中…") : t("应用这张背景"))
-          : null,
+          ? React.createElement('button', { className: 'ui-btn sm', disabled: pickerLoading, onClick: () => { setBackgroundPreview(null); setBackgroundFileName(''); setPickerError('') }, type: 'button' }, t("取消预览"))
+          : React.createElement('button', { className: 'ui-btn sm', disabled: pickerLoading || !hasSavedBackground, onClick: restoreDefaultBackground, type: 'button' }, t("恢复默认")),
         backgroundPreview
-          ? React.createElement('button', {
-            className: 'whg-btn',
-            disabled: pickerLoading,
-            onClick: () => { setBackgroundPreview(null); setBackgroundFileName(''); setPickerError('') },
-            type: 'button',
-          }, t("取消预览"))
-          : null,
-        hasSavedBackground
-          ? React.createElement('button', {
-            className: 'whg-btn',
-            disabled: pickerLoading,
-            onClick: restoreDefaultBackground,
-            type: 'button',
-          }, t("恢复默认"))
+          ? React.createElement('button', { className: 'ui-btn sm primary', disabled: pickerLoading, onClick: applyBackgroundUpload, type: 'button' }, pickerLoading ? t("保存中…") : t("应用这张背景"))
           : null,
       ),
-      pickerError ? React.createElement('div', { className: 'whg-bg-error', role: 'alert' }, pickerError) : null,
     )
   }
 
-  function skitPicker(): React.ReactElement | null {
-    if (pickerPanel !== 'skit') return null
-    const side = (s && s.sideStory) || {}
-    const cooling = Number(side.cooldownMs) > 0
-    const mins = cooling ? Math.ceil(Number(side.cooldownMs) / 60000) : 0
-    const start = () => {
-      if (busy || cooling) return
-      const topic = skitTopic.trim()
-      setSkitTopic('')
-      closePicker(false)
-      act('side-story', topic ? { op: 'start', topic } : { op: 'start' })
-    }
-    return React.createElement('div', {
-      'aria-label': t("开一场小剧场"),
-      className: 'whg-picker right whg-skit-picker',
-      id: 'whg-skit-picker-' + appScope,
-      ref: pickerRef,
-      role: 'dialog',
-    },
-      React.createElement('div', { className: 'whg-picker-head' },
-        React.createElement('span', null, 'SIDE ACT'),
-        React.createElement('span', null, cooling ? t("冷却中 · 约 ") + mins + t(" 分钟") : t("可开演")),
-      ),
-      React.createElement('p', { className: 'whg-side-seed' },
-        t("不填就让她们自己找话题：优先看看外面在聊什么，找不到就聊主人最近在忙的事。")),
-      React.createElement('input', {
-        className: 'whg-input',
-        value: skitTopic,
-        placeholder: t("想让她们聊点什么？（可留空）"),
-        disabled: busy || cooling,
-        onChange: (event: any) => { setSkitTopic(event.target.value) },
-        onKeyDown: (event: any) => { if (event.key === 'Enter') start() },
-      }),
-      React.createElement('button', {
-        className: 'whg-btn whg-skit-start',
-        disabled: busy || cooling,
-        onClick: start,
-        type: 'button',
-      }, cooling ? t("冷却中") : t("开演")),
-    )
-  }
 
   function spritePicker(): React.ReactElement | null {
     if (pickerPanel !== 'sprite') return null
@@ -2496,15 +2016,13 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     const hasSavedSprite = !!customSprite || !!(s && (s.hasCustomSprite === true || s.customSprite === true || s.spriteMode === 'custom'))
     return React.createElement('div', {
       'aria-label': t("修改") + (s && s.name ? s.name : t("当前角色")) + t("的角色立绘"),
-      className: 'whg-picker right whg-sprite-picker',
+      className: 'whg-picker right whg-sprite-picker gx-pop',
       id: 'whg-sprite-picker-' + appScope,
       ref: pickerRef,
       role: 'dialog',
     },
-      React.createElement('div', { className: 'whg-picker-head' },
-        React.createElement('span', null, 'CHARACTER PORTRAIT'),
-        React.createElement('span', null, spritePreview ? t("预览") : hasSavedSprite ? t("使用中") : t("默认")),
-      ),
+      React.createElement('div', { className: 'gx-pop-h' }, t("角色立绘"), React.createElement('small', null, s && s.name ? s.name : ''), React.createElement('span', { className: 'grow' }), React.createElement('span', { className: 'ws-tag' }, spritePreview ? t("预览") : hasSavedSprite ? t("自己上传") : t("默认"))),
+      React.createElement('div', { className: 'gx-pop-b' },
       visiblePreview
         ? React.createElement('div', { className: 'whg-sprite-preview-shell' },
           React.createElement('img', {
@@ -2514,9 +2032,8 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
           }),
         )
         : React.createElement('div', { className: 'whg-bg-empty' }, t("选择一张本地图片后在这里预览")),
-      React.createElement('div', { className: 'whg-picker-note' },
-        t("当前角色 · ") + (s && s.name ? s.name : t("未识别")) + t("。立绘按角色分别保存，并在所有工作区共享；建议使用透明背景的竖向图片。"),
-      ),
+      React.createElement('p', { className: 'gx-hint' }, t("立绘按角色保存，所有工作区共用。建议用透明背景的竖图，12 MB 以内。")),
+      pickerError ? React.createElement('div', { className: 'whg-bg-error', role: 'alert' }, pickerError) : null),
       React.createElement('input', {
         accept: 'image/png,image/jpeg,image/webp,image/avif',
         className: 'whg-bg-file',
@@ -2524,554 +2041,213 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         ref: spriteFileRef,
         type: 'file',
       }),
-      React.createElement('div', { className: 'whg-bg-actions' },
-        React.createElement('button', {
-          className: 'whg-btn',
-          disabled: pickerLoading,
-          onClick: () => spriteFileRef.current?.click(),
-          type: 'button',
-        }, spritePreview ? t("重新选择") : t("上传图片")),
+      React.createElement('div', { className: 'gx-pop-f' },
+        React.createElement('button', { className: 'ui-btn sm', disabled: pickerLoading, onClick: () => spriteFileRef.current?.click(), type: 'button' }, Icon('upload', { size: 14 }), spritePreview ? t("重新选择") : t("上传图片")),
+        React.createElement('span', { className: 'grow' }),
         spritePreview
-          ? React.createElement('button', {
-            className: 'whg-cg-btn',
-            disabled: pickerLoading,
-            onClick: applySpriteUpload,
-            type: 'button',
-          }, pickerLoading ? t("保存中…") : t("应用这张立绘"))
-          : null,
-        React.createElement('button', {
-          className: 'whg-btn',
-          disabled: pickerLoading,
-          onClick: () => closePicker(),
-          type: 'button',
-        }, t("取消")),
-        hasSavedSprite
-          ? React.createElement('button', {
-            className: 'whg-btn',
-            disabled: pickerLoading,
-            onClick: restoreDefaultSprite,
-            type: 'button',
-          }, t("恢复默认"))
-          : null,
-      ),
-      pickerError ? React.createElement('div', { className: 'whg-bg-error', role: 'alert' }, pickerError) : null,
-    )
-  }
-
-  function profileField(
-    key: ProfileKey,
-    label: string,
-    hint: string,
-    multiline = false,
-  ): React.ReactElement {
-    const id = 'whg-profile-' + appScope + '-' + key
-    const hintId = id + '-hint'
-    const common = {
-      'aria-describedby': hintId,
-      className: 'whg-profile-control',
-      disabled: profileLoading || profileSaving,
-      id,
-      onChange: (event: any) => updateProfileField(key, String(event.target.value || '')),
-      spellCheck: true,
-      value: profileDraft[key],
-    }
-    const control = multiline
-      ? React.createElement('textarea', { ...common, rows: key === 'persona' || key === 'tone' ? 5 : 4 })
-      : React.createElement('input', {
-        ...common,
-        autoComplete: 'off',
-        ref: key === 'displayName' ? profileFirstFieldRef : undefined,
-        type: 'text',
-      })
-    return React.createElement('div', { className: 'whg-profile-field' },
-      React.createElement('label', { htmlFor: id }, label),
-      control,
-      React.createElement('small', { id: hintId }, hint),
-    )
-  }
-
-  function profileEditor(): React.ReactElement {
-    if (profileLoading) {
-      return React.createElement('div', { className: 'whg-profile-loading', role: 'status' }, t("正在调取角色档案……"))
-    }
-    if (!profileLoaded) {
-      return React.createElement('div', { className: 'whg-archive-error', role: 'alert' },
-        profileError || t("角色设定暂时无法读取。"),
-        React.createElement('button', {
-          className: 'whg-btn',
-          onClick: () => loadCharacterProfile(String(s && s.current ? s.current : '')),
-          type: 'button',
-        }, t("重新读取")),
-      )
-    }
-    const dirty = PROFILE_KEYS.some((key) => profileDraft[key] !== profileBaseline[key])
-    const message = profileError
-      || profileMessage
-      || (dirty ? t("有未保存的修改。") : profileHasOverrides ? t("当前角色使用自定义设定。") : t("当前角色使用默认设定。"))
-    return React.createElement(React.Fragment, null,
-      React.createElement('div', { className: 'whg-profile-intro' },
-        React.createElement('strong', null, (s && s.name ? s.name : t("当前角色")) + t(" · 独立角色档案")),
-        t("。设定按角色分别保存，并在所有工作区共享；保存或恢复默认都不会改变好感度、记忆或角色立绘，已经开始互动的对话历史也不会被改写。"),
-        React.createElement('span', { className: 'whg-profile-guard' },
-          t("若尚未开始互动，编辑会原位更新当前开场问候；开始对话后不再改写历史。安全规则与单句回复限制始终保留。"),
-        ),
-      ),
-      React.createElement('form', {
-        'aria-busy': profileSaving,
-        className: 'whg-profile-form',
-        onSubmit: (event: any) => { event.preventDefault(); saveCharacterProfile() },
-      },
-        React.createElement('section', { 'aria-labelledby': 'whg-profile-heading-' + appScope, className: 'whg-profile-section' },
-          React.createElement('div', { className: 'whg-profile-section-head', id: 'whg-profile-heading-' + appScope },
-            React.createElement('strong', null, 'DOSSIER HEADING'),
-            React.createElement('span', null, t("姓名牌与彼此称呼")),
-          ),
-          React.createElement('div', { className: 'whg-profile-head-fields' },
-            profileField('displayName', t("角色昵称"), t("显示在标题、姓名牌与对话记录中。")),
-            profileField('address', t("对用户称呼"), t("角色在台词中如何称呼你。")),
-          ),
-        ),
-        React.createElement('section', { 'aria-labelledby': 'whg-profile-core-' + appScope, className: 'whg-profile-section' },
-          React.createElement('div', { className: 'whg-profile-section-head', id: 'whg-profile-core-' + appScope },
-            React.createElement('strong', null, 'CHARACTER CORE'),
-            React.createElement('span', null, t("主要对话依据")),
-          ),
-          React.createElement('div', { className: 'whg-profile-main-fields' },
-            profileField('persona', t("性格"), t("角色的性格、价值取向与互动边界。"), true),
-            profileField('tone', t("语气"), t("措辞、节奏、口癖等表达偏好。"), true),
-          ),
-        ),
-        React.createElement('section', { 'aria-labelledby': 'whg-profile-scenes-' + appScope, className: 'whg-profile-section' },
-          React.createElement('div', { className: 'whg-profile-section-head', id: 'whg-profile-scenes-' + appScope },
-            React.createElement('strong', null, 'SCENE NOTES'),
-            React.createElement('span', null, t("开场与纪念 CG")),
-          ),
-          React.createElement('div', { className: 'whg-profile-secondary-fields' },
-            profileField('greeting', t("首次问候"), t("尚未开始互动时可更新当前开场问候；已有真实对话后不会改写。"), true),
-            profileField('visual', t("CG 外观描述"), t("用于生成升级纪念 CG，不会更换当前角色立绘。"), true),
-          ),
-        ),
-        React.createElement('div', { className: 'whg-profile-actions' },
-          React.createElement('button', {
-            className: 'whg-cg-btn',
-            disabled: profileSaving || !dirty,
-            type: 'submit',
-          }, profileSaving ? t("保存中…") : t("保存设定")),
-          React.createElement('button', {
-            className: 'whg-btn',
-            disabled: profileSaving || (!profileHasOverrides && !dirty),
-            onClick: resetCharacterProfile,
-            title: t("只恢复当前角色的六项设定，不清除其他存档内容"),
-            type: 'button',
-          }, profileSaving ? t("处理中…") : t("恢复默认")),
-          React.createElement('p', {
-            className: 'whg-profile-message' + (profileError ? ' error' : ''),
-            role: profileError ? 'alert' : 'status',
-          }, message),
-        ),
+          ? React.createElement('button', { className: 'ui-btn sm primary', disabled: pickerLoading, onClick: applySpriteUpload, type: 'button' }, pickerLoading ? t("保存中…") : t("应用这张立绘"))
+          : React.createElement('button', { className: 'ui-btn sm', disabled: pickerLoading || !hasSavedSprite, onClick: restoreDefaultSprite, type: 'button' }, t("恢复默认")),
       ),
     )
   }
 
+
+
+  // The CG gallery drawer (its only use since the history and skits panels moved into the companion manager).
   function archiveDrawer(): React.ReactElement | null {
-    if (!archivePanel || !s) return null
-    const history: any[] = Array.isArray(s.history) ? s.history : []
+    if (archivePanel !== 'gallery' || !s) return null
     const galleryCount = typeof s.galleryCount === 'number' ? s.galleryCount : galleryItems.length
-    const isHistory = archivePanel === 'history'
-    const isProfile = archivePanel === 'profile'
-    const isSkits = archivePanel === 'skits'
-    const recordCount = isHistory ? history.length : isSkits ? skitLog.length : galleryCount
-    const kicker = isProfile
-      ? 'DEEP-SEA DOSSIER · ' + String(profileCharacterId || s.current || 'PROFILE').toUpperCase()
-      : 'DEEP-SEA ARCHIVE · ' + (isHistory ? 'LOG ' : isSkits ? 'ACT ' : 'CG ') + String(recordCount).padStart(3, '0')
+    const waiting = (item: any) => ['queued', 'planning', 'generating'].includes(item.status)
+    const nameOf = (item: any) => item.name || s.name
+    let title = galleryTrash ? t("CG 回收站") : t("CG 图鉴")
+    let kicker = galleryTrash ? galleryItems.length + t(" 张 · 恢复后回到图鉴") : galleryCount + t(" 张 · 按角色分开收藏")
     let body: React.ReactElement
-
-    if (isProfile) {
-      body = profileEditor()
-    } else if (isSkits) {
-      body = skitLogError
-        ? React.createElement('div', { className: 'whg-archive-error', role: 'alert' }, t("小剧场记录读取失败：") + skitLogError)
-        : skitLogLoading
-          ? React.createElement('div', { className: 'whg-archive-empty' }, t("正在翻出后台的演出记录……"))
-          : skitLog.length === 0
-            ? React.createElement('div', { className: 'whg-archive-empty' }, t("还没有演过小剧场。等主人忙点什么，她们就有话题了。"))
-            : React.createElement('div', { className: 'whg-skit-log' },
-              skitLog.map((skit: any) => React.createElement('section', { className: 'whg-skit', key: String(skit.id) },
-                React.createElement('header', { className: 'whg-skit-head' },
-                  React.createElement('span', { className: 'whg-skit-cast' },
-                    (skit.cast || []).map((member: any) => React.createElement('span', {
-                      key: member.id,
-                      style: { color: member.color },
-                    }, member.name))),
-                  React.createElement('time', { className: 'whg-skit-time' },
-                    new Date(Number(skit.at) || 0).toLocaleString()),
-                ),
-                skit.seed ? React.createElement('p', { className: 'whg-skit-seed' }, skit.seed) : null,
-                skitCgAvailable
-                  ? React.createElement('button', {
-                    className: 'whg-btn whg-skit-cg',
-                    disabled: busy || ['queued', 'generating', 'ready'].includes(skit.cgStatus),
-                    onClick: () => {
-                      if(skit.cgStatus === 'trashed'){setArchivePanel('gallery');loadGallery(true);return}
-                      callApi('skit-cg', { skitId: skit.id }).then(result => { assertApiResult(result, t("合影生成暂时失败")); loadSkitLog() }).catch((err: any) => {
-                        setSkitLogError(String(err && err.message ? err.message : err))
-                      })
-                    },
-                    type: 'button',
-                  }, skit.cgStatus === 'trashed' ? t("已移入回收站 · 点击恢复") : skit.cgStatus === 'ready'
-                    ? t("合影已生成 · 见 CG图鉴")
-                    : ['queued', 'generating'].includes(skit.cgStatus)
-                      ? t("合影绘制中…")
-                      : skit.cgStatus === 'failed'
-                        ? t("重试这场的合影 CG")
-                        : t("生成这场的合影 CG"))
-                  : null,
-                React.createElement('div', { className: 'whg-history' },
-                  (skit.lines || []).map((line: any, index: number) => React.createElement('div', {
-                    className: 'whg-history-row ' + String(line.who || 'narrator'),
-                    key: index,
-                  },
-                    React.createElement('div', { className: 'whg-history-who' }, line.name || t("旁白")),
-                    React.createElement('p', { className: 'whg-history-text' }, line.text || ''),
-                  ))),
-              )))
-    } else if (isHistory) {
-      body = history.length === 0
-        ? React.createElement('div', { className: 'whg-archive-empty' }, t("还没有对话记录。和") + s.name + t("说句话，第一份深海档案就会在这里归档。"))
-        : React.createElement('div', { className: 'whg-history' },
-          history.map((line: any, index: number) => {
-            const who = line && line.who === 'heroine' ? s.name : line && line.who === 'user' ? t("主人") : t("旁白")
-            const kind = line && line.who ? String(line.who) : 'narrator'
-            return React.createElement('div', { className: 'whg-history-row ' + kind, key: index + '-' + kind },
-              React.createElement('div', { className: 'whg-history-who' }, who),
-              React.createElement('p', { className: 'whg-history-text' }, line && typeof line.text === 'string' ? line.text : ''),
-            )
-          }),
-        )
-    } else if (gallerySelected) {
-      body = React.createElement('div', { className: 'whg-gallery-detail' },
-        React.createElement('button', {
-          className: 'whg-archive-back',
-          onClick: closeGalleryDetail,
-          type: 'button',
-        }, t("← 返回图鉴")),
+    if (gallerySelected) {
+      const item = gallerySelected
+      const index = galleryItems.findIndex((row: any) => row.id === item.id)
+      title = item.theme?.title || ('Lv.' + (item.level || '?') + ' · ' + nameOf(item))
+      kicker = (galleryTrash ? t("CG 回收站") : t("CG 图鉴")) + (index >= 0 ? ' · ' + t("第 {k} 张 / 共 {n} 张").replace('{k}', String(index + 1)).replace('{n}', String(galleryItems.length)) : '')
+      const notes = [item.referenceNotice, item.theme?.fallbackReason, item.prompt].filter(Boolean)
+      body = React.createElement('div', { className: 'gx-detail whg-gallery-detail' },
+        React.createElement('button', { className: 'gx-back', onClick: closeGalleryDetail, type: 'button' }, Icon('chevron', { size: 14 }), galleryTrash ? t("返回回收站") : t("返回图鉴")),
         galleryDetailLoading
-          ? React.createElement('div', { className: 'whg-archive-empty', role: 'status' }, t("正在读取这张特殊 CG……"))
+          ? React.createElement('div', { className: 'gx-big gx-big-wait', role: 'status' }, React.createElement('span', { className: 'ui-spinner', 'aria-hidden': 'true' }), t("正在读取这张特殊 CG……"))
           : galleryDetailError
-            ? React.createElement('div', { className: 'whg-archive-error', role: 'alert' },
-              t("CG 图片读取失败：") + galleryDetailError,
-              React.createElement('button', {
-                className: 'whg-btn',
-                onClick: () => openGalleryDetail(gallerySelected),
-                type: 'button',
-              }, t("重新读取")),
-            )
-            : gallerySelected.dataUrl
-              ? React.createElement(CgImageViewer, {
-                src: gallerySelected.dataUrl,
-                alt: (gallerySelected.name || s.name) + t("的特殊CG"),
-              })
-              : React.createElement('div', { className: 'whg-archive-error', role: 'alert' }, t("这张 CG 暂时无法读取。")),
-        React.createElement('div', { className: 'whg-gallery-caption' },
-          React.createElement('strong', null, 'Lv.' + (gallerySelected.level || '?')),
-          React.createElement('span', null, (gallerySelected.name || s.name) + ' · ' + formatCgDate(gallerySelected.at)),
-        ),
-        gallerySelected.referenceNotice ? React.createElement('p',{className:'whg-gallery-prompt'},gallerySelected.referenceNotice) : null,
-        gallerySelected.theme ? React.createElement('p',{className:'whg-gallery-prompt'},gallerySelected.theme.title + ' · ' + (gallerySelected.theme.source === 'model' ? t("模型设计") : t("本地主题")) + (gallerySelected.theme.fallbackReason ? ' · '+gallerySelected.theme.fallbackReason : '')) : null,
-        gallerySelected.prompt
-          ? React.createElement('p', { className: 'whg-gallery-prompt' }, gallerySelected.prompt)
-          : null,
-        React.createElement('button', {
-          className: 'whg-cg-btn',
-          disabled: busy || gallerySelected.savedAsBg === true,
-          onClick: () => saveGalleryBackground(gallerySelected),
-          type: 'button',
-        }, gallerySelected.savedAsBg ? t("当前galgame背景") : t("设为galgame背景")),
+            ? React.createElement('div', { className: 'gx-big gx-big-wait err', role: 'alert' }, Icon('alert', { size: 22 }), t("CG 图片读取失败：") + galleryDetailError, React.createElement('button', { className: 'ui-btn sm', onClick: () => openGalleryDetail(item), type: 'button' }, t("重新读取")))
+            : item.dataUrl
+              ? React.createElement(CgImageViewer, { src: item.dataUrl, alt: nameOf(item) + t("的特殊CG"), title, subtitle: nameOf(item) + ' · Lv.' + (item.level || '?') + ' · ' + formatCgDate(item.at) })
+              : React.createElement('div', { className: 'gx-big gx-big-wait err', role: 'alert' }, t("这张 CG 暂时无法读取。")),
+        React.createElement('div', { className: 'gx-meta' },
+          React.createElement('b', null, 'Lv.' + (item.level || '?') + (item.theme?.title ? ' · ' + item.theme.title : '')),
+          React.createElement('small', null, [nameOf(item), formatCgDate(item.at), item.theme ? (item.theme.source === 'model' ? t("主题由模型设计") : t("本地主题")) : ''].filter(Boolean).join(' · '))),
+        React.createElement('div', { className: 'gx-acts' },
+          galleryTrash
+            ? React.createElement('button', { className: 'ui-btn sm primary', disabled: busy, onClick: () => recycleCg(item.id, true), type: 'button' }, Icon('undo', { size: 14 }), t("恢复到图鉴"))
+            : React.createElement(React.Fragment, null,
+              React.createElement('button', { className: 'ui-btn sm', disabled: busy || item.savedAsBg === true, onClick: () => saveGalleryBackground(item), type: 'button' }, Icon(item.savedAsBg ? 'check' : 'image', { size: 14 }), item.savedAsBg ? t("已是 Galgame 背景") : t("设为 Galgame 背景")),
+              React.createElement('button', { className: 'ui-btn sm danger', disabled: busy, onClick: () => recycleCg(item.id), type: 'button' }, Icon('trash', { size: 14 }), t("移入回收站")))),
+        notes.length ? React.createElement('details', { className: 'ws-details ws-plain' }, React.createElement('summary', null, Icon('chevron', { size: 16 }), t("画面描述（生成时用的提示词）")), ...notes.map((text: string, i: number) => React.createElement('p', { key: i, className: 'whg-gallery-prompt' }, text))) : null,
       )
     } else if (galleryLoading) {
-      body = React.createElement('div', { className: 'whg-archive-empty', role: 'status' }, t("正在打开深海图鉴柜……"))
+      body = React.createElement('div', { className: 'gx-cg-grid', role: 'status', 'aria-label': t("正在打开图鉴……") }, [0, 1, 2, 3].map(i => React.createElement('span', { key: i, className: 'ui-skel gx-cg-skel' })))
     } else if (galleryError) {
-      body = React.createElement('div', { className: 'whg-archive-error', role: 'alert' },
-        t("CG 图鉴读取失败：") + galleryError,
-        React.createElement('button', { className: 'whg-btn', onClick: loadGallery, type: 'button' }, t("重新读取")),
-      )
+      body = React.createElement('div', { className: 'ui-alert', role: 'alert' }, Icon('alert', { size: 16 }), React.createElement('div', { className: 'spacer' }, React.createElement('b', null, t("CG 图鉴读取失败")), galleryError), React.createElement('button', { className: 'ui-btn sm', onClick: () => loadGallery(), type: 'button' }, t("重新读取")))
     } else if (galleryItems.length === 0) {
-      body = React.createElement('div', { className: 'whg-archive-empty' }, galleryTrash ? t("回收站是空的。") : t("图鉴柜还是空的。提升等级后，收到的特殊 CG 会依角色分别收藏在这里。"))
+      body = React.createElement('div', { className: 'ws-empty gx-cg-empty' }, Icon(galleryTrash ? 'trash' : 'gallery', { size: 36 }), React.createElement('b', null, galleryTrash ? t("回收站是空的。") : t("还没有特殊 CG")), galleryTrash ? null : React.createElement('p', null, t("图鉴柜还是空的。提升等级后，收到的特殊 CG 会依角色分别收藏在这里。")))
     } else {
-      body = React.createElement('div', { className: 'whg-gallery' },
+      body = React.createElement('div', { className: 'gx-cg-grid whg-gallery' },
         galleryItems.map((item: any, index: number) => React.createElement('button', {
-          'aria-label': t("查看") + (item.name || s.name) + ' Lv.' + (item.level || '?') + t(" 特殊CG"),
-          className: 'whg-gallery-card',
+          'aria-label': t("查看") + nameOf(item) + ' Lv.' + (item.level || '?') + t(" 特殊CG"),
+          className: 'gx-cg whg-gallery-card' + (cgMenu?.item.id === item.id ? ' hl' : ''),
           'data-cg-id': item.id,
           'data-selected': cgMenu?.item.id === item.id,
-          onContextMenu: (event: any) => openCgMenu(event,item),
-          onKeyDown: (event: any) => {if(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))openCgMenu(event,item)},
+          onContextMenu: (event: any) => openCgMenu(event, item),
+          onKeyDown: (event: any) => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) openCgMenu(event, item) },
           key: item.id || index,
           onClick: () => busy ? undefined : galleryTrash ? item.status === 'ready' ? openGalleryDetail(item) : undefined : ['failed', 'cancelled'].includes(item.status) ? generateGalleryCg(item) : item.status === 'ready' ? openGalleryDetail(item) : undefined,
-          'aria-disabled': busy || ['queued', 'planning', 'generating'].includes(item.status),
+          'aria-disabled': busy || waiting(item),
           type: 'button',
         },
           React.createElement(CgThumbnail, { item, sessionId: props.sessionId }),
-          item.savedAsBg
-            ? React.createElement('span', { className: 'whg-gallery-bg' }, t("背景中"))
-            : null,
-          React.createElement('span', { className: 'whg-gallery-meta' },
-            React.createElement('span', { className: 'whg-gallery-level' }, 'Lv.' + (item.level || '?')),
-            React.createElement('span', { className: 'whg-gallery-date' }, (item.name || s.name) + ' · ' + formatCgDate(item.at)),
-          ),
+          item.savedAsBg ? React.createElement('span', { className: 'ws-tag gx-cg-tag' }, t("当前背景")) : null,
+          React.createElement('span', { className: 'gx-cg-m' }, React.createElement('b', null, 'Lv.' + (item.level || '?')), React.createElement('span', null, (item.theme?.title || nameOf(item)) + ' · ' + formatCgDate(item.at))),
         )),
       )
     }
-
+    const menuItem = (icon: string, label: string, onSelect: () => void, extra: any = {}) => React.createElement('button', { role: 'menuitem', type: 'button', ...extra, onClick: () => { setCgMenu(null); onSelect() } }, Icon(icon, { size: 16 }), label)
     return React.createElement('div', {
-      className: 'whg-archive-scrim',
+      className: 'whg-archive-scrim gx-scrim',
       onMouseDown: (event: any) => { if (event.target === event.currentTarget) closeArchive() },
     },
       React.createElement('aside', {
         'aria-labelledby': 'whg-archive-title-' + appScope,
         'aria-modal': 'true',
-        className: 'whg-archive' + (isProfile ? ' whg-profile-archive' : ''),
-        id: isProfile ? 'whg-profile-editor-' + appScope : undefined,
+        className: 'whg-archive gx-drawer',
         ref: archiveRef,
         role: 'dialog',
       },
-        React.createElement('div', { className: 'whg-archive-spine', 'aria-hidden': 'true' }, isProfile ? 'CHARACTER DOSSIER' : 'DEEP-SEA ARCHIVE'),
-        React.createElement('header', { className: 'whg-archive-head' },
-          React.createElement('div', { className: 'whg-archive-heading' },
-            React.createElement('div', { className: 'whg-archive-kicker' }, kicker),
-            React.createElement('h2', { className: 'whg-archive-title', id: 'whg-archive-title-' + appScope }, isProfile ? t("角色设定") : isHistory ? t("对话历史") : isSkits ? t("小剧场") : galleryTrash ? t("CG 回收站") : t("CG图鉴")),
-          ),
-          React.createElement('button', {
-            'aria-label': t("关闭") + (isProfile ? t("角色设定") : isHistory ? t("对话历史") : isSkits ? t("小剧场") : galleryTrash ? t("CG 回收站") : t("CG图鉴")),
-            className: 'whg-archive-close',
-            onClick: closeArchive,
-            ref: archiveCloseRef,
-            type: 'button',
-          }, '×'),
-          archivePanel === 'gallery' || isHistory || isSkits
-            ? React.createElement('div', { className: 'whg-archive-actions' },
-              archivePanel === 'gallery'
-                ? React.createElement(React.Fragment, null, React.createElement('button', {className:'whg-btn','data-cg-trash-toggle':true,onClick:()=>{closeGalleryDetail();loadGallery(!galleryTrash)},type:'button'},galleryTrash?t("返回图鉴"):t("回收站")), !galleryTrash && React.createElement('button', { className: 'whg-btn', 'data-cg-generate': true, disabled: busy, onClick: () => s.cgAvailable ? generateGalleryCg() : (window as any).whale?.open('settings'), type: 'button' }, s.cgAvailable ? t("生成当前角色纪念 CG") : t("配置 CG 绘图连接")))
-                : React.createElement('div', { className: 'whg-archive-tabs', role: 'tablist' },
-                  React.createElement('button', {
-                    'aria-selected': isHistory,
-                    className: 'whg-archive-tab' + (isHistory ? ' active' : ''),
-                    onClick: () => { setArchivePanel('history') },
-                    role: 'tab', type: 'button',
-                  }, t("对话历史")),
-                  React.createElement('button', {
-                    'aria-selected': isSkits,
-                    className: 'whg-archive-tab' + (isSkits ? ' active' : ''),
-                    onClick: () => { setArchivePanel('skits'); loadSkitLog() },
-                    role: 'tab', type: 'button',
-                  }, t("小剧场")),
-                ),
-            ) : null,
+        React.createElement('header', { className: 'gx-dh' },
+          React.createElement('span', { className: 'kick' }, kicker),
+          React.createElement('h3', { id: 'whg-archive-title-' + appScope }, title),
+          React.createElement('button', { 'aria-label': t("关闭") + (galleryTrash ? t("CG 回收站") : t("CG 图鉴")), className: 'ui-icon-btn gx-dh-x', onClick: closeArchive, ref: archiveCloseRef, type: 'button' }, Icon('close', { size: 18 })),
+          gallerySelected ? null : React.createElement('div', { className: 'gx-dh-row' },
+            React.createElement('div', { className: 'ui-seg sm', role: 'tablist', 'aria-label': t("CG 图鉴") },
+              React.createElement('button', { type: 'button', role: 'tab', 'aria-selected': !galleryTrash, 'data-cg-trash-toggle': galleryTrash || undefined, onClick: () => { if (galleryTrash) { closeGalleryDetail(); loadGallery(false) } } }, t("图鉴") + ' ' + galleryCount),
+              React.createElement('button', { type: 'button', role: 'tab', 'aria-selected': galleryTrash, 'data-cg-trash-toggle': !galleryTrash || undefined, onClick: () => { if (!galleryTrash) { closeGalleryDetail(); loadGallery(true) } } }, t("回收站") + (galleryTrash ? ' ' + galleryItems.length : ''))),
+            React.createElement('span', { className: 'grow' }),
+            galleryTrash ? null : React.createElement('button', { className: 'ui-btn sm primary', 'data-cg-generate': true, disabled: busy, onClick: () => s.cgAvailable ? generateGalleryCg() : (window as any).whale?.open('settings'), type: 'button' }, Icon(s.cgAvailable ? 'brush' : 'plug', { size: 14 }), s.cgAvailable ? t("生成纪念 CG") : t("配置 CG 绘图连接"))),
         ),
-        React.createElement('div', {
-          className: 'whg-archive-body',
-          ref: isHistory ? historyScrollRef : undefined,
-        }, body),
-        archivePanel === 'gallery' && cgUndo ? React.createElement('div',{className:'whg-recycle-notice',role:'status'},t("已移入回收站。"),React.createElement('button',{className:'whg-btn',onClick:()=>recycleCg(cgUndo,true),type:'button'},t("撤销"))) : null,
-        archivePanel === 'gallery' && gallerySelected && galleryTrash ? React.createElement('button',{className:'whg-btn',onClick:()=>recycleCg(gallerySelected.id,true),type:'button'},t("恢复到图鉴")) : null,
-        cgMenu ? createPortal(React.createElement('div',{className:'whg-cg-menu',role:'menu',ref:cgMenuRef,style:{left:cgMenu.x,top:cgMenu.y}},React.createElement('button',{role:'menuitem',type:'button',disabled:busy || ['planning','generating'].includes(cgMenu.item.status),onClick:()=>recycleCg(cgMenu.item.id,galleryTrash)},galleryTrash ? t("恢复到图鉴") : ['planning','generating'].includes(cgMenu.item.status) ? t("请等待当前 CG 生成完成") : t("移入回收站"))),document.body) : null,
+        React.createElement('div', { className: 'whg-archive-body gx-db' }, body),
+        cgUndo ? React.createElement('div', { className: 'ui-snackbar gx-snack', role: 'status' }, Icon('trash', { size: 16 }), React.createElement('span', { className: 'grow' }, t("已移入回收站")), React.createElement('button', { onClick: () => recycleCg(cgUndo, true), type: 'button' }, Icon('undo', { size: 14 }), t("撤销")), React.createElement('span', { className: 'gx-snack-left' }, undoLeft + t(" 秒"))) : null,
+        cgMenu ? createPortal(React.createElement('div', { className: 'ui-menu gx-cg-menu whg-cg-menu', role: 'menu', 'aria-label': t("CG 操作"), ref: cgMenuRef, style: { position: 'fixed', left: cgMenu.x, top: cgMenu.y } },
+          !galleryTrash && cgMenu.item.status === 'ready' ? menuItem('zin', t("查看大图"), () => openGalleryDetail(cgMenu.item)) : null,
+          !galleryTrash && cgMenu.item.status === 'ready' ? menuItem('image', cgMenu.item.savedAsBg ? t("已是 Galgame 背景") : t("设为 Galgame 背景"), () => saveGalleryBackground(cgMenu.item), { disabled: busy || cgMenu.item.savedAsBg === true }) : null,
+          !galleryTrash && cgMenu.item.status === 'ready' ? React.createElement('hr') : null,
+          menuItem(galleryTrash ? 'undo' : 'trash', galleryTrash ? t("恢复到图鉴") : waiting(cgMenu.item) ? t("请等待当前 CG 生成完成") : t("移入回收站"), () => recycleCg(cgMenu.item.id, galleryTrash), { className: galleryTrash ? undefined : 'danger', disabled: busy || ['planning', 'generating'].includes(cgMenu.item.status) })), document.body) : null,
       ),
     )
   }
 
+  // Head crop for a character chip: built-ins use their theme's centred head, custom characters their own avatar.
+  function headOf(id: string): string | null {
+    if ((THEMES as any)[id]) return './' + themeAsset(id, 'head.webp')
+    const avatar = s?.companion?.characters?.find((row: any) => row.id === id)?.avatar
+    return avatar ? companionImage(avatar, art) : null
+  }
+  function face(id: string, className = 'gx-face'): React.ReactElement {
+    const src = headOf(id)
+    return React.createElement('span', { className, 'aria-hidden': 'true' }, src ? React.createElement('img', { src, alt: '', draggable: false }) : String(companionCharacterName(s?.companion, id) || id || '?').slice(0, 1))
+  }
   function topbar(showBack: boolean): React.ReactElement {
     if (group) return React.createElement(GroupHeader, { key:group.id, toolbarRef:setGroupToolbarTarget, state:s.companion, request:companionRequest, resolveArt:art, onBrowse:(characterId:string)=>setGroupBrowseRequest({groupId:group.id,characterId,nonce:Date.now()}), panelRequest:groupPanelRequest,loadCg:(id:string)=>requestCgData(id,props.sessionId), petEnabled:s.petEnabled!==false, onPetToggle:()=>act('pet-set',{enabled:s.petEnabled===false}) })
     const characterModel = s.characterModelLabel || s.modelLabel || ''
-    const chatModel = s.chatModelLabel || s.lastModel || ''
     const petEnabled = s.petEnabled !== false
     const galleryCount = typeof s.galleryCount === 'number' ? s.galleryCount : 0
     const characterMode = (pluginSettings && pluginSettings.characterMode) || s.characterMode || 'follow'
     const chatMode = (pluginSettings && pluginSettings.chatMode) || s.chatMode || 'configured'
-    return React.createElement('div', { className: 'whg-top' },
-      React.createElement(GalgameTitle, { key:s.current, characterId:s.current, defaultTitle:t("与") + s.name + t("的galgame"), value:s.companion?.settings?.galgameTitles?.[s.current]||'', request:companionRequest }),
-      React.createElement('div', { className: 'whg-chip-wrap' },
-        React.createElement('button', {
-          'aria-controls': 'whg-character-picker-' + appScope,
-          'aria-expanded': pickerPanel === 'character',
-          'aria-haspopup': 'listbox',
-          className: 'whg-chip whg-chip-button',
-          onClick: (event: any) => openPicker('character', event.currentTarget),
-          title: t("点击切换出场角色。当前") + (characterMode === 'manual' ? t("已固定") : t("跟随工作区")) + '：' + (characterModel || t("未识别")),
-          type: 'button',
-        },
-          React.createElement('span', { className: 'whg-dot' + (s.modelOnline ? '' : ' off') }),
-          React.createElement('span', null, t("角色来源 · ")),
-          React.createElement('strong', null, characterModel || t("未识别")),
-          React.createElement('span', { className: 'whg-chip-caret', 'aria-hidden': 'true' }, '▼'),
-        ),
-        pickerOverlay(characterPicker()),
-      ),
-      React.createElement('div', { className: 'whg-chip-wrap' },
-        React.createElement('button', {
-          'aria-controls': 'whg-chat-picker-' + appScope,
-          'aria-expanded': pickerPanel === 'chat',
-          'aria-haspopup': 'listbox',
-          className: 'whg-chip whg-chip-button',
-          onClick: (event: any) => s.modelConfigurationCentral ? (window as any).whale?.open('settings') : openPicker('chat', event.currentTarget),
-          title: s.modelConfigurationCentral ? t("在通用设置中配置模型") : t("点击切换 galgame 对话模型。当前模式：") + (chatMode === 'manual' ? t("单独指定") : chatMode === 'main' ? t("跟随工作区") : t("插件默认")) + t("；实际使用：") + (chatModel || t("离线")),
-          type: 'button',
-        },
-          React.createElement('span', { className: 'whg-dot' + (chatModel && !s.fallbackUsed ? '' : ' off') }),
-          React.createElement('span', null, t("实际对话 · ")),
-          React.createElement('strong', null, (() => { const current = s.companion?.characters?.find((c: any) => c.id === (group ? s.companion?.groupRuntime?.currentMessage?.characterId || group.entryCharacterId : s.current)); const route = current?.effectiveConnection; const recorded = group ? s.companion?.groupRuntime?.currentMessage?.request : null; return recorded?.model || (route?.error ? route.error : route?.model ? route.name + ' · ' + route.model : chatModel) || t('离线'); })()),
-          React.createElement('span', { className: 'whg-chip-caret', 'aria-hidden': 'true' }, '▼'),
-        ),
-        !s.modelConfigurationCentral && pickerOverlay(chatPicker()),
-      ),
-      React.createElement('div', { className: 'whg-spacer' }),
-      s.resourcePendingCharacter && validPetCharacter(s.resourcePendingCharacter) ? React.createElement('button',{className:'whg-btn',onClick:()=> (window as any).whale.resources.manage(s.resourcePendingCharacter)},t('补装角色')+' · '+s.resourcePendingCharacter) : null,
-      s.customCharacter ? React.createElement('span', { className: 'whg-chip buddy-pet-note' }, t('此角色没有桌宠资源，保留当前桌宠')) : null,
-      React.createElement('div', { className: 'whg-top-actions' },
+    const spriteShown = isSpriteVisible(s.spriteVisibility, s.backgroundMode, props.hideSpriteOnCg !== false)
+    const persona = s?.companion?.personas?.find((row: any) => row.id === s.companion.activePersonaId)?.name
+    const modelText = (() => { const current = s.companion?.characters?.find((c: any) => c.id === s.current); const route = current?.effectiveConnection; return (route?.error ? route.error : route?.model ? route.name + ' · ' + route.model : (s.chatModelLabel || s.lastModel || '')) || t('离线') })()
+    const tool = (icon: string, label: any, extra: any = {}) => React.createElement('button', { type: 'button', ...extra, className: 'gx-tb' + (extra.className ? ' ' + extra.className : '') }, Icon(icon, { size: 15 }), label)
+    const sep = (key: string) => React.createElement('i', { className: 'gx-sep', key, 'aria-hidden': 'true' })
+    return React.createElement('div', { className: 'gx-top' },
+      React.createElement('div', { className: 'gx-row' },
+        React.createElement(GalgameTitle, { key:s.current, characterId:s.current, defaultTitle:t("与") + s.name + t("的galgame"), value:s.companion?.settings?.galgameTitles?.[s.current]||'', request:companionRequest }),
         React.createElement('div', { className: 'whg-chip-wrap' },
           React.createElement('button', {
-            'aria-controls': 'whg-background-picker-' + appScope,
-            'aria-expanded': pickerPanel === 'background',
-            'aria-haspopup': 'dialog',
-            className: 'whg-btn',
-            onClick: (event: any) => group ? openCompanion('groups') : openPicker('background', event.currentTarget),
+            'aria-controls': 'whg-character-picker-' + appScope,
+            'aria-expanded': pickerPanel === 'character',
+            'aria-haspopup': 'listbox',
+            className: 'gx-chip' + (pickerPanel === 'character' ? ' open' : ''),
+            onClick: (event: any) => openPicker('character', event.currentTarget),
+            title: t("点击切换出场角色。当前") + (characterMode === 'manual' ? t("已固定") : t("跟随工作区")) + '：' + (characterModel || t("未识别")),
             type: 'button',
-          }, t("背景图")),
+          }, face(s.current), React.createElement('small', null, t("角色来源")), React.createElement('strong', null, s.name), Icon('chevron', { size: 14 })),
+          pickerOverlay(characterPicker()),
+        ),
+        React.createElement('div', { className: 'whg-chip-wrap' },
+          React.createElement('button', {
+            'aria-controls': s.modelConfigurationCentral ? undefined : 'whg-chat-picker-' + appScope,
+            'aria-expanded': s.modelConfigurationCentral ? undefined : pickerPanel === 'chat',
+            'aria-haspopup': s.modelConfigurationCentral ? undefined : 'listbox',
+            className: 'gx-chip np' + (pickerPanel === 'chat' ? ' open' : ''),
+            onClick: (event: any) => s.modelConfigurationCentral ? (window as any).whale?.open('settings') : openPicker('chat', event.currentTarget),
+            title: s.modelConfigurationCentral ? t("在通用设置里换模型") : t("点击切换 galgame 对话模型。当前模式：") + (chatMode === 'manual' ? t("单独指定") : chatMode === 'main' ? t("跟随工作区") : t("插件默认")),
+            type: 'button',
+          }, React.createElement('i', { className: 'gx-dot' + (props.chat?.enabled ?? (s.chatModelLabel && !s.fallbackUsed) ? '' : ' off'), 'aria-hidden': 'true' }), React.createElement('small', null, t("实际对话")), React.createElement('strong', null, modelText), Icon(s.modelConfigurationCentral ? 'jump' : 'chevron', { size: 14 })),
+          !s.modelConfigurationCentral && pickerOverlay(chatPicker()),
+        ),
+        React.createElement('span', { className: 'gx-grow' }),
+        s.resourcePendingCharacter && validPetCharacter(s.resourcePendingCharacter) ? React.createElement('button',{className:'gx-tb gx-glass',type:'button',onClick:()=> (window as any).whale.resources.manage(s.resourcePendingCharacter)},Icon('download',{size:15}),t('补装角色')+' · '+s.resourcePendingCharacter) : null,
+        s.customCharacter ? React.createElement('span', { className: 'gx-chip np buddy-pet-note' }, t('此角色没有桌宠资源，保留当前桌宠')) : null,
+        props.chat ? React.createElement('div', { className: 'gx-net', 'data-galgame-net': true }, Icon('globe', { size: 15 }), React.createElement('span', null, t("联网聊天")), React.createElement(Switch, { checked: !!props.chat.enabled, label: t("联网聊天"), onChange: () => props.onToggleChat?.() })) : null,
+      ),
+      React.createElement('div', { className: 'gx-tools', role: 'toolbar', 'aria-label': t("Galgame 工具") },
+        React.createElement('div', { className: 'whg-chip-wrap' },
+          tool('image', t("背景图"), { 'aria-controls': 'whg-background-picker-' + appScope, 'aria-expanded': pickerPanel === 'background', 'aria-haspopup': 'dialog', className: pickerPanel === 'background' ? 'open' : '', onClick: (event: any) => openPicker('background', event.currentTarget) }),
           pickerOverlay(backgroundPicker()),
         ),
         React.createElement('div', { className: 'whg-chip-wrap' },
-          React.createElement('button', {
-            'aria-controls': 'whg-sprite-picker-' + appScope,
-            'aria-expanded': pickerPanel === 'sprite',
-            'aria-haspopup': 'dialog',
-            className: 'whg-btn',
-            onClick: (event: any) => openPicker('sprite', event.currentTarget),
-            title: t("为") + (s.name || t("当前角色")) + t("上传本地角色立绘"),
-            type: 'button',
-          }, t("角色立绘")),
+          tool('person', t("角色立绘"), { 'aria-controls': 'whg-sprite-picker-' + appScope, 'aria-expanded': pickerPanel === 'sprite', 'aria-haspopup': 'dialog', className: pickerPanel === 'sprite' ? 'open' : '', title: t("为") + (s.name || t("当前角色")) + t("上传本地角色立绘"), onClick: (event: any) => openPicker('sprite', event.currentTarget) }),
           pickerOverlay(spritePicker()),
         ),
-        React.createElement('button',{className:'whg-btn','data-sprite-toggle':true,type:'button','aria-pressed':isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg !== false),onClick:()=>act('sprite-visibility',{characterId:s.current,mode:isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg !== false)?'hide':'show'})},isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg !== false)?t("立绘：显示"):t("立绘：隐藏")),
-        s.spriteVisibility !== 'auto' && React.createElement('button',{className:'whg-btn',type:'button',onClick:()=>act('sprite-visibility',{characterId:s.current,mode:'auto'})},t("恢复自动")),
-        React.createElement('button', {
-          'aria-controls': 'buddy-companion-dialog',
-          'aria-expanded': companionPanel === 'characters',
-          'aria-haspopup': 'dialog',
-          className: 'whg-btn',
-          onClick: () => openCompanion('characters'),
-          title: t("修改") + (s.name || t("当前角色")) + t("的昵称、称呼、问候、性格、语气与 CG 外观描述"),
-          type: 'button',
-        }, t("管理角色")),
-        React.createElement('button', {
-          'aria-expanded': companionPanel === 'history',
-          'aria-controls': 'buddy-companion-dialog',
-          'aria-haspopup': 'dialog',
-          className: 'whg-btn',
-          onClick: () => openCompanion('history'),
-          type: 'button',
-        }, t("对话历史")),
-        React.createElement('button', { className: 'whg-btn', type: 'button', onClick: () => openCompanion('personas'), title: t('选择和管理我的身份'), 'data-companion-personas': true }, t('我的身份') + (s?.companion?.personas?.find((row: any) => row.id === s.companion.activePersonaId)?.name ? ' · ' + s.companion.personas.find((row: any) => row.id === s.companion.activePersonaId).name : '')),
-        React.createElement('button', { className: 'whg-btn', type: 'button', onClick: () => openCompanion('groups'), 'data-companion-groups': true }, t('群聊')),
-        React.createElement('button', {
-          'aria-expanded': archivePanel === 'gallery',
-          className: 'whg-btn',
-          onClick: (event: any) => openArchive('gallery', event.currentTarget),
-          type: 'button',
-        },
-          t("CG图鉴"),
-          galleryCount > 0 ? React.createElement('span', { className: 'whg-count' }, galleryCount) : null,
+        tool('eye', t("立绘"), { 'data-sprite-toggle': true, 'aria-pressed': spriteShown, title: spriteShown ? t("隐藏立绘") : t("显示立绘"), onClick: () => act('sprite-visibility', { characterId: s.current, mode: spriteShown ? 'hide' : 'show' }) }),
+        s.spriteVisibility !== 'auto' && tool('undo', t("恢复自动"), { onClick: () => act('sprite-visibility', { characterId: s.current, mode: 'auto' }) }),
+        sep('s1'),
+        tool('users', t("管理角色"), { 'aria-controls': 'buddy-companion-dialog', 'aria-expanded': companionPanel === 'characters', 'aria-haspopup': 'dialog', title: t("修改") + (s.name || t("当前角色")) + t("的昵称、称呼、问候、性格、语气与 CG 外观描述"), onClick: () => openCompanion('characters') }),
+        tool('idcard', t('我的身份') + (persona ? ' · ' + persona : ''), { title: t('选择和管理我的身份'), 'data-companion-personas': true, onClick: () => openCompanion('personas') }),
+        tool('clock', t("对话历史"), { 'aria-controls': 'buddy-companion-dialog', 'aria-expanded': companionPanel === 'history', 'aria-haspopup': 'dialog', onClick: () => openCompanion('history') }),
+        sep('s2'),
+        tool('chats', t('群聊'), { 'data-companion-groups': true, onClick: () => openCompanion('groups') }),
+        sep('s3'),
+        tool('gallery', React.createElement(React.Fragment, null, t("CG 图鉴"), galleryCount > 0 ? React.createElement('span', { className: 'gx-cnt' }, galleryCount) : null), { 'aria-expanded': archivePanel === 'gallery', className: archivePanel === 'gallery' ? 'open' : '', onClick: (event: any) => openArchive('gallery', event.currentTarget) }),
+        sep('s4'),
+        tool('paw', t("桌宠"), { 'aria-pressed': petEnabled, disabled: busy, title: petEnabled ? t("关闭桌宠，避免与其他悬浮插件冲突") : t("开启可跳转 galgame 的桌宠"), onClick: () => act('pet-set', { enabled: !petEnabled }) }),
+        // restarting clears level and affection, so it asks once in a small bubble
+        React.createElement('span', { className: 'gx-confirm-wrap', ref: resetRef },
+          React.createElement('button', { type: 'button', className: 'gx-tb only', 'aria-label': t("重新开始"), title: t("重新开始（清零等级与好感度）"), 'aria-expanded': armReset, onClick: (e: any) => { e.stopPropagation(); setArmReset(!armReset) } }, Icon('retry', { size: 15 })),
+          armReset ? React.createElement('div', { className: 'gx-confirm', role: 'alertdialog', 'aria-label': t("重新开始") },
+            React.createElement('b', null, t("重新开始？")),
+            React.createElement('span', null, t("等级和好感度会清零，聊天记录保留。")),
+            React.createElement('div', { className: 'gx-confirm-btns' },
+              React.createElement('button', { type: 'button', className: 'ui-btn sm', onClick: () => setArmReset(false) }, t("取消")),
+              React.createElement('button', { type: 'button', className: 'ui-btn sm danger', onClick: () => { setArmReset(false); act('reset') } }, t("重新开始"))),
+          ) : null,
         ),
-        React.createElement('button', { className: 'whg-btn', type: 'button', onClick: (event: any) => openArchive('skits', event.currentTarget) }, t('历史剧场')),
-        React.createElement('button', {
-          'aria-pressed': petEnabled,
-          className: 'whg-btn',
-          disabled: busy,
-          onClick: () => act('pet-set', { enabled: !petEnabled }),
-          title: petEnabled ? t("关闭桌宠，避免与其他悬浮插件冲突") : t("开启可跳转 galgame 的桌宠"),
-          type: 'button',
-        }, t("桌宠 · ") + (petEnabled ? t("开") : t("关"))),
-        React.createElement('button', {
-          className: 'whg-btn',
-          title: t("重新开始（清零等级与好感度）"),
-          onClick: (e: any) => {
-            e.stopPropagation()
-            if (armReset) { setArmReset(false); act('reset') } else { setArmReset(true) }
-          },
-          type: 'button',
-        }, armReset ? t("确认?") : '↺'),
         showBack
-          ? React.createElement('button', {
-            className: 'whg-btn back',
-            title: t("回到办公区（角色会继续在桌宠状态陪你）"),
-            onClick: (e: any) => { e.stopPropagation(); setOpen(false) },
-            type: 'button',
-          }, t("返回办公区"))
+          ? tool('exit', t("返回办公区"), { className: 'back', title: t("回到办公区（角色会继续在桌宠状态陪你）"), onClick: (e: any) => { e.stopPropagation(); setOpen(false) } })
           : null,
       ),
     )
   }
 
-  function sideStoryToast(): React.ReactElement | null {
-    const code = s && typeof s.sideStoryError === 'string' ? s.sideStoryError : ''
-    if (!code) return null
-    const message = code === 'no-seed'
-      ? t("这里暂时没有新故事，可以先聊一会儿。")
-      : code === 'cooldown'
-        ? t("刚热闹过一场，让她们缓一缓。")
-        : t("这次没编出像样的短剧，稍后再试一次吧。")
-    return React.createElement('div', { className: 'whg-toast', role: 'status' }, '🎭 ' + message)
-  }
 
-  function sideStoryScene(): any | null {
-    const side = s?.companion ? null : s && s.sideStory
-    return side && side.scene && Array.isArray(side.scene.beats) && side.scene.beats.length ? side.scene : null
-  }
 
-  /** Index of the beat currently on screen; the cursor never runs past the last one. */
-  function sideStoryBeatIndex(scene: any): number {
-    return Math.max(0, Math.min(scene.cursor, scene.beats.length - 1))
-  }
 
-  function sideStoryAtEnd(scene: any): boolean {
-    return scene.cursor >= scene.beats.length - 1
-  }
 
-  function castStage(scene: any): React.ReactElement {
-    const beat = scene.beats[sideStoryBeatIndex(scene)]
-    const speaking = beat && beat.speaker !== 'narrator' ? beat.speaker : ''
-    return React.createElement('div', { className: 'whg-stage' },
-      React.createElement('div', {
-        className: 'whg-tint',
-        style: { background: 'radial-gradient(closest-side, ' + (scene.cast[0] ? scene.cast[0].color : '#8fd8ef') + '2e, transparent)' },
-      }),
-      React.createElement('div', { className: 'whg-cast' },
-        scene.cast.map((member: any, index: number) => {
-          const memberEmotion = speaking===member.id ? beat?.emotion||'normal' : 'normal'
-          const src = member.id==='deepseek'&&EMOTION_ART[memberEmotion] ? art(EMOTION_ART[memberEmotion]) : art(member.sprite)
-          return React.createElement('div', {
-            key: member.id,
-            className: 'whg-cast-slot',
-            'data-active': speaking === member.id ? 'true' : 'false',
-            'data-lead': index === 0 ? 'true' : 'false',
-            // All cast members remain visible and share the available stage.
-            'data-overflow': index >= 2 ? 'true' : 'false',
-          },
-            src
-              ? React.createElement(CastPortrait, { member, src, normalSrc:art(member.sprite), request: api, emotion:memberEmotion })
-              : React.createElement('div', { className: 'whg-sprite-fallback' }, '🐋'),
-            React.createElement('div', {
-              className: 'whg-cast-name',
-              style: { color: member.color },
-            }, member.name),
-          )
-        }),
-      ),
-    )
-  }
 
   function stage(): React.ReactElement {
     if (group) return React.createElement(CompanionGroupStage, { toolbarTarget:groupToolbarTarget, browseRequest:groupBrowseRequest, state: s.companion, request: companionRequest, resolveArt: art, renderPortrait: (member: any, src: string, emotion: string) => React.createElement(CastPortrait, { member: {...member, ...(s?.characters?.find((row: any) => row.id === member.id)||{}), name: companionCharacterName(member)}, src: member.id==='deepseek'&&emotion!=='normal'&&!member.hasCustomSprite&&!member.effective?.sprite ? art(EMOTION_ART[emotion])||src : src, normalSrc: src, request: callApi, emotion, align: 'top' }) })
-    const activeScene = sideStoryScene()
-    if (activeScene) return castStage(activeScene)
     if (!isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg !== false)) return React.createElement('div',{className:'whg-stage','data-sprite-hidden':true})
     if (s.customCharacter && !s.hasCustomSprite && !customSprite) return React.createElement('div', { className: 'whg-stage buddy-text-only-stage' }, React.createElement('div', { className: 'buddy-text-only-card' }, React.createElement('strong', null, s.name), React.createElement('span', null, t('未设置立绘，可以直接聊天'))))
     const emotion = emotionOf()
@@ -3128,145 +2304,91 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     )
   }
 
-  function sideStoryDialogue(scene: any): React.ReactElement {
-    const beat = scene.beats[sideStoryBeatIndex(scene)]
-    const isNarrator = !beat || beat.speaker === 'narrator'
-    const isUser = !!beat && beat.speaker === 'user'
-    const member = isNarrator || isUser ? null : scene.cast.find((row: any) => row.id === beat.speaker)
-    const plateLabel = isUser ? t("主人") : isNarrator ? t("旁白") : (member ? member.name : '???')
-    const plateStyle = plateVars({ who: isUser ? 'user' : isNarrator ? 'narrator' : 'character', characterId: member?.id, color: member?.color })
-    const atEnd = sideStoryAtEnd(scene)
-    // The server offers choices only at the interlude the master is standing in,
-    // so their presence decides what this panel shows.
-    const offered = Array.isArray(scene.choices) ? scene.choices : []
-    let controls: React.ReactElement
-    if (offered.length === 0 && !atEnd) {
-      controls = React.createElement('div', { className: 'whg-choices' },
-        React.createElement('button', {
-          className: 'whg-choice',
-          disabled: busy,
-          onClick: () => { act('side-story', { op: 'advance' }) },
-          type: 'button',
-        }, t("继续 ▸")))
-    } else if (offered.length === 0) {
-      controls = React.createElement('div', { className: 'whg-choices' },
-        React.createElement('button', {
-          className: 'whg-choice',
-          disabled: busy,
-          onClick: () => { act('side-story', { op: 'close' }) },
-          type: 'button',
-        }, t("回到日常")))
-    } else {
-      // Deltas stay hidden until the choice is made; the closing beat reveals
-      // who warmed up and who did not.
-      const speak = () => {
-        const spoken = skitText.trim()
-        if (!spoken || busy) return
-        setSkitText('')
-        act('side-story', { op: 'speak', text: spoken })
-      }
-      controls = React.createElement(React.Fragment, null,
-        React.createElement('div', { className: 'whg-choices' },
-          offered.map((choice: any, index: number) => React.createElement('button', {
-            key: choice.id || index,
-            className: 'whg-choice',
-            disabled: busy,
-            onClick: () => { act('side-story', { op: 'choose', choiceId: choice.id }) },
-            type: 'button',
-          }, choice.text))),
-        // The master may say something of her own instead of picking a line.
-        React.createElement('div', { className: 'whg-input-row' },
-          React.createElement('input', {
-            className: 'whg-input',
-            value: skitText,
-            placeholder: t("或者，你自己开口说……"),
-            disabled: busy,
-            onChange: (event: any) => { setSkitText(event.target.value) },
-            onKeyDown: (event: any) => { if (event.key === 'Enter') speak() },
-          }),
-          React.createElement('button', {
-            className: 'whg-send',
-            disabled: busy || !skitText.trim(),
-            onClick: speak,
-            type: 'button',
-          }, t("说")),
-        ),
-      )
-    }
-    const sources = (scene.sources || []).length
-      ? React.createElement('div', { className: 'whg-side-sources' },
-        scene.sources.map((row: any) => React.createElement('a', {
-          key: row.url,
-          href: row.url,
-          rel: 'noreferrer noopener',
-          target: '_blank',
-        }, row.title)))
-      : null
-    return React.createElement('div', { id: 'whg-panel', className: 'whg-panel' },
-      React.createElement('div', { className: 'whg-plate', style: plateStyle }, plateLabel),
-      React.createElement('div', { className: 'whg-side-seed' },
-        React.createElement('span', { className: 'whg-side-badge' }, t("小剧场")),
-        scene.seed && scene.seed.summary ? scene.seed.summary : t("一段新的故事开始了。")),
-      React.createElement('div', {
-        key: 'side-' + scene.id + '-' + scene.cursor,
-        className: 'whg-line-now ' + (isUser ? 'user' : isNarrator ? 'narrator' : 'heroine'),
-      }, beat ? beat.text : ''),
-      controls,
-      sources,
-    )
+
+  // A chat turn: the typed text comes back into the box if the model call fails, so nothing has to be retyped.
+  function say(payload: any, typed = ''): void {
+    if (busy) return
+    setBusy(true)
+    setPendingChat(payload)
+    setFailedChat(null)
+    callApi('chat', payload).then((v) => {
+      if (v && typeof v === 'object') { setS(v); setApiError(null) }
+    }).catch((e) => {
+      setApiError(String(e && e.message ? e.message : e))
+      setFailedChat(payload)
+      if (typed) setText((current: string) => current || typed)
+    }).finally(() => { setBusy(false); setPendingChat(null) })
   }
 
   function dialogue(): React.ReactElement {
     if (group) return React.createElement(CompanionGroupDialogue, { state: s.companion, request: companionRequest, onPhoto: (cgId:string) => setGroupPanelRequest({groupId:group.id,panel:'gallery',cgId,nonce:Date.now()}), onManage: () => setGroupPanelRequest({groupId:group.id,panel:'settings',nonce:Date.now()}) })
-    const activeScene = sideStoryScene()
-    if (activeScene) return sideStoryDialogue(activeScene)
     const last = lastLine()
-    const plateLabel = last
-      ? (last.who === 'heroine' ? s.name : last.who === 'user' ? (last.personaSnapshot?.nickname || s.companion?.personas?.find((p: any) => p.id === s.companion.activePersonaId)?.nickname || t("你")) : t("旁白"))
-      : s.name
-    const plateClass = last ? (last.who === 'heroine' ? '' : ' ' + last.who) : ''
-    const plateStyle = plateVars({ who: last ? (last.who === 'heroine' ? 'heroine' : last.who) : 'heroine', characterId: s.current, color: s.color })
-    const showChoices = Array.isArray(s.choices) && s.choices.length > 0
+    const userName = last?.personaSnapshot?.nickname || s.companion?.personas?.find((p: any) => p.id === s.companion.activePersonaId)?.nickname || t("你")
+    const plateLabel = last ? (last.who === 'heroine' ? s.name : last.who === 'user' ? userName : t("旁白")) : s.name
+    const plateWho = last ? (last.who === 'heroine' ? 'heroine' : last.who) : 'heroine'
+    const plateStyle = plateVars({ who: plateWho, characterId: s.current, color: s.color })
+    const offline = props.chat ? props.chat.enabled === false : false
+    const replying = busy && !!pendingChat
+    const choiceList = Array.isArray(s.choices) ? s.choices.map((c: any) => ({ text: typeof c === 'string' ? c : c && typeof c.text === 'string' ? c.text : '', id: typeof c === 'object' && c && c.id !== undefined ? String(c.id) : undefined })) : []
+    const choose = (c: any) => { if (c && c.text) say(c.id ? { choiceId: c.id, text: c.text } : { text: c.text }) }
+    const showChoices = choiceList.length > 0 && !replying && !offline && !apiError
     const choices = showChoices
-      ? React.createElement('div', { className: 'whg-choices' },
-        s.choices.map((c: any, i: number) => {
-          const choiceText = typeof c === 'string' ? c : c && typeof c.text === 'string' ? c.text : ''
-          const choiceId = typeof c === 'object' && c && c.id !== undefined ? String(c.id) : undefined
-          return React.createElement('button', {
-            key: choiceId || i,
-            className: 'whg-choice',
-            disabled: busy || !choiceText,
-            onClick: () => { act('chat', choiceId ? { choiceId, text: choiceText } : { text: choiceText }) },
-            type: 'button',
-          }, choiceText)
-        }))
+      ? React.createElement('div', { className: 'whg-choices gx-choices' },
+        choiceList.map((c: any, i: number) => React.createElement('button', {
+          key: c.id || i,
+          className: 'whg-choice gx-choice',
+          disabled: busy || !c.text,
+          onClick: () => choose(c),
+          type: 'button',
+        }, React.createElement('kbd', { 'aria-hidden': 'true' }, i + 1), React.createElement('span', null, c.text))))
       : null
-    const input = React.createElement('div', { className: 'whg-input-row' },
-      React.createElement('textarea', {
-        className: 'whg-input', rows: 2, 'aria-label': t('私聊消息'),
-        value: text,
-        placeholder: t("回复 ") + s.name + ' …',
-        disabled: busy,
-        onChange: (e: any) => { setText(e.target.value) },
-        onKeyDown: (e: any) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send() } },
-      }),
-      React.createElement('button', { className: 'whg-send', disabled: busy || !text.trim(), onClick: send }, t("回复")))
-    const fallbackNote = s.fallbackUsed
-      ? React.createElement('div', { className: 'whg-fallback-note' }, t("（模型调用失败，") + s.name + t(" 用了备用台词。原因：") + (s.fallbackReason ? modelErrorText(s.fallbackReason) : t("未知")) + t(" · 目标模型：") + (s.lastModel || s.modelLabel || t("未知")) + '）')
-      : null
-    const now = last
-      ? React.createElement('div', { key: 'now-' + ((s.history || []).length), className: 'whg-line-now ' + last.who }, last.text)
-      : React.createElement('div', { className: 'whg-line-now narrator' }, t("（点击输入框，开始和") + s.name + t("对话吧）"))
-    return React.createElement('div', { id: 'whg-panel', className: 'whg-panel' },
-      React.createElement('div', { className: 'whg-plate' + plateClass, style: plateStyle }, plateLabel),
-      React.createElement('div', { className: 'whg-level' },
-        React.createElement('span', null, 'Lv.' + s.level + t(" · 好感度 ") + s.affection + '/' + s.cap),
-        React.createElement('div', { className: 'whg-level-track' },
-          React.createElement('div', { className: 'whg-level-fill', style: { width: Math.min(100, Math.round((s.affection / Math.max(1, s.cap)) * 100)) + '%' } }))),
+    const blocked = busy || offline
+    const input = React.createElement('div', { className: 'whg-input-row gx-say' },
+      React.createElement('label', { className: 'gx-ta' + (blocked ? ' dis' : '') },
+        React.createElement('textarea', {
+          className: 'whg-input', rows: 2, 'aria-label': t('私聊消息'),
+          value: text,
+          placeholder: replying ? t("等 ") + s.name + t(" 说完…") : offline ? t("开启联网聊天后就能回复") : t("回复 ") + s.name + ' …',
+          disabled: blocked,
+          onChange: (e: any) => { setText(e.target.value) },
+          // an empty box takes 1 / 2 / 3 as the matching choice
+          onKeyDown: (e: any) => {
+            if (!text && showChoices && /^[1-9]$/.test(e.key) && !e.ctrlKey && !e.altKey && !e.metaKey) { const c = choiceList[Number(e.key) - 1]; if (c) { e.preventDefault(); choose(c) } return }
+            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send() }
+          },
+        }),
+        React.createElement('small', { 'aria-hidden': 'true' }, t("Enter 发送 · Shift+Enter 换行"))),
+      React.createElement('button', { className: 'whg-send gx-send', type: 'button', disabled: blocked || !text.trim(), onClick: send },
+        replying ? React.createElement('span', { className: 'ui-spinner', 'aria-hidden': 'true' }) : Icon('send', { size: 15 }),
+        replying ? t("回复中") : t("回复")))
+    const truncated = apiError ? modelOutputTruncated(apiError) : false
+    const alert = apiError
+      ? React.createElement('div', { className: 'gx-alert', role: 'alert' }, Icon('alert', { size: 16 }),
+        React.createElement('span', { className: 'grow' }, React.createElement('b', null, truncated ? t("回复被截断") : t("没连上模型")), ' · ', modelErrorText(String(apiError).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''))),
+        failedChat && !truncated ? React.createElement('button', { type: 'button', className: 'gx-gbtn', disabled: busy, onClick: () => { setText(''); say(failedChat) } }, Icon('retry', { size: 14 }), t("重试")) : null,
+        React.createElement('button', { type: 'button', className: 'gx-gbtn', onClick: () => (window as any).whale?.open?.('settings') }, truncated ? t('打开通用设置') : t("去设置")))
+      : s.fallbackUsed
+        ? React.createElement('div', { className: 'gx-alert warn whg-fallback-note', role: 'status' }, Icon('info', { size: 16 }),
+          React.createElement('span', { className: 'grow' }, React.createElement('b', null, t("这句是备用台词")), ' · ', s.fallbackReason ? modelErrorText(s.fallbackReason) : t("未知"), ' · ', t("目标模型 ") + (s.lastModel || s.modelLabel || t("未知"))))
+        : offline
+          ? React.createElement('div', { className: 'gx-alert info', role: 'status' }, Icon('globe', { size: 16 }),
+            React.createElement('span', { className: 'grow' }, t("联网聊天已关闭，现在只能翻看之前的对话。")),
+            props.onToggleChat ? React.createElement('button', { type: 'button', className: 'gx-gbtn pri', onClick: () => props.onToggleChat?.() }, t("开启联网聊天")) : null)
+          : null
+    const now = replying
+      ? React.createElement('div', { className: 'whg-line-now gx-typing', role: 'status' }, s.name + t(" 正在回复"), React.createElement('span', { 'aria-hidden': 'true' }, React.createElement('i'), React.createElement('i'), React.createElement('i')))
+      : last
+        ? React.createElement('div', { key: 'now-' + ((s.history || []).length), className: 'whg-line-now ' + last.who + (apiError ? ' muted' : '') }, last.text)
+        : React.createElement('div', { className: 'whg-line-now narrator' }, t("（点击输入框，开始和") + s.name + t("对话吧）"))
+    const pct = Math.min(100, Math.round((s.affection / Math.max(1, s.cap)) * 100))
+    return React.createElement('div', { id: 'whg-panel', className: 'whg-panel gx-dlg' },
+      React.createElement('div', { className: 'whg-plate gx-plate' + (plateWho === 'heroine' ? '' : ' ' + plateWho), style: plateStyle }, plateLabel, plateWho === 'heroine' ? React.createElement('i', { className: 'gx-acc', 'aria-hidden': 'true' }) : null),
+      React.createElement('div', { className: 'whg-level gx-lvl' },
+        React.createElement('span', null, 'Lv.', React.createElement('b', null, s.level), t(" · 好感度 "), React.createElement('b', null, s.affection), '/' + s.cap),
+        React.createElement('i', { className: 'gx-track', 'aria-hidden': 'true' }, React.createElement('s', { style: { width: pct + '%' } }))),
       now,
       s.companion?.lifeRecovery?.characterId === s.current ? React.createElement(LifeRecoveryBanner, { state: s.companion, request: companionRequest, characterId: s.current, setFeedback: (text: string, error?: boolean) => setApiError(error ? text : null) }) : null,
-      apiError ? React.createElement('p', { className: 'buddy-error', role: 'alert' }, modelErrorText(apiError), modelOutputTruncated(apiError) ? React.createElement('button', { type: 'button', className: 'whg-btn', style: { marginLeft: 8 }, onClick: () => (window as any).whale?.open?.('settings') }, t('打开通用设置')) : null) : null,
-      fallbackNote,
+      alert,
       choices,
       input,
     )
@@ -3274,69 +2396,53 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
 
   function cgModal(): React.ReactElement | null {
     if (!settled || !s || !s.cg) return null
+    const who = s.cg.name || s.name
+    // design → queue → draw, shown as three steps
     if (s.cg.status === 'planning' || s.cg.status === 'generating' || s.cg.status === 'queued') {
-      return React.createElement('div', { className: 'whg-toast' }, s.cg.status === 'planning' ? t("正在设计纪念 CG 主题…") : s.cg.status === 'queued' ? t("CG 已排队。") : t("正在绘制纪念 CG…"))
+      const step = s.cg.status === 'planning' ? 1 : s.cg.status === 'queued' ? 2 : 3
+      return React.createElement('div', { className: 'whg-toast gx-toast', role: 'status' },
+        React.createElement('span', { className: 'ui-spinner', 'aria-hidden': 'true' }),
+        React.createElement('div', null,
+          React.createElement('b', null, step === 1 ? t("正在设计纪念 CG 主题…") : step === 2 ? t("CG 已排队。") : t("正在绘制纪念 CG…")),
+          React.createElement('span', { className: 'gx-steps', 'aria-hidden': 'true' }, [1, 2, 3].map(n => React.createElement('i', { key: n, className: n < step ? 'd' : n === step ? 'n' : '' }))),
+          React.createElement('small', null, t("第 {k} 步 / 共 3 步").replace('{k}', String(step)) + ' · ' + who + (s.level ? ' Lv.' + s.level : ''))))
     }
     if (s.cg.status === 'failed' && !s.cg.seen) {
-      return React.createElement('div', { className: 'whg-toast', onClick: () => { act('cg-ack') } },
-        t("⚠️ CG 生成失败：") + (s.cg.error || t("未知错误")) + t("（点击关闭）"))
+      return React.createElement('div', { className: 'whg-toast gx-toast err', role: 'alert' },
+        Icon('alert', { size: 18 }),
+        React.createElement('div', null,
+          React.createElement('b', null, t("CG 生成失败")),
+          React.createElement('small', null, s.cg.error || t("未知错误")),
+          React.createElement('span', { className: 'gx-row-btns' },
+            s.cg.id ? React.createElement('button', { type: 'button', className: 'ui-btn sm primary', disabled: busy, onClick: () => { generateGalleryCg({ id: s.cg.id, characterId: s.current }); act('cg-ack') } }, t("重试")) : null,
+            React.createElement('button', { type: 'button', className: 'ui-btn sm', disabled: busy, onClick: () => act('cg-ack') }, t("关闭")))))
     }
     if (s.cg.status === 'ready' && !s.cg.seen) {
       const detailReady = rewardCgDetail
         && String(rewardCgDetail.id || '') === rewardCgId
         && typeof rewardCgDetail.dataUrl === 'string'
         && rewardCgDetail.dataUrl
-      if (!detailReady) {
-        return React.createElement('div', { 'aria-modal': 'true', className: 'whg-cg-backdrop', role: 'dialog' },
-          React.createElement('div', { className: 'whg-cg-title' }, t("🎁 升级啦 · ") + (s.cg.name || s.name) + t("送给你的特殊CG")),
-          rewardCgError
-            ? React.createElement('div', { className: 'whg-archive-error', role: 'alert' }, t("特殊 CG 读取失败：") + rewardCgError)
-            : React.createElement('div', { className: 'whg-cg-title', role: 'status' }, rewardCgLoading ? t("正在取出这份深海礼物……") : t("正在准备这份深海礼物……")),
-          rewardCgError
-            ? React.createElement('div', { className: 'whg-cg-btns' },
-              React.createElement('button', {
-                className: 'whg-cg-btn',
-                disabled: rewardCgLoading,
-                onClick: () => loadRewardCg(rewardCgId),
-                type: 'button',
-              }, rewardCgLoading ? t("重新读取中…") : t("重新读取")),
-              React.createElement('button', {
-                className: 'whg-cg-btn alt',
-                disabled: busy,
-                onClick: acknowledgeRewardCg,
-                type: 'button',
-              }, t("暂时收下并关闭")),
-            )
+      const head = React.createElement('div', { className: 'gx-gift-b' },
+        face(s.current),
+        React.createElement('div', { className: 'grow' },
+          React.createElement('h4', null, t("升级啦 · ") + who + t(" 送你一张特殊 CG")),
+          React.createElement('p', null, (s.level ? 'Lv.' + s.level + t(" 纪念 · ") : '') + t("已收进 CG 图鉴"))),
+        detailReady
+          ? (s.cg.savedAsBg
+            ? React.createElement('button', { className: 'ui-btn', onClick: () => { bgCache.current = null; act('cg-clear-bg') }, type: 'button' }, t("恢复默认背景"))
+            : React.createElement('button', { className: 'ui-btn', disabled: busy, onClick: saveRewardCgBackground, type: 'button' }, Icon('image', { size: 15 }), t("设为 Galgame 背景")))
+          : rewardCgError
+            ? React.createElement('button', { className: 'ui-btn', disabled: rewardCgLoading, onClick: () => loadRewardCg(rewardCgId), type: 'button' }, rewardCgLoading ? t("重新读取中…") : t("重新读取"))
             : null,
-        )
-      }
-      return React.createElement('div', { 'aria-modal': 'true', className: 'whg-cg-backdrop', role: 'dialog' },
-        React.createElement('div', { className: 'whg-cg-title' }, t("🎁 升级啦 · ") + (s.cg.name || s.name) + t("送给你的特殊CG")),
-        React.createElement('img', { className: 'whg-cg-img', src: rewardCgDetail.dataUrl, alt: (s.cg.name || s.name) + t("送给你的特殊CG") }),
-        React.createElement('div', { className: 'whg-cg-btns' },
-          s.cg.savedAsBg
-            ? React.createElement('button', {
-              className: 'whg-cg-btn alt',
-              onClick: () => {
-                bgCache.current = null
-                act('cg-clear-bg')
-              },
-              type: 'button',
-            }, t("恢复默认背景"))
-            : React.createElement('button', {
-              className: 'whg-cg-btn',
-              disabled: busy,
-              onClick: saveRewardCgBackground,
-              type: 'button',
-            }, t("保存为galgame界面背景")),
-          React.createElement('button', {
-            className: 'whg-cg-btn alt',
-            disabled: busy,
-            onClick: acknowledgeRewardCg,
-            type: 'button',
-          }, t("收下并关闭")),
-        ),
-      )
+        React.createElement('button', { className: 'ui-btn primary', disabled: busy, onClick: acknowledgeRewardCg, type: 'button' }, detailReady ? t("收下") : t("先关闭")))
+      return React.createElement('div', { 'aria-modal': 'true', className: 'whg-cg-backdrop gx-veil', role: 'dialog', 'aria-label': t("升级啦 · ") + who + t(" 送你一张特殊 CG") },
+        React.createElement('div', { className: 'gx-gift' },
+          detailReady
+            ? React.createElement('div', { className: 'gx-big' }, React.createElement(CgImageViewer, { src: rewardCgDetail.dataUrl, alt: who + t("的特殊CG"), title: who + t("的特殊CG"), subtitle: (s.level ? 'Lv.' + s.level + ' · ' : '') + t("升级纪念") }))
+            : React.createElement('div', { className: 'gx-big gx-big-wait', role: rewardCgError ? 'alert' : 'status' },
+              rewardCgError ? Icon('alert', { size: 22 }) : React.createElement('span', { className: 'ui-spinner', 'aria-hidden': 'true' }),
+              rewardCgError ? t("特殊 CG 读取失败：") + rewardCgError : rewardCgLoading ? t("正在取出这份礼物……") : t("正在准备这份礼物……")),
+          head))
     }
     return null
   }
@@ -3344,21 +2450,17 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   const isTab = props.variant === 'tab'
 
   if (isTab) {
+    // whole-page states: connecting, failed to connect, switched off
+    const fullCard = (kind: string, icon: any, title: string, text: string, action: any) => React.createElement('div', { id: 'whg-tab-root', className: 'whg-root-tab' },
+      React.createElement('div', { className: 'whg-bg whg-bg-fallback' }),
+      React.createElement('div', { className: 'gx-full' }, React.createElement('div', { className: 'gx-fcard' + (kind === 'err' ? ' err' : ''), role: kind === 'err' ? 'alert' : 'status' }, icon, React.createElement('h4', null, title), React.createElement('p', null, text), action)))
     if (s === null) {
-      return React.createElement('div', { id: 'whg-tab-root', className: 'whg-root-tab' },
-        React.createElement('div', { className: 'whg-bg whg-bg-fallback' }),
-        React.createElement('div', { className: 'whg-toast' }, apiError ? '⚠️ ' + apiError : t("连接 galgame 服务中…")),
-      )
+      return apiError
+        ? fullCard('err', Icon('alert', { size: 28 }), t("Galgame 服务没有就绪"), apiError, React.createElement('button', { type: 'button', className: 'ui-btn sm primary', onClick: () => { setApiError(null); callApi('view').then((v: any) => { if (v && typeof v === 'object') setS(v) }).catch((e: any) => setApiError(String(e && e.message ? e.message : e))) } }, Icon('retry', { size: 14 }), t("重新连接")))
+        : fullCard('busy', React.createElement('span', { className: 'ui-spinner gx-big-spin', 'aria-hidden': 'true' }), t("正在连接 Galgame…"), t("通常几秒钟就好。"), null)
     }
     if (s.enabled === false) {
-      return React.createElement('div', { id: 'whg-tab-root', className: 'whg-root-tab' },
-        React.createElement('div', { className: 'whg-disabled' },
-          React.createElement('div', { className: 'whg-disabled-card' },
-            React.createElement('h2', null, t("AI娘 Galgame 已关闭")),
-            React.createElement('p', null, t("在通用设置中开启 Galgame 后，即可继续。")),
-          ),
-        ),
-      )
+      return fullCard('off', Icon('power', { size: 28 }), t("AI娘 Galgame 已关闭"), t("在通用设置中开启 Galgame 后，即可继续。"), React.createElement('button', { type: 'button', className: 'ui-btn sm', onClick: () => (window as any).whale?.open?.('settings') }, t("去通用设置")))
     }
     const bgSrc = group ? (companionImage(group.background, art) || art('bg-kimi-moonlit-reading-study') || art('palace-night')) : (s.bg === 'cg' || s.bg === 'custom' ? bgCache.current : companionImage(s.bg, art))
     const bgEl = bgSrc
@@ -3372,7 +2474,6 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       archiveDrawer(),
       companionPanel && s.companion ? React.createElement(CompanionManager, { state: s.companion, request: companionRequest, panel: companionPanel, onClose: () => setCompanionPanel(null), resolveArt: art }) : null,
       cgModal(),
-      sideStoryToast(),
     )
   }
 
@@ -3405,7 +2506,6 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     archiveDrawer(),
     companionPanel && s.companion ? React.createElement(CompanionManager, { state: s.companion, request: companionRequest, panel: companionPanel, onClose: () => setCompanionPanel(null), resolveArt: art }) : null,
     cgModal(),
-    sideStoryToast(),
   )
 }
 
