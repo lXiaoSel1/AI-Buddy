@@ -1,12 +1,13 @@
 import {THEMES} from './appearance.mjs';
 import {validPetCharacter} from './pet-characters.mjs';
 import {defaultViews,validateViews} from './statistics-views.mjs';
-export const DEFAULT_PREFERENCES=Object.freeze({language:'zh-CN',theme:'deepseek',themeMode:'fixed',hideSpriteOnCg:true,petVisible:true,petCharacterMode:'follow',petFixedCharacter:'deepseek',petScale:1.25,animationSpeed:0.75,alwaysOnTop:true,clickThrough:true,followCursor:true,showStatusBadge:true,completionBubbles:true,monitorRefreshMs:1000,displayTimeZone:'America/New_York',statisticsTimeZone:'local',autoPriceUpdates:false,statisticsViews:defaultViews()});
+export const DEFAULT_PREFERENCES=Object.freeze({language:'zh-CN',theme:'deepseek',themeMode:'fixed',hideSpriteOnCg:true,petVisible:true,petCharacterMode:'follow',petFixedCharacter:'deepseek',petScale:1.25,animationSpeed:0.75,alwaysOnTop:true,clickThrough:true,followCursor:true,showStatusBadge:true,completionBubbles:true,autoSleep:true,petPhysics:true,throwStrength:'standard',monitorRefreshMs:1000,displayTimeZone:'America/New_York',statisticsTimeZone:'local',autoPriceUpdates:false,statisticsViews:defaultViews()});
 export const PET_SCALES=Object.freeze([0.75,1,1.25,1.5]);
 export const ANIMATION_SPEEDS=Object.freeze([0.25,0.5,0.75,1]);
 export const MONITOR_INTERVALS=Object.freeze([1000,2000,5000]);
 const zones=['America/New_York','local','UTC'];
 function valid(key,value){
+  if(key==='throwStrength')return ['gentle','standard','strong','exaggerated'].includes(value);
   if(key==='petCharacterMode')return ['follow','fixed'].includes(value);
   if(key==='petFixedCharacter')return validPetCharacter(value);
   if(key==='language')return ['zh-CN','en'].includes(value);

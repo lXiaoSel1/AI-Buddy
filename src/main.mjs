@@ -5,7 +5,11 @@ import {chromeColor,resolvedTheme} from './appearance.mjs';
 import {CgThemePlanner} from './cg-theme.mjs';
 import {createCharacterReferenceResolver} from './cg-reference-registry.mjs';
 import {monitorView} from './monitor-view.mjs';
-import { app,BrowserWindow,Tray,Menu,ipcMain,nativeImage,screen,session,safeStorage,dialog } from 'electron';
+import { app,BrowserWindow,Tray,Menu,ipcMain,nativeImage,screen,session,safeStorage,dialog,powerMonitor } from 'electron';
+import {PetActivityClock,PetMotion} from './pet-interactions.mjs';
+import {createPetButtonObserver} from './pet-buttons.mjs';
+import {PetTouchExpressions} from './pet-touch.mjs';
+import {frameSequence,CHARACTER_SEQUENCES} from './frame-sequence.mjs';
 import { Worker } from 'node:worker_threads';
 import { join,resolve,dirname } from 'node:path';
 import { readFileSync,mkdirSync,appendFileSync,writeFileSync,existsSync } from 'node:fs';
@@ -19,16 +23,17 @@ import {CodexImageProvider} from './codex-image-provider.mjs';
 import {createCgCodec} from './cg-images.mjs';
 import { clampToDisplays } from './window-position.mjs';
 import { petBounds,petSize,petWindowOptions,positionPet } from './pet-window.mjs';
+import {petCollisionInsets} from './pet-presentation.mjs';
 import { createLocalControlServer,requestLocalControl } from './local-control.mjs';
 import { DEFAULT_PREFERENCES,normalizePreferences,validatePreferencesPatch } from './preferences.mjs';
-import { PET_ACTIONS,validatePetPlayback } from './pet-actions.mjs';
+import { PET_ACTIONS,PET_INTERACTION_ACTIONS,validatePetPlayback,getPetAction } from './pet-actions.mjs';
 import { EMOTIONS,validEmotion,shortReply } from './emotions.mjs';
 import {validPetCharacter,resolvePetCharacter} from './pet-characters.mjs';
 import {connectionView} from './connection-view.mjs';
 import {lockPageZoom} from './page-zoom.mjs';
 import {TOOL_NAMES} from './token-sources.mjs';
 import {resolveCodexBinary,codexHome} from './runtime-discovery.mjs';
-import {APP_NAME,APP_ID,PANEL_TITLE,APP_ICON_ICO,APP_ICON_PNG} from './app-brand.mjs';
+import {APP_NAME,APP_ID,APP_ICON_ICO,APP_ICON_PNG} from './app-brand.mjs';
 
 const build=__dirname;
 const appVersion=JSON.parse(readFileSync(join(build,'package.json'),'utf8')).version;
@@ -43,6 +48,7 @@ function brandWindow(window){
   if(process.platform==='win32')window.setAppDetails({appId:APP_ID,appIconPath,appIconIndex:0,relaunchCommand:'"'+join(process.env.SystemRoot??'C:/Windows','System32/wscript.exe')+'" "'+join(root,'AI Buddy.vbs')+'"',relaunchDisplayName:'AI Buddy'});
 }
 const arg=name=>process.argv.find(x=>x.startsWith('--'+name+'='))?.slice(name.length+3);
+const workspaceTitle=()=>localizedTitle()+(arg('candidate')==='1'?(settings.preferences?.language==='en'?' · Feature Preview':' · 八项功能候选'):'');
 const previewQuery=arg('rig')==='working'?{query:{workingRig:'1'}}:arg('rig')==='all'?{query:{allActionRigs:'1'}}:arg('rig')==='source'?{query:{sourcePreview:'1'}}:{};
 const resources=createInstalledResources({root,build});
 const dataRoot=resolve(arg('data') || resources.installation?.dataPath || join(root,'local/data-v003'));
@@ -55,6 +61,7 @@ for(const flag of ['disable-background-networking','disable-component-update','d
 const auditPath=join(dataRoot,'runtime-audit.jsonl');
 const audit=value=>appendFileSync(auditPath,JSON.stringify({timestamp:new Date().toISOString(),...value})+'\n');
 const pipe=arg('pipe') || (resources.installation?.pipe?'\\\\.\\pipe\\'+resources.installation.pipe:null) || '\\\\.\\pipe\\whale-companion-v001';
+let buttonObserver=null,nativeButtons=0;
 let pet,panel,tray,worker,game,provider,snapshot={indexing:true,sessions:[],active:[],todayUsage:{codex:{total:0},claude:{total:0}},workTotal:0},settings={},drag=null,lastWork=null,quitting=false,gestureMode=false,lastPetHit=false,ignoringMouse=true,petAssetsReady=false;
 const settingsStore=createSnapshotStorage(join(dataRoot,'settings.json'));
 let cg,quotas;
@@ -65,31 +72,63 @@ let logRoots=[],settingsTail=Promise.resolve(),monitorAppliedInterval=1000;
 let tokenSources=null,sourceRequest=0;const sourceRequests=new Map();
 function tokenAction(action,args={}){return new Promise((done,fail)=>{if(!worker)return fail(Error('监控正在启动'));const id=++sourceRequest,timer=setTimeout(()=>{sourceRequests.delete(id);fail(Error('检测尚未完成，请稍后查看'));},120000);sourceRequests.set(id,{done,fail,timer});worker.postMessage({type:'source-action',id,action,args});});}
 let petState={id:'idle',source:'monitor',manual:false,expiresAt:null},gameRequests=0;
-const actionIds=new Set(PET_ACTIONS.map(a=>a.id));
+const activityClock=new PetActivityClock({requireReady:true});let petMotion=null,lastInteraction='',heldFollowCharacter=null,trajectoryWindow=null,trajectoryState=null;
+function petInteraction(){const motion=petMotion?.state()??{mode:'rest'},area=petMotion?.area(),body=motion.collisionBounds,grounded=!!(area&&body&&Math.abs(body.y+body.height-area.y-area.height)<2);return {characterId:petState.characterId??effectivePetCharacter(),gestureId:drag?.gestureId??null,...activityClock.tick({defer:!!drag||['flying','charging','landing'].includes(petMotion?.mode)||petState.manual}),motion:{...motion,grounded,elapsedMs:motion.since===undefined?0:performance.now()-motion.since,preview:petMotion?.preview()??[]},at:Date.now()};}
+function publishInteraction(force=false){const value=petInteraction(),key=JSON.stringify([value.characterId,value.gestureId,value.phase,value.animationEpoch,value.animationWaiting,value.motion.animationEpoch,value.motion.animationWaiting,value.motion.mode,value.motion.button,value.motion.walkDirection,value.motion.pull,value.motion.anchor,value.motion.grounded]);if(force||key!==lastInteraction){lastInteraction=key;petEvent({kind:'interaction',value});updateTrajectory(value);}return value;}
+function updateTrajectory(value){
+  trajectoryState=value;
+  if(value.motion.mode!=='charging'||!pet?.isVisible()){
+    const old=trajectoryWindow;trajectoryWindow=null;old?.destroy();return;
+  }
+  if(!trajectoryWindow){
+    const areas=screen.getAllDisplays().map(d=>d.bounds),x=Math.min(...areas.map(a=>a.x)),y=Math.min(...areas.map(a=>a.y));
+    const bounds={x,y,width:Math.max(...areas.map(a=>a.x+a.width))-x,height:Math.max(...areas.map(a=>a.y+a.height))-y};
+    const overlay=new BrowserWindow({...bounds,frame:false,transparent:true,show:false,focusable:false,skipTaskbar:true,resizable:false,hasShadow:false,webPreferences:{preload:join(build,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+    trajectoryWindow=overlay;overlay.setIgnoreMouseEvents(true,{forward:true});overlay.setAlwaysOnTop(true,'screen-saver');
+    overlay.loadFile(join(build,'pet-trajectory.html')).then(()=>{if(trajectoryWindow!==overlay||overlay.isDestroyed())return;overlay.showInactive();updateTrajectory(trajectoryState);}).catch(error=>audit({type:'trajectory-error',message:error.message}));
+  }
+  if(!trajectoryWindow.isDestroyed()&&!trajectoryWindow.webContents.isLoading())trajectoryWindow.webContents.send('pet:action',{kind:'trajectory',value,origin:trajectoryWindow.getBounds()});
+}
+function cancelGesture(reason='cancel'){
+  const id=drag?.gestureId??null;drag=null;buttonObserver?.stop();petMotion?.cancel();
+  petEvent({kind:'gesture-reset',gestureId:id,reason});petEvent({kind:'drag',active:false});
+  if(pet&&!pet.isDestroyed())setGestureMode(gestureMode);publishInteraction(true);
+}
+const gestureMatches=message=>!!drag&&(drag.gestureId===null?message?.gestureId==null:message?.gestureId===drag.gestureId);
+const touchExpressions=new PetTouchExpressions();
+function petContextMenu(){Menu.buildFromTemplate([{label:settings.preferences.language==='en'?'Open workspace':'打开工作空间',click:()=>openPanel('overview')}]).popup({window:pet});}
+// Renderer coordinates are accepted only by explicitly isolated simulation runs.
+// Normal operation has one position writer: the main process OS DIP sampler.
+const gesturePoint=message=>arg('cursor')==='manual'&&Number.isFinite(message?.x)&&Number.isFinite(message?.y)?{x:message.x,y:message.y}:screen.getCursorScreenPoint();
+function internalActivity({id,active}){activityClock.request(id,active);petEvent({kind:'dialog',active:activityClock.busy.size>0||gameRequests>0});publishInteraction();}
+function interactionMediaReady(id=petState.characterId??effectivePetCharacter()){return PET_INTERACTION_ACTIONS.every(a=>!!frameSequence(a.id,id)?.video?.src);}
+function configurePetInteractions(){const speed=settings.preferences.animationSpeed??.75,media=interactionMediaReady(),character=petState.characterId??effectivePetCharacter();if(drag&&(!settings.preferences.petPhysics||!media)&&['charging','dragging'].includes(petMotion?.mode))cancelGesture('physics-disabled');petMotion?.configure({enabled:settings.preferences.petPhysics&&media,strength:settings.preferences.throwStrength,landDurationMs:getPetAction('land-recover',petState.characterId).cycleMs,speed,collisionInsets:petCollisionInsets(character,settings.preferences.petScale,CHARACTER_SEQUENCES[character])});activityClock.configure({enabled:settings.preferences.autoSleep&&media,durations:{enter:getPetAction('sleep-enter',petState.characterId).cycleMs,wake:getPetAction('wake',petState.characterId).cycleMs},speed});if(!media)activityClock.resume();publishInteraction(true);}
+function effectivePetCharacter(){const target=resolvePetCharacter(settings.preferences,themeCharacter);if(!validPetCharacter(themeCharacter)&&settings.preferences?.petCharacterMode!=='fixed')return heldFollowCharacter??petState.characterId??resources.fallback('deepseek');const resolved=resources.fallback(target);if(resolved)heldFollowCharacter=resolved;return resolved;}
+const actionIds=new Set([...PET_ACTIONS,...PET_INTERACTION_ACTIONS].map(a=>a.id));
 function petEvent(value){if(pet&&!pet.isDestroyed())pet.webContents.send('pet:action',value);}
-function playPet(request){const value=validatePetPlayback({...request,characterId:request?.characterId??petState.characterId??resolvePetCharacter(settings.preferences,themeCharacter)});resources.require([value.characterId]);petEvent({kind:'play',...value});audit({type:'pet-manual-action',id:value.id,lookIndex:value.lookIndex,characterId:value.characterId});return {ok:true,...value};}
+function playPet(request){const value=validatePetPlayback({...request,characterId:request?.characterId??petState.characterId??resolvePetCharacter(settings.preferences,themeCharacter)});resources.require([value.characterId]);if(PET_INTERACTION_ACTIONS.some(a=>a.id===value.id)&&!frameSequence(value.id,value.characterId)?.video?.src)throw Error('该角色的新互动动作尚未完成审核');petEvent({kind:'play',...value});audit({type:'pet-manual-action',id:value.id,lookIndex:value.lookIndex,characterId:value.characterId});return {ok:true,...value};}
 function petAuto(){petEvent({kind:'auto'});return {ok:true};}
 function triggerPet(id,source='event',durationMs=null){petEvent({kind:'trigger',id,source,...(durationMs===null?{}:{durationMs})});}
-function feedback(value){if(settings.preferences?.petVisible!==false)petEvent({kind:'feedback',value});}
-function chatFeedback(value){if(!validPetCharacter(value.characterId)||!validEmotion(value.emotion))return;feedback({eventId:value.messageId,id:EMOTIONS[value.emotion]?.actionId??null,source:'dialog',origin:value.requestId?'chat':'story',provider:provider?.currentKind??'codex',sessionKey:'whale-companion-local',turnKey:value.requestId??value.messageId,characterId:value.characterId,role:'heroine',emotion:value.emotion,emotionSource:value.emotionSource??'story-label',sequence:value.sequence,text:shortReply(value.text),cycles:1});}
+function feedback(value){activityClock.wake('feedback');publishInteraction();if(settings.preferences?.petVisible!==false)petEvent({kind:'feedback',value});}
+function chatFeedback(value){if(!game?.hasCharacter?.(value.characterId)||!validEmotion(value.emotion))return;feedback({eventId:value.messageId,id:EMOTIONS[value.emotion]?.actionId??null,source:'dialog',origin:value.requestId?'chat':'story',provider:provider?.currentKind??'codex',sessionKey:'whale-companion-local',turnKey:value.requestId??value.messageId,characterId:value.characterId,role:'heroine',emotion:value.emotion,emotionSource:value.emotionSource??'story-label',sequence:value.sequence,text:shortReply(value.text),cycles:1});}
 function chatCommitted(value){if(panel&&!panel.isDestroyed())panel.webContents.send('game:chat-committed',value);chatFeedback(value);}
 app.on('second-instance',()=>{audit({type:'second-instance'});reopenRequested=true;if(app.isReady()&&game)openPanel('overview',false);});
 
 function clamp(bounds) {
+  if(settings.preferences?.petPhysics&&interactionMediaReady()){
+    const character=petState.characterId??effectivePetCharacter(),probe=new PetMotion({bounds,collisionInsets:petCollisionInsets(character,settings.preferences.petScale,CHARACTER_SEQUENCES[character]),displays:()=>screen.getAllDisplays()});probe.contain();
+    return {...probe.bounds,x:Math.round(probe.bounds.x),y:Math.round(probe.bounds.y)};
+  }
   return clampToDisplays(bounds,screen.getAllDisplays(),screen.getPrimaryDisplay());
 }
 function setGestureMode(value){gestureMode=!!value;ignoringMouse=settings.preferences?.clickThrough!==false&&!gestureMode&&!lastPetHit;pet?.setIgnoreMouseEvents(ignoringMouse,{forward:true});}
 function moveDrag(point){
   if(!drag || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y))return;
-  if(Math.hypot(point.x-drag.origin.x,point.y-drag.origin.y)>5)drag.moved=true;
-  if(!drag.moved)return;
-  const next=petBounds({x:point.x-drag.offset.x,y:point.y-drag.offset.y},settings.preferences.petScale);
-  if(next.x===drag.position.x&&next.y===drag.position.y)return;
-  const dx=next.x-drag.position.x;if(dx)drag.direction=Math.sign(dx);
-  positionPet(pet,next,settings.preferences.petScale);drag.position=next;petEvent({kind:'drag',active:true,direction:drag.direction||1});
+  petMotion.move(point);drag.moved=petMotion.moved;
+  if(drag.moved)petEvent({kind:'drag',active:true,direction:petMotion.walkDirection});publishInteraction();
 }
 async function saveSettings() {await settingsStore.writeText(JSON.stringify(settings));}
-function settingsView(){return {resources:resources.status(),effectivePetCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter)),preferences:{...settings.preferences},themeCharacter,petCharacterId:petState.characterId??resources.fallback('deepseek'),version:appVersion,build:build.split(/[\\/]/).at(-1),dataRoot,logRoots,tokenSources,defaultModel:provider?.defaultModel,modelConnections:provider?.state?connectionView(provider):null,cgConnections:cg?.state?connectionView(cg):null,systemTimeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,monitorAppliedInterval};}
+function settingsView(){return {interactionMedia:Object.fromEntries(resources.status().characters.map(c=>[c.id,interactionMediaReady(c.id)])),resources:resources.status(),effectivePetCharacter:effectivePetCharacter(),petResourceNotice:validPetCharacter(themeCharacter)?null:'当前角色没有桌宠资源，保留当前桌宠',preferences:{...settings.preferences},themeCharacter,petCharacterId:petState.characterId??resources.fallback('deepseek'),version:appVersion,build:build.split(/[\\/]/).at(-1),dataRoot,logRoots,tokenSources,defaultModel:provider?.defaultModel,modelConnections:provider?.state?connectionView(provider):null,cgConnections:cg?.state?connectionView(cg):null,systemTimeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,monitorAppliedInterval};}
 function broadcastSettings(){const value=settingsView();for(const win of [pet,panel])if(win&&!win.isDestroyed())win.webContents.send('settings:update',value);return value;}
 function saveConnection(service,draft){
   // An unusable edit must not overwrite the currently selected profile before
@@ -109,9 +148,11 @@ function applyPetPreferences(resize=false){
     pet.setMinimumSize(size.width,size.height);pet.setMaximumSize(size.width,size.height);
     settings.petBounds=clamp(petBounds(pet.getContentBounds(),settings.preferences.petScale));
     positionPet(pet,settings.petBounds,settings.preferences.petScale);
+    petMotion?.recover(settings.petBounds);
   }
   pet.setAlwaysOnTop(settings.preferences.alwaysOnTop,'floating');
-  if(settings.preferences.petVisible&&petAssetsReady){const wasVisible=pet.isVisible();pet.showInactive();if(!wasVisible)triggerPet('wave','show');}else{drag=null;petEvent({kind:'drag',active:false});petAuto();pet.hide();}
+  configurePetInteractions();
+  if(settings.preferences.petVisible&&petAssetsReady){const wasVisible=pet.isVisible();pet.showInactive();if(!wasVisible)triggerPet('wave','show');}else{cancelGesture('hidden');petAuto();pet.hide();}
   setGestureMode(gestureMode);updateTray();
 }
 async function syncPetVisibility(visible){
@@ -126,7 +167,7 @@ function setPreferences(patch){
     if(valid.petFixedCharacter)resources.require([valid.petFixedCharacter]);
     if(resize&&drag)throw new Error('请先松开桌宠，再调整大小');
     if(next.petVisible!==settings.preferences.petVisible)await game.action('pet-set',{enabled:next.petVisible});
-    settings.preferences=next;applyChrome();applyPetPreferences(resize);
+    const previousPet=effectivePetCharacter();settings.preferences=next;if(effectivePetCharacter()!==previousPet){cancelGesture('character-change');activityClock.resume();}applyChrome();applyPetPreferences(resize);
     worker?.postMessage({type:'configure',refreshIntervalMs:next.monitorRefreshMs,statisticsTimeZone:next.statisticsTimeZone,autoPriceUpdates:next.autoPriceUpdates});
     await saveSettings();audit({type:'settings-changed',keys:Object.keys(valid)});return broadcastSettings();
   });settingsTail=run.catch(()=>{});return run;
@@ -134,20 +175,20 @@ function setPreferences(patch){
 async function settingsAction(action){
   if(action==='defaults')return setPreferences({...DEFAULT_PREFERENCES});
   if(action==='reset-position'){
-    if(drag)throw new Error('请先松开桌宠，再重置位置');
+    cancelGesture('reset-position');
     const area=screen.getPrimaryDisplay().workArea,size=petSize(settings.preferences.petScale);
     settings.petBounds=clamp(petBounds({x:area.x+area.width-size.width-20,y:area.y+area.height-size.height-20},settings.preferences.petScale));
-    positionPet(pet,settings.petBounds,settings.preferences.petScale);await saveSettings();audit({type:'pet-position-reset',bounds:settings.petBounds});return broadcastSettings();
+    positionPet(pet,settings.petBounds,settings.preferences.petScale);petMotion?.recover(settings.petBounds);publishInteraction(true);await saveSettings();audit({type:'pet-position-reset',bounds:settings.petBounds});return broadcastSettings();
   }
   if(action==='refresh'){worker?.postMessage({type:'refresh'});return settingsView();}
   throw new Error('未知设置操作');
 }
-function applyChrome(character){if(character&&character!==themeCharacter){themeCharacter=character;broadcastSettings();}setLocale(settings.preferences?.language);if(panel&&!panel.isDestroyed()){panel.setTitle(localizedTitle());if(process.platform==='win32')panel.setTitleBarOverlay({color:chromeColor(resolvedTheme(settings.preferences,themeCharacter)),symbolColor:'#e5edf5',height:34});}if(tray){tray.setToolTip(settings.preferences?.language==='en'?'AI Buddy':'AI 酱');updateTray();}}
+function applyChrome(character){if(character&&character!==themeCharacter){const previousPet=effectivePetCharacter();themeCharacter=character;if(effectivePetCharacter()!==previousPet)cancelGesture('character-change');if(settings.preferences?.petCharacterMode!=='fixed'){activityClock.resume();publishInteraction(true);}broadcastSettings();}setLocale(settings.preferences?.language);if(panel&&!panel.isDestroyed()){panel.setTitle(workspaceTitle());if(process.platform==='win32')panel.setTitleBarOverlay({color:chromeColor(resolvedTheme(settings.preferences,themeCharacter)),symbolColor:'#e5edf5',height:34});}if(tray){tray.setToolTip(settings.preferences?.language==='en'?'AI Buddy':'AI 酱');updateTray();}}
 let themeCharacter=resources.fallback('deepseek');
 function openPanel(page='overview',focus=true) {
   if(page==='sessions')page='overview';
   if(!panel || panel.isDestroyed()) {
-    panel=new BrowserWindow({width:1180,height:820,minWidth:900,minHeight:650,title:PANEL_TITLE,icon:appIconPath,backgroundColor:chromeColor(resolvedTheme(settings.preferences,themeCharacter)),show:false,
+    panel=new BrowserWindow({width:1180,height:820,minWidth:900,minHeight:650,title:workspaceTitle(),icon:appIconPath,backgroundColor:chromeColor(resolvedTheme(settings.preferences,themeCharacter)),show:false,
       ...(process.platform==='win32'?{titleBarStyle:'hidden',titleBarOverlay:{color:'#0b1628',symbolColor:'#c8deef',height:34},accentColor:false}:{}),
       webPreferences:{preload:join(build,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,partition:'whale-memory'}});
     brandWindow(panel);applyChrome();
@@ -162,6 +203,7 @@ function openPanel(page='overview',focus=true) {
 function publish(value) {
   if(quitting)return;
   snapshot=value;
+  activityClock.observeExternal(value);publishInteraction();
   if(!value.indexing) {
     const work=value.workSinceStart || 0;
     const delta=work-(lastWork || 0);if(delta>0)game?.workTokens(delta);lastWork=Math.max(lastWork || 0,work);
@@ -193,7 +235,7 @@ ipcMain.handle('settings:action',(_,action)=>settingsAction(action));
 ipcMain.handle('pet:play',(_,request)=>playPet(request));
 ipcMain.handle('pet:auto',()=>petAuto());
 ipcMain.handle('pet:state',()=>petState);
-ipcMain.on('pet:state',(event,value)=>{if(event.sender!==pet?.webContents||!actionIds.has(value?.id))return;const previous=petState.characterId;petState={id:value.id,source:String(value.source||'monitor').slice(0,20),manual:value.manual===true,expiresAt:Number.isFinite(value.expiresAt)?value.expiresAt:null,characterId:validPetCharacter(value.characterId)?value.characterId:'deepseek'};if(panel&&!panel.isDestroyed())panel.webContents.send('pet:state',petState);if(previous!==petState.characterId)broadcastSettings();});
+ipcMain.on('pet:state',(event,value)=>{if(event.sender!==pet?.webContents||!actionIds.has(value?.id))return;const previous=petState.characterId;petState={id:value.id,source:String(value.source||'monitor').slice(0,20),manual:value.manual===true,expiresAt:Number.isFinite(value.expiresAt)?value.expiresAt:null,characterId:validPetCharacter(value.characterId)?value.characterId:'deepseek'};if(panel&&!panel.isDestroyed())panel.webContents.send('pet:state',petState);if(previous!==petState.characterId){configurePetInteractions();broadcastSettings();}});
 async function manageResources(characterId){
   const manager=resources.manager();if(!manager)throw Error('请下载此版本的在线安装器进行管理 / Download this version’s installer to manage resources');
   const ids=(Array.isArray(characterId)?characterId:[characterId]).filter(Boolean);if(ids.some(id=>!validPetCharacter(id)))throw Error('Unknown character');
@@ -210,7 +252,8 @@ ipcMain.handle('models:get',()=>connectionView(provider));
 ipcMain.handle('models:save',(_,draft)=>saveConnection(provider,draft));
 ipcMain.handle('models:delete',(_,id)=>provider.remove(id));
 ipcMain.handle('models:activate',(_,id)=>provider.activate(id));
-ipcMain.handle('models:list',async(_,draft)=>{const models=await provider.fetchModels(draft);if(draft.id)await provider.saveModels(draft.id,models);return models;});
+// Listing belongs to the editor draft; Cancel must not replace a saved route's catalog.
+ipcMain.handle('models:list',(_,draft)=>provider.fetchModels(draft));
 ipcMain.handle('models:test',(_,draft)=>provider.test(draft));
 ipcMain.handle('cg:get',()=>connectionView(cg));
 ipcMain.handle('cg:save',(_,draft)=>saveConnection(cg,draft));
@@ -223,27 +266,104 @@ ipcMain.handle('cg:test-image',(_,draft)=>cg.testImage(draft));
 ipcMain.handle('cg:image',(_,id)=>{const job=cg.job(id);if(!job?.assetRef)throw Error('CG 尚未完成');return {dataUrl:cg.readAsset(job.assetRef)};});
 ipcMain.handle('game:action',async(_,action,args)=>{
   if(typeof action!=='string')throw new Error('Invalid action');
-  const dialog=provider.enabled&&['chat','side-story','side-story-free-reply'].includes(action);
+  const dialog=provider.enabled&&['chat','side-story','side-story-free-reply','companion-group-send','companion-group-continue'].includes(action);
   if(dialog){gameRequests++;petEvent({kind:'dialog',active:true});}
-  try{const result=await game.action(action,args||{});if(dialog&&result?.ok===false)feedback({id:'fail',source:'chat-error',text:'聊天暂时失败，请重试。',cycles:1});return result;}
+  try{const result=await game.action(action,args||{});if(dialog&&result?.ok===false&&result.code!=='CHARACTER_NOT_INSTALLED')feedback({id:'fail',source:'chat-error',text:'聊天暂时失败，请重试。',cycles:1});return result;}
   catch(error){if(dialog)feedback({id:'fail',source:'chat-error',text:'聊天暂时失败，请重试。',cycles:1});throw error;}
-  finally{if(dialog){gameRequests--;petEvent({kind:'dialog',active:gameRequests>0});}}
+  finally{if(dialog){gameRequests--;petEvent({kind:'dialog',active:gameRequests>0||activityClock.busy.size>0});}}
 });
-ipcMain.handle('pet:story-feedback',(event,value)=>{if(event.sender!==panel?.webContents||!validPetCharacter(value?.characterId)||!validEmotion(value.emotion)||typeof value.text!=='string'||value.text.length>4000)return false;chatFeedback({...value,messageId:'story:'+String(value.messageId).slice(0,160)});return true;});
+ipcMain.handle('pet:story-feedback',(event,value)=>{if(event.sender!==panel?.webContents||!game?.hasCharacter?.(value?.characterId)||!validEmotion(value.emotion)||typeof value.text!=='string'||value.text.length>4000)return false;chatFeedback({...value,messageId:'story:'+String(value.messageId).slice(0,160)});return true;});
 ipcMain.on('panel:open',(_,page)=>openPanel(page));
 ipcMain.on('pet:hit',(_,hit)=>{lastPetHit=!!hit;if(!drag && pet && !pet.isDestroyed())setGestureMode(gestureMode);});
-ipcMain.on('pet:drag-start',(_,point)=>{if(!Number.isFinite(point?.x)||!Number.isFinite(point?.y))point=screen.getCursorScreenPoint();const bounds=pet.getContentBounds();drag={offset:{x:point.x-bounds.x,y:point.y-bounds.y},origin:point,position:bounds,moved:false,direction:1};petEvent({kind:'drag',active:true,direction:1});ignoringMouse=false;pet.setIgnoreMouseEvents(false);audit({type:'pet-pointer-down',bounds});});
-ipcMain.on('pet:drag-move',(_,point)=>moveDrag(point));
-ipcMain.handle('pet:drag-end',async(_,point)=>{if(!drag)return false;moveDrag(point);const moved=!!drag.moved;drag=null;petEvent({kind:'drag',active:false});if(!moved)triggerPet('wave','click');settings.petBounds=clamp(petBounds(pet.getContentBounds(),settings.preferences.petScale));positionPet(pet,settings.petBounds,settings.preferences.petScale);setGestureMode(gestureMode);audit({type:'pet-pointer-up',moved,bounds:settings.petBounds});await saveSettings();return moved;});
+ipcMain.on('pet:drag-start',(event,message)=>{
+ if(event.sender!==pet?.webContents||!petMotion||drag)return;
+ const gestureId=typeof message?.gestureId==='string'?message.gestureId.slice(0,120):null,cursor=gesturePoint(message),bounds=pet.getContentBounds();
+ // Preserve the point actually grabbed, even if the cursor has already moved
+ // while pointer-down crosses IPC. This local offset never positions a window.
+ const local=message?.local,point=Number.isFinite(local?.x)&&Number.isFinite(local?.y)&&local.x>=0&&local.x<=1&&local.y>=0&&local.y<=1?{x:bounds.x+local.x*bounds.width,y:bounds.y+local.y*bounds.height}:cursor;
+ const button=message?.button??0;if(button!==0&&button!==2)return;
+ petMotion.bounds={...bounds};const begin=petMotion.begin(point,{button});
+ const wakeOnly=activityClock.wake('touch');
+ drag={gestureId,button,origin:point,moved:false,characterId:petState.characterId??effectivePetCharacter(),personaId:game.context?.().personaId,eventId:'touch:'+process.pid+':'+Date.now()+':'+begin.serial,caught:begin.caught,wakeOnly};
+ nativeButtons=button===2?2:1;buttonObserver?.start(gestureId);ignoringMouse=false;pet.setIgnoreMouseEvents(false);moveDrag(cursor);publishInteraction(true);audit({type:'pet-pointer-down',gestureId,button,point,cursor,bounds});
+});
+ipcMain.on('pet:drag-move',(event,message)=>{if(event.sender===pet?.webContents&&gestureMatches(message))moveDrag(gesturePoint(message));});
+async function finishPetGesture(message){
+ if(!gestureMatches(message))return {ignored:true};
+ if(message?.button!==undefined&&message.button!==(petMotion.releaseButton??drag.button))return {ignored:true};
+ // A very quick drag can finish between timer ticks. Observe its final OS
+ // position for placement/tap classification, without adding a velocity sample.
+ if(arg('cursor')!=='manual')petMotion.move(screen.getCursorScreenPoint(),{sample:false});
+ const captured=drag,result=petMotion.release(null,{button:message?.button??petMotion.releaseButton??drag.button});if(result.ignored)return result;drag=null;buttonObserver?.stop();petEvent({kind:'gesture-reset',gestureId:captured.gestureId,reason:'released',buttons:nativeButtons});petEvent({kind:'drag',active:false});publishInteraction(true);setGestureMode(gestureMode);
+ if(result.touch){activityClock.activity('touch');const id=touchExpressions.next(captured.characterId);petEvent({kind:'feedback',value:{id,source:'touch',cycles:1,eventId:captured.eventId,characterId:captured.characterId}});const awarded=await game.touch?.({characterId:captured.characterId,personaId:captured.personaId,eventId:captured.eventId});audit({type:'pet-touch',characterId:captured.characterId,personaId:captured.personaId,expression:id,awarded:awarded?.awarded??false,reason:awarded?.reason});}
+ if(captured.wakeOnly){result.wakeOnly=true;result.context=false;}
+ else if(result.context)petContextMenu();
+ settings.petBounds=petBounds(pet.getContentBounds(),settings.preferences.petScale);audit({type:'pet-pointer-up',gestureId:captured.gestureId,...result,bounds:settings.petBounds});await saveSettings();return result;
+}
+ipcMain.handle('pet:drag-end',(event,message)=>event.sender===pet?.webContents?finishPetGesture(message):{ignored:true});
+function observePetButtons(value){
+ if(!gestureMatches(value))return;const previous=nativeButtons;nativeButtons=value.buttons;
+ if(value.escape){cancelGesture('escape-native');return;}
+ if(drag.button===2&&(value.buttons&1)&&!(previous&1)){moveDrag(screen.getCursorScreenPoint());petMotion.right(screen.getCursorScreenPoint());publishInteraction(true);}
+ const releaseButton=petMotion.releaseButton??drag.button;
+ if(!(value.buttons&(releaseButton===2?2:1)))void finishPetGesture({gestureId:value.gestureId,button:releaseButton}).catch(error=>{audit({type:'pet-input-error',message:error.message});cancelGesture('release-error');});
+}
+ipcMain.handle('pet:gesture-cancel',(event,message)=>{if(event.sender!==pet?.webContents||!gestureMatches(message))return false;cancelGesture(message?.reason??'renderer-cancel');return true;});
+ipcMain.handle('pet:context',(event,message)=>{
+ if(event.sender!==pet?.webContents||!pet)return false;
+ if(drag){if(!gestureMatches(message)||drag.button!==2||message?.button!==0)return {ignored:true};moveDrag(gesturePoint(message));const charging=petMotion?.right(gesturePoint(message));publishInteraction(true);return {consumed:true,charging:petMotion?.mode==='charging',changed:charging};}
+ if(message?.gestureId)return {ignored:true};
+ petContextMenu();return {menu:true};
+});
+ipcMain.on('pet:animation-ready',(event,value)=>{
+ if(event.sender!==pet?.webContents||value?.characterId!==petState.characterId)return;
+ const clock=value.scope==='motion'?petMotion:activityClock;if(!clock||value.epoch!==clock.animationEpoch)return;
+ if(value.failed){audit({type:'interaction-media-error',id:value.id,characterId:value.characterId});if(value.scope==='motion')petMotion.stop();else activityClock.resume();}
+ else clock.markReady(value.epoch);
+ publishInteraction(true);
+});
 
 const control=createLocalControlServer({
   onSocketError:error=>audit({type:'control-client-error',code:error.code || 'UNKNOWN'}),
   onRequest:async request=>{
       let result;
-      if(request.command==='snapshot')result={processId:process.pid,singleInstance:app.hasSingleInstanceLock(),snapshot,settings:settingsView(),petAction:petState,chat:{enabled:provider?.enabled || false,model:provider?.defaultModel},petBounds:pet?.getBounds(),petContentBounds:pet?.getContentBounds(),petVisible:pet?.isVisible(),petAssetsReady,petAlwaysOnTop:pet?.isAlwaysOnTop(),petInteraction:{gestureMode,lastPetHit,ignoringMouse,dragging:!!drag},displays:screen.getAllDisplays().map(d=>({workArea:d.workArea,scaleFactor:d.scaleFactor})),build,dataRoot};
+      if(request.command==='snapshot')result={processId:process.pid,singleInstance:app.hasSingleInstanceLock(),snapshot,settings:settingsView(),petAction:petState,chat:{enabled:provider?.enabled || false,model:provider?.defaultModel},petBounds:pet?.getBounds(),petContentBounds:pet?.getContentBounds(),petVisible:pet?.isVisible(),petAssetsReady,petAlwaysOnTop:pet?.isAlwaysOnTop(),petInteraction:{gestureMode,lastPetHit,ignoringMouse,dragging:!!drag,...petInteraction()},displays:screen.getAllDisplays().map(d=>({workArea:d.workArea,scaleFactor:d.scaleFactor})),build,dataRoot};
       else if(request.command==='installation-status')result={version:appVersion,build,dataRoot,processId:process.pid,ready:!!game&&petAssetsReady,busy:!!(gameRequests||provider?.status().busy||cg?.status().busy),resources:resources.status()};
       else if(request.command==='installation-quit'){if(request.expectedBuild!==build)result={ok:false,error:'Different installation'};else if(gameRequests||provider?.status().busy||cg?.status().busy)result={ok:false,busy:true};else{result={ok:true};setTimeout(()=>{void shutdown();},100);}}
       else if(request.command==='resources-status')result=resources.status(true);
+      else if(request.command==='validation-window'&&arg('validation')==='1'){
+        if(!panel||panel.isDestroyed())openPanel('galgame',false);
+        if(![900,1180,1600,1920].includes(request.width))throw Error('Validation width outside test matrix');
+        panel.setBounds({width:request.width,height:Math.max(650,Math.min(1100,Number(request.height)||820))});result={bounds:panel.getBounds(),scaleFactor:screen.getDisplayMatching(panel.getBounds()).scaleFactor};
+      }
+      else if(request.command==='validation-system'&&arg('validation')==='1'){
+        if(['suspend','resume'].includes(request.event))powerMonitor.emit(request.event);
+        else if(['display-removed','display-metrics-changed'].includes(request.event))screen.emit(request.event,{},screen.getPrimaryDisplay(),['workArea','scaleFactor']);
+        else throw Error('Invalid validation system event');
+        result={simulated:true,event:request.event,interaction:petInteraction(),bounds:pet?.getContentBounds()};
+      }
+      else if(request.command==='validation-position'&&arg('validation')==='1'){
+        if(!Number.isFinite(request.x)||!Number.isFinite(request.y)||Math.abs(request.x)>20000||Math.abs(request.y)>20000)throw Error('Invalid validation position');
+        cancelGesture('validation-position');positionPet(pet,{x:request.x,y:request.y},settings.preferences.petScale);
+        result={bounds:pet.getContentBounds()};
+      }
+      else if(request.command==='validation-metrics'&&arg('validation')==='1'){
+        result={processes:app.getAppMetrics(),gpuFeatures:app.getGPUFeatureStatus(),displays:screen.getAllDisplays().map(d=>({id:d.id,bounds:d.bounds,workArea:d.workArea,scaleFactor:d.scaleFactor})),trajectoryVisible:!!trajectoryWindow&&!trajectoryWindow.isDestroyed(),rendererErrors:[...rendererErrors]};
+      }
+      else if(request.command==='validation-input'&&arg('validation')==='1'){
+        const target=request.target==='panel'?panel:pet;if(!target||target.isDestroyed())throw Error('Validation window not ready');
+        if(!['mouseMove','mouseDown','mouseUp','keyDown','keyUp'].includes(request.input?.type))throw Error('Invalid validation input');target.webContents.sendInputEvent(request.input);result={ok:true};
+      }
+      else if(request.command==='validation-activity'&&arg('validation')==='1'){
+        if(request.kind==='reset')activityClock.resume();
+        else if(request.kind==='age'){if(![299000,300000,301000].includes(request.ms))throw Error('Invalid timing boundary');activityClock.lastActivity=performance.now()-request.ms;activityClock.awakeUntil=activityClock.lastActivity+300000;}
+        else if(request.kind==='token')activityClock.activity('token');
+        else throw Error('Invalid validation activity');result=publishInteraction(true);
+      }
+      else if(request.command==='validation-feedback'&&arg('validation')==='1'){
+        if(!['completed','failed'].includes(request.kind))throw Error('Invalid validation feedback');
+        const completed=request.kind==='completed';feedback({eventId:'validation:'+String(request.id??Date.now()),id:completed?'jump':'fail',source:request.kind,provider:'validation',text:completed?'本地验证：任务完成':'本地验证：任务失败',cycles:completed?2:1});result={ok:true};
+      }
       else if(request.command==='pet-play')result=playPet(request.action);
       else if(request.command==='pet-auto')result=petAuto();
       else if(request.command==='settings-get')result=settingsView();
@@ -281,13 +401,14 @@ control.on('error',error=>{
 });
 
 async function shutdown() {
-  if(quitting)return;quitting=true;quotas?.close();provider?.close();await cg?.close();game?.close();
+  if(quitting)return;quitting=true;buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();provider?.close();await cg?.close();game?.close();
   if(worker){worker.postMessage({type:'close'});await Promise.race([new Promise(r=>{worker.once('exit',r);worker.on('message',m=>{if(m.type==='closed')r();});}),new Promise(r=>setTimeout(r,5000))]);}
   control.close();app.exit(0);
 }
 app.on('before-quit',event=>{if(!quitting){event.preventDefault();void shutdown();}});
 app.on('window-all-closed',()=>{});
 app.whenReady().then(async()=>{
+  buttonObserver=createPetButtonObserver({path:join(build,'pet-buttons.exe'),enabled:process.platform==='win32'&&arg('cursor')!=='manual',onState:observePetButtons,onError:error=>{audit({type:'pet-input-helper-error',message:error.message});if(drag)cancelGesture('button-observer-error');}});
   settings=await readJson(settingsStore,{});
   const netSession=session.fromPartition('whale-memory');
   netSession.webRequest.onBeforeRequest({urls:['http://*/*','https://*/*']},(details,callback)=>{audit({type:'renderer-external-blocked',scheme:details.url.split(':')[0]});callback({cancel:true});});
@@ -297,13 +418,13 @@ app.whenReady().then(async()=>{
   const model=config.match(/^model\s*=\s*"([^"]+)"/m)?.[1] || 'gpt-6.1-sol';
   const binary=()=>resolveCodexBinary({root,explicit:arg('codex')});
   const codex=new CodexProvider({binary,defaultModel:model,dataRoot,onUsage:usage=>worker?.postMessage({type:'companion-usage',...usage}),audit});
-  provider=new ModelRouter({codex,dataRoot,crypto:safeStorage,legacy:existsSync(settingsStore.target+'.snapshots'),onChange:()=>broadcastSettings(),onUsage:usage=>{appendFileSync(join(dataRoot,'api-usage.jsonl'),JSON.stringify(usage)+'\n');worker?.postMessage({type:'refresh'});},audit});
+  provider=new ModelRouter({codex,dataRoot,crypto:safeStorage,legacy:existsSync(settingsStore.target+'.snapshots'),onActivity:internalActivity,onChange:()=>broadcastSettings(),onUsage:usage=>{appendFileSync(join(dataRoot,'api-usage.jsonl'),JSON.stringify(usage)+'\n');worker?.postMessage({type:'refresh'});},audit});
   await provider.ready;
   quotas=new QuotaService({dataRoot,home,crypto:safeStorage,binary,onChange:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('quotas:update',value);}});await quotas.ready;quotas.start();
   const cgUsage=usage=>{appendFileSync(join(dataRoot,'cg-usage.jsonl'),JSON.stringify({timestamp:new Date().toISOString(),...usage})+'\n');worker?.postMessage({type:'refresh'});};
-  cg=new CgService({resourceCheck:ids=>resources.require(ids),themePlanner:new CgThemePlanner(provider,()=>settings.preferences?.language|| (app.getLocale().startsWith('zh')?'zh-CN':'en')),codex:new CodexImageProvider({binary,defaultModel:model,dataRoot,onUsage:cgUsage,audit}),dataRoot,crypto:safeStorage,imageCodec:createCgCodec(nativeImage),onUsage:cgUsage,onChange:()=>{broadcastSettings();if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',{});},audit,referenceResolver:createCharacterReferenceResolver(build,ref=>cg.readAsset(ref))});
+  cg=new CgService({resourceCheck:ids=>resources.require(ids.filter(validPetCharacter)),themePlanner:new CgThemePlanner(provider,()=>settings.preferences?.language|| (app.getLocale().startsWith('zh')?'zh-CN':'en')),codex:new CodexImageProvider({binary,defaultModel:model,dataRoot,onUsage:cgUsage,audit}),dataRoot,crypto:safeStorage,imageCodec:createCgCodec(nativeImage),onUsage:cgUsage,onActivity:internalActivity,onChange:()=>{broadcastSettings();if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',{});},audit,referenceResolver:createCharacterReferenceResolver(build,ref=>cg.readAsset(ref))});
   await cg.ready;
-  game=await createGalgame({dataRoot,provider,model,cg,resources,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value);}});
+  game=await createGalgame({dataRoot,provider,model,cg,resources,onActivity:internalActivity,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value);}});
   cg.start();
   const legacyGameSettings=await game.action('settings-get');
   const firstPreferences=!settings.preferences||!Object.keys(settings.preferences).length;
@@ -321,6 +442,8 @@ app.whenReady().then(async()=>{
   brandWindow(pet);
   lockPageZoom(pet,error=>audit({type:'zoom-policy-error',message:error.message}));
   positionPet(pet,bounds,settings.preferences.petScale);pet.on('will-resize',event=>event.preventDefault());
+  petMotion=new PetMotion({bounds,requireReady:true,displays:()=>screen.getAllDisplays(),onPosition:value=>{if(pet&&!pet.isDestroyed())positionPet(pet,value,settings.preferences.petScale);},onState:()=>{publishInteraction(true);}});
+  configurePetInteractions();activityClock.resume();
   pet.setAlwaysOnTop(settings.preferences.alwaysOnTop,'floating');setGestureMode(false);
   pet.loadFile(join(build,'pet.html'),{...previewQuery,query:{...previewQuery.query,petCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter))}});pet.once('ready-to-show',async()=>{
     if(PET_ACTIONS.some(action=>action.sourceFrameCount))try{await pet.webContents.executeJavaScript('window.petCharacterReady.then(()=>window.frameSequenceInspection.renderer.ready).then(()=>true)');}catch(error){rendererErrors.push(error.message);audit({type:'pet-assets-error',message:error.message});return;}
@@ -329,16 +452,19 @@ app.whenReady().then(async()=>{
   pet.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   tray=new Tray(appIcon.resize({width:32,height:32}));tray.setToolTip(arg('rig')==='working'?APP_NAME+' · 工作动作小样（独立预览）':APP_NAME+' · 本地 AI 用量监控与桌面陪伴');
   updateTray();tray.on('double-click',()=>openPanel());
-  const recoverPet=()=>positionPet(pet,clamp(petBounds(pet.getContentBounds(),settings.preferences.petScale)),settings.preferences.petScale);
+  const recoverPet=()=>{if(!pet||pet.isDestroyed())return;cancelGesture('system-recovery');petMotion?.recover(clamp(petBounds(pet.getContentBounds(),settings.preferences.petScale)));publishInteraction(true);};
+  pet.on('hide',()=>cancelGesture('window-hidden'));pet.webContents.on('render-process-gone',()=>cancelGesture('renderer-lost'));
   screen.on('display-removed',recoverPet);screen.on('display-metrics-changed',recoverPet);
+  powerMonitor.on('suspend',recoverPet);powerMonitor.on('resume',()=>{recoverPet();activityClock.resume();publishInteraction(true);});
   let lastCursorPoint=null;
   setInterval(()=>{
+    if(pet&&!pet.isDestroyed()&&pet.isVisible()){const before=petMotion.mode;petMotion.tick();if(before!==petMotion.mode&&petMotion.mode==='rest'){settings.petBounds=petBounds(pet.getContentBounds(),settings.preferences.petScale);void saveSettings();}publishInteraction();}
     if(!pet || pet.isDestroyed() || !pet.isVisible()){lastCursorPoint=null;return;}
     // Private validation can drive the same input handlers without live OS cursor interference.
     if(arg('cursor')==='manual')return;
     const cursor=screen.getCursorScreenPoint();
     if(drag)moveDrag(cursor);
-    const b=pet.getContentBounds(),point={x:cursor.x-b.x,y:cursor.y-b.y,dragging:!!drag};
+    const b=pet.getContentBounds(),point={x:cursor.x-b.x,y:cursor.y-b.y,dragging:!!drag?.moved};
     if(!lastCursorPoint||point.x!==lastCursorPoint.x||point.y!==lastCursorPoint.y||point.dragging!==lastCursorPoint.dragging){lastCursorPoint=point;pet.webContents.send('pet:cursor',point);}
   },16);
   logRoots=arg('roots')?JSON.parse(readFileSync(arg('roots'),'utf8')):[{provider:'codex',path:join(home,'.codex/sessions')},{provider:'codex',path:join(home,'.codex/archived_sessions')},{provider:'claude',path:join(home,'.claude/projects')}];
@@ -348,5 +474,5 @@ app.whenReady().then(async()=>{
   worker.on('message',message=>{if(message.type==='task-feedback'&&!quitting)feedback(message.value);});
   worker.on('error',error=>audit({type:'monitor-worker-error',message:error.stack}));
   control.listen(pipe);audit({type:'app-start',mode:'offline',version:appVersion,build});
-  if(reopenRequested||arg('open')==='overview')openPanel('overview',false);
+  if(reopenRequested||['overview','galgame','settings','actions'].includes(arg('open')))openPanel(reopenRequested?'overview':arg('open'),false);
 }).catch(error=>{audit({type:'startup-error',message:error.stack});console.error(error);app.exit(1);});

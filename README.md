@@ -2,7 +2,10 @@
 
 **简体中文** · [English](README.en.md)
 
-**当前版本：[v1.8.0](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0)** · 提供 30fps 轻量版和 60fps 版，两版功能相同，都包含 11 位角色、198 套独立动作和 80 张表情。桌宠默认大小为 125%，已保存的自定义大小不受影响。见 [使用说明](docs/CHARACTER-PETS.md) 与 [本次更新](docs/VALIDATION-1.8.0.md)。
+<!-- ai-buddy-source-version: 1.9.0 -->
+**正式代码版本：1.9.0（已验收，尚未发布）** · 本版包含群聊分区舞台、角色独立 API 与 effort、桌宠互动，以及长期记忆、人格成长和完整人生存档。[1.9.0 更新与验收](docs/VALIDATION-1.9.0.md)。下方安装器和下载仍为已发布的 1.8.0。
+
+**当前已发布版本：[v1.8.0](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0)** · 提供 30fps 轻量版和 60fps 版，两版功能相同，都包含 11 位角色、198 套独立动作和 80 张表情。桌宠默认大小为 125%，已保存的自定义大小不受影响。见 [使用说明](docs/CHARACTER-PETS.md) 与 [本次更新](docs/VALIDATION-1.8.0.md)。
 
 ## 在线安装（推荐）
 

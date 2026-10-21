@@ -26,7 +26,7 @@ function App(){
  const [settings,setSettings]=useState(null),[settingsError,setSettingsError]=useState('');
  setLocale(settings?.preferences.language||'zh-CN');
  useEffect(()=>{const title=localizedTitle();document.title=title;const node=document.querySelector('.window-titlebar span');if(node)node.textContent=title;},[settings?.preferences.language]);
- const [character,setCharacter]=useState('deepseek');
+ const [character,setCharacter]=useState('deepseek'),[gameMode,setGameMode]=useState('private');
  useEffect(()=>{applyAppearance(settings?.preferences,character);},[settings?.preferences.theme,settings?.preferences.themeMode,character]);
  const [apiTab,setApiTab]=useState('model');
  const [attributionSource,setAttributionSource]=useState(null);
@@ -43,7 +43,7 @@ function App(){
  else if(page==='tokens')content=h(TokenSettings,{sourceId:attributionSource,timeZone:settings?.preferences.statisticsTimeZone});
  else if(page==='api')content=h(ApiSettings,{view:settings,tab:apiTab,onTab:setApiTab});
  else if(page==='actions')content=h(ActionGallery,{settings});
- else content=h('div',{className:'game-shell'},h('div',{className:'game-mode'},h('span',null,chat.enabled?t("联网聊天已开启 · ")+t(chat.name)+' · '+chat.model:t("离线模式 · ")+(t(chat.name)||t("尚未选择模型"))),h('button',{className:chat.enabled?'':'accent',onClick:toggleChat},chat.enabled?t("关闭联网聊天"):t("开启联网聊天")),h('button',{onClick:()=>manage('model')},t("配置模型"))),settingsError&&h('p',{className:'settings-error',role:'alert'},settingsError),h('style',null,GalgameCSS),h(GalgameApp,{variant:'tab',useSessions:null,hideSpriteOnCg:settings?.preferences.hideSpriteOnCg,onCharacter:setCharacter}));
+ else content=h('div',{className:'game-shell'},h('div',{className:'game-mode'},h('span',null,gameMode==='group'?(chat.enabled?t("联网群聊已开启 · 按成员 API"):t("群聊离线 · 开启联网后使用成员 API")):chat.enabled?t("联网聊天已开启 · ")+t(chat.name)+' · '+chat.model:t("离线模式 · ")+(t(chat.name)||t("尚未选择模型"))),h('button',{className:chat.enabled?'':'accent',onClick:toggleChat},chat.enabled?t("关闭联网聊天"):t("开启联网聊天")),h('button',{onClick:()=>manage('model')},t(gameMode==='group'?"管理聊天连接":"配置模型"))),settingsError&&h('p',{className:'settings-error',role:'alert'},settingsError),h('style',null,GalgameCSS),h(GalgameApp,{variant:'tab',useSessions:null,hideSpriteOnCg:settings?.preferences.hideSpriteOnCg,onCharacter:setCharacter,onDisplayMode:setGameMode}));
  const actionsPage=page==='actions',galgamePage=page==='galgame',hideDiagnostics=actionsPage||galgamePage||['overview','projects','history'].includes(page);
  return h('div',{className:'layout'+(actionsPage?' actions-page':'')+(galgamePage?' galgame-page':'')},
    h('aside',null,h('div',{className:'brand'},h('div',{className:'brand-mark'},h('img',{src:'./assets/branding/app.png',alt:'',width:35,height:35})),h('div',null,h('strong',null,settings?.preferences.language==='en'?'AI Buddy':'AI 酱'),h('small',null,'AI Buddy'))),

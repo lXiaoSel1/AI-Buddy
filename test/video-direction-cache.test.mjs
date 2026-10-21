@@ -69,6 +69,15 @@ test('A video action change seeks once instead of chasing the advancing clock',a
  assert.equal(r.draw(target,{actionId:'idle',elapsedMs:1040}),true);assert.equal(r.seekCount,1);assert.equal(r.displayedSample(target).elapsedMs,1040);
  r.release(target);await pause(20);
 });
+test('one-shot sleep/wake/recovery clips hold the last pose instead of automatically replaying',async t=>{
+ const {renderer:r,target}=fixture(t);r.sequences.idle.loop=false;await r.ready;
+ r.draw(target,{actionId:'idle',elapsedMs:0});await pause(15);r.draw(target,{actionId:'idle',elapsedMs:100});
+ const slot=r.targets.get(target).slot;assert.equal(slot.video.loop,false);assert.equal(slot.video.paused,false);
+ slot.video.currentTime=(r.sequences.idle.cycleMs-30)/1000;
+ r.draw(target,{actionId:'idle',elapsedMs:r.sequences.idle.cycleMs-30});assert.equal(slot.video.paused,true);
+ r.draw(target,{actionId:'idle',elapsedMs:r.sequences.idle.cycleMs*3});assert.equal(slot.video.paused,true);
+ r.dispose();await pause(20);
+});
 
 test('A missing direction shows the nearest decoded one along the turn instead of freezing',async t=>{
  const {renderer:r,target,sample}=fixture(t,{warmBatch:0});await r.ready;

@@ -10,8 +10,8 @@ import {fitReferences,referenceInstructions} from './cg-reference-registry.mjs';
 import {createSnapshotStorage,readJson} from './storage.mjs';
 const pending=job=>['queued','planning','generating'].includes(job.status),sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 export class CgService extends ModelRouter{
- constructor({codex,dataRoot,crypto,onChange=()=>{},onUsage=()=>{},audit=()=>{},fetchImpl,imageCodec,themePlanner=null,resourceCheck=()=>{},referenceResolver=async()=>[],pollInterval=10000,timeoutMs=600000}){
-  super({codex,dataRoot,crypto,onChange,onUsage,audit,fetchImpl,legacy:false,storeName:'cg-connections.json',presets:CG_PRESETS,protocols:CG_PROTOCOLS,timeoutMs});
+ constructor({codex,dataRoot,crypto,onChange=()=>{},onUsage=()=>{},onActivity=()=>{},audit=()=>{},fetchImpl,imageCodec,themePlanner=null,resourceCheck=()=>{},referenceResolver=async()=>[],pollInterval=10000,timeoutMs=600000}){
+  super({codex,dataRoot,crypto,onChange,onUsage,onActivity,audit,fetchImpl,legacy:false,storeName:'cg-connections.json',presets:CG_PRESETS,protocols:CG_PROTOCOLS,timeoutMs});
   Object.assign(this,{imageCodec,referenceResolver,themePlanner,resourceCheck});this.jobs=[];this.tombstones={};this.listeners=new Set();this.sentJobs=new Map();this.jobTail=Promise.resolve();this.jobStore=createSnapshotStorage(join(dataRoot,'cg-jobs.json'));this.imageTransport=new CgTransport({fetchImpl,onUsage,pollInterval});this.started=false;this.closed=false;
   const configurationReady=this.ready;
   this.ready=Promise.all([configurationReady,readJson(this.jobStore,{version:1,jobs:[]})]).then(async([,state])=>{
@@ -23,7 +23,7 @@ export class CgService extends ModelRouter{
  publicProfile(profile){return {...super.publicProfile(profile),options:profile.options??cgOptions(),references:profile.options?.references!==false&&!profile.protocol.startsWith('wan-t2i')};}
  validateDraft(draft,previous){const profile=super.validateDraft(draft,previous);profile.protocol=cgProtocol(profile);const preset=this.presets.find(row=>row.kind===profile.kind);profile.options=cgOptions({...previous?.options,references:preset.references,...draft.options});if(profile.protocol.startsWith('wan-t2i'))profile.options.references=false;return profile;}
  status(){return {...super.status(),busy:!!this.jobs?.some(pending)||this.activeTurns>0,autoEnabled:this.enabled};}
- publicJob(job){return {id:job.id,status:job.status,kind:job.kind,sourceEventId:job.sourceEventId,label:job.label,at:job.at,provider:job.profile.kind,model:job.profile.model,connectionName:job.profile.name,error:job.error??null,errorDetails:job.errorDetails??null,assetRef:job.assetRef??null,thumbnailRef:job.thumbnailRef??null,width:job.width,height:job.height,sha256:job.sha256,retryOf:job.retryOf??null,prompt:job.prompt??null,theme:job.theme??null,referenceMode:job.referenceMode??null,referenceNotice:job.referenceMode==='text-only'?'未使用人物参考':job.environmentReferenceOmitted?'已保留全部人物参考；环境仅使用文字线索':null,characters:job.characters??null,scene:job.scene??null,deletedAt:job.deletedAt??null};}
+ publicJob(job){return {id:job.id,status:job.status,submittedAt:job.submittedAt??null,completedAt:job.completedAt??null,kind:job.kind,sourceEventId:job.sourceEventId,label:job.label,at:job.at,provider:job.profile.kind,model:job.profile.model,connectionName:job.profile.name,error:job.error??null,errorDetails:job.errorDetails??null,assetRef:job.assetRef??null,thumbnailRef:job.thumbnailRef??null,width:job.width,height:job.height,sha256:job.sha256,retryOf:job.retryOf??null,prompt:job.prompt??null,theme:job.theme??null,referenceMode:job.referenceMode??null,referenceNotice:job.referenceMode==='text-only'?'未使用人物参考':job.environmentReferenceOmitted?'已保留全部人物参考；环境仅使用文字线索':null,characters:job.characters??null,scene:job.scene??null,deletedAt:job.deletedAt??null};}
  view(){return {...super.view(),jobs:(this.jobs??[]).slice(-30).reverse().map(job=>this.publicJob(job))};}
  available(){try{this.materialize(this.selected());return true;}catch{return false;}}
  unlocked(id){if(this.activeTurns||(this.jobs??[]).some(job=>pending(job)&&(id===undefined||job.profile.id===id)))throw Error('请等待当前 CG 队列完成后再修改或切换连接');}
@@ -41,7 +41,8 @@ export class CgService extends ModelRouter{
  });}
  async restoreJob(id){await this.ready;return this.jobsMutate(()=>{delete this.tombstones[id];const job=this.job(id);if(job){job.deletedAt=null;return this.publicJob(job);}});}
  job(id){return this.jobs.find(job=>job.id===id);}
- async enqueue({id=randomUUID(),sourceEventId,kind='level',label='',prompt,characters=[],scene=null,automatic=false,retryOf=null,draft=null,themeBrief=null,theme=null}){
+ async validateReferences(characters,scene){await this.ready;this.resourceCheck(characters.map(c=>c.id));const profile=structuredClone(this.selected());this.materialize(profile);const refs=profile.options?.references===false?[]:await this.referenceResolver(characters,scene);return fitReferences(profile,refs);}
+ async enqueue({id=randomUUID(),sourceEventId,kind='level',label='',prompt,characters=[],scene=null,automatic=false,retryOf=null,draft=null,themeBrief=null,theme=null,themeConnection=undefined}){
   await this.ready;if(automatic&&!this.enabled)return {skipped:true};
   const prior=this.jobs.find(job=>job.sourceEventId===sourceEventId);if(prior)return this.publicJob(prior);
   this.resourceCheck(characters.map(c=>c.id));
@@ -53,7 +54,7 @@ export class CgService extends ModelRouter{
   const storedRefs=[];for(let index=0;index<references.length;index++){
    const ref=references[index],bytes=ref.buffer??readFileSync(ref.path);const normalized=this.imageCodec(bytes,{reference:true});const path=join(directory,'reference-'+index+'.png');writeFileSync(path,normalized.png,{flag:'wx'});storedRefs.push({path,mime:'image/png',sha256:sha(normalized.png),sourceSha256:ref.sourceSha256||sha(bytes),role:ref.role||'character',characterId:ref.characterId||characters[index]?.id||null,name:ref.name||characters[index]?.name||null,resourceVersion:ref.resourceVersion||null,ignoreCharacters:ref.role==='environment'});
   }
-  const job={id,sourceEventId,kind,label,prompt:old?.prompt||prompt,theme:old?.theme||theme,themeBrief:old?.themeBrief||themeBrief,themeConnection:this.themePlanner?.capture()??null,automatic,retryOf,profile,references:storedRefs,directory,at:Date.now(),status:'queued',...(old?.remoteTask&&old.profile.id===profile.id?{remoteTask:old.remoteTask,profile:structuredClone(old.profile)}:{})};
+  const job={id,sourceEventId,kind,label,prompt:old?.prompt||prompt,theme:old?.theme||theme,themeBrief:old?.themeBrief||themeBrief,themeConnection:old?.themeConnection??themeConnection??this.themePlanner?.capture()??null,automatic,retryOf,profile,references:storedRefs,directory,at:Date.now(),status:'queued',...(old?.remoteTask&&old.profile.id===profile.id?{remoteTask:old.remoteTask,profile:structuredClone(old.profile)}:{})};
   job.characters=old?.characters??characters.map(({dataUrl,...character})=>structuredClone(character));
   job.basePrompt=old?.basePrompt??old?.prompt??prompt;job.prompt=job.basePrompt;
   job.scene=old?.scene??(scene?structuredClone(Object.fromEntries(Object.entries(scene).filter(([key])=>key!=='dataUrl'))):null);
@@ -65,6 +66,7 @@ export class CgService extends ModelRouter{
  async runQueue(){
   while(!this.closed){const job=this.jobs.find(value=>value.status==='queued');if(!job)break;
    if(!await this.jobsMutate(()=>{if(job.status!=='queued'||job.deletedAt)return false;job.status=job.themeBrief&&!job.prompt?'planning':'generating';job.error=null;return true;}))continue;const controller=new AbortController();this.currentController=controller;this.currentJob=job;const timer=setTimeout(()=>controller.abort(),this.timeoutMs);
+   this.onActivity({id:'cg:'+job.id,active:true,kind:'cg'});
    try{
     if(job.themeBrief&&!job.prompt){
      const history=[...this.jobs.filter(x=>x.id!==job.id&&x.themeBrief?.charId===job.themeBrief.charId&&x.theme).sort((a,b)=>b.at-a.at).map(x=>x.theme),...(job.themeBrief.history??[])].slice(0,6);
@@ -81,10 +83,10 @@ export class CgService extends ModelRouter{
     writeFileSync(raw,result.buffer,{flag:'wx'});writeFileSync(path,decoded.png,{flag:'wx'});writeFileSync(thumb,decoded.thumbnail,{flag:'wx'});
     await this.jobsMutate(()=>Object.assign(job,{status:'ready',error:null,assetRef:relative(this.dataRoot,path).replaceAll('\\','/'),thumbnailRef:relative(this.dataRoot,thumb).replaceAll('\\','/'),originalRef:relative(this.dataRoot,raw).replaceAll('\\','/'),width:decoded.width,height:decoded.height,sha256:sha(decoded.png),revisedPrompt:result.revisedPrompt??null,completedAt:Date.now()}));
    }catch(error){await this.jobsMutate(()=>{job.status=job.status==='cancelled'?'cancelled':this.closed&&job.remoteTask?'queued':'failed';job.error=error.message?.slice(0,1800)??'CG 生成失败，请重试';job.errorDetails=error.details??null;});}
-   finally{clearTimeout(timer);this.currentController=null;this.currentJob=null;this.codex.close();}
+   finally{clearTimeout(timer);this.currentController=null;this.currentJob=null;this.codex.close();this.onActivity({id:'cg:'+job.id,active:false,kind:'cg'});}
   }
  }
- readAsset(ref){if(typeof ref!=='string'||!ref.startsWith('cg-assets/'))throw Error('CG 文件引用无效');const root=realpathSync(join(this.dataRoot,'cg-assets')),path=realpathSync(resolve(this.dataRoot,ref)),rel=relative(root,path);if(rel.startsWith('..')||isAbsolute(rel))throw Error('CG 文件引用无效');return 'data:image/png;base64,'+readFileSync(path).toString('base64');}
+ readAsset(ref){if(typeof ref!=='string'||!ref.startsWith('cg-assets/'))throw Error('CG 文件引用无效');const root=realpathSync(join(this.dataRoot,'cg-assets')),path=realpathSync(resolve(this.dataRoot,ref)),rel=relative(root,path);if(rel.startsWith('..')||isAbsolute(rel))throw Error('CG 文件引用无效');const bytes=readFileSync(path),mime=bytes[0]===255&&bytes[1]===216?'jpeg':bytes.toString('ascii',0,4)==='RIFF'&&bytes.toString('ascii',8,12)==='WEBP'?'webp':'png';return 'data:image/'+mime+';base64,'+bytes.toString('base64');}
  async fetchModels(draft){await this.ready;if(this.status().busy)throw Error('请等待 CG 队列完成');const profile=this.materialize({...this.draftProfile(draft),model:draft.model||'model-list'});this.activeTurns++;this.onChange(this.view());const request=this.requestController(null,15000);try{return profile.kind==='codex'?await this.codex.models():await this.imageTransport.listModels(profile,request.controller.signal);}finally{request.dispose();this.activeTurns--;this.codex.close();this.onChange(this.view());this.pump();}}
  async test(draft){await this.ready;if(this.status().busy)throw Error('请等待 CG 队列完成');const profile=this.materialize({...this.draftProfile(draft),model:draft.model||'connection-check'});this.activeTurns++;this.onChange(this.view());const request=this.requestController(null,15000);try{return profile.kind==='codex'?await this.codex.check():await this.imageTransport.check(profile,request.controller.signal);}finally{request.dispose();this.activeTurns--;this.codex.close();this.onChange(this.view());this.pump();}}
  async testImage(draft){if(this.status().busy)throw Error('请等待 CG 队列完成');return this.enqueue({draft,kind:'test',sourceEventId:'test:'+randomUUID(),label:'连接测试图',prompt:'精美 Galgame CG 插画。参考图片中的鲸鱼娘保持人物外观，在温暖的海底女仆工坊中微笑挥手，横向16:9，允许文字，保留原有服饰标识。',characters:[{id:'deepseek'}]});}

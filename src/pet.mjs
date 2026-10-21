@@ -4,7 +4,8 @@ import {motionRenderer,prepareCharacterRenderer,adoptCharacterRenderer} from './
 import {currentPetCharacter,CHARACTER_SEQUENCES} from './frame-sequence.mjs';
 import {resolvePetCharacter} from './pet-characters.mjs';
 import {PetCharacterSwitch} from './pet-character-switch.mjs';
-import {petPresentation} from './pet-presentation.mjs';
+import {interactionPresentation,gloveCursor} from './pet-interaction-view.mjs';
+import {petPresentation,petActionPresentation} from './pet-presentation.mjs';
 import {APP_NAME} from './app-brand.mjs';
 import {applyAppearance} from './appearance.mjs';
 import {t} from './i18n.mjs';
@@ -15,7 +16,9 @@ sprite.style.backgroundImage=`url('${PET_ATLAS.src}')`;sprite.style.backgroundSi
 const controller=new PetActionController({ready:(id,elapsed)=>motionRenderer.isReadyFor?.(id,elapsed,{reducedMotion:reducedMotion.matches})??true});
 controller.holdFeedback=true;
 let presentedBubble=null;
-let pixels=null,mode='idle',row=0,col=0,down=false,lastOpaque=null,bubbleTimer,frameTimer=null,dialogActive=false,lastCursor=null,lastBackground='',lastState='',badgeText=APP_NAME+' · 离线陪伴';
+let pixels=null,mode='idle',row=0,col=0,down=false,lastOpaque=null,bodyOpaque=false,interaction=null,bubbleTimer,frameTimer=null,dialogActive=false,lastCursor=null,lastBackground='',lastState='',badgeText=APP_NAME+' · 离线陪伴';
+const glove={open:gloveCursor('open'),closed:gloveCursor('closed'),grab:gloveCursor('grab')};
+let gestureId=null,capturedPointer=null,readySent=null,ownerButton=null,releaseButton=null,chordRequest=null,suppressedButtons=0,observedButtons=0;
 let currentSample=actionSample('idle',0);
 let geometry=null;
 function petGeometry(){if(!geometry)geometry={sprite:sprite.getBoundingClientRect(),badge:badge.getBoundingClientRect()};return geometry;}
@@ -23,7 +26,10 @@ window.addEventListener('resize',()=>{geometry=null;motionRenderer.invalidate?.(
 const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
 let preferences={petScale:1.25,animationSpeed:.75,showStatusBadge:true,followCursor:true,completionBubbles:true};
 let configuredCharacter=currentPetCharacter(),demoRequest=null,demoActive=false,settingsReady=false,characterError=null;
-function applyCharacterPresentation(id){sprite.style.transformOrigin='0 0';sprite.style.transform=petPresentation(id).transform;geometry=null;motionRenderer.invalidate?.(surface);}
+let appliedPresentation=null;
+let badgeLayout=null;
+function placeStatusBadge(){const grounded=interaction?.motion?.grounded===true,hidden=!preferences.showStatusBadge||grounded&&!bubble.hidden,top=grounded?Math.max(4,(interaction.motion.collisionInsets?.top??0)/(preferences.petScale??1.25)-34)+'px':'';const key=hidden+'|'+top;if(key===badgeLayout)return;badgeLayout=key;badge.hidden=hidden;badge.style.top=top;badge.style.bottom=grounded?'auto':'';geometry=null;}
+function applyCharacterPresentation(id,actionId='idle'){const presentation=petActionPresentation(id,motionRenderer.sequences?.[actionId]);if(appliedPresentation?.transform===presentation.transform)return false;sprite.style.transformOrigin='0 0';sprite.style.transform=presentation.transform;appliedPresentation=presentation;geometry=null;motionRenderer.invalidate?.(surface);return true;}
 applyCharacterPresentation(currentPetCharacter());
 let initialCharacterReady=false,resolveInitialCharacter;
 window.petCharacterReady=new Promise(resolve=>{resolveInitialCharacter=resolve;});
@@ -39,7 +45,7 @@ function applySettings(value){
   controller.setSpeed(preferences.animationSpeed??.75);
   document.body.style.setProperty('--pet-scale',preferences.petScale);
   geometry=null;motionRenderer.invalidate?.(surface);
-  badge.hidden=!preferences.showStatusBadge;
+  badgeLayout=null;badge.hidden=!preferences.showStatusBadge;
   controller.followCursor=preferences.followCursor;
   controller.setVisible(preferences.petVisible!==false&&!document.hidden);
   if(!preferences.completionBubbles){bubble.hidden=true;clearTimeout(bubbleTimer);presentedBubble=null;}
@@ -78,6 +84,8 @@ window.whale.onCursor(point=>{
   controller.drag(!!point.dragging);
 });
 window.whale.onPetAction(value=>{
+  if(value.kind==='interaction')interaction=value.value;
+  if(value.kind==='gesture-reset'&&(!value.gestureId||value.gestureId===gestureId)){if(Number.isInteger(value.buttons))suppressedButtons=value.buttons;clearPointer();}
   if(value.kind==='feedback')controller.enqueueFeedback(value.value);
   if(value.kind==='play'){demoRequest={id:value.id,lookIndex:value.lookIndex,durationMs:value.durationMs,characterId:value.characterId??currentPetCharacter()};requestCharacter(demoRequest.characterId);}
   if(value.kind==='auto'){demoRequest=null;demoActive=false;requestCharacter(configuredCharacter);controller.holdFeedback=characterSwitch.target!==characterSwitch.current;controller.automatic();}
@@ -92,29 +100,42 @@ function render(){
   const {sprite:rect,badge:b}=petGeometry();
   if(demoActive&&(!controller.manual||controller.manual.expiresAt<=Date.now())){demoActive=false;requestCharacter(demoRequest?.characterId??configuredCharacter);controller.holdFeedback=!!demoRequest||characterSwitch.target!==characterSwitch.current;controller.automatic();}
   const hasStartedFeedback=!!controller.feedback.active||controller.feedback.queue.some(item=>item.startedAt!==undefined);
-  controller.holdFeedback=!settingsReady||!!((demoRequest||characterSwitch.target!==characterSwitch.current)&&!hasStartedFeedback);
+  const interactionView=interactionPresentation(interaction,{speed:preferences.animationSpeed??.75,hasClip:id=>!!motionRenderer.sequences?.[id],cycle:id=>getPetAction(id).cycleMs});
+  controller.holdFeedback=!settingsReady||interactionView?.hold||!!((demoRequest||characterSwitch.target!==characterSwitch.current)&&!hasStartedFeedback);
   let state=controller.select();
-  const characterChanged=characterSwitch.advance({busy:controller.dragging||!!controller.manual||hasStartedFeedback});
+  const characterChanged=characterSwitch.advance({busy:controller.dragging||['flying','charging','landing'].includes(interactionView?.motion)||!!controller.manual||hasStartedFeedback});
   if(characterChanged)state=controller.select();
   if(demoRequest&&!characterSwitch.loading&&!characterSwitch.failed&&currentPetCharacter()===demoRequest.characterId&&!controller.dragging&&!controller.manual){controller.play(demoRequest);demoRequest=null;demoActive=true;controller.holdFeedback=false;state=controller.select();}
+  if(interactionView?.id&&!state.manual){state={...state,id:interactionView.id,source:'interaction',elapsed:interactionView.elapsed,lookIndex:null,lookAngle:null,gazeWeight:0,feedback:null};}
+  else if(interactionView?.hold&&!state.manual){state={...state,id:'idle',source:'interaction-pending-media',elapsed:0,lookIndex:null,lookAngle:null,gazeWeight:0,feedback:null};}
   const pose=actionSample(state.id,state.elapsed,{lookIndex:state.lookIndex,lookAngle:state.lookAngle,reducedMotion:reducedMotion.matches});
   pose.elapsedMs=state.elapsed;pose.clockMs=state.clockMs;pose.baseElapsedMs=state.baseElapsed;pose.followBaseId=state.source.startsWith('cursor')?'idle':null;pose.gazeAngle=state.lookAngle;pose.gazeWeight=state.gazeWeight;pose.turn=state.turn;pose.reducedMotion=reducedMotion.matches;
-  pose.playbackRate=state.animationSpeed;pose.playing=true;
+  pose.playbackRate=state.animationSpeed;pose.staticFrame=!state.manual?interactionView?.staticFrame:null;pose.playing=state.manual||!(interactionView?.playing===false||interactionView?.animationWaiting||interactionView?.missing||interactionView?.asleep&&!interactionView.id);
   currentSample=pose;
   row=pose.row;col=pose.col;
   const background=(-col*FRAME_SIZE.width)+'px '+(-row*FRAME_SIZE.height)+'px';
   if(background!==lastBackground){sprite.style.backgroundPosition=background;lastBackground=background;}
   motionRenderer.draw(surface,pose);
   currentSample=motionRenderer.displayedSample?.(surface)??pose;
+  if(interactionView?.animationWaiting&&!state.manual&&interaction.characterId===currentPetCharacter()){
+    const id=interactionView.id,key=[currentPetCharacter(),interactionView.readyScope,interactionView.animationEpoch,id].join(':');
+    motionRenderer.isReadyFor?.(id,0); // Also enforces the bounded decoder timeout.
+    const slot=motionRenderer.targets?.get(surface)?.slot,failed=!!slot?.error;
+    // Ack only a decoded frame actually drawn for this action, never its placeholder.
+    const ready=slot?.ready&&!slot.seekPending&&currentSample.actionId===id;
+    if(readySent!==key&&(ready||failed)){readySent=key;window.whale.interactionReady({characterId:currentPetCharacter(),scope:interactionView.readyScope,epoch:interactionView.animationEpoch,id,failed});}
+  }
+  const registrationChanged=applyCharacterPresentation(currentPetCharacter(),currentSample.actionId);
   presentFeedback(state.feedback);
   if(characterError&&!state.feedback&&!controller.manual){
     bubble.textContent=characterError;characterError=null;bubble.hidden=false;geometry=null;clearTimeout(bubbleTimer);
     bubbleTimer=setTimeout(()=>{bubble.hidden=true;geometry=null;},6500);
   }
-  if(lastCursor&&!characterChanged)hitAt(lastCursor.x,lastCursor.y,rect,b);
+  placeStatusBadge();
+  if(lastCursor&&!characterChanged&&!registrationChanged)hitAt(lastCursor.x,lastCursor.y,rect,b);
   const text=state.manual?'演示 · '+getPetAction(state.id).label:badgeText;if(badge.textContent!==text)badge.textContent=text;
   const label=APP_NAME+' · '+getPetAction(state.id).label;if(sprite.getAttribute('aria-label')!==label)sprite.setAttribute('aria-label',label);
-  window.petActionDiagnostic={...state,...pose,characterId:currentPetCharacter(),targetCharacterId:characterSwitch.target,presentation:petPresentation(currentPetCharacter()),renderer:motionRenderer.backend,displayedActionId:currentSample.actionId,sequenceFrame:motionRenderer.sequences?.[state.id]?currentSample.displayedSequenceFrame??null:null,sourceFrameCount:motionRenderer.sequences?.[state.id]?.frames.length??getPetAction(state.id).frames,draws:motionRenderer.draws,rigDraws:motionRenderer.rigDraws??0,rigResizes:motionRenderer.rigResizes??0,canvasSize:[surface.width,surface.height],geometryReads:motionRenderer.geometryReads??0};
+  window.petActionDiagnostic={...state,...pose,interaction,interactionView,characterId:currentPetCharacter(),targetCharacterId:characterSwitch.target,presentation:appliedPresentation??petPresentation(currentPetCharacter()),renderer:motionRenderer.backend,displayedActionId:currentSample.actionId,sequenceFrame:motionRenderer.sequences?.[state.id]?currentSample.displayedSequenceFrame??null:null,sourceFrameCount:motionRenderer.sequences?.[state.id]?.frames.length??getPetAction(state.id).frames,draws:motionRenderer.draws,rigDraws:motionRenderer.rigDraws??0,rigResizes:motionRenderer.rigResizes??0,canvasSize:[surface.width,surface.height],geometryReads:motionRenderer.geometryReads??0};
   const report={id:state.id,source:state.source,manual:state.manual,expiresAt:state.expiresAt,characterId:currentPetCharacter()},key=JSON.stringify(report);
   if(key!==lastState){lastState=key;window.whale.reportPetState(report);}
 }
@@ -124,16 +145,56 @@ function hitAt(clientX,clientY,rect=petGeometry().sprite,b=petGeometry().badge){
     const x=(clientX-rect.left)/rect.width*FRAME_SIZE.width,y=(clientY-rect.top)/rect.height*FRAME_SIZE.height;
     hit=motionRenderer.pixels?motionRenderer.alpha(currentSample,x,y)>25:pixels[((Math.floor(y)+row*FRAME_SIZE.height)*image.width+Math.floor(x)+col*FRAME_SIZE.width)*4+3]>25;
   }
+  bodyOpaque=hit;sprite.style.cursor=bodyOpaque?(down?(['dragging','charging'].includes(interaction?.motion?.mode)?glove.grab:glove.closed):glove.open):'default';
   if(!badge.hidden&&clientX>=b.left&&clientX<b.right&&clientY>=b.top&&clientY<b.bottom)hit=true;
   if(!bubble.hidden){const br=bubble.getBoundingClientRect();if(clientX>=br.left&&clientX<br.right&&clientY>=br.top&&clientY<br.bottom)hit=true;}
   if(hit!==lastOpaque){lastOpaque=hit;window.whale.hit(hit);}
 }
-document.addEventListener('mousemove',event=>{window.petInputDiagnostic.move++;window.petInputDiagnostic.cursor={x:event.clientX,y:event.clientY};hitAt(event.clientX,event.clientY);if(down)window.whale.dragMove({x:event.screenX,y:event.screenY});});
-const begin=event=>{if(event.button!==0 || down)return;down=true;window.petInputDiagnostic.down++;window.whale.dragStart({x:event.screenX,y:event.screenY});try{event.target.setPointerCapture?.(event.pointerId);}catch{/* Main window keeps mouse input during a drag. */}};
-const end=async event=>{if(!down)return;down=false;window.petInputDiagnostic.up++;const moved=await window.whale.dragEnd({x:event.screenX,y:event.screenY});if(!moved)window.whale.open('overview');};
-document.addEventListener('pointerdown',begin);document.addEventListener('mousedown',begin);
-document.addEventListener('pointerup',end);document.addEventListener('mouseup',end);
-document.addEventListener('pointercancel',()=>{if(down){down=false;void window.whale.dragEnd();}});
+function clearPointer(){
+  down=false;gestureId=null;ownerButton=null;releaseButton=null;chordRequest=null;sprite.style.cursor=bodyOpaque?glove.open:'default';controller.drag(false);
+  const captured=capturedPointer;capturedPointer=null;if(captured)try{captured.target.releasePointerCapture(captured.id);}catch{}
+}
+function cancelPointer(reason){if(!down)return;const id=gestureId;suppressedButtons=observedButtons;clearPointer();void window.whale.cancelPetGesture({gestureId:id,reason});}
+document.addEventListener('mousemove',event=>{
+ observedButtons=event.buttons;suppressedButtons&=event.buttons;window.petInputDiagnostic.move++;window.petInputDiagnostic.cursor={x:event.clientX,y:event.clientY};hitAt(event.clientX,event.clientY);
+ if(down&&!chordRequest&&!(event.buttons&(releaseButton===2?2:1)))cancelPointer('button-lost');else if(down)window.whale.dragMove({gestureId});
+});
+document.addEventListener('pointerdown',event=>{
+ // Native pointerdown occurs only on the transition from no buttons to held.
+ // It proves a prior out-of-window release occurred, unlike chord mousedown.
+ observedButtons=event.buttons;if(!down)suppressedButtons=0;if(![0,2].includes(event.button)||down)return;hitAt(event.clientX,event.clientY);if(!bodyOpaque)return;
+ down=true;ownerButton=event.button;releaseButton=ownerButton;gestureId=crypto.randomUUID();sprite.style.cursor=glove.closed;window.petInputDiagnostic.down++;
+ window.whale.dragStart({gestureId,button:ownerButton,local:{x:event.clientX/innerWidth,y:event.clientY/innerHeight}});
+ try{event.target.setPointerCapture(event.pointerId);capturedPointer={target:event.target,id:event.pointerId};}catch{cancelPointer('capture-failed');}
+});
+// Chorded buttons use mouse events. Once charging is accepted, LEFT release
+// launches, even if RIGHT was released first. Buffer releases while the main
+// process confirms charging so fast clicks cannot race the IPC response.
+document.addEventListener('mousedown',event=>{
+ observedButtons=event.buttons;if(suppressedButtons){suppressedButtons=event.buttons;return;}if(!down||ownerButton!==2||releaseButton===0||event.button!==0||chordRequest)return;
+ event.preventDefault();const id=gestureId,request={releases:[]};chordRequest=request;
+ void window.whale.petContext({gestureId:id,button:0}).then(result=>{
+  if(!down||gestureId!==id||chordRequest!==request)return;
+  if(result?.charging)releaseButton=0;
+  chordRequest=null;for(const event of request.releases)endPointer(event);
+  if(down&&gestureId===id&&request.captureLost)cancelPointer('capture-lost');
+ }).catch(()=>{if(down&&gestureId===id&&chordRequest===request)cancelPointer('charge-failed');});
+});
+const endPointer=event=>{observedButtons=event.buttons??0;suppressedButtons&=observedButtons;if(!down)return;if(chordRequest){chordRequest.releases.push({button:event.button,buttons:event.buttons});return;}if(event.button!==releaseButton)return;const id=gestureId,button=releaseButton;suppressedButtons=observedButtons;clearPointer();window.petInputDiagnostic.up++;void window.whale.dragEnd({gestureId:id,button});};
+document.addEventListener('pointerup',endPointer);document.addEventListener('mouseup',endPointer);
+document.addEventListener('pointercancel',()=>cancelPointer('pointer-cancel'));
+document.addEventListener('lostpointercapture',()=>{
+ // Chromium implicitly releases capture after the last button-up. If that
+ // up is buffered behind a chord acknowledgement, resolve it before treating
+ // capture loss as cancellation. Genuine loss still cancels a held gesture.
+ if(chordRequest?.releases.length){chordRequest.captureLost=true;capturedPointer=null;return;}
+ cancelPointer('capture-lost');
+});
+window.addEventListener('blur',()=>cancelPointer('window-blur'));
+document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelPointer('window-hidden');});
+// The main process opens the menu only after a stationary right gesture.
+document.addEventListener('contextmenu',event=>event.preventDefault());
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&down){event.preventDefault();cancelPointer('escape');}else if(event.key==='ContextMenu'&&!down&&lastOpaque){event.preventDefault();void window.whale.petContext({});}});
 window.whale.status().then(updateSnapshot);
 function clock(){frameTimer?.();frameTimer=null;const wasVisible=controller.visible;controller.setVisible(!document.hidden&&preferences.petVisible!==false);if(!document.hidden){if(!wasVisible)controller.trigger('wave',{source:'show'});render();frameTimer=subscribeAnimationClock(render);}else motionRenderer.release?.(surface);}
 document.addEventListener('visibilitychange',clock);

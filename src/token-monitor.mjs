@@ -84,7 +84,7 @@ export class TokenMonitor {
    if(!session.model&&task.model)session.model=task.model;
   }return value;
  }
- emit(){if(!this.legacySnapshot)return;this.listeners({usageRevision:this.legacy.ledger.aggregationRevision+':'+this.ledger.revision,...mergeSnapshots(this.legacySnapshot,this.genericSnapshot(),this.sources.list(),this.sources.state?.aliases),modelAliases:this.sources.state?.modelAliases||{},errors:[...this.legacySnapshot.errors,...this.errors].map(e=>Array.isArray(e)?{path:e[0],message:e[1]}:e)});}
+ emit(){if(!this.legacySnapshot)return;this.listeners({activityEpoch:this.legacy.startedAt,usageRevision:this.legacy.ledger.aggregationRevision+':'+this.ledger.revision,...mergeSnapshots(this.legacySnapshot,this.genericSnapshot(),this.sources.list(),this.sources.state?.aliases),modelAliases:this.sources.state?.modelAliases||{},errors:[...this.legacySnapshot.errors,...this.errors].map(e=>Array.isArray(e)?{path:e[0],message:e[1]}:e)});}
  recordTask(event,source){
   if(!event.timestamp)return;
   const key='dsh:'+event.sessionId,old=this.taskStates.get(key);

@@ -2,15 +2,17 @@ import {connectionIdentity} from './service-identity.mjs';
 import {randomUUID} from 'node:crypto';
 const textOf=value=>typeof value==='string'?value:Array.isArray(value)?value.filter(part=>part.type==='text'||part.type==='input_text'||part.type==='output_text').map(part=>part.text??'').join('\n'):'';
 const messagesOf=options=>(options.messages??[]).map(message=>({role:message.role==='assistant'?'assistant':'user',content:textOf(message.content)}));
+const REASONING_EFFORTS=new Set(['none','minimal','low','medium','high','xhigh','max','ultra']);
 function requestBody(profile,options){
   const messages=messagesOf(options),budget=Math.max(1,Math.min(32768,options.purpose==='emotion'?2048:Number(options.maxTokens)||2048));
+  const effort=REASONING_EFFORTS.has(profile.reasoningEffort)?profile.reasoningEffort:undefined;
   if(profile.protocol==='gemini')return {systemInstruction:options.system?{parts:[{text:options.system}]}:undefined,contents:messages.map(message=>({role:message.role==='assistant'?'model':'user',parts:[{text:message.content}]})),generationConfig:{maxOutputTokens:budget}};
   if(profile.protocol==='anthropic'){
     const combined=[];for(const message of messages){if(combined.at(-1)?.role===message.role)combined.at(-1).content+='\n\n'+message.content;else combined.push({...message});}
     return {model:profile.model,system:options.system||undefined,messages:combined,max_tokens:budget,stream:true};
   }
-  if(profile.protocol==='responses')return {model:profile.model,instructions:options.system||undefined,input:messages,max_output_tokens:budget,stream:true,store:false};
-  return {model:profile.model,messages:[...(options.system?[{role:'system',content:options.system}]:[]),...messages],max_tokens:budget,stream:true,stream_options:{include_usage:true}};
+  if(profile.protocol==='responses')return {model:profile.model,instructions:options.system||undefined,input:messages,max_output_tokens:budget,stream:true,store:false,...(effort?{reasoning:{effort}}:{})};
+  return {model:profile.model,messages:[...(options.system?[{role:'system',content:options.system}]:[]),...messages],max_tokens:budget,stream:true,stream_options:{include_usage:true},...(profile.protocol==='chat-completions'&&effort?{reasoning_effort:effort}:{})};
 }
 function headers(profile){return {'Content-Type':'application/json',...(profile.protocol==='gemini'?{'x-goog-api-key':profile.key}:profile.protocol==='anthropic'?{'x-api-key':profile.key,'anthropic-version':'2023-06-01'}:profile.key?{Authorization:'Bearer '+profile.key}:{})};}
 export function apiError(status){return Error(status===401?'API Key 无效，请重新配置':status===403?'当前账户没有该模型的访问权限':status===404?'服务地址或模型 ID 不存在':status===429?'请求受限或额度不足，请稍后重试':status>=500?'模型服务暂时不可用，请稍后重试':'API 请求失败，请检查模型和协议配置');}

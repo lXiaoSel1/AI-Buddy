@@ -6,10 +6,20 @@ import { EventEmitter } from 'node:events';
 import {codexHome,codexRuntimeError} from './runtime-discovery.mjs';
 import {t} from './i18n.mjs';
 
+const REASONING_EFFORTS=new Set(['none','minimal','low','medium','high','xhigh','max','ultra']);
+function catalogModel(row){
+  if(!row||typeof row!=='object'||Array.isArray(row))return null;
+  const id=typeof row.model==='string'&&row.model.trim()?row.model.trim():typeof row.id==='string'?row.id.trim():'';
+  if(!id)return null;
+  const supportedReasoningEfforts=Array.isArray(row.supportedReasoningEfforts)?row.supportedReasoningEfforts.filter(value=>value&&typeof value.reasoningEffort==='string').map(value=>({reasoningEffort:value.reasoningEffort,description:typeof value.description==='string'?value.description:''})):[];
+  // Keep the app-server's model identity and capabilities; no guessed model IDs or effort levels.
+  return {...row,id,name:typeof row.displayName==='string'?row.displayName:typeof row.name==='string'?row.name:id,supportedReasoningEfforts,defaultReasoningEffort:typeof row.defaultReasoningEffort==='string'?row.defaultReasoningEffort:null};
+}
+
 export class CodexProvider extends EventEmitter {
   constructor({binary,defaultModel,dataRoot,onUsage=()=>{},audit=()=>{},imageGeneration=false,clientInfo=null,spawnImpl=spawn,env=process.env}) {
     super(); Object.assign(this,{binary,defaultModel,dataRoot,onUsage,audit,spawnImpl,env});
-    this.imageGeneration=imageGeneration;this.clientInfo=clientInfo;this.enabled=false; this.pending=new Map(); this.nextId=1; this.child=null; this.chatTail=Promise.resolve(); this.notifications=new Set();
+    this.imageGeneration=imageGeneration;this.clientInfo=clientInfo;this.enabled=false; this.pending=new Map(); this.nextId=1; this.child=null; this.chatTail=Promise.resolve(); this.notifications=new Set();this.models=[];this.catalogClient=null;this.catalogRequest=null;
   }
   setEnabled(value) {
     this.enabled=!!value;
@@ -69,6 +79,7 @@ export class CodexProvider extends EventEmitter {
   }
   fail(error) {for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(error);}this.pending.clear();for(const l of this.notifications)l({method:'provider/error',params:{message:error.message}});}
   async complete(options) {
+    const model=options.model || this.defaultModel,effort=this.reasoningEffort(model,options.reasoningEffort);
     await this.start();
     const cwd=join(this.dataRoot,'chat-sandbox');mkdirSync(cwd,{recursive:true});
     const thread=await this.request('thread/start',{model:options.model || this.defaultModel,cwd,ephemeral:true,approvalPolicy:'never',sandbox:'read-only',config:{web_search:'disabled','features.shell_tool':false,'features.js_repl':false,'features.memories':false,'features.goals':false,'features.apply_patch_freeform':false,'mcp_servers':{},'apps':{_default:{enabled:false}}},baseInstructions:'你只生成聊天文本。不调用任何工具，不读取本机文件，不执行命令，不修改文件。',developerInstructions:options.system || ''});
@@ -99,7 +110,7 @@ export class CodexProvider extends EventEmitter {
       const timer=setTimeout(()=>{abort();},timeout);
       this.notifications.add(listener);options.signal?.addEventListener('abort',abort,{once:true});
       if(options.signal?.aborted){abort();return;}
-      try {await this.request('turn/start',{threadId:id,input:[{type:'text',text}],cwd,model:options.model || this.defaultModel,effort:'low',approvalPolicy:'never',sandboxPolicy:{type:'readOnly'},summary:'concise'},15000);}catch(error){done(error);}
+      try {await this.request('turn/start',{threadId:id,input:[{type:'text',text}],cwd,model,...(effort===null?{}:{effort}),approvalPolicy:'never',sandboxPolicy:{type:'readOnly'},summary:'concise'},15000);}catch(error){done(error);}
     });
   }
   async *stream(options) {
@@ -108,7 +119,36 @@ export class CodexProvider extends EventEmitter {
     const text=await run;yield {type:'text-delta',text};yield {type:'finish',reason:{kind:'stop'}};
   }
   listProviders(){return [{id:'codex',name:'本机 Codex 登录'}];}
-  listModels(){return [{id:this.defaultModel,name:this.defaultModel}];}
-  resolveModelInfo(){return {reasoningEfforts:['low'],defaultReasoningEffort:'low'};}
-  close(){this.setEnabled(false);}
+  listModels(){return structuredClone(this.models);}
+  resolveModelInfo(model=this.defaultModel){const row=this.models.find(value=>value.id===model||value.model===model),supportedReasoningEfforts=structuredClone(row?.supportedReasoningEfforts??[]);return {reasoningEfforts:supportedReasoningEfforts.map(value=>value.reasoningEffort),supportedReasoningEfforts,defaultReasoningEffort:row?.defaultReasoningEffort??null};}
+  reasoningEffort(model,value){
+    if(value===null||value==='auto')return null;
+    const effort=value===undefined?'low':value;
+    if(typeof effort!=='string'||!REASONING_EFFORTS.has(effort))throw Error('Codex 推理强度无效，请重新选择');
+    const known=this.models.find(row=>row.id===model||row.model===model),supported=this.resolveModelInfo(model).reasoningEfforts;
+    if(Array.isArray(known?.supportedReasoningEfforts)&&!supported.includes(effort))throw Error('所选 Codex 模型不支持推理强度 '+effort+'，请重新选择');
+    return effort;
+  }
+  async fetchModels(){
+    if(this.catalogRequest)return this.catalogRequest;
+    // A metadata-only process keeps model discovery independent of the chat switch
+    // and never interrupts, enables, or sends a turn to the active chat process.
+    const client=new CodexProvider({binary:this.binary,defaultModel:this.defaultModel,dataRoot:this.dataRoot,env:this.env,spawnImpl:this.spawnImpl,audit:event=>this.audit({...event,purpose:'model-list'}),clientInfo:{name:'ai_buddy_models',version:'1.9.0',title:'AI Buddy model catalog'}});
+    this.catalogClient=client;client.setEnabled(true);
+    this.catalogRequest=(async()=>{
+      await client.start();const models=new Map(),cursors=new Set();let cursor;
+      for(let page=0;page<100;page++){
+        const result=await client.request('model/list',{limit:100,...(cursor?{cursor}:{})},15000);
+        if(!result||!Array.isArray(result.data))throw Error('Codex 模型列表格式无效，请更新 Codex 后重试');
+        for(const value of result.data){const model=catalogModel(value);if(model&&!model.hidden&&!models.has(model.id))models.set(model.id,model);}
+        const next=result.nextCursor;
+        if(next==null||next===''){this.models=[...models.values()];return this.listModels();}
+        if(typeof next!=='string'||cursors.has(next))throw Error('Codex 模型列表分页无效，请重试');
+        cursors.add(next);cursor=next;
+      }
+      throw Error('Codex 模型列表分页过多，请更新 Codex 后重试');
+    })();
+    try{return await this.catalogRequest;}finally{client.close();if(this.catalogClient===client)this.catalogClient=null;this.catalogRequest=null;}
+  }
+  close(){this.catalogClient?.close();this.setEnabled(false);}
 }

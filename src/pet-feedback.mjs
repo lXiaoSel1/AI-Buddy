@@ -12,6 +12,9 @@ export class PetFeedbackQueue{
       if(this.active?.source==='dialog')this.active=null;
     }
     if(rank(item)===1&&(this.active&&rank(this.active)>1||this.queue.some(x=>rank(x)>1)))return false;
+    // Petting is transient: do not accumulate minutes of animations after a
+    // burst of clicks, and never replace a task or a spoken chat reply.
+    if(item.source==='touch'){this.queue=this.queue.filter(x=>rank(x)>1);if(this.active&&rank(this.active)===1)this.active=null;}
     if(this.active&&rank(item)>rank(this.active)){
       if(rank(this.active)>=3)this.queue.push(this.active);
       this.active=null;

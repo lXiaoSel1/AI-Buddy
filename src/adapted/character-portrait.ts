@@ -40,9 +40,9 @@ export function ExpressionPortrait({characterId,emotion,src,normalSrc,spriteKey,
  return React.createElement(CharacterPortrait,{...props,src:chosen?.src||fallback||src,spriteKey:custom?null:spriteKey,registration:chosen?.registration,viewport:chosen?role.viewport:null,onError:fail})
 }
 
-export function CastPortrait({member,src,normalSrc,request,emotion='normal'}:any){
+export function CastPortrait({member,src,normalSrc,request,emotion='normal',align='bottom'}:any){
  const [custom,setCustom]=useState<string|null>(null)
  useLayoutEffect(()=>{let closed=false;setCustom(null);if(member.hasCustomSprite)request('sprite-data',{characterId:member.id}).then((r:any)=>{if(!closed)setCustom(r.dataUrl||null)}).catch(()=>{});return()=>{closed=true}},[member.id,member.hasCustomSprite,member.spriteRevision])
  if(member.hasCustomSprite&&!custom)return React.createElement('div',{'aria-label':member.name,className:'whg-sprite-loading'})
- return React.createElement(ExpressionPortrait,{characterId:member.id,emotion,src:custom||src,normalSrc,spriteKey:custom||member.id==='deepseek'&&emotion!=='normal'?null:member.sprite,custom:!!custom,alt:member.name})
+ return React.createElement(ExpressionPortrait,{characterId:member.id,emotion,align,src:custom||src,normalSrc,spriteKey:custom||member.id==='deepseek'&&emotion!=='normal'?null:member.sprite,custom:!!custom||!!member.effective?.sprite,alt:member.name})
 }

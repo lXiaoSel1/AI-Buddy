@@ -19,7 +19,12 @@ export class HdSourceRenderer{
     this.pixels={atlas:true,alpha:Object.fromEntries(actions.map((a,n)=>[a.id,alphaPlane(pages[n])]))};this.backend='canvas-hd-source';return this;
   }
   invalidate(target){const state=this.targets.get(target);if(state){state.dirty=true;state.key=null;}}
-  release(target){if(!target)return;this.observer.unobserve(target);this.activeTargets.delete(target);this.targets.delete(target);}
+  release(target){if(!target)return;this.observer.unobserve(target);this.activeTargets.delete(target);this.targets.delete(target);
+    // Release the backing surface as well as its JS bookkeeping. Hidden and
+    // detached gallery canvases otherwise retain GPU surfaces until a later GC.
+    // targetState restores the measured pixel size when the canvas is reused.
+    target.width=0;target.height=0;
+  }
   targetState(target){let state=this.targets.get(target);if(!state){state={ctx:target.getContext('2d'),dirty:true,key:null};this.targets.set(target,state);this.activeTargets.add(target);this.observer.observe(target);}
     if(state.dirty){this.geometryReads++;const rect=target.getBoundingClientRect();const width=Math.max(1,Math.round((rect.width||FRAME_SIZE.width)*devicePixelRatio)),height=Math.max(1,Math.round((rect.height||FRAME_SIZE.height)*devicePixelRatio));
       if(target.width!==width||target.height!==height){target.width=width;target.height=height;state.ctx.imageSmoothingEnabled=true;state.ctx.imageSmoothingQuality='high';}state.dirty=false;state.key=null;

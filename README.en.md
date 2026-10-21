@@ -2,7 +2,10 @@
 
 [简体中文](README.md) · **English**
 
-**Current release: [v1.8.0](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0)** · Choose 30fps Lightweight or 60fps with the same features, 11 characters, 198 independent animations and 80 portrait expressions. The default pet size is 125%; saved custom sizes are preserved. See the [guide](docs/CHARACTER-PETS.md) and [update record](docs/VALIDATION-1.8.0.md).
+<!-- ai-buddy-source-version: 1.9.0 -->
+**Approved source version: 1.9.0 (not published)** · Includes the group stage, per-character APIs and effort, pet interactions, long-term memory, personality growth and complete life archives. [1.9.0 changes and validation](docs/VALIDATION-1.9.0.md). The installer and download links below still point to the published 1.8.0.
+
+**Current published release: [v1.8.0](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.8.0)** · Choose 30fps Lightweight or 60fps with the same features, 11 characters, 198 independent animations and 80 portrait expressions. The default pet size is 125%; saved custom sizes are preserved. See the [guide](docs/CHARACTER-PETS.md) and [update record](docs/VALIDATION-1.8.0.md).
 
 ## Online installer (recommended)
 

@@ -1,4 +1,7 @@
 import {t} from '../i18n.mjs';
+import {GalgameTitle} from '../galgame-title.mjs';
+import {GroupHeader} from '../group-header.mjs';
+import {CgImageViewer,CgImageViewerCSS} from '../cg-image-viewer.mjs';
 import {isSpriteVisible} from '../character-display.mjs';
 import {messageEmotion,validEmotion} from '../emotions.mjs'
 /**
@@ -16,9 +19,12 @@ import { WHALE_ART as LEGACY_ART } from './art.generated'
 import { CHARACTER_ART } from '../character-catalog.mjs'
 import { ExpressionPortrait, CastPortrait } from './character-portrait'
 import {validPetCharacter} from '../pet-characters.mjs'
+import {CompanionCSS,CompanionManager,CompanionGroupStage,CompanionGroupDialogue,activeCompanionGroup,companionCharacterName,companionImage} from '../companion-ui.mjs'
 const WHALE_ART = { ...LEGACY_ART, ...CHARACTER_ART }
 
 const CSS = [
+  CgImageViewerCSS,
+  CompanionCSS,
   // ── pet ────────────────────────────────────────────────────────────────
   '.whg-pet{--whg-scale:1.15;--whg-y:0px;position:fixed;right:18px;bottom:124px;width:calc(192px * var(--whg-scale));height:calc(208px * var(--whg-scale));padding:0;border:0;border-radius:18px;background:transparent;cursor:zoom-in;filter:drop-shadow(0 10px 16px rgb(0 0 0 / 36%));transition:width 180ms ease,height 180ms ease,filter 180ms ease;z-index:9999}',
   '.whg-pet[data-mode="running"]{--whg-y:-1456px}',
@@ -361,7 +367,7 @@ const API_WRITE_ACTIONS = new Set([
 ])
 
 function apiTimeoutMs(action: string): number {
-  if (action === 'chat' || action === 'side-story' || action === 'bg-upload' || action === 'sprite-upload') return API_LONG_TIMEOUT_MS
+  if (action === 'companion-group-send' || action === 'companion-group-continue' || action === 'chat' || action === 'side-story' || action === 'bg-upload' || action === 'sprite-upload') return API_LONG_TIMEOUT_MS
   if (API_WRITE_ACTIONS.has(action)) return API_WRITE_TIMEOUT_MS
   return API_READ_TIMEOUT_MS
 }
@@ -956,7 +962,7 @@ function PluginSettingsCard(): React.ReactElement {
   )
 }
 
-function App(props: { useSessions: any; variant?: string; sessionId?: string; hideSpriteOnCg?: boolean; onCharacter?: (id: string) => void }): React.ReactElement {
+function App(props: { useSessions: any; variant?: string; sessionId?: string; hideSpriteOnCg?: boolean; onCharacter?: (id: string) => void; onDisplayMode?: (mode: string) => void }): React.ReactElement {
   const callApi = (action: string, args?: any) => api(action, props.sessionId
     ? { ...(args && typeof args === 'object' ? args : {}), sessionId: props.sessionId }
     : args)
@@ -973,6 +979,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     setViewState((previous: any) => {
       const base = previous && previous.key === cacheKey ? previous.value : cachedView(cacheKey)
       const next = typeof nextOrUpdater === 'function' ? nextOrUpdater(base) : nextOrUpdater
+      if (base?.companion && next?.companion && Number(next.companion.revision) < Number(base.companion.revision)) return previous
       rememberView(cacheKey, next)
       return { key: cacheKey, value: next }
     })
@@ -988,6 +995,21 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     })
   }, [cacheKey])
   const [open, setOpen] = useState(false)
+  const [companionPanel, setCompanionPanel] = useState<string | null>(null)
+  const privatePresentation=useRef(new Set<string>())
+  useEffect(()=>{
+    const companion=s?.companion
+    if(!companion||companion.activeGroupId||companionPanel||document.hidden||document.querySelector('dialog[open]'))return
+    const last=companion.messages?.at(-1)
+    if(last?.role!=='assistant'||last.presentation!=='pending'||privatePresentation.current.has(last.id))return
+    privatePresentation.current.add(last.id)
+    let cancelled=false
+    const frame=requestAnimationFrame(()=>{if(cancelled||document.hidden){privatePresentation.current.delete(last.id);return}callApi('companion-private-present',{conversationId:companion.activeConversationId,id:last.id}).then(result=>{if(result?.view)setS(result.view)}).catch(()=>privatePresentation.current.delete(last.id))})
+    return()=>{cancelled=true;cancelAnimationFrame(frame);privatePresentation.current.delete(last.id)}
+  })
+  const [groupBrowseRequest,setGroupBrowseRequest] = useState<any>(null)
+  const [groupPanelRequest,setGroupPanelRequest] = useState<any>(null)
+  const [groupToolbarTarget,setGroupToolbarTarget] = useState<HTMLElement|null>(null)
   const [busy, setBusy] = useState(false)
   const [text, setText] = useState('')
   const [skitText, setSkitText] = useState('')
@@ -1058,6 +1080,45 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   const galleryDetailRequestSeq = useRef(0)
   const rewardCgRequestSeq = useRef(0)
 
+  const companionRequestEpoch = useRef(0)
+  async function companionRequest(action: string, args?: any): Promise<any> {
+    const selecting = /companion-(?:character-select|persona-select|conversation-(?:new|select)|group-(?:select|close))$/.test(action)
+    if (selecting) companionRequestEpoch.current++
+    const epoch = companionRequestEpoch.current
+    const result = await callApi(action, args)
+    if (result?.ok === false) throw new Error(result.error || result.message || t('操作失败'))
+    if (epoch !== companionRequestEpoch.current) return result
+    if (result?.view) setS(result.view)
+    else if (result?.companion) setS((previous: any) => ({ ...previous, companion: result.companion }))
+    return result
+  }
+  function openCompanion(panel: string): void {
+    closePicker(false)
+    setArchivePanel(null)
+    setCompanionPanel(panel)
+    companionRequest('companion-state').catch((error: any) => setApiError(String(error?.message || error)))
+  }
+  const companionConversationId = s?.companion?.activeConversationId || ''
+  const draftConversation = useRef('')
+  const draftText = useRef('')
+  useEffect(() => { draftText.current = text }, [text])
+  useEffect(() => {
+    if (!companionConversationId || draftConversation.current === companionConversationId) return
+    if (draftConversation.current) void callApi('companion-conversation-update', { id: draftConversation.current, draft: draftText.current }).catch(() => {})
+    draftConversation.current = companionConversationId
+    const conversation = s?.companion?.conversations?.find((row: any) => row.id === companionConversationId)
+    setText(String(conversation?.draft || s?.companion?.draft || ''))
+  }, [companionConversationId])
+  useEffect(() => {
+    if (!companionConversationId || busy) return
+    const timer = setTimeout(() => callApi('companion-conversation-update', { id: companionConversationId, draft: text }).catch(() => {}), 450)
+    return () => clearTimeout(timer)
+  }, [companionConversationId, text, busy])
+  useEffect(() => () => {
+    if (draftConversation.current) void callApi('companion-conversation-update', { id: draftConversation.current, draft: draftText.current }).catch(() => {})
+  }, [props.sessionId])
+  const group = activeCompanionGroup(s?.companion)
+  useEffect(() => { props.onDisplayMode?.(group ? 'group' : 'private') }, [group?.id, props.onDisplayMode])
   const currentStory = s?.sideStory?.scene
   useEffect(() => {
     if (!cgMenu) return
@@ -1331,6 +1392,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       else archiveCloseRef.current?.focus()
     })
     const onKeyDown = (event: KeyboardEvent) => {
+      if (document.querySelector('.buddy-cg-lightbox[open]')) return
       if (event.key === 'Escape') {
         event.preventDefault()
         if (cgMenu) {setCgMenu(null);cgMenuTarget.current?.focus({preventScroll:true})}
@@ -1974,7 +2036,9 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
 
   function lastLine(): any {
     const lines: any[] = (s && s.history) || []
-    return lines.length > 0 ? lines[lines.length - 1] : null
+    if (lines.length > 0) return lines[lines.length - 1]
+    const greeting = s?.companion?.characters?.find((row: any) => row.id === s.current)?.effective?.greeting
+    return greeting ? { who: 'heroine', text: greeting, opening: true } : null
   }
 
   function loadRewardCg(cgId: string): void {
@@ -2187,7 +2251,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
 
   function characterPicker(): React.ReactElement | null {
     if (pickerPanel !== 'character') return null
-    const characters: any[] = Array.isArray(modelOptions && modelOptions.characters) ? modelOptions.characters : []
+    const characters: any[] = Array.isArray(s?.companion?.characters) ? s.companion.characters : Array.isArray(modelOptions && modelOptions.characters) ? modelOptions.characters : []
     const mode = (pluginSettings && pluginSettings.characterMode) || s.characterMode || 'follow'
     const selectedId = (pluginSettings && pluginSettings.characterId) || s.characterId || s.current
     return React.createElement('div', {
@@ -2210,10 +2274,11 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       characters.map((character: any, index: number) => pickerOption({
         key: String(character.id || index),
         selected: mode === 'manual' && String(selectedId) === String(character.id),
-        title: optionText(character, t("角色 ") + (index + 1)) + (s.resources?.characters?.find((c:any)=>c.id===character.id)?.installed===false?' · '+t('待安装'):''),
+        title: (s?.companion ? companionCharacterName(character) : optionText(character, t("角色 ") + (index + 1))) + (s.resources?.characters?.find((c:any)=>c.id===character.id)?.installed===false?' · '+t('待安装'):''),
         subtitle: character.model ? String(character.model) : character.description ? String(character.description) : undefined,
-        onChoose: () => updateRuntimeSettings({ characterMode: 'manual', characterId: String(character.id) }),
+        onChoose: () => { if (s?.companion) { closePicker(); companionRequest('companion-character-select', { id: String(character.id) }).catch((error: any) => setApiError(error.message)) } else updateRuntimeSettings({ characterMode: 'manual', characterId: String(character.id) }) },
       })),
+      React.createElement('button', { className: 'whg-picker-option', type: 'button', onClick: () => openCompanion('characters') }, t('管理角色')),
       pickerError ? React.createElement('div', { className: 'whg-bg-error', role: 'alert' }, pickerError) : null,
     )
   }
@@ -2701,8 +2766,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
               }, t("重新读取")),
             )
             : gallerySelected.dataUrl
-              ? React.createElement('img', {
-                className: 'whg-gallery-full',
+              ? React.createElement(CgImageViewer, {
                 src: gallerySelected.dataUrl,
                 alt: (gallerySelected.name || s.name) + t("的特殊CG"),
               })
@@ -2815,6 +2879,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   }
 
   function topbar(showBack: boolean): React.ReactElement {
+    if (group) return React.createElement(GroupHeader, { key:group.id, toolbarRef:setGroupToolbarTarget, state:s.companion, request:companionRequest, resolveArt:art, onBrowse:(characterId:string)=>setGroupBrowseRequest({groupId:group.id,characterId,nonce:Date.now()}), panelRequest:groupPanelRequest,loadCg:(id:string)=>requestCgData(id,props.sessionId), petEnabled:s.petEnabled!==false, onPetToggle:()=>act('pet-set',{enabled:s.petEnabled===false}) })
     const characterModel = s.characterModelLabel || s.modelLabel || ''
     const chatModel = s.chatModelLabel || s.lastModel || ''
     const petEnabled = s.petEnabled !== false
@@ -2822,7 +2887,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     const characterMode = (pluginSettings && pluginSettings.characterMode) || s.characterMode || 'follow'
     const chatMode = (pluginSettings && pluginSettings.chatMode) || s.chatMode || 'configured'
     return React.createElement('div', { className: 'whg-top' },
-      React.createElement('span', { className: 'whg-title' }, t("与") + s.name + t("的galgame")),
+      React.createElement(GalgameTitle, { key:s.current, characterId:s.current, defaultTitle:t("与") + s.name + t("的galgame"), value:s.companion?.settings?.galgameTitles?.[s.current]||'', request:companionRequest }),
       React.createElement('div', { className: 'whg-chip-wrap' },
         React.createElement('button', {
           'aria-controls': 'whg-character-picker-' + appScope,
@@ -2852,13 +2917,14 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         },
           React.createElement('span', { className: 'whg-dot' + (chatModel && !s.fallbackUsed ? '' : ' off') }),
           React.createElement('span', null, t("实际对话 · ")),
-          React.createElement('strong', null, chatModel || t("离线")),
+          React.createElement('strong', null, (() => { const current = s.companion?.characters?.find((c: any) => c.id === (group ? s.companion?.groupRuntime?.currentMessage?.characterId || group.entryCharacterId : s.current)); const route = current?.effectiveConnection; const recorded = group ? s.companion?.groupRuntime?.currentMessage?.request : null; return recorded?.model || (route?.error ? route.error : route?.model ? route.name + ' · ' + route.model : chatModel) || t('离线'); })()),
           React.createElement('span', { className: 'whg-chip-caret', 'aria-hidden': 'true' }, '▼'),
         ),
         !s.modelConfigurationCentral && pickerOverlay(chatPicker()),
       ),
       React.createElement('div', { className: 'whg-spacer' }),
-      s.resourcePendingCharacter ? React.createElement('button',{className:'whg-btn',onClick:()=> (window as any).whale.resources.manage(s.resourcePendingCharacter)},t('补装角色')+' · '+s.resourcePendingCharacter) : null,
+      s.resourcePendingCharacter && validPetCharacter(s.resourcePendingCharacter) ? React.createElement('button',{className:'whg-btn',onClick:()=> (window as any).whale.resources.manage(s.resourcePendingCharacter)},t('补装角色')+' · '+s.resourcePendingCharacter) : null,
+      s.customCharacter ? React.createElement('span', { className: 'whg-chip buddy-pet-note' }, t('此角色没有桌宠资源，保留当前桌宠')) : null,
       React.createElement('div', { className: 'whg-top-actions' },
         React.createElement('div', { className: 'whg-chip-wrap' },
           React.createElement('button', {
@@ -2866,7 +2932,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
             'aria-expanded': pickerPanel === 'background',
             'aria-haspopup': 'dialog',
             className: 'whg-btn',
-            onClick: (event: any) => openPicker('background', event.currentTarget),
+            onClick: (event: any) => group ? openCompanion('groups') : openPicker('background', event.currentTarget),
             type: 'button',
           }, t("背景图")),
           pickerOverlay(backgroundPicker()),
@@ -2886,20 +2952,24 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         React.createElement('button',{className:'whg-btn','data-sprite-toggle':true,type:'button','aria-pressed':isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg !== false),onClick:()=>act('sprite-visibility',{characterId:s.current,mode:isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg !== false)?'hide':'show'})},isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg !== false)?t("立绘：显示"):t("立绘：隐藏")),
         s.spriteVisibility !== 'auto' && React.createElement('button',{className:'whg-btn',type:'button',onClick:()=>act('sprite-visibility',{characterId:s.current,mode:'auto'})},t("恢复自动")),
         React.createElement('button', {
-          'aria-controls': 'whg-profile-editor-' + appScope,
-          'aria-expanded': archivePanel === 'profile',
+          'aria-controls': 'buddy-companion-dialog',
+          'aria-expanded': companionPanel === 'characters',
           'aria-haspopup': 'dialog',
           className: 'whg-btn',
-          onClick: (event: any) => openArchive('profile', event.currentTarget),
+          onClick: () => openCompanion('characters'),
           title: t("修改") + (s.name || t("当前角色")) + t("的昵称、称呼、问候、性格、语气与 CG 外观描述"),
           type: 'button',
-        }, t("角色设定")),
+        }, t("管理角色")),
         React.createElement('button', {
-          'aria-expanded': archivePanel === 'history',
+          'aria-expanded': companionPanel === 'history',
+          'aria-controls': 'buddy-companion-dialog',
+          'aria-haspopup': 'dialog',
           className: 'whg-btn',
-          onClick: (event: any) => openArchive('history', event.currentTarget),
+          onClick: () => openCompanion('history'),
           type: 'button',
         }, t("对话历史")),
+        React.createElement('button', { className: 'whg-btn', type: 'button', onClick: () => openCompanion('personas'), title: t('选择和管理我的身份'), 'data-companion-personas': true }, t('我的身份') + (s?.companion?.personas?.find((row: any) => row.id === s.companion.activePersonaId)?.name ? ' · ' + s.companion.personas.find((row: any) => row.id === s.companion.activePersonaId).name : '')),
+        React.createElement('button', { className: 'whg-btn', type: 'button', onClick: () => openCompanion('groups'), 'data-companion-groups': true }, t('群聊')),
         React.createElement('button', {
           'aria-expanded': archivePanel === 'gallery',
           className: 'whg-btn',
@@ -2909,29 +2979,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
           t("CG图鉴"),
           galleryCount > 0 ? React.createElement('span', { className: 'whg-count' }, galleryCount) : null,
         ),
-        React.createElement('div', { className: 'whg-chip-wrap' },
-          (() => {
-            const side = (s && s.sideStory) || {}
-            const cooling = Number(side.cooldownMs) > 0
-            const active = !!(side.scene)
-            const mins = cooling ? Math.ceil(Number(side.cooldownMs) / 60000) : 0
-            return React.createElement('button', {
-              'aria-controls': 'whg-skit-picker-' + appScope,
-              'aria-expanded': pickerPanel === 'skit',
-              'aria-haspopup': 'dialog',
-              className: 'whg-btn',
-              disabled: busy || active || side.available === false,
-              onClick: (event: any) => openPicker('skit', event.currentTarget),
-              title: active
-                ? t("小剧场正在上演")
-                : cooling
-                  ? t("小剧场冷却中，约 ") + mins + t(" 分钟后可再开一场")
-                  : t("让角色们演一段小剧场，可以自己指定话题"),
-              type: 'button',
-            }, t("小剧场"))
-          })(),
-          pickerOverlay(skitPicker()),
-        ),
+        React.createElement('button', { className: 'whg-btn', type: 'button', onClick: (event: any) => openArchive('skits', event.currentTarget) }, t('历史剧场')),
         React.createElement('button', {
           'aria-pressed': petEnabled,
           className: 'whg-btn',
@@ -2973,7 +3021,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   }
 
   function sideStoryScene(): any | null {
-    const side = s && s.sideStory
+    const side = s?.companion ? null : s && s.sideStory
     return side && side.scene && Array.isArray(side.scene.beats) && side.scene.beats.length ? side.scene : null
   }
 
@@ -3020,9 +3068,11 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   }
 
   function stage(): React.ReactElement {
+    if (group) return React.createElement(CompanionGroupStage, { toolbarTarget:groupToolbarTarget, browseRequest:groupBrowseRequest, state: s.companion, request: companionRequest, resolveArt: art, renderPortrait: (member: any, src: string, emotion: string) => React.createElement(CastPortrait, { member: {...member, ...(s?.characters?.find((row: any) => row.id === member.id)||{}), name: companionCharacterName(member)}, src: member.id==='deepseek'&&emotion!=='normal'&&!member.hasCustomSprite&&!member.effective?.sprite ? art(EMOTION_ART[emotion])||src : src, normalSrc: src, request: callApi, emotion, align: 'top' }) })
     const activeScene = sideStoryScene()
     if (activeScene) return castStage(activeScene)
     if (!isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg !== false)) return React.createElement('div',{className:'whg-stage','data-sprite-hidden':true})
+    if (s.customCharacter && !s.hasCustomSprite && !customSprite) return React.createElement('div', { className: 'whg-stage buddy-text-only-stage' }, React.createElement('div', { className: 'buddy-text-only-card' }, React.createElement('strong', null, s.name), React.createElement('span', null, t('未设置立绘，可以直接聊天'))))
     const emotion = emotionOf()
     const mood = emotion
     let src: string | undefined
@@ -3043,12 +3093,12 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       src = art(s.moods[mood]) || art(s.moods.normal)
       if (!src) src = art(s.sprite)
     } else {
-      src = art(s.sprite)
+      src = companionImage(s.sprite, art) || undefined
     }
     const wrap = s.hasCustomSprite&&!customSprite&&!imgFail
       ? React.createElement('div', {className:'whg-sprite-loading','aria-label':s.name})
       : (!src || imgFail)
-      ? React.createElement('div', { className: 'whg-sprite-fallback' }, '🐋')
+      ? React.createElement('div', { className: 'whg-sprite-fallback', 'aria-label': s.name }, s.companion?.characters?.find((row: any) => row.id === s.current)?.builtin === false ? String(s.name || '').slice(0, 2) : '🐋')
       : React.createElement(ExpressionPortrait, {
         characterId:s.current,
         normalSrc:art(s.sprite),
@@ -3166,11 +3216,12 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   }
 
   function dialogue(): React.ReactElement {
+    if (group) return React.createElement(CompanionGroupDialogue, { state: s.companion, request: companionRequest, onPhoto: (cgId:string) => setGroupPanelRequest({groupId:group.id,panel:'gallery',cgId,nonce:Date.now()}), onManage: () => setGroupPanelRequest({groupId:group.id,panel:'settings',nonce:Date.now()}) })
     const activeScene = sideStoryScene()
     if (activeScene) return sideStoryDialogue(activeScene)
     const last = lastLine()
     const plateLabel = last
-      ? (last.who === 'heroine' ? s.name : last.who === 'user' ? t("主人") : t("旁白"))
+      ? (last.who === 'heroine' ? s.name : last.who === 'user' ? (last.personaSnapshot?.nickname || s.companion?.personas?.find((p: any) => p.id === s.companion.activePersonaId)?.nickname || t("你")) : t("旁白"))
       : s.name
     const plateClass = last ? (last.who === 'heroine' ? '' : ' ' + last.who) : ''
     const plateColor = last
@@ -3192,13 +3243,13 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         }))
       : null
     const input = React.createElement('div', { className: 'whg-input-row' },
-      React.createElement('input', {
-        className: 'whg-input',
+      React.createElement('textarea', {
+        className: 'whg-input', rows: 2, 'aria-label': t('私聊消息'),
         value: text,
         placeholder: t("回复 ") + s.name + ' …',
         disabled: busy,
         onChange: (e: any) => { setText(e.target.value) },
-        onKeyDown: (e: any) => { if (e.key === 'Enter') send() },
+        onKeyDown: (e: any) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send() } },
       }),
       React.createElement('button', { className: 'whg-send', disabled: busy || !text.trim(), onClick: send }, t("回复")))
     const fallbackNote = s.fallbackUsed
@@ -3214,6 +3265,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         React.createElement('div', { className: 'whg-level-track' },
           React.createElement('div', { className: 'whg-level-fill', style: { width: Math.min(100, Math.round((s.affection / Math.max(1, s.cap)) * 100)) + '%' } }))),
       now,
+      apiError ? React.createElement('p', { className: 'buddy-error', role: 'alert' }, apiError) : null,
       fallbackNote,
       choices,
       input,
@@ -3308,7 +3360,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         ),
       )
     }
-    const bgSrc = s.bg === 'cg' || s.bg === 'custom' ? bgCache.current : art(s.bg)
+    const bgSrc = group ? (companionImage(group.background, art) || art('bg-kimi-moonlit-reading-study') || art('palace-night')) : (s.bg === 'cg' || s.bg === 'custom' ? bgCache.current : companionImage(s.bg, art))
     const bgEl = bgSrc
       ? React.createElement('img', { className: 'whg-bg', src: bgSrc, alt: '', draggable: false })
       : React.createElement('div', { className: 'whg-bg whg-bg-fallback' })
@@ -3318,6 +3370,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       stage(),
       dialogue(),
       archiveDrawer(),
+      companionPanel && s.companion ? React.createElement(CompanionManager, { state: s.companion, request: companionRequest, panel: companionPanel, onClose: () => setCompanionPanel(null), resolveArt: art }) : null,
       cgModal(),
       sideStoryToast(),
     )
@@ -3340,7 +3393,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     )
   }
   if (s.enabled === false) return React.createElement(React.Fragment, null)
-  const bgSrc = s.bg === 'cg' || s.bg === 'custom' ? bgCache.current : art(s.bg)
+  const bgSrc = group ? (companionImage(group.background, art) || art('bg-kimi-moonlit-reading-study') || art('palace-night')) : (s.bg === 'cg' || s.bg === 'custom' ? bgCache.current : companionImage(s.bg, art))
   const bgEl = bgSrc
     ? React.createElement('img', { className: 'whg-bg', src: bgSrc, alt: '', draggable: false })
     : React.createElement('div', { className: 'whg-bg whg-bg-fallback' })
@@ -3350,6 +3403,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     stage(),
     dialogue(),
     archiveDrawer(),
+    companionPanel && s.companion ? React.createElement(CompanionManager, { state: s.companion, request: companionRequest, panel: companionPanel, onClose: () => setCompanionPanel(null), resolveArt: art }) : null,
     cgModal(),
     sideStoryToast(),
   )

@@ -1,3 +1,4 @@
+import {replyEmotion} from '../group-stage.mjs'
 import {englishProfile,ENGLISH_CHOICES} from '../character-english.mjs';
 import {migrateCharacterDisplay,characterBackground,setCharacterBackground} from '../character-display.mjs';
 import {EMOTION_KEYS,EMOTION_PROMPT,resolveEmotion} from '../emotions.mjs'
@@ -13,7 +14,8 @@ import {
   type HarnessActivity,
 } from './activity-context.ts'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { randomUUID } from 'node:crypto'
+import { randomUUID,createHash } from 'node:crypto'
+import { exportPortableCgs, validatePortableCgs } from '../companion-media.mjs'
 import {
   link as nativeLink,
   mkdir as nativeMkdir,
@@ -437,12 +439,34 @@ const CANNED_LINES = new Set([
 
 export const name = 'whale-galgame'
 export const inject = ['webServer', 'llm']
+const BUILTIN_COMPANION_ROSTER = ROSTER
 
 export function apply(
   ctx: any,
   config: any = {},
   internals: { nativeGlobalIo?: NativeGlobalIo; nativeWorkspaceIo?: NativeGlobalIo } = {},
 ): any {
+  // Dynamic cards belong to this engine instance, never the module singleton.
+  const ROSTER: Record<string, any> = structuredClone(BUILTIN_COMPANION_ROSTER)
+  const ROSTER_IDS = Object.keys(ROSTER)
+  const companionCards: Record<string, any> = {}
+  function registerCompanionCard(card: any): void {
+    if (!card || typeof card.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(card.id) || card.id === 'prototype' || Object.hasOwn(Object.prototype, card.id)) throw new Error('无效角色身份')
+    companionCards[card.id] = card
+    const profile = card.effective || card.defaults || {}
+    if (!ROSTER[card.id]) {
+      ROSTER[card.id] = { id: card.id, name: card.name, color: '#9dbbda', sprite: null, moods: null, moodSprites: false,
+        address: '', greet: '', persona: '', tone: '', visual: '', backgrounds: [], custom: true, resourceVersion: 'custom-card-' + card.id }
+      ROSTER_IDS.push(card.id)
+    }
+    if (ROSTER[card.id].custom) Object.assign(ROSTER[card.id], { name: card.name, address: profile.address || '', greet: profile.greeting || '', persona: profile.personality || '', tone: profile.tone || '', visual: profile.visual || '' })
+  }
+  for (const card of ctx.companionCards || []) registerCompanionCard(card)
+  function builtInProfile(charId: string, language = 'zh-CN'): Record<string, string> {
+    const ch = ROSTER[charId] || ROSTER.deepseek
+    const result = { displayName: ch.name, address: ch.address || '', greeting: ch.greet || '', persona: ch.persona || '', tone: ch.tone || '', visual: ch.visual || '' }
+    return language === 'en' && !ch.custom ? englishProfile(charId, result) : result
+  }
   const webServer = ctx.webServer
   const llm = ctx.llm
   const cfg = {
@@ -596,6 +620,8 @@ export function apply(
       chosenBuiltinBackground: null,
       // Only non-empty differences from the built-in profile are stored.
       profileOverrides: {},
+      companionEvents: {},
+      companionPersonaId: 'default',
     }
   }
 
@@ -651,6 +677,7 @@ export function apply(
     'chosenBuiltinBackground',
     'backgroundOverride', 'backgroundName', 'spriteVisibility',
     'profileOverrides',
+    'companionEvents', 'companionPersonaId', 'companionBackground', 'lifeOperationId',
   ])
   const GLOBAL_ROOT_FIELDS = new Set([
     'current',
@@ -666,6 +693,7 @@ export function apply(
     // entry composeState routes it to the workspace save, which only stores a
     // source marker, so the cooldown and history would never reach disk.
     'sideStory',
+    'sideStoryPersonas',
     'modelOnline',
     'characterModelLabel',
     'chatModelLabel',
@@ -715,6 +743,7 @@ export function apply(
       // an older build reading this file ignores the field instead of latching
       // the whole save as an unrecognized version.
       sideStory: normalizeSideStory(null),
+      sideStoryPersonas: {},
       // Claims record which global choices have already been established.
       // Legacy workspace imports may fill an unclaimed field once, but can
       // never overwrite a value chosen in the new global store.
@@ -1013,13 +1042,17 @@ export function apply(
       savedAsBg: raw.savedAsBg === true,
       error: typeof raw.error === 'string' && raw.error ? raw.error : null,
       assetRef,
-      ...Object.fromEntries(['sourceEventId', 'kind', 'label', 'skitId', 'retryOf', 'provider', 'model', 'connectionName', 'thumbnailRef', 'sha256', 'referenceMode', 'referenceNotice'].filter(key => typeof raw[key] === 'string').map(key => [key, raw[key]])),
+      ...Object.fromEntries(['groupId', 'personaId', 'sourceEventId', 'kind', 'label', 'skitId', 'retryOf', 'provider', 'model', 'connectionName', 'thumbnailRef', 'sha256', 'referenceMode', 'referenceNotice'].filter(key => typeof raw[key] === 'string').map(key => [key, raw[key]])),
+      submittedAt: typeof raw.submittedAt === 'number' ? raw.submittedAt : null,
+      completedAt: typeof raw.completedAt === 'number' ? raw.completedAt : null,
       automatic: raw.automatic === true,
       deletedAt: typeof raw.deletedAt === 'number' ? raw.deletedAt : null,
       theme: raw.theme && typeof raw.theme === 'object' ? raw.theme : null,
+      groupSource: raw.groupSource && typeof raw.groupSource === 'object' ? raw.groupSource : null,
       themeBrief: raw.themeBrief && typeof raw.themeBrief === 'object' ? raw.themeBrief : null,
       characters: Array.isArray(raw.characters) ? raw.characters : null,
       scene: raw.scene && typeof raw.scene === 'object' ? raw.scene : null,
+      lifeIds: raw.lifeIds && typeof raw.lifeIds==='object' ? raw.lifeIds : null,
     }
   }
 
@@ -1999,9 +2032,19 @@ export function apply(
   }
 
   function effectiveProfileFor(charId: string): Record<string, string> {
+    const card = companionCards[charId]
+    const effective = card?.effective
+    const fields: Record<string, string> = {}
+    if (effective) {
+      if (card.nameCustomized || ROSTER[charId]?.custom) fields.displayName = card.name
+      for (const [key, legacy] of Object.entries({ personality: 'persona', tone: 'tone', address: 'address', greeting: 'greeting', visual: 'visual' })) {
+        if (card.fields?.[key] && card.fields[key].mode !== 'inherit') fields[legacy] = effective[key] || ''
+      }
+    }
     return {
       ...builtInProfile(charId,ctx.language?.()),
       ...profileOverridesFor(charId),
+      ...fields,
     }
   }
 
@@ -2134,11 +2177,15 @@ export function apply(
     s.modelLabel = s.characterModelLabel
     s.modelOnline = !!(manualCharacter || sel)
     const requested = manualCharacter || heroineFor(sel, s.current)
-    const next = ctx.resources?.available(requested) === false ? ctx.resources.fallback(s.current) : requested
+    const next = !ROSTER[requested]?.custom && ctx.resources?.available(requested) === false ? ctx.resources.fallback(s.current) : requested
     const changed = next !== s.current
     if (changed) {
       s.lastCurrent = s.current
       s.current = next
+    }
+    if (!s.characters[next] && splitStorageActive() && globalState?.characters[next]) {
+      const runtime = currentWorkspaceRuntime()
+      if (runtime) runtime.facade = composeState(globalState, runtime.state)
     }
     const c = s.characters[next]
     let mutated = changed
@@ -2232,6 +2279,7 @@ export function apply(
       c.choices = []
       c.chatLines.push({
         who: 'narrator',
+        personaId: c.companionPersonaId || 'default',
         text: ctx.language?.() === 'en' ? '(' + profile.displayName + ' reached Lv.' + c.level + '!' + (options.skipCg ? '' : ' Preparing a gift for you…') + ')' : options.skipCg === true
           ? '（好感度已满！' + profile.displayName + ' 的等级提升至 Lv.' + c.level + '！）'
           : '（好感度已满！' + profile.displayName + ' 的等级提升至 Lv.' + c.level + '！正在为' + profile.address + '准备礼物……）',
@@ -2240,11 +2288,13 @@ export function apply(
       const cgId = makeId('cg')
       c.cgs.push({
         id: cgId,
+        lifeIds:ctx.companionLifeIds?.([charId]),
         status: 'queued',
         kind: 'level', automatic: true, sourceEventId: 'level:' + cgId,
         dataUrl: null,
         prompt: null,
         charId,
+        personaId: c.companionPersonaId || 'default',
         level: c.level,
         at: Date.now(),
         seen: false,
@@ -2267,7 +2317,7 @@ export function apply(
   function sideStoryView(): any {
     const state = sideStoryState()
     const scene = state.scene
-    const missingCharacters = (scene?.cast || []).filter((id:string)=>ctx.resources?.available(id) === false)
+    const missingCharacters = (scene?.cast || []).filter((id:string)=>!ROSTER[id]?.custom && ctx.resources?.available(id) === false)
     return {
       missingCharacters,
       cooldownMs: sideStoryCooldownRemaining(),
@@ -2326,7 +2376,7 @@ export function apply(
       enabled: preferences.enabled !== false,
       current: s.current,
       resources: ctx.resources?.status(),
-      resourcePendingCharacter: ctx.resources && !ctx.resources.available(preferences.characterMode === 'manual' ? preferences.characterId : heroineFor(currentSelectionSync(),s.current)) ? (preferences.characterMode === 'manual' ? preferences.characterId : heroineFor(currentSelectionSync(),s.current)) : null,
+      resourcePendingCharacter: ctx.resources && !ROSTER[preferences.characterMode === 'manual' ? preferences.characterId : heroineFor(currentSelectionSync(),s.current)]?.custom && !ctx.resources.available(preferences.characterMode === 'manual' ? preferences.characterId : heroineFor(currentSelectionSync(),s.current)) ? (preferences.characterMode === 'manual' ? preferences.characterId : heroineFor(currentSelectionSync(),s.current)) : null,
       name: profile.displayName,
       profileCustomized: Object.keys(profileOverridesFor(s.current)).length > 0,
       color: ch.color,
@@ -2805,6 +2855,12 @@ export function apply(
 
   function sideStoryState(): any {
     ensureState()
+    const personaId = ctx.companionPersonaId?.() || 'default'
+    if (personaId !== 'default') {
+      if (!s.sideStoryPersonas || typeof s.sideStoryPersonas !== 'object') s.sideStoryPersonas = {}
+      if (!s.sideStoryPersonas[personaId]) s.sideStoryPersonas[personaId] = normalizeSideStory(null)
+      return s.sideStoryPersonas[personaId]
+    }
     if (!s.sideStory || typeof s.sideStory !== 'object') s.sideStory = normalizeSideStory(null)
     return s.sideStory
   }
@@ -3161,6 +3217,31 @@ export function apply(
    * in where she spoke, later interludes shift by however many beats that added,
    * and the scene only closes once every interlude has been used.
    */
+  function settleCapturedRelationship(charId: string, personaId: string, base: any, delta: number, eventId: string, source = 'companion'): any {
+    const c = s.characters[charId]
+    if (!c || !Number.isFinite(delta) || Math.abs(delta) > 10000) throw new Error('无效关系结算')
+    c.companionEvents ||= {}
+    if (c.companionEvents[eventId]) return c.companionEvents[eventId]
+    const previousProjection = { level: c.level, affection: c.affection, personaId: c.companionPersonaId || 'default' }
+    const actualBase = previousProjection.personaId === personaId ? c : base
+    c.level = Math.max(1, Math.floor(Number(actualBase?.level) || 1))
+    c.affection = Math.max(0, (Number(actualBase?.affection) || 0) + delta)
+    c.companionPersonaId = personaId
+    const levels: number[] = []
+    while (c.affection >= affectionCap(c.level)) {
+      checkLevelUp(charId, c)
+      levels.push(c.level)
+    }
+    const result = { level: c.level, affection: c.affection, levels, characterId: charId, personaId, delta, eventId, at: Date.now(), source }
+    c.companionEvents[eventId] = result
+    if (previousProjection.personaId !== personaId) {
+      c.level = previousProjection.level
+      c.affection = previousProjection.affection
+      c.companionPersonaId = previousProjection.personaId
+    }
+    return result
+  }
+
   function settleSideStoryChoice(scene: any, choice: any): { applied: boolean; leveled: string[] } {
     const interlude = pendingSideStoryInterlude(scene)
     if (!interlude) return { applied: false, leveled: [] }
@@ -3172,10 +3253,10 @@ export function apply(
       if (delta !== 1 && delta !== -1) continue
       const c = s.characters[id]
       if (!c) continue
-      c.affection = Math.max(0, c.affection + delta)
-      // Side-story level-ups deliberately skip CG generation: a three-character
-      // scene could otherwise trigger three image calls at once.
-      if (checkLevelUp(id, c)) leveled.push(id)
+      const personaId = ctx.companionPersonaId?.() || c.companionPersonaId || 'default'
+      const base = ctx.companionProgress?.(id, personaId) || { level: c.level, affection: c.affection }
+      const result = settleCapturedRelationship(id, personaId, base, delta, 'skit:' + scene.id + ':' + interlude.at + ':' + id, 'skit')
+      if (result.levels.length) leveled.push(id)
       scene.applied[id] = (scene.applied[id] || 0) + delta
     }
 
@@ -3292,11 +3373,11 @@ export function apply(
     const previous = record.retryOf ? findCg(record.retryOf) : null
     const activities = globalActivityCandidates()
     record.themeBrief = previous?.themeBrief || {
-      charId, level, language: ctx.language?.() || 'zh-CN', visual: profile.visual, profile: { ...profile }, identity: profile.visual,
+      charId, level, language: ctx.language?.() || 'zh-CN', visual: profile.visual, profile: { ...profile, ...(companionCards[charId]?.effective || {}) }, identity: profile.visual,
       resourceVersion: ROSTER[charId].resourceVersion || 'deepseek-approved',
       referenceKind: customSpriteFor(s.characters[charId])?.dataUrl ? 'custom' : 'builtin',
       scene: captureCgScene(charId, false), relationship: intimacyFor(level),
-      recentContext: (s.characters[charId].chatLines || []).slice(-6).map((line: any) => String(line.text || '').slice(0,240)).join('；').slice(0,1200),
+      recentContext: (ctx.companionHistory?.(charId, record.personaId || 'default') || s.characters[charId].chatLines || []).slice(-6).map((line: any) => String(line.text || '').slice(0,240)).join('；').slice(0,1200),
       activity: activities.length ? activityCgTheme(activities[0]) : '',
       history: allCgs(true).filter((row: any) => row.id !== cgId && row.charId === charId && row.prompt).slice(0,6).map((row: any) => row.theme || {title: '旧版纪念 CG', scene: '深海女仆工坊，烛光与月光', action: '幸福温柔地微笑', composition: '正面人物，桌面与工坊背景', prompt: row.prompt.slice(0,1200)}),
     }
@@ -3305,10 +3386,12 @@ export function apply(
   }
 
   function cgCharacters(ids: string[]): any[] {
-    return ids.map(id => ({ id, name: effectiveProfileFor(id).displayName, profile: { ...effectiveProfileFor(id) },
+    return ids.map(id => ({ id, name: effectiveProfileFor(id).displayName, profile: { ...effectiveProfileFor(id), ...(companionCards[id]?.effective || {}) },
       identity: effectiveProfileFor(id).visual, spriteKey: ROSTER[id].sprite,
       resourceVersion: ROSTER[id].resourceVersion || 'deepseek-approved',
-      referenceRole: 'character', dataUrl: customSpriteFor(s.characters[id])?.dataUrl || null }))
+      referenceRole: 'character', customCharacter: ROSTER[id].custom === true,
+      referenceMode: ROSTER[id].custom && !customSpriteFor(s.characters[id])?.dataUrl ? 'text-only' : 'image',
+      dataUrl: companionCards[id]?.effective?.referenceImage || customSpriteFor(s.characters[id])?.dataUrl || null }))
   }
 
   function captureCgScene(charId: string, includeImage = true): any {
@@ -3359,6 +3442,7 @@ export function apply(
     if (previous && ['queued', 'planning', 'generating', 'ready'].includes(previous.status)) return previous.id
     const owner = skit.cast[0], c = s.characters[owner], id = makeId('cg')
     c.cgs.push({ id, status: 'queued', dataUrl: null, prompt: null, charId: owner,
+      lifeIds:ctx.companionLifeIds?.(skit.cast),
       kind: 'skit', skitId: skit.id, automatic, sourceEventId: automatic ? 'skit:' + skit.id : 'manual:' + id,
       retryOf: previous?.id || null, level: c.level || 1, at: Date.now(), seen: true, savedAsBg: false, error: null })
     skit.cgId = id
@@ -3611,7 +3695,12 @@ export function apply(
       }
     }
     if (typeof src.level === 'number' && src.level >= 1) dst.level = Math.floor(src.level)
+    // `log` is a bounded model-context cache. The complete originals live in
+    // chatLines and the versioned companion conversation message store.
     if (Array.isArray(src.log)) dst.log = src.log.slice(-24)
+    if (src.companionEvents && typeof src.companionEvents === 'object') dst.companionEvents = src.companionEvents
+    if (typeof src.companionPersonaId === 'string') dst.companionPersonaId = src.companionPersonaId
+    if (src.companionBackground && typeof src.companionBackground === 'object') dst.companionBackground = src.companionBackground
     if (Array.isArray(src.chatLines)) {
       dst.chatLines = src.chatLines.map((line: any) => ({
         ...(line && typeof line === 'object' ? line : {}),
@@ -3767,6 +3856,7 @@ export function apply(
     )
     next.activityFeed = normalizeActivityFeed(combined.activityFeed)
     next.sideStory = normalizeSideStory(combined.sideStory)
+    next.sideStoryPersonas = Object.fromEntries(Object.entries(combined.sideStoryPersonas || {}).filter(([id]) => /^[a-zA-Z0-9_-]{1,100}$/.test(id) && !['__proto__','constructor','prototype'].includes(id)).map(([id, value]) => [id, normalizeSideStory(value)]))
     next.preferences = normalizePreferences({ ...combined.preferences })
     next.modelOnline = combined.modelOnline === true
     next.characterModelLabel = typeof combined.characterModelLabel === 'string' ? combined.characterModelLabel : ''
@@ -3840,6 +3930,7 @@ export function apply(
       : null
     combined.activityFeed = version === GLOBAL_SAVE_VERSION ? normalizeActivityFeed(data.activityFeed) : []
     combined.sideStory = version === GLOBAL_SAVE_VERSION ? data.sideStory : null
+    combined.sideStoryPersonas = version === GLOBAL_SAVE_VERSION ? data.sideStoryPersonas : {}
     combined.modelOnline = data.modelOnline === true
     combined.characterModelLabel = typeof data.characterModelLabel === 'string' ? data.characterModelLabel : ''
     combined.chatModelLabel = typeof data.chatModelLabel === 'string' ? data.chatModelLabel : ''
@@ -4499,6 +4590,139 @@ export function apply(
         .catch(() => hasSessionId ? 'mismatch' as const : 'unscoped' as const)
     if (!splitStorageActive() && binding === 'mismatch') return workspaceMismatchView()
     switch (action) {
+      case 'companion-media-export': {
+        const ids = new Set(args.ids || [])
+        const records = allCgs(true).filter((cg: any) => args.all || ids.has(cg.id))
+        if (!args.all && records.length !== ids.size) throw Error('合影记录缺失，无法完整导出')
+        return { media: exportPortableCgs(records, (ref: string) => ctx.cg.readAsset(ref)) }
+      }
+      case 'companion-media-validate':
+      case 'companion-media-import': {
+        const prepared = validatePortableCgs(args.media)
+        const allowed = new Set(args.characterIds || ROSTER_IDS)
+        for (const row of prepared.cgs) {
+          if (!allowed.has(row.charId) || row.characters?.some((c: any) => !allowed.has(c.id))) throw Error('CG 关联角色不存在')
+        }
+        if (action === 'companion-media-validate') {
+          if (prepared.files.length && !ctx.cg?.imageCodec) throw Error('CG 图片解码器尚未就绪')
+          // Decode before syncCard or either history store is changed. A valid
+          // signature/hash alone does not make a truncated image decodable.
+          for (const file of prepared.files) ctx.cg.imageCodec(file.bytes)
+          return { ok: true }
+        }
+        const assets = ctx.writePortableImages(prepared.files)
+        for (const row of prepared.cgs) {
+          if (findCg(row.id)) continue // Do not resurrect local trash on reimport.
+          const { image, ...metadata } = row
+          const cg = normalizeCg({ ...metadata, ...(assets.get(image) || {}) }, row.charId)
+          s.characters[row.charId].cgs.push(cg)
+        }
+        if (prepared.cgs.length) await save('global')
+        return { ok: true, idMap: prepared.idMap }
+      }
+      case 'companion-export': {
+        return { current: s.current, characters: ROSTER_IDS.map(id => ({ id, hasCustomSprite: !!customSpriteFor(s.characters[id])?.dataUrl, spriteRevision: spriteRevisionFor(s.characters[id]), sprite: ROSTER[id].sprite, color: ROSTER[id].color, background: defaultBuiltinBackground(id), profile: effectiveProfileFor(id), builtIn: builtInProfile(id, ctx.language?.()), overrides: profileOverridesFor(id), level: s.characters[id].level,
+          affection: s.characters[id].affection, history: s.characters[id].chatLines || [], choices: s.characters[id].choices || [], personaId: s.characters[id].companionPersonaId || 'default',
+          pendingRelationEvents: Object.values(s.characters[id].companionEvents || {}).filter((event: any) => event.source === 'skit' && !event.delivered) })) }
+      }
+      case 'companion-life-content': {
+        const id=String(args.characterId),character=s.characters[id]
+        if(!character)throw Error('角色不存在')
+        const content:any={}
+        for(const key of GLOBAL_CHARACTER_FIELDS)if(character[key]!==undefined)content[key]=JSON.parse(JSON.stringify(character[key]))
+        content.sharedCgs=allCgs(true).filter((cg:any)=>cg.charId!==id&&cg.characters?.some((c:any)=>c.id===id)&&ctx.companionCgVisible?.(cg,id)!==false).map((cg:any)=>JSON.parse(JSON.stringify(cg)))
+        if([...(content.cgs||[]),...(content.sharedCgs||[])].some((cg:any)=>['queued','planning','generating'].includes(cg.status)))throw Error('请等待此角色绘图完成，或先在绘图队列取消任务，再保存或切换人生')
+        return {ok:true,content}
+      }
+      case 'companion-life-validate':
+      case 'companion-life-project': {
+        const id=String(args.characterId),content=args.content
+        if(!s.characters[id]||!content||typeof content!=='object'||Array.isArray(content))throw Error('人生内容无效')
+        if(!content.reset&&(!Number.isFinite(content.level)||content.level<1||!Number.isFinite(content.affection)||content.affection<0||!Array.isArray(content.cgs)||!Array.isArray(content.chatLines)))throw Error('人生角色进度不完整')
+        const files:any[]=[],scan=(value:any):any=>{
+          if(Array.isArray(value))return value.map(scan)
+          if(value&&typeof value==='object'){
+            if(value.$assetImage){const match=/^data:image\/(png|jpeg|webp|avif);base64,([a-zA-Z0-9+/=]+)$/.exec(value.$assetImage);if(!match)throw Error('存档图片编码无效');const bytes=Buffer.from(match[2],'base64'),key=createHash('sha256').update(bytes).digest('hex');if(!ctx.cg?.imageCodec)throw Error('图片解码器尚未就绪');ctx.cg.imageCodec(bytes);files.push({key,bytes});return {$assetKey:key}}
+            return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,scan(v)]))
+          }return value
+        }
+        const prepared=scan(content)
+        if(action==='companion-life-validate')return {ok:true}
+        const assets=ctx.writePortableImages(files),materialize=(value:any):any=>{if(Array.isArray(value))return value.map(materialize);if(value&&typeof value==='object'){if(value.$assetKey)return assets.get(value.$assetKey)?.assetRef;return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,materialize(v)]))}return value}
+        const incoming=content.reset?emptyCharacter():materialize(prepared),character=s.characters[id]
+        const appearance=Object.fromEntries(['customSprite','chosenBuiltinBackground','backgroundOverride','backgroundName','spriteVisibility','companionBackground'].map(key=>[key,character[key]]))
+        for(const key of GLOBAL_CHARACTER_FIELDS)character[key]=incoming[key]??emptyCharacter()[key]??null
+        for(const shared of incoming.sharedCgs||[])if(!findGlobalCg(shared.id))character.cgs.push({...shared,charId:id,archivedOwnerId:shared.charId})
+        if(content.reset&&content.preserveAppearance)for(const [key,value]of Object.entries(appearance))character[key]=value
+        for(const cg of character.cgs||[]){if(['queued','planning','generating'].includes(cg.status)){cg.status='cancelled';cg.error='恢复的历史任务未重新提交'}cg.automatic=false}
+        for(const event of Object.values(character.companionEvents||{}) as any[])event.delivered=true
+        character.lifeOperationId=args.operationId
+        if(s.cg?.charId===id){s.cg=null;claimGlobalValue('cg')}
+        await save('global')
+        return {ok:true}
+      }
+      case 'companion-ack-events': {
+        for (const entry of args.entries || []) {
+          const event = s.characters[entry.characterId]?.companionEvents?.[entry.eventId]
+          if (event) event.delivered = true
+        }
+        await save('global')
+        return { ok: true }
+      }
+      case 'companion-register': {
+        const card = args.card
+        registerCompanionCard(card)
+        const backing = splitStorageActive() ? globalState : legacyState
+        backing.characters[card.id] ||= emptyCharacter()
+        if (splitStorageActive()) {
+          for (const runtime of workspaceRuntimes.values()) runtime.facade = composeState(globalState, runtime.state)
+          const current = currentWorkspaceRuntime()
+          if (current) current.facade = composeState(globalState, current.state)
+        }
+        const effective = card.effective || {}
+        if (Object.prototype.hasOwnProperty.call(effective, 'sprite')) {
+          const image = validCustomSprite(effective.sprite)
+          const old = backing.characters[card.id].customSprite
+          if (image !== old?.dataUrl) backing.characters[card.id].customSprite = { dataUrl: image, fileName: '', revision: Math.max((old?.revision || 0) + 1, Date.now()) }
+        }
+        const target = backing.characters[card.id], previous = target.companionBackground
+        if (effective.backgroundImage?.startsWith('data:image/')) {
+          if (effective.backgroundImage !== previous?.applied) {
+            target.companionBackground = { applied: effective.backgroundImage, previous: target.backgroundOverride === previous?.applied ? previous.previous : target.backgroundOverride || null }
+            target.backgroundOverride = effective.backgroundImage
+          }
+        } else if (previous) {
+          if (target.backgroundOverride === previous.applied) target.backgroundOverride = previous.previous || null
+          target.companionBackground = null
+        }
+        await save('global')
+        return { ok: true }
+      }
+      case 'companion-project': {
+        if (args.relationships && typeof args.relationships === 'object') {
+          for (const [id, relationship] of Object.entries(args.relationships) as any) {
+            const c = s.characters[id]
+            if (!c) throw new Error('角色不存在')
+            c.level = Math.max(1, Math.floor(Number(relationship?.level) || 1))
+            c.affection = Math.max(0, Number(relationship?.affection) || 0)
+            c.companionPersonaId = args.personaId || 'default'
+          }
+          await save('global')
+          return { ok: true }
+        }
+        const c = s.characters[args.characterId]
+        if (!c) throw new Error('角色不存在')
+        c.level = Math.max(1, Math.floor(Number(args.relationship?.level) || 1))
+        c.affection = Math.max(0, Number(args.relationship?.affection) || 0)
+        c.companionPersonaId = args.personaId || 'default'
+        await save('global')
+        return { ok: true }
+      }
+      case 'companion-relationship': {
+        const result = settleCapturedRelationship(args.characterId, args.personaId || 'default', args.base, args.delta, args.eventId)
+        await save('global')
+        return result
+      }
       case 'model-options': {
         return modelOptions()
       }
@@ -4570,7 +4794,7 @@ export function apply(
           errors.push('手动角色不能为空')
           nextCharacterMode = 'follow'
         }
-        if(nextCharacterMode === 'manual' && ctx.resources?.available(p.characterId) === false){s.preferences=originalPreferences;return {ok:false,code:'CHARACTER_NOT_INSTALLED',characterIds:[p.characterId],errors:['角色资源待安装 / Character resources need installation'],view:view()}}
+        if(nextCharacterMode === 'manual' && !ROSTER[p.characterId]?.custom && ctx.resources?.available(p.characterId) === false){s.preferences=originalPreferences;return {ok:false,code:'CHARACTER_NOT_INSTALLED',characterIds:[p.characterId],errors:['角色资源待安装 / Character resources need installation'],view:view()}}
         p.characterMode = nextCharacterMode
 
         let nextChatMode = p.chatMode
@@ -4656,6 +4880,7 @@ export function apply(
         return profileResult(charId)
       }
       case 'profile-set': {
+        ctx.guardCompanionProfile?.(action,args)
         ensureState()
         if (ensurePreferences().enabled !== false) syncHeroine(false)
         const charId = requestedProfileCharId(args)
@@ -4729,6 +4954,7 @@ export function apply(
         return { ...profileResult(charId), view: view(false) }
       }
       case 'profile-reset': {
+        ctx.guardCompanionProfile?.(action,args)
         ensureState()
         if (ensurePreferences().enabled !== false) syncHeroine(false)
         const charId = requestedProfileCharId(args)
@@ -4773,7 +4999,9 @@ export function apply(
         return immediate
       }
       case 'chat': {
-        const text = args && args.text ? String(args.text).trim().slice(0, 500) : ''
+        const text = args && args.text ? String(args.text).trim() : ''
+        if (text.length > 200000) throw new Error('消息超过 200000 字符；原文未截断')
+        const companionContext = args.companionContext
         if (!text) return view()
         if (ensurePreferences().enabled === false) return view()
         const runtime = splitStorageActive() ? currentWorkspaceRuntime() : null
@@ -4794,13 +5022,14 @@ export function apply(
             ensureState()
             if (ensurePreferences().enabled === false) return { disabled: true, response: view() }
             syncHeroine()
-            const charId = String(s.current)
+            const charId = String(companionContext?.characterId && ROSTER[companionContext.characterId] ? companionContext.characterId : s.current)
             const character = s.characters[charId]
-            const profile = { ...effectiveProfileFor(charId) }
+            const profile = { ...effectiveProfileFor(charId), ...(companionContext?.profile ? {displayName: companionContext.profile.name,
+              persona: companionContext.profile.personality || '', tone: companionContext.profile.tone || '', address: companionContext.profile.address || '', greeting: companionContext.profile.greeting || '', visual: companionContext.profile.visual || ''} : {}) }
             const scopedActivity = globalActivityCandidates()
             const pendingActivity = nextUnseenActivity(scopedActivity, character.activity)
             const selectedChoice = args && typeof args.choiceId === 'string'
-              ? character.choices.find((choice: any) => choice && typeof choice === 'object' && choice.id === args.choiceId)
+              ? (companionContext?.choices ?? character.choices).find((choice: any) => choice && typeof choice === 'object' && choice.id === args.choiceId)
               : null
             return {
               disabled: false,
@@ -4809,20 +5038,20 @@ export function apply(
               scene: captureCgScene(charId, false),
               pendingActivity,
               selectedChoice: selectedChoice ? { ...selectedChoice } : null,
-              promptCharacter: { level: character.level, affection: character.affection },
-              log: character.log.slice(-12).map((entry: any) => ({ ...entry })),
+              promptCharacter: companionContext?.relationship || { level: character.level, affection: character.affection },
+              log: (companionContext?.log || character.log.slice(-24)).map((entry: any) => ({ ...entry })),
             }
           })
           if (prepared.disabled) return prepared.response
+          const inputVersions: any[] = []
 
           let sel: any = null
           try {
             sel = await waitWithAbort(Promise.resolve(pickModel()), signal, 'chat model selection aborted')
           } catch (err) { /* the fallback line remains available */ }
           const effort = await pickEffort(sel, signal)
-          const requestId = randomUUID()
+          const requestId = companionContext?.requestId || randomUUID()
           const sequence = ++emotionSequence
-          const emotionPromise = classifyEmotion(text, signal, sel)
           let reply = ''
           let usedFallback = false
           let fallbackReason = ''
@@ -4838,8 +5067,9 @@ export function apply(
                     content: [{ type: 'text', text: '（场景：' + prepared.scene.description + '。当前角色正在和用户聊天。你只扮演当前角色，不要提到其他角色。）' }],
                     source: { kind: 'user' },
                   }]
-                  for (const m of [...prepared.log, { role: 'user', text }].slice(-12)) {
+                  for (const m of (companionContext ? [...prepared.log, {role:'user',text:companionContext.modelText??text}] : [...prepared.log, { role: 'user', text }].slice(-12))) {
                     if (m.role === 'assistant' && typeof m.text === 'string' && CANNED_LINES.has(m.text.trim())) continue
+                    if (m.id) inputVersions.push({id: m.id, revision: m.revision || 0})
                     msgs.push({
                       role: m.role === 'assistant' ? 'assistant' : 'user',
                       content: [{ type: 'text', text: m.text }],
@@ -4850,7 +5080,9 @@ export function apply(
                   }
                   return msgs
                 })(),
-                system: systemPrompt(prepared.profile, prepared.promptCharacter, prepared.pendingActivity),
+                system: systemPrompt(prepared.profile, prepared.promptCharacter, prepared.pendingActivity)
+                  + (companionContext ? '\n完整角色卡（只扮演此角色）：' + JSON.stringify(companionContext.profile) + '\n本会话用户身份：' + JSON.stringify(companionContext.persona)
+                    + '\n未提供的其他身份经历、私聊与群聊内容均不可获知，不编造。可在回复末尾用 [[emotion:标签]] 标记你实际表达的情绪，标签限 normal,cheerful,shy,serious,confused,angry,frightened,exasperated,starry。\n'+(companionContext.memoryText||'')  : ''),
                 temperature: 0.9,
                 maxTokens: 1200,
               }, signal)
@@ -4866,21 +5098,23 @@ export function apply(
           if (!reply) {
             if (cfg.strictModelErrors) {
               controller.abort(new Error('主回复失败'))
-              await emotionPromise
               throw new Error(fallbackReason || '模型没有返回正文，请重试')
             }
             reply = ctx.language?.() === 'en' ? 'I heard you. The connection is having trouble; let us talk again in a moment.' : prepared.profile.address + '说的话，我听到了。（连接暂时不顺畅，稍后我们再接着聊。）'
             usedFallback = true
           }
-          const {emotion, emotionSource} = await emotionPromise
+          const emotionTag=reply.match(/\[\[emotion:([a-z-]+)\]\]\s*$/i)?.[1]
+          reply=reply.replace(/\s*\[\[emotion:[a-z-]+\]\]\s*$/i,'')
+          const {emotion, emotionSource} = replyEmotion(reply,emotionTag)
           pendingChoiceCharId = prepared.charId
           choiceGenerationPending.add(pendingChoiceCharId)
           const committed = await runSerializedStateTask(async () => {
             ensureState()
+            if(companionContext?.lifeToken)ctx.assertCompanionLife?.(companionContext.characterId,companionContext.lifeToken)
             const settledBeforeChat = settle()
             const c = s.characters[prepared.charId]
             if (!c) throw new Error('chat character became unavailable before commit')
-            c.log.push({ role: 'user', text })
+            c.log.push({ role: 'user', text, ...(companionContext ? {personaId: companionContext.personaId, conversationId: companionContext.conversationId} : {}) })
             c.chatLines.push({
               who: 'user',
               id: requestId + ':user',
@@ -4888,6 +5122,7 @@ export function apply(
               emotion,
               emotionSource,
               choiceId: prepared.selectedChoice ? prepared.selectedChoice.id : null,
+              ...(companionContext ? {personaId: companionContext.personaId, conversationId: companionContext.conversationId} : {}),
             })
             c.choices = []
             s.chatModelLabel = sel && sel.model ? String(sel.model) : ''
@@ -4899,15 +5134,16 @@ export function apply(
             }
             c.log.push({ role: 'assistant', text: reply })
             if (c.log.length > 24) c.log = c.log.slice(-24)
-            c.chatLines.push({ who: 'heroine', id: requestId + ':reply', requestId, text: reply, emotion, emotionSource })
+            c.chatLines.push({ who: 'heroine', id: requestId + ':reply', requestId, text: reply, emotion, emotionSource,
+              ...(companionContext ? {personaId: companionContext.personaId, conversationId: companionContext.conversationId} : {}) })
             const before = c.affection
             const delta = prepared.selectedChoice
               ? (prepared.selectedChoice.effect === 1 ? 1 : prepared.selectedChoice.effect === -1 ? -1 : 0)
               : (/喜欢|爱|可爱|想你|陪你|晚安|早安|抱抱|亲亲|约会|月圆/.test(text) ? 1 : (/讨厌|烦|滚|走开|无聊|再见/.test(text) ? -1 : 0))
-            c.affection = Math.max(0, before + delta)
-            const leveled = checkLevelUp(prepared.charId, c)
+            if (!companionContext) c.affection = Math.max(0, before + delta)
+            const leveled = !companionContext && checkLevelUp(prepared.charId, c)
             await save(settledBeforeChat.changed || c.affection !== before || leveled ? 'both' : 'workspace')
-            return { leveled, response: view() }
+            return { leveled, delta, response: view() }
           })
           ctx.emit?.('galgame/chat-committed', {requestId, messageId: requestId + ':reply', sequence, characterId: prepared.charId, role: 'heroine', emotion, emotionSource, text: reply})
           if (committed.leveled) {
@@ -4916,19 +5152,20 @@ export function apply(
             return await runSerializedStateTask(async () => {
               const c = s.characters[prepared.charId]
               if (ensureReplyChoices(prepared.charId, c)) await save('global')
-              return view()
+              return {...view(), ...(companionContext ? {companionCommit: {text: reply, emotion, emotionSource, choices: c.choices.map((choice: any) => ({...choice})), delta: committed.delta, connectionId: sel?.provider, model: sel?.model, inputVersions}} : {})}
             })
           }
 
           const choices = await generateChoices(prepared.promptCharacter, text, reply, signal)
           return await runSerializedStateTask(async () => {
+            if(companionContext?.lifeToken)ctx.assertCompanionLife?.(companionContext.characterId,companionContext.lifeToken)
             const c = s.characters[prepared.charId]
             if (!c) throw new Error('chat character became unavailable before choice commit')
             c.choices = choices
             choiceGenerationPending.delete(prepared.charId)
             pendingChoiceCharId = ''
             await save('workspace')
-            return view()
+            return {...view(), ...(companionContext ? {companionCommit: {text: reply, emotion, emotionSource, choices: c.choices.map((choice: any) => ({...choice})), delta: committed.delta, connectionId: sel?.provider, model: sel?.model, inputVersions}} : {})}
           })
         } finally {
           if (pendingChoiceCharId) choiceGenerationPending.delete(pendingChoiceCharId)
@@ -4945,7 +5182,7 @@ export function apply(
             return view()
           })
         }
-        const savedMissing = (sideStoryState().scene?.cast || []).filter((id:string)=>ctx.resources?.available(id) === false)
+        const savedMissing = (sideStoryState().scene?.cast || []).filter((id:string)=>!ROSTER[id]?.custom && ctx.resources?.available(id) === false)
         if(savedMissing.length)return {...view(),ok:false,code:'CHARACTER_NOT_INSTALLED',characterIds:savedMissing,sideStoryError:'角色资源待安装 / Character resources need installation'}
         if (op === 'advance') {
           return await runSerializedStateTask(async () => {
@@ -5001,7 +5238,7 @@ export function apply(
         if (existing && !existing.settled) return view()
         await refreshActivityCache()
         const cast = pickSideStoryCast()
-        const missingCast = cast.filter((id:string)=>ctx.resources?.available(id) === false)
+        const missingCast = cast.filter((id:string)=>!ROSTER[id]?.custom && ctx.resources?.available(id) === false)
         if(missingCast.length)return {...view(),ok:false,code:'CHARACTER_NOT_INSTALLED',characterIds:missingCast,sideStoryError:'角色资源待安装 / Character resources need installation'}
         const subject = pickSideStorySubject(cast)
         const seed = await resolveSideStorySeed(subject, typeof args.topic === 'string' ? args.topic : '')
@@ -5020,6 +5257,23 @@ export function apply(
           return view()
         })
       }
+      case 'group-photo': {
+        if (!ctx.cg?.available()) return {ok:false,error:'请在设置中选择 CG 绘图连接'}
+        const source=args.source, ids=source?.characterIds
+        if (!Array.isArray(ids)||!ids.length||ids.some((id:string)=>!ROSTER[id])) return {ok:false,error:'合影角色无效'}
+        const existing=allCgs(true).find((row:any)=>row.sourceEventId===source.sourceEventId)
+        if(existing)return {ok:true,cgId:existing.id}
+        const characters=cgCharacters(ids), scene=source.scene
+        // Validate references before persisting a queued item or calling a model.
+        if(ctx.cg.validateReferences)await ctx.cg.validateReferences(characters,scene)
+        const id=makeId('cg'),charId=ids[0],profile=effectiveProfileFor(charId)
+        const record:any={id,charId,lifeIds:ctx.companionLifeIds?.(ids),personaId:source.personaId,groupId:source.groupId,kind:'group',status:'queued',level:s.characters[charId].level,at:Date.now(),seen:true,automatic:false,sourceEventId:source.sourceEventId,groupSource:source,characters,scene,prompt:'',label:'群聊合影 · '+source.groupName}
+        record.themeBrief={kind:'group',charId,level:record.level,language:ctx.language?.()||'zh-CN',profile,visual:profile.visual,scene,characters,groupName:source.groupName,recentContext:source.messages.map((m:any)=>({id:m.id,speaker:m.characterName||m.personaName,text:m.text})),history:[]}
+        s.characters[charId].cgs.push(record);await save('global')
+        try{await ctx.cg.enqueue({id,sourceEventId:record.sourceEventId,kind:'group',label:record.label,prompt:'',characters,scene,themeBrief:record.themeBrief,themeConnection:ctx.cg.themePlanner?.capture(source.themeBinding)})}
+        catch(error:any){record.status='failed';record.error=error.message;await save('global');return {ok:false,error:error.message,cgId:id}}
+        return {ok:true,cgId:id}
+      }
       case 'cg-generate':
       case 'cg-retry': {
         if (!ctx.cg?.available()) return { ok: false, error: '请在设置中选择 CG 绘图连接' }
@@ -5027,6 +5281,12 @@ export function apply(
           const previous = action === 'cg-retry' ? findCg(shortSetting(args.id)) : null
           if (action === 'cg-retry' && (!previous || previous.deletedAt)) return { ok: false, error: 'CG 不存在' }
           if (previous && ['queued', 'planning', 'generating', 'ready'].includes(previous.status)) return { ok: true, cgId: previous.id }
+          if (previous?.kind === 'group') {
+            const id=makeId('cg'),record={...previous,id,status:'queued',seen:true,deletedAt:null,retryOf:previous.id,sourceEventId:'group-retry:'+id,at:Date.now()}
+            s.characters[record.charId].cgs.push(record);await save('global')
+            try{await ctx.cg.enqueue({id,sourceEventId:record.sourceEventId,kind:'group',label:record.label,prompt:previous.prompt||'',characters:previous.characters||[],scene:previous.scene,themeBrief:previous.themeBrief,theme:previous.theme,retryOf:previous.id})}catch(error:any){record.status='failed';record.error=error.message;await save('global')}
+            return {ok:true,cgId:id}
+          }
           if (previous?.kind === 'skit') {
             const skit = sideStoryState().transcripts.find((row: any) => row.id === previous.skitId)
             if (!skit) return { ok: false, error: '剧场记录不存在' }
@@ -5037,8 +5297,8 @@ export function apply(
           const existing = !previous && c.cgs.find((row: any) => !row.deletedAt && row.level === level && row.kind !== 'skit' && ['queued', 'planning', 'generating', 'ready'].includes(row.status))
           if (existing) return { ok: true, cgId: existing.id }
           const cgId = makeId('cg')
-          c.cgs.push({ id: cgId, status: 'queued', kind: 'level', automatic: false, sourceEventId: 'manual:' + cgId,
-            retryOf: previous?.id || null, charId, level, at: Date.now(), dataUrl: null, prompt: null, seen: true, savedAsBg: false, error: null })
+          c.cgs.push({ id: cgId,lifeIds:ctx.companionLifeIds?.([charId]), status: 'queued', kind: 'level', automatic: false, sourceEventId: 'manual:' + cgId,
+            retryOf: previous?.id || null, charId, personaId: previous?.personaId || args.personaId || c.companionPersonaId || 'default', level, at: Date.now(), dataUrl: null, prompt: null, seen: true, savedAsBg: false, error: null })
           await save('global'); void generateCg(charId, level, cgId); return { ok: true, cgId }
         })
       }
@@ -5221,8 +5481,8 @@ export function apply(
             await ctx.cg?.trashJob(cg.id)
             cg.deletedAt = Date.now(); cg.seen = true
             if (cg.status === 'queued') {cg.status = 'cancelled';cg.error = '已移入回收站'}
-            if (characterBackground(s, cg.charId) === 'cg:' + cg.id) {
-              setCharacterBackground(s, null, cg.charId); ensurePreferences().customBgName = ''; bumpBackgroundRevision(); claimGlobalValue('bg'); claimGlobalPreferences(['customBgName'])
+            for (const roleId of Object.keys(s.characters)) if (characterBackground(s, roleId) === 'cg:' + cg.id) {
+              setCharacterBackground(s, null, roleId); ensurePreferences().customBgName = ''; bumpBackgroundRevision(); claimGlobalValue('bg'); claimGlobalPreferences(['customBgName'])
             }
             cg.savedAsBg = false
             if (s.cg?.cgId === cg.id) {s.cg = null;claimGlobalValue('cg')}
@@ -5234,8 +5494,12 @@ export function apply(
       case 'cg-trash-list':
       case 'cg-gallery': {
         return {
-          items: allCgs(true).filter((cg: any) => cg.charId === (args.characterId || s.current)).filter((cg: any) => action === 'cg-trash-list' ? !!cg.deletedAt : !cg.deletedAt).map((cg: any) => ({
+          items: allCgs(true).filter((cg:any)=>ctx.companionCgVisible?.(cg,args.characterId||s.current)!==false).filter((cg: any) => (args.groupId ? cg.kind === 'group' && cg.groupId === args.groupId : (cg.charId === (args.characterId || s.current) || cg.kind === 'group' && cg.characters?.some((c: any) => c.id === (args.characterId || s.current))))).filter((cg: any) => action === 'cg-trash-list' ? !!cg.deletedAt : !cg.deletedAt).map((cg: any) => ({
             id: cg.id,
+            groupId: cg.groupId || null, kind: cg.kind || null, retryOf: cg.retryOf || null,
+            provider: cg.provider || null, model: cg.model || null, connectionName: cg.connectionName || null,
+            submittedAt: cg.submittedAt || null, completedAt: cg.completedAt || null,
+            characters: cg.characters?.map((c: any) => ({id:c.id,name:c.name})) || [],
             thumbnailRef: cg.thumbnailRef || null,
             deletedAt: cg.deletedAt || null, theme: cg.theme || null, referenceNotice: cg.referenceNotice || null,
             label: cg.label || null,
@@ -5289,7 +5553,7 @@ export function apply(
       case 'cg-save-bg': {
         const cg = args && typeof args.id === 'string' ? findCg(args.id) : currentCg()
         let snapshot: any = null
-        if (s && cg && cg.charId === s.current && !cg.deletedAt && cg.status === 'ready' && (cg.dataUrl || cg.assetRef)) {
+        if (s && cg && (cg.charId === s.current || cg.kind === 'group' && cg.characters?.some((c: any) => c.id === s.current)) && !cg.deletedAt && cg.status === 'ready' && (cg.dataUrl || cg.assetRef)) {
           snapshot = captureBackgroundMutationSnapshot()
           for (const item of allCgs().filter((g: any) => g.charId === s.current)) item.savedAsBg = item.id === cg.id
           cg.seen = true
@@ -5358,6 +5622,9 @@ export function apply(
     const hasExplicitCharacter = !!ROSTER[explicitCharacterId]
     const globalReadOnly = new Set([
       'view',
+      'companion-export',
+      'companion-life-content', 'companion-life-validate',
+      'companion-media-export', 'companion-media-validate',
       'model-options',
       'settings-get',
       'profile-get',
@@ -5370,6 +5637,9 @@ export function apply(
     ])
     const globalWithoutWorkspace = new Set([
       'settings-set',
+      'companion-register', 'companion-project', 'companion-relationship', 'companion-ack-events',
+      'companion-media-import',
+      'companion-life-project',
       'profile-set',
       'profile-reset',
       'sprite-upload',
@@ -5441,6 +5711,8 @@ export function apply(
     }
     const execute = () => workspaceStateContext.run(runtime, () => dispatchAction(action, args))
     const mutating = new Set([
+      'companion-register', 'companion-project', 'companion-relationship', 'companion-ack-events',
+      'companion-life-project',
       'settings-set',
       'profile-set',
       'profile-reset',
@@ -5509,7 +5781,7 @@ export function apply(
       await ensureGlobalReady()
       const record = findGlobalCg(job.id)
       if (!record) return
-      if (record.status === job.status && record.assetRef === job.assetRef && record.error === job.error && record.prompt === job.prompt && record.deletedAt === job.deletedAt) return
+      if (record.status === job.status && record.assetRef === job.assetRef && record.error === job.error && record.prompt === job.prompt && record.deletedAt === job.deletedAt && record.submittedAt === job.submittedAt && record.completedAt === job.completedAt) return
       const deletedAt = record.deletedAt
       Object.assign(record, job)
       if (deletedAt) record.deletedAt = deletedAt

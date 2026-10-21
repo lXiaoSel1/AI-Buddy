@@ -1,6 +1,6 @@
 import {t} from './i18n.mjs';
 import React,{memo,useState,useEffect,useRef,useCallback} from 'react';
-import {PET_ACTIONS,actionSample,getPetAction} from './pet-actions.mjs';
+import {PET_ACTIONS,PET_INTERACTION_ACTIONS,actionSample,getPetAction} from './pet-actions.mjs';
 import {subscribeAnimationClock} from './animation-clock.mjs';
 import {prepareCharacterRenderer} from './motion-renderer.mjs';
 import {PET_CHARACTERS,resolvePetCharacter} from './pet-characters.mjs';
@@ -73,7 +73,7 @@ export function ActionGallery({settings}){
       await window.whale.playPet({id,characterId,durationMs:Math.min(60000,Math.max(5000,Math.ceil(cycle/speed)))});
     }catch{playbackError();}
   }
-  const actions=PET_ACTIONS.map(a=>a.id==='reviewing'?{...a,label:t("审查中")}:a);
+  const actions=[...PET_ACTIONS,...PET_INTERACTION_ACTIONS.filter(a=>frameSequence(a.id,characterId))].map(a=>a.id==='reviewing'?{...a,label:t("审查中")}:a);
   return h('div',{className:'action-gallery'},
     h('div',{className:'action-heading'},h('h1',null,t("动作展示")),h('div',{className:'action-toolbar'},
       h('select',{'aria-label':t('桌宠角色'),'data-gallery-character':true,value:characterId,onChange:async e=>{const id=e.target.value;if(settings?.resources?.characters.find(c=>c.id===id)?.installed===false){try{await window.whale.resources.manage(id);}catch(error){setError(error.message);}return;}setCharacterId(id);}},...PET_CHARACTERS.map(c=>h('option',{key:c.id,value:c.id},t(c.name)+(settings?.resources?.characters.find(r=>r.id===c.id)?.installed===false?' · '+t('待安装'):'')))),
