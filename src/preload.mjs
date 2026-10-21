@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('whale',{
   setSettings:patch=>ipcRenderer.invoke('settings:set',patch),
   settingsAction:action=>ipcRenderer.invoke('settings:action',action),
   onSettings:callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on('settings:update',listener);return()=>ipcRenderer.removeListener('settings:update',listener);},
+  onPanelVisibility:callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on('panel:visibility',listener);return()=>ipcRenderer.removeListener('panel:visibility',listener);},
   game:(action,args)=>ipcRenderer.invoke('game:action',action,args),
   onChatCommitted:callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on('game:chat-committed',listener);return()=>ipcRenderer.removeListener('game:chat-committed',listener);},
   storyFeedback:value=>ipcRenderer.invoke('pet:story-feedback',value),

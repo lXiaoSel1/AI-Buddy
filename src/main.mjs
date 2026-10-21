@@ -28,6 +28,7 @@ import { createLocalControlServer,requestLocalControl } from './local-control.mj
 import { DEFAULT_PREFERENCES,normalizePreferences,validatePreferencesPatch } from './preferences.mjs';
 import { PET_ACTIONS,PET_INTERACTION_ACTIONS,validatePetPlayback,getPetAction } from './pet-actions.mjs';
 import { EMOTIONS,validEmotion,shortReply } from './emotions.mjs';
+import { superviseWorker,pushBounded } from './worker-supervisor.mjs';
 import {validPetCharacter,resolvePetCharacter} from './pet-characters.mjs';
 import {connectionView} from './connection-view.mjs';
 import {lockPageZoom} from './page-zoom.mjs';
@@ -199,9 +200,11 @@ function openPanel(page='overview',focus=true) {
     lockPageZoom(panel,error=>audit({type:'zoom-policy-error',message:error.message}));
     panel.setMenuBarVisibility(false);panel.loadFile(join(build,'index.html'),{hash:page,...previewQuery,query:{...previewQuery.query,petCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter))}});
     panel.on('close',event=>{if(!quitting){event.preventDefault();petAuto();panel.hide();}});
+    // Lets the panel release heavy media (action gallery decoders, stills) while hidden.
+    for(const [name,visible] of [['hide',false],['show',true]])panel.on(name,()=>{if(panel&&!panel.isDestroyed())panel.webContents.send('panel:visibility',{visible});});
     panel.once('ready-to-show',()=>focus?panel.show():panel.showInactive());
     panel.webContents.setWindowOpenHandler(()=>({action:'deny'}));
-    panel.webContents.on('console-message',(event,...args)=>{if(event.level==='error'||args[0]===3)rendererErrors.push(event.message || args[1]);});
+    panel.webContents.on('console-message',(event,...args)=>{if(event.level==='error'||args[0]===3)pushBounded(rendererErrors,event.message || args[1]);});
   } else {panel.webContents.send('panel:page',page);focus?panel.show():panel.showInactive();}
 }
 function publish(value) {
@@ -455,7 +458,7 @@ app.whenReady().then(async()=>{
   configurePetInteractions();activityClock.resume();
   pet.setAlwaysOnTop(settings.preferences.alwaysOnTop,'floating');setGestureMode(false);
   pet.loadFile(join(build,'pet.html'),{...previewQuery,query:{...previewQuery.query,petCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter))}});pet.once('ready-to-show',async()=>{
-    if(PET_ACTIONS.some(action=>action.sourceFrameCount))try{await pet.webContents.executeJavaScript('window.petCharacterReady.then(()=>window.frameSequenceInspection.renderer.ready).then(()=>true)');}catch(error){rendererErrors.push(error.message);audit({type:'pet-assets-error',message:error.message});return;}
+    if(PET_ACTIONS.some(action=>action.sourceFrameCount))try{await pet.webContents.executeJavaScript('window.petCharacterReady.then(()=>window.frameSequenceInspection.renderer.ready).then(()=>true)');}catch(error){pushBounded(rendererErrors,error.message);audit({type:'pet-assets-error',message:error.message});return;}
     if(!pet.isDestroyed()){petAssetsReady=true;applyPetPreferences();}
   });
   pet.webContents.setWindowOpenHandler(()=>({action:'deny'}));
@@ -478,10 +481,14 @@ app.whenReady().then(async()=>{
   },16);
   logRoots=arg('roots')?JSON.parse(readFileSync(arg('roots'),'utf8')):[{provider:'codex',path:join(home,'.codex/sessions')},{provider:'codex',path:join(home,'.codex/archived_sessions')},{provider:'claude',path:join(home,'.claude/projects')}];
   monitorAppliedInterval=settings.preferences.monitorRefreshMs;
+  // The monitor worker is restarted with backoff if it exits unexpectedly.
+  superviseWorker(()=>{
   worker=new Worker(join(build,'monitor-worker.cjs'),{workerData:{roots:arg('roots')?logRoots:undefined,home,env:process.env,dataRoot,refreshIntervalMs:settings.preferences.monitorRefreshMs,statisticsTimeZone:settings.preferences.statisticsTimeZone,autoPriceUpdates:settings.preferences.autoPriceUpdates}});
   worker.on('message',message=>{if(message.type==='sources'){tokenSources=message.value;if(panel&&!panel.isDestroyed())panel.webContents.send('tokens:update',message.value);}if(message.type==='source-result'){const pending=sourceRequests.get(message.id);if(pending){clearTimeout(pending.timer);sourceRequests.delete(message.id);message.error?pending.fail(Error(message.error)):pending.done(message.value);}}if(message.type==='snapshot')publish(message.value);if(message.type==='configured'){monitorAppliedInterval=message.refreshIntervalMs;broadcastSettings();}if(message.type==='refreshed')broadcastSettings();if(message.type==='error')audit({type:'monitor-error',message:message.message});});
   worker.on('message',message=>{if(message.type==='task-feedback'&&!quitting)feedback(message.value);});
   worker.on('error',error=>audit({type:'monitor-worker-error',message:error.stack}));
+  return worker;
+  },{shouldRestart:()=>!quitting,onExit:code=>{if(!quitting)audit({type:'monitor-worker-exit',code});}});
   control.listen(pipe);audit({type:'app-start',mode:'offline',version:appVersion,build});
   if(startupFailure)openPanel('safe-mode',false);
   else if(reopenRequested||['overview','galgame','settings','actions'].includes(arg('open')))openPanel(reopenRequested?'overview':arg('open'),false);
