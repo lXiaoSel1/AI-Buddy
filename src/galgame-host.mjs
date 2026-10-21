@@ -1,14 +1,14 @@
 import { apply } from './adapted/game-core.ts';
 import { restrictedFileService } from './storage.mjs';
-import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import {openCompanionStore,effectiveCard} from './companion-store.mjs';
 import {createCompanionService} from './companion-service.mjs';
 import {writePortableImages} from './companion-media.mjs';
 
-export async function createGalgame({dataRoot,provider,model,cg=null,resources=null,getLanguage=()=> 'zh-CN',onCharacter=()=>{},onPetVisibility=()=>{},onChatCommitted=()=>{},onCgUpdated=()=>{},onActivity=()=>{}}) {
+export async function createGalgame({dataRoot,provider,model,cg=null,resources=null,getLanguage=()=> 'zh-CN',onCharacter=()=>{},onPetVisibility=()=>{},onChatCommitted=()=>{},onCgUpdated=()=>{},onActivity=()=>{},audit=()=>{}}) {
   const companionStore=await openCompanionStore(dataRoot);
   const languageContext=new AsyncLocalStorage();
   const personaContext=new AsyncLocalStorage();
@@ -20,6 +20,13 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
   bus.on('galgame/chat-committed',onChatCommitted);
   bus.on('galgame/cg-updated',onCgUpdated);
   const ctx={llm:provider,cg,resources,writePortableImages:files=>writePortableImages(dataRoot,cg?.imageCodec,files),companionCards:Object.values(companionStore.state.cards).map(card=>({...card,effective:effectiveCard(card)})),language:()=>languageContext.getStore()||getLanguage(),emit:(event,value)=>bus.emit(event,value),dshHomePath:(...parts)=>join(dataRoot,'galgame',...parts),inject:(_,fn)=>fn(scope),on:(event,fn)=>bus.on(event,fn),effect:fn=>{const cleanup=fn();if(typeof cleanup==='function')effects.push(cleanup);}};
+  // Work-token counter: a few bytes rewritten atomically at most every 2 s,
+  // instead of a full global save per token delta.
+  const ledgerPath=join(dataRoot,'galgame','storages','dsh-whale-galgame','work-tokens.json');
+  let workTotal=0,ledgerTimer=null;
+  try{const saved=JSON.parse(readFileSync(ledgerPath,'utf8'));if(Number.isFinite(saved.total)&&saved.total>=0)workTotal=saved.total;}catch(error){if(error.code!=='ENOENT'&&!(error instanceof SyntaxError))throw error;}
+  const writeLedger=()=>{clearTimeout(ledgerTimer);ledgerTimer=null;mkdirSync(dirname(ledgerPath),{recursive:true});writeFileSync(ledgerPath+'.tmp',JSON.stringify({version:1,total:workTotal,updatedAt:new Date().toISOString()}));renameSync(ledgerPath+'.tmp',ledgerPath);};
+  ctx.workLedgerTotal=()=>workTotal;
   const engine=apply(ctx,{enabled:true,chatProvider:'codex',chatModel:model,singleChatSelection:!!provider.currentSelection,strictModelErrors:!!provider.currentSelection});
   const settings=await engine.handleAction('settings-get',{});
   // Default whale identity is fixed independently from the actual Codex model.
@@ -27,7 +34,7 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
     const view=await engine.handleAction('view',{});
     await engine.handleAction('settings-set',{characterMode:'manual',characterId:resources?.fallback(resources.status().initialCharacter)??(provider.currentSelection?view.current||'deepseek':'deepseek'),sideStorySeedSource:'activity',...(!provider.currentSelection?{chatMode:'manual',chatProvider:'codex',chatModel:model}:{})});
   }
-  const companion=await createCompanionService({store:companionStore,engine,provider,dataRoot,imageCodec:cg?.imageCodec,resources,onCharacter,onChatCommitted,onActivity,getLanguage});
+  const companion=await createCompanionService({store:companionStore,engine,provider,dataRoot,imageCodec:cg?.imageCodec,resources,onCharacter,onChatCommitted,onActivity,getLanguage,audit});
   ctx.assertCompanionLife=(id,token)=>companion.assertLife(id,token);
   ctx.guardCompanionProfile=(action,args)=>companion.guardProfile(action,args);
   ctx.companionLifeIds=ids=>Object.fromEntries(ids.filter(id=>companionStore.state.lives?.[id]).map(id=>[id,companionStore.state.lives[id].id]));
@@ -63,8 +70,10 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
     touch:args=>companion.touch(args),
     workTokens(amount) {
       if(amount<=0)return;
+      workTotal+=amount;ledgerTimer??=setTimeout(()=>{try{writeLedger();}catch(error){console.warn('work-token ledger save failed:',error);}},2000);
       bus.emit('session/event',{header:{id:'local-work-ledger',cwd:root}},{type:'assistant/message',seq:++sequence,time:Date.now(),data:{id:'local-ledger-'+Date.now()+'-'+sequence,usage:{inputTokens:amount,outputTokens:0}}});
     },
-    close(){companion.close();for(const fn of effects)fn();},
+    flushWorkLedger:()=>engine.flushWorkLedger(),
+    close(){if(ledgerTimer)try{writeLedger();}catch{}void engine.flushWorkLedger().catch(()=>{});companion.close();for(const fn of effects)fn();},
   };
 }

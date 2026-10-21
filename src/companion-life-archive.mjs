@@ -55,5 +55,5 @@ export function createLifeArchiveRepository({dataRoot,imageCodec=null}){
  }
  function file(id){if(!/^archive-[a-f0-9-]{36}$/.test(id))throw Error('人生存档 ID 无效');const target=join(directory,id+'.zip');if(existsSync(target)&&relative(realpathSync(directory),realpathSync(target)).startsWith('..'))throw Error('人生存档路径越界');return target;}
  function write(bytes){decode(bytes);const id='archive-'+randomUUID(),target=file(id),temp=target+'.partial';writeFileSync(temp,bytes,{flag:'wx'});const fd=openSync(temp,'r+');try{fsyncSync(fd);}finally{closeSync(fd);}if(archiveHash(readFileSync(temp))!==archiveHash(bytes))throw Error('存档写入校验失败');renameSync(temp,target);return {id,bytes:bytes.length,sha256:archiveHash(bytes),fileName:id+'.zip'};}
- return {prepare,decode,save:snapshot=>write(prepare(snapshot)),import:bytes=>write(bytes),read(id,expectedHash){const bytes=readFileSync(file(id));if(expectedHash&&archiveHash(bytes)!==expectedHash)throw Error('本地人生存档哈希不匹配');return {...decode(bytes),bytes};}};
+ return {prepare,decode,has:id=>{try{return existsSync(file(id));}catch{return false;}},save:snapshot=>write(prepare(snapshot)),import:bytes=>write(bytes),read(id,expectedHash){const bytes=readFileSync(file(id));if(expectedHash&&archiveHash(bytes)!==expectedHash)throw Error('本地人生存档哈希不匹配');return {...decode(bytes),bytes};}};
 }

@@ -28,6 +28,7 @@ import { createLocalControlServer,requestLocalControl } from './local-control.mj
 import { DEFAULT_PREFERENCES,normalizePreferences,validatePreferencesPatch } from './preferences.mjs';
 import { PET_ACTIONS,PET_INTERACTION_ACTIONS,validatePetPlayback,getPetAction } from './pet-actions.mjs';
 import { EMOTIONS,validEmotion,shortReply } from './emotions.mjs';
+import { superviseWorker,pushBounded } from './worker-supervisor.mjs';
 import {validPetCharacter,resolvePetCharacter} from './pet-characters.mjs';
 import {connectionView} from './connection-view.mjs';
 import {lockPageZoom} from './page-zoom.mjs';
@@ -66,6 +67,10 @@ let pet,panel,tray,worker,game,provider,snapshot={indexing:true,sessions:[],acti
 const settingsStore=createSnapshotStorage(join(dataRoot,'settings.json'));
 let cg,quotas;
 const stateBefore=new Map();const rendererErrors=[];
+// Set when startup could not bring up the companion features (or the app);
+// the app keeps running in safe mode instead of exiting on every launch.
+let startupFailure=null;
+function noteStartupFailure(scope,error){startupFailure={scope,message:String(error?.message??error).slice(0,2000),at:new Date().toISOString()};audit({type:'safe-mode',scope,message:error?.stack??String(error)});}
 let feedbackSerial=0;
 let reopenRequested=false;
 let logRoots=[],settingsTail=Promise.resolve(),monitorAppliedInterval=1000;
@@ -112,7 +117,7 @@ function triggerPet(id,source='event',durationMs=null){petEvent({kind:'trigger',
 function feedback(value){activityClock.wake('feedback');publishInteraction();if(settings.preferences?.petVisible!==false)petEvent({kind:'feedback',value});}
 function chatFeedback(value){if(!game?.hasCharacter?.(value.characterId)||!validEmotion(value.emotion))return;feedback({eventId:value.messageId,id:EMOTIONS[value.emotion]?.actionId??null,source:'dialog',origin:value.requestId?'chat':'story',provider:provider?.currentKind??'codex',sessionKey:'whale-companion-local',turnKey:value.requestId??value.messageId,characterId:value.characterId,role:'heroine',emotion:value.emotion,emotionSource:value.emotionSource??'story-label',sequence:value.sequence,text:shortReply(value.text),cycles:1});}
 function chatCommitted(value){if(panel&&!panel.isDestroyed())panel.webContents.send('game:chat-committed',value);chatFeedback(value);}
-app.on('second-instance',()=>{audit({type:'second-instance'});reopenRequested=true;if(app.isReady()&&game)openPanel('overview',false);});
+app.on('second-instance',()=>{audit({type:'second-instance'});reopenRequested=true;if(app.isReady()&&(game||startupFailure))openPanel(game?'overview':'safe-mode',false);});
 
 function clamp(bounds) {
   if(settings.preferences?.petPhysics&&interactionMediaReady()){
@@ -128,7 +133,7 @@ function moveDrag(point){
   if(drag.moved)petEvent({kind:'drag',active:true,direction:petMotion.walkDirection});publishInteraction();
 }
 async function saveSettings() {await settingsStore.writeText(JSON.stringify(settings));}
-function settingsView(){return {interactionMedia:Object.fromEntries(resources.status().characters.map(c=>[c.id,interactionMediaReady(c.id)])),resources:resources.status(),effectivePetCharacter:effectivePetCharacter(),petResourceNotice:validPetCharacter(themeCharacter)?null:'当前角色没有桌宠资源，保留当前桌宠',preferences:{...settings.preferences},themeCharacter,petCharacterId:petState.characterId??resources.fallback('deepseek'),version:appVersion,build:build.split(/[\\/]/).at(-1),dataRoot,logRoots,tokenSources,defaultModel:provider?.defaultModel,modelConnections:provider?.state?connectionView(provider):null,cgConnections:cg?.state?connectionView(cg):null,systemTimeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,monitorAppliedInterval};}
+function settingsView(){return {startupFailure,safeMode:!!startupFailure,interactionMedia:Object.fromEntries(resources.status().characters.map(c=>[c.id,interactionMediaReady(c.id)])),resources:resources.status(),effectivePetCharacter:effectivePetCharacter(),petResourceNotice:validPetCharacter(themeCharacter)?null:'当前角色没有桌宠资源，保留当前桌宠',preferences:{...settings.preferences},themeCharacter,petCharacterId:petState.characterId??resources.fallback('deepseek'),version:appVersion,build:build.split(/[\\/]/).at(-1),dataRoot,logRoots,tokenSources,defaultModel:provider?.defaultModel,modelConnections:provider?.state?connectionView(provider):null,cgConnections:cg?.state?connectionView(cg):null,systemTimeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,monitorAppliedInterval};}
 function broadcastSettings(){const value=settingsView();for(const win of [pet,panel])if(win&&!win.isDestroyed())win.webContents.send('settings:update',value);return value;}
 function saveConnection(service,draft){
   // An unusable edit must not overwrite the currently selected profile before
@@ -166,7 +171,7 @@ function setPreferences(patch){
     const next={...settings.preferences,...valid},resize=next.petScale!==settings.preferences.petScale;
     if(valid.petFixedCharacter)resources.require([valid.petFixedCharacter]);
     if(resize&&drag)throw new Error('请先松开桌宠，再调整大小');
-    if(next.petVisible!==settings.preferences.petVisible)await game.action('pet-set',{enabled:next.petVisible});
+    if(next.petVisible!==settings.preferences.petVisible)await game?.action('pet-set',{enabled:next.petVisible});
     const previousPet=effectivePetCharacter();settings.preferences=next;if(effectivePetCharacter()!==previousPet){cancelGesture('character-change');activityClock.resume();}applyChrome();applyPetPreferences(resize);
     worker?.postMessage({type:'configure',refreshIntervalMs:next.monitorRefreshMs,statisticsTimeZone:next.statisticsTimeZone,autoPriceUpdates:next.autoPriceUpdates});
     await saveSettings();audit({type:'settings-changed',keys:Object.keys(valid)});return broadcastSettings();
@@ -195,9 +200,11 @@ function openPanel(page='overview',focus=true) {
     lockPageZoom(panel,error=>audit({type:'zoom-policy-error',message:error.message}));
     panel.setMenuBarVisibility(false);panel.loadFile(join(build,'index.html'),{hash:page,...previewQuery,query:{...previewQuery.query,petCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter))}});
     panel.on('close',event=>{if(!quitting){event.preventDefault();petAuto();panel.hide();}});
+    // Lets the panel release heavy media (action gallery decoders, stills) while hidden.
+    for(const [name,visible] of [['hide',false],['show',true]])panel.on(name,()=>{if(panel&&!panel.isDestroyed())panel.webContents.send('panel:visibility',{visible});});
     panel.once('ready-to-show',()=>focus?panel.show():panel.showInactive());
     panel.webContents.setWindowOpenHandler(()=>({action:'deny'}));
-    panel.webContents.on('console-message',(event,...args)=>{if(event.level==='error'||args[0]===3)rendererErrors.push(event.message || args[1]);});
+    panel.webContents.on('console-message',(event,...args)=>{if(event.level==='error'||args[0]===3)pushBounded(rendererErrors,event.message || args[1]);});
   } else {panel.webContents.send('panel:page',page);focus?panel.show():panel.showInactive();}
 }
 function publish(value) {
@@ -266,6 +273,7 @@ ipcMain.handle('cg:test-image',(_,draft)=>cg.testImage(draft));
 ipcMain.handle('cg:image',(_,id)=>{const job=cg.job(id);if(!job?.assetRef)throw Error('CG 尚未完成');return {dataUrl:cg.readAsset(job.assetRef)};});
 ipcMain.handle('game:action',async(_,action,args)=>{
   if(typeof action!=='string')throw new Error('Invalid action');
+  if(!game)return {ok:false,code:'COMPANION_SAFE_MODE',error:'陪伴功能启动失败，已进入安全模式：'+(startupFailure?.message??'尚未就绪')};
   const dialog=provider.enabled&&['chat','side-story','side-story-free-reply','companion-group-send','companion-group-continue'].includes(action);
   if(dialog){gameRequests++;petEvent({kind:'dialog',active:true});}
   try{const result=await game.action(action,args||{});if(dialog&&result?.ok===false&&result.code!=='CHARACTER_NOT_INSTALLED')feedback({id:'fail',source:'chat-error',text:'聊天暂时失败，请重试。',cycles:1});return result;}
@@ -285,7 +293,7 @@ ipcMain.on('pet:drag-start',(event,message)=>{
  petMotion.bounds={...bounds};const begin=petMotion.begin(point,{button});
  const wakeOnly=activityClock.wake('touch');
  const capturedAt=Date.now();
- drag={gestureId,button,origin:point,moved:false,characterId:petState.characterId??effectivePetCharacter(),personaId:game.context?.().personaId,eventId:'touch:'+process.pid+':'+capturedAt+':'+begin.serial,capturedAt,caught:begin.caught,wakeOnly};
+ drag={gestureId,button,origin:point,moved:false,characterId:petState.characterId??effectivePetCharacter(),personaId:game?.context?.().personaId,eventId:'touch:'+process.pid+':'+capturedAt+':'+begin.serial,capturedAt,caught:begin.caught,wakeOnly};
  nativeButtons=button===2?2:1;buttonObserver?.start(gestureId);ignoringMouse=false;pet.setIgnoreMouseEvents(false);moveDrag(cursor);publishInteraction(true);audit({type:'pet-pointer-down',gestureId,button,point,cursor,bounds});
 });
 ipcMain.on('pet:drag-move',(event,message)=>{if(event.sender===pet?.webContents&&gestureMatches(message))moveDrag(gesturePoint(message));});
@@ -296,7 +304,7 @@ async function finishPetGesture(message){
  // position for placement/tap classification, without adding a velocity sample.
  if(arg('cursor')!=='manual')petMotion.move(screen.getCursorScreenPoint(),{sample:false});
  const captured=drag,result=petMotion.release(null,{button:message?.button??petMotion.releaseButton??drag.button});if(result.ignored)return result;drag=null;buttonObserver?.stop();petEvent({kind:'gesture-reset',gestureId:captured.gestureId,reason:'released',buttons:nativeButtons});petEvent({kind:'drag',active:false});publishInteraction(true);setGestureMode(gestureMode);
- if(result.touch){activityClock.activity('touch');const id=touchExpressions.next(captured.characterId);petEvent({kind:'feedback',value:{id,source:'touch',cycles:1,eventId:captured.eventId,gestureId:captured.gestureId,capturedAt:captured.capturedAt,confirmedAt:Date.now(),characterId:captured.characterId}});const awarded=await game.touch?.({characterId:captured.characterId,personaId:captured.personaId,eventId:captured.eventId});audit({type:'pet-touch',characterId:captured.characterId,personaId:captured.personaId,expression:id,awarded:awarded?.awarded??false,reason:awarded?.reason});}
+ if(result.touch){activityClock.activity('touch');const id=touchExpressions.next(captured.characterId);petEvent({kind:'feedback',value:{id,source:'touch',cycles:1,eventId:captured.eventId,gestureId:captured.gestureId,capturedAt:captured.capturedAt,confirmedAt:Date.now(),characterId:captured.characterId}});const awarded=await game?.touch?.({characterId:captured.characterId,personaId:captured.personaId,eventId:captured.eventId});audit({type:'pet-touch',characterId:captured.characterId,personaId:captured.personaId,expression:id,awarded:awarded?.awarded??false,reason:awarded?.reason});}
  if(captured.wakeOnly){result.wakeOnly=true;result.context=false;}
  else if(result.context)petContextMenu();
  settings.petBounds=petBounds(pet.getContentBounds(),settings.preferences.petScale);audit({type:'pet-pointer-up',gestureId:captured.gestureId,...result,bounds:settings.petBounds});await saveSettings();return result;
@@ -329,7 +337,7 @@ const control=createLocalControlServer({
   onRequest:async request=>{
       let result;
       if(request.command==='snapshot')result={processId:process.pid,singleInstance:app.hasSingleInstanceLock(),snapshot,settings:settingsView(),petAction:petState,chat:{enabled:provider?.enabled || false,model:provider?.defaultModel},petBounds:pet?.getBounds(),petContentBounds:pet?.getContentBounds(),petVisible:pet?.isVisible(),petAssetsReady,petAlwaysOnTop:pet?.isAlwaysOnTop(),petInteraction:{gestureMode,lastPetHit,ignoringMouse,dragging:!!drag,...petInteraction()},displays:screen.getAllDisplays().map(d=>({workArea:d.workArea,scaleFactor:d.scaleFactor})),build,dataRoot};
-      else if(request.command==='installation-status')result={version:appVersion,build,dataRoot,processId:process.pid,ready:!!game&&petAssetsReady,busy:!!(gameRequests||provider?.status().busy||cg?.status().busy),resources:resources.status()};
+      else if(request.command==='installation-status')result={version:appVersion,build,dataRoot,processId:process.pid,ready:(!!game||!!startupFailure)&&petAssetsReady,safeMode:!!startupFailure,startupFailure,busy:!!(gameRequests||provider?.status().busy||cg?.status().busy),resources:resources.status()};
       else if(request.command==='installation-quit'){if(request.expectedBuild!==build)result={ok:false,error:'Different installation'};else if(gameRequests||provider?.status().busy||cg?.status().busy)result={ok:false,busy:true};else{result={ok:true};setTimeout(()=>{void shutdown();},100);}}
       else if(request.command==='resources-status')result=resources.status(true);
       else if(request.command==='validation-window'&&arg('validation')==='1'){
@@ -402,7 +410,7 @@ control.on('error',error=>{
 });
 
 async function shutdown() {
-  if(quitting)return;quitting=true;buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();provider?.close();await cg?.close();game?.close();
+  if(quitting)return;quitting=true;buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();provider?.close();await cg?.close();await game?.flushWorkLedger?.().catch(()=>{});game?.close();
   if(worker){worker.postMessage({type:'close'});await Promise.race([new Promise(r=>{worker.once('exit',r);worker.on('message',m=>{if(m.type==='closed')r();});}),new Promise(r=>setTimeout(r,5000))]);}
   control.close();app.exit(0);
 }
@@ -425,18 +433,21 @@ app.whenReady().then(async()=>{
   const cgUsage=usage=>{appendFileSync(join(dataRoot,'cg-usage.jsonl'),JSON.stringify({timestamp:new Date().toISOString(),...usage})+'\n');worker?.postMessage({type:'refresh'});};
   cg=new CgService({resourceCheck:ids=>resources.require(ids.filter(validPetCharacter)),themePlanner:new CgThemePlanner(provider,()=>settings.preferences?.language|| (app.getLocale().startsWith('zh')?'zh-CN':'en')),codex:new CodexImageProvider({binary,defaultModel:model,dataRoot,onUsage:cgUsage,audit}),dataRoot,crypto:safeStorage,imageCodec:createCgCodec(nativeImage),onUsage:cgUsage,onActivity:internalActivity,onChange:()=>{broadcastSettings();if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',{});},audit,referenceResolver:createCharacterReferenceResolver(build,ref=>cg.readAsset(ref))});
   await cg.ready;
-  game=await createGalgame({dataRoot,provider,model,cg,resources,onActivity:internalActivity,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value);}});
+  let legacyGameSettings={};
+  try{
+  game=await createGalgame({dataRoot,provider,model,cg,resources,audit,onActivity:internalActivity,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value);}});
   cg.start();
-  const legacyGameSettings=await game.action('settings-get');
+  legacyGameSettings=await game.action('settings-get');
+  }catch(error){try{game?.close();}catch{}game=null;noteStartupFailure('companion',error);}
   const firstPreferences=!settings.preferences||!Object.keys(settings.preferences).length;
   settings.preferences=normalizePreferences(settings.preferences,legacyGameSettings.petEnabled!==false);
   if(firstPreferences)settings.preferences.language=app.getLocale().startsWith('zh')?'zh-CN':'en';
   setLocale(settings.preferences.language);
-  if(settings.preferences.petVisible!==(legacyGameSettings.petEnabled!==false))await game.action('pet-set',{enabled:settings.preferences.petVisible});
+  if(game&&settings.preferences.petVisible!==(legacyGameSettings.petEnabled!==false))await game.action('pet-set',{enabled:settings.preferences.petVisible});
   await saveSettings();
   // Resolve the saved/manual or model-following character before the first
   // desktop greeting, even when the Galgame panel has not been opened.
-  await game.action('view');
+  if(game)try{await game.action('view');}catch(error){audit({type:'startup-view-error',message:error.stack});}
   const area=screen.getPrimaryDisplay().workArea;
   const bounds=clamp(petBounds(settings.petBounds || {x:area.x+area.width-290,y:area.y+area.height-290},settings.preferences.petScale));
   pet=new BrowserWindow({...petWindowOptions(bounds,settings.preferences.petScale),title:APP_NAME,icon:appIconPath,webPreferences:{preload:join(build,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,partition:'whale-memory'}});
@@ -447,7 +458,7 @@ app.whenReady().then(async()=>{
   configurePetInteractions();activityClock.resume();
   pet.setAlwaysOnTop(settings.preferences.alwaysOnTop,'floating');setGestureMode(false);
   pet.loadFile(join(build,'pet.html'),{...previewQuery,query:{...previewQuery.query,petCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter))}});pet.once('ready-to-show',async()=>{
-    if(PET_ACTIONS.some(action=>action.sourceFrameCount))try{await pet.webContents.executeJavaScript('window.petCharacterReady.then(()=>window.frameSequenceInspection.renderer.ready).then(()=>true)');}catch(error){rendererErrors.push(error.message);audit({type:'pet-assets-error',message:error.message});return;}
+    if(PET_ACTIONS.some(action=>action.sourceFrameCount))try{await pet.webContents.executeJavaScript('window.petCharacterReady.then(()=>window.frameSequenceInspection.renderer.ready).then(()=>true)');}catch(error){pushBounded(rendererErrors,error.message);audit({type:'pet-assets-error',message:error.message});return;}
     if(!pet.isDestroyed()){petAssetsReady=true;applyPetPreferences();}
   });
   pet.webContents.setWindowOpenHandler(()=>({action:'deny'}));
@@ -470,10 +481,25 @@ app.whenReady().then(async()=>{
   },16);
   logRoots=arg('roots')?JSON.parse(readFileSync(arg('roots'),'utf8')):[{provider:'codex',path:join(home,'.codex/sessions')},{provider:'codex',path:join(home,'.codex/archived_sessions')},{provider:'claude',path:join(home,'.claude/projects')}];
   monitorAppliedInterval=settings.preferences.monitorRefreshMs;
+  // The monitor worker is restarted with backoff if it exits unexpectedly.
+  superviseWorker(()=>{
   worker=new Worker(join(build,'monitor-worker.cjs'),{workerData:{roots:arg('roots')?logRoots:undefined,home,env:process.env,dataRoot,refreshIntervalMs:settings.preferences.monitorRefreshMs,statisticsTimeZone:settings.preferences.statisticsTimeZone,autoPriceUpdates:settings.preferences.autoPriceUpdates}});
   worker.on('message',message=>{if(message.type==='sources'){tokenSources=message.value;if(panel&&!panel.isDestroyed())panel.webContents.send('tokens:update',message.value);}if(message.type==='source-result'){const pending=sourceRequests.get(message.id);if(pending){clearTimeout(pending.timer);sourceRequests.delete(message.id);message.error?pending.fail(Error(message.error)):pending.done(message.value);}}if(message.type==='snapshot')publish(message.value);if(message.type==='configured'){monitorAppliedInterval=message.refreshIntervalMs;broadcastSettings();}if(message.type==='refreshed')broadcastSettings();if(message.type==='error')audit({type:'monitor-error',message:message.message});});
   worker.on('message',message=>{if(message.type==='task-feedback'&&!quitting)feedback(message.value);});
   worker.on('error',error=>audit({type:'monitor-worker-error',message:error.stack}));
+  return worker;
+  },{shouldRestart:()=>!quitting,onExit:code=>{if(!quitting)audit({type:'monitor-worker-exit',code});}});
   control.listen(pipe);audit({type:'app-start',mode:'offline',version:appVersion,build});
-  if(reopenRequested||['overview','galgame','settings','actions'].includes(arg('open')))openPanel(reopenRequested?'overview':arg('open'),false);
-}).catch(error=>{audit({type:'startup-error',message:error.stack});console.error(error);app.exit(1);});
+  if(startupFailure)openPanel('safe-mode',false);
+  else if(reopenRequested||['overview','galgame','settings','actions'].includes(arg('open')))openPanel(reopenRequested?'overview':arg('open'),false);
+}).catch(error=>{audit({type:'startup-error',message:error.stack});console.error(error);enterSafeMode(error);});
+// Startup failed outside the companion features: keep a way to see the error
+// and quit instead of exiting silently on every launch.
+function enterSafeMode(error){
+  noteStartupFailure('app',error);
+  try{
+    if(!tray){tray=new Tray(appIcon.resize({width:32,height:32}));tray.setToolTip(APP_NAME+' · 安全模式');tray.setContextMenu(Menu.buildFromTemplate([{label:'查看错误',click:()=>{try{openPanel('safe-mode');}catch(error){audit({type:'safe-mode-panel-error',message:error.stack});}}},{label:'退出',click:()=>app.quit()}]));}
+    try{control.listen(pipe);}catch{}
+    try{openPanel('safe-mode');}catch(error){audit({type:'safe-mode-panel-error',message:error.stack});}
+  }catch(fatal){audit({type:'safe-mode-error',message:fatal.stack});app.exit(1);}
+}
