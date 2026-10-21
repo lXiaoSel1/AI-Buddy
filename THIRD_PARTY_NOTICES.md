@@ -1,5 +1,11 @@
 # Third-party code, artwork and runtime notices
 
+## Copyright and license of AI Buddy
+
+AI 酱 / AI Buddy is Copyright 2026 lXiaoSel1. Its code and documentation are licensed under the Apache License 2.0 with the Commons Clause License Condition v1.0 ([LICENSE.md](LICENSE.md)). Anyone may use, copy, modify and share it free of charge, including inside a company, but nobody may sell it without a separate written license from lXiaoSel1. To ask for one, open an issue at [github.com/lXiaoSel1/AI-Buddy](https://github.com/lXiaoSel1/AI-Buddy/issues) or message lXiaoSel1 on GitHub. Version 1.8.0 and earlier were released under the MIT License, and copies obtained under it remain MIT. The license does not grant permission to use the names "AI 酱" and "AI Buddy" beyond describing where a copy comes from (Apache License 2.0, section 6). The upstream code and the artwork below keep their own terms.
+
+## Upstream
+
 AI Buddy is adapted from [JAdpp/dsh-whale-galgame](https://github.com/JAdpp/dsh-whale-galgame), pinned at `046b848f244450e6e636335766276bf3343fe84b`. Adaptations include the Electron host, independent model/image connections, persistence, monitoring and UI. Thank you to JAdpp and all upstream contributors.
 
 Original notices are preserved under [licenses/upstream](licenses/upstream/): code/UI/docs are MIT, while the upstream image terms differ. The upstream table identifies 21 default images under CC BY-NC-SA 4.0 and a desktop-pet atlas under MIT. The code license does not relicense character artwork.

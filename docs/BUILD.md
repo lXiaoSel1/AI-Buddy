@@ -23,3 +23,20 @@ The 1.7.5 source build verifies the DeepSeek Galgame WebP and its lossless PNG C
 `release.json` records the explicit 1.8.0 media baseline reused by 1.9.0. A source build may use its own version or that declared baseline, while the portrait, expression and file hash checks remain mandatory. Use the locally approved full 30fps/60fps resource tree for all 264 actions; the public 1.8.0 package alone contains the earlier 198 actions. Do not regenerate media to change the source version.
 
 The checked-in installer remains the published 1.8.0 maintenance client and fixed-manifest contract until the separate 1.9.0 distribution package is prepared. Its existing transaction recovery, manifest hashes and download URLs must not be relabeled. Current build output is local only and is excluded from Git.
+
+## Signed release tags
+
+All new releases require a signed tag created locally. The repository uses SSH signing (`gpg.format=ssh`, `tag.gpgSign=true`) with `~/.ssh/ai-buddy-signing`; the configured public-key path and allowed-signers file must match that identity. Never commit or distribute the private key.
+
+For 1.9.0, run the following only after release approval and the final build and validation checks:
+
+```sh
+git tag -s v1.9.0 -m "AI Buddy 1.9.0"
+git tag -v v1.9.0
+git push origin v1.9.0
+gh release create v1.9.0 --verify-tag --notes-file docs/VALIDATION-1.9.0.md <release-assets>
+```
+
+Stop if verification fails; the verification output must report `Good signature` for the expected signing identity. Verify an existing tag instead of replacing it. Do not let `gh`, the GitHub website, or a legacy publication script create a tag on the server. `--verify-tag` requires the already-pushed tag; it does not replace the local signature check. Apply the same sequence with the approved version for future releases. These instructions do not authorize publishing a release.
+
+Keep the filename `LICENSE.md`: the distribution builder and installer root-file allowlist package that exact name. Do not rename it or add another root license file. Changes to the contents of `LICENSE.md`, `CONTRIBUTING.md`, or `.github/pull_request_template.md` require explicit user approval; the 1.9.0 license merge imports their exact approved contents from `d8cf74e`.
