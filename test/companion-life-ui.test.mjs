@@ -24,7 +24,7 @@ test('growth card editor locks name, inherited mode controls and examples but ke
  assert.equal(companionGrowthLocked(value.characters[0]),true);
  assert.match(html,/<input[^>]*disabled=""[^>]*value="DeepSeek"/);
  assert.match(html,/<textarea[^>]*id="buddy-card-personality"[^>]*disabled=""/);
- assert.match(html,/<select[^>]*aria-label="性格 · 内容方式"[^>]*disabled=""/);
+ assert.match(html,/<div[^>]*role="radiogroup"[^>]*aria-label="性格 · 内容方式"><button[^>]*disabled=""/);
  assert.match(html,/<button[^>]*disabled=""[^>]*>添加示例<\/button>/);
  assert.match(html,/<button[^>]*disabled=""[^>]*>恢复默认人设<\/button>/);
  assert.match(html,/<textarea[^>]*id="buddy-card-visual"(?:(?!disabled).)*>/);

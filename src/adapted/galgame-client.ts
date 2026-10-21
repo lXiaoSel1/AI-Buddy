@@ -1,6 +1,9 @@
 import {t} from '../i18n.mjs';
 import {GalgameTitle} from '../galgame-title.mjs';
 import {GroupHeader} from '../group-header.mjs';
+import {GroupCgCSS} from '../group-cg-ui.mjs';
+import {GroupStageCSS} from '../group-stage-ui.mjs';
+import {CompanionDesignCSS} from '../companion-design.mjs';
 import {CgImageViewer,CgImageViewerCSS} from '../cg-image-viewer.mjs';
 import {isSpriteVisible} from '../character-display.mjs';
 import {messageEmotion,validEmotion} from '../emotions.mjs'
@@ -281,7 +284,10 @@ const CSS = [
   '@media (max-width:900px){.whg-top{gap:6px;padding:10px 12px;flex-wrap:wrap}.whg-title{font-size:14px}.whg-chip{padding:3px 8px}.whg-spacer{display:none}.whg-top-actions{width:100%;justify-content:flex-end}.whg-btn{padding:5px 9px;font-size:12px}.whg-archive{width:min(470px,calc(100% - 12px))}.whg-archive-spine{display:none}}',
   '@media (max-width:560px){.whg-chip-wrap{max-width:calc(50% - 4px)}.whg-chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.whg-picker{position:fixed;top:92px;right:10px;left:10px;width:auto;max-height:55vh}.whg-top-actions{gap:5px;overflow-x:auto;padding-bottom:2px}.whg-archive{width:100%;border-left:0}.whg-archive-head{padding:18px 16px 14px}.whg-archive-body{padding:14px 14px 24px}.whg-gallery{grid-template-columns:1fr}.whg-history-row{grid-template-columns:38px minmax(0,1fr);gap:8px}.whg-archive-title{font-size:21px}.whg-profile-head-fields,.whg-profile-main-fields,.whg-profile-secondary-fields{grid-template-columns:1fr}.whg-profile-section-head{align-items:flex-start;flex-direction:column;gap:3px}.whg-profile-message{flex-basis:100%;text-align:left}.whg-settings-row{grid-template-columns:1fr;gap:8px}.whg-settings-toggle{justify-self:start}.whg-settings-head{padding:13px}.whg-settings-body{margin:0 13px}}',
   '@media (prefers-reduced-motion:reduce){.whg-archive-scrim,.whg-archive{animation:none}.whg-gallery-card:hover{transform:none}}',
+  GroupStageCSS,
+  GroupCgCSS,
   GalgameDesignCSS,
+  CompanionDesignCSS,
 ].join('\n')
 
 function art(key: any): string | undefined {
@@ -2159,7 +2165,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     return React.createElement('span', { className, 'aria-hidden': 'true' }, src ? React.createElement('img', { src, alt: '', draggable: false }) : String(companionCharacterName(s?.companion, id) || id || '?').slice(0, 1))
   }
   function topbar(showBack: boolean): React.ReactElement {
-    if (group) return React.createElement(GroupHeader, { key:group.id, toolbarRef:setGroupToolbarTarget, state:s.companion, request:companionRequest, resolveArt:art, onBrowse:(characterId:string)=>setGroupBrowseRequest({groupId:group.id,characterId,nonce:Date.now()}), panelRequest:groupPanelRequest,loadCg:(id:string)=>requestCgData(id,props.sessionId), petEnabled:s.petEnabled!==false, onPetToggle:()=>act('pet-set',{enabled:s.petEnabled===false}) })
+    if (group) return React.createElement(GroupHeader, { key:group.id, toolbarRef:setGroupToolbarTarget, state:s.companion, request:companionRequest, resolveArt:art, onBrowse:(characterId:string)=>setGroupBrowseRequest({groupId:group.id,characterId,nonce:Date.now()}), panelRequest:groupPanelRequest,loadCg:(id:string)=>requestCgData(id,props.sessionId), petEnabled:s.petEnabled!==false, onPetToggle:()=>act('pet-set',{enabled:s.petEnabled===false}), chat:props.chat, onToggleChat:props.onToggleChat })
     const characterModel = s.characterModelLabel || s.modelLabel || ''
     const petEnabled = s.petEnabled !== false
     const galleryCount = typeof s.galleryCount === 'number' ? s.galleryCount : 0
@@ -2321,7 +2327,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   }
 
   function dialogue(): React.ReactElement {
-    if (group) return React.createElement(CompanionGroupDialogue, { state: s.companion, request: companionRequest, onPhoto: (cgId:string) => setGroupPanelRequest({groupId:group.id,panel:'gallery',cgId,nonce:Date.now()}), onManage: () => setGroupPanelRequest({groupId:group.id,panel:'settings',nonce:Date.now()}) })
+    if (group) return React.createElement(CompanionGroupDialogue, { state: s.companion, request: companionRequest, chat: props.chat, onToggleChat: props.onToggleChat, onApi: props.onManage, onPhoto: (cgId:string) => setGroupPanelRequest({groupId:group.id,panel:'gallery',cgId,nonce:Date.now()}), onManage: () => setGroupPanelRequest({groupId:group.id,panel:'settings',nonce:Date.now()}) })
     const last = lastLine()
     const userName = last?.personaSnapshot?.nickname || s.companion?.personas?.find((p: any) => p.id === s.companion.activePersonaId)?.nickname || t("你")
     const plateLabel = last ? (last.who === 'heroine' ? s.name : last.who === 'user' ? userName : t("旁白")) : s.name
