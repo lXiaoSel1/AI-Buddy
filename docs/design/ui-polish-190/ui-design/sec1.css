@@ -1,0 +1,38 @@
+/* ---- avatars: per-character centred head crops (extra/head-<id>.webp), plus surface 1.12 ---- */
+.face img.hd,.mini-face img.hd{transform:none!important;object-fit:cover;width:100%;height:100%}
+.face-old{display:block;width:44px;height:44px;border-radius:50%;overflow:hidden;background:var(--surface2);box-shadow:0 0 0 1px var(--border)}
+.face-old img{width:100%;height:100%;object-fit:cover;transform:scale(1.9);transform-origin:50% 14%}
+.av-wrap{display:grid;grid-template-columns:400px minmax(0,1fr);gap:24px;padding:24px;background:var(--bg);color:var(--text)}
+.av-card{display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:var(--r-card);background:var(--surface);box-shadow:0 0 0 1px var(--border)}
+.av-card h4{margin:0;font-size:var(--fs-body);font-weight:700}
+.av-card h4 small{font-weight:500;color:var(--muted);font-size:var(--fs-cap);margin-left:6px}
+.av-mini{width:100%;height:auto;border-radius:12px;overflow:hidden;box-shadow:0 0 0 1px var(--border)}
+.av-mini .win-bar{position:relative}
+.av-mini .logo{padding:16px 16px 18px;background:var(--side-bg);color:var(--side-text)}
+.av-grid{display:grid;grid-template-columns:72px repeat(11,minmax(0,1fr));gap:8px 6px;align-items:center;font-size:var(--fs-cap);color:var(--muted)}
+.av-grid .mini-face{width:44px;height:44px;box-shadow:0 0 0 1px var(--border);background:var(--surface2)}
+.av-grid .nm{text-align:center;font-size:11px}
+.av-grid .rh{font-weight:700;color:var(--text)}
+.av-grid .rh small{display:block;font-weight:500;color:var(--muted)}
+.av-sizes{display:flex;align-items:flex-end;gap:16px;font-size:11px;color:var(--muted)}
+.av-sizes span{display:flex;flex-direction:column;align-items:center;gap:4px}
+.tb{display:flex;align-items:center;height:48px;padding:0 10px;gap:4px;border-radius:10px;background:#f3f3f3;color:#1b1b1b;font:12px/1 "Segoe UI","Microsoft YaHei",sans-serif;box-shadow:0 0 0 1px rgba(0,0,0,.08)}
+.tb.dark{background:#202020;color:#f2f2f2;box-shadow:0 0 0 1px rgba(255,255,255,.08)}
+.tb .grow{flex:1}
+.tb-app{position:relative;display:grid;place-items:center;width:40px;height:40px;border-radius:6px}
+.tb-app i{display:block;width:22px;height:22px;border-radius:5px;background:var(--c)}
+.tb-app.on{background:rgba(0,0,0,.06)}
+.tb.dark .tb-app.on{background:rgba(255,255,255,.08)}
+.tb-app.on::after{content:"";position:absolute;bottom:2px;left:50%;width:16px;height:3px;margin-left:-8px;border-radius:2px;background:#0067c0}
+.tb.dark .tb-app.on::after{background:#60a5fa}
+.tb-ico{display:block;width:26px;height:26px;border-radius:50%;overflow:hidden;background:color-mix(in srgb,var(--accent) 22%,#fff);box-shadow:0 0 0 1px rgba(0,0,0,.08)}
+.tb-ico img{width:100%;height:100%;object-fit:cover}
+.tb-ico.sm{width:18px;height:18px}
+.tb-tray{display:flex;align-items:center;gap:10px;padding:0 8px;height:40px;border-radius:6px}
+.tb-tray.hl{background:rgba(0,0,0,.06)}
+.tb.dark .tb-tray.hl{background:rgba(255,255,255,.08)}
+.tb-clock{display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-size:11px}
+.tb-tip{position:absolute;padding:6px 10px;border-radius:6px;background:#f9f9f9;color:#1b1b1b;box-shadow:0 0 0 1px rgba(0,0,0,.08),0 6px 18px -6px rgba(0,0,0,.35);font:12px/1.2 "Segoe UI","Microsoft YaHei",sans-serif;white-space:nowrap}
+.av-swap{display:flex;align-items:center;gap:10px;font-size:var(--fs-sm);color:var(--muted)}
+.av-swap .mini-face{width:30px;height:30px;box-shadow:0 0 0 1px var(--border)}
+.av-swap b{color:var(--text)}

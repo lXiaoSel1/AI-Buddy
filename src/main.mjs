@@ -1,7 +1,7 @@
 import {createInstalledResources} from './installed-resources.mjs';
 import {spawn} from 'node:child_process';
 import {setLocale,t,localizedTitle} from './i18n.mjs';
-import {chromeColor,resolvedTheme} from './appearance.mjs';
+import {chromeColor,chromeSymbolColor,windowBackground,resolvedTheme} from './appearance.mjs';
 import {CgThemePlanner} from './cg-theme.mjs';
 import {createCharacterReferenceResolver} from './cg-reference-registry.mjs';
 import {monitorView} from './monitor-view.mjs';
@@ -206,17 +206,17 @@ async function settingsAction(action){
   if(action==='refresh'){worker?.postMessage({type:'refresh'});return settingsView();}
   throw new Error('未知设置操作');
 }
-function applyChrome(character){if(character&&character!==themeCharacter){const previousPet=effectivePetCharacter();themeCharacter=character;if(effectivePetCharacter()!==previousPet)cancelGesture('character-change');if(settings.preferences?.petCharacterMode!=='fixed'){activityClock.resume();publishInteraction(true);}broadcastSettings();}setLocale(settings.preferences?.language);if(panel&&!panel.isDestroyed()){panel.setTitle(workspaceTitle());if(process.platform==='win32')panel.setTitleBarOverlay({color:chromeColor(resolvedTheme(settings.preferences,themeCharacter)),symbolColor:'#e5edf5',height:34});}if(tray){tray.setToolTip(settings.preferences?.language==='en'?'AI Buddy':'AI 酱');updateTray();}}
+function applyChrome(character){if(character&&character!==themeCharacter){const previousPet=effectivePetCharacter();themeCharacter=character;if(effectivePetCharacter()!==previousPet)cancelGesture('character-change');if(settings.preferences?.petCharacterMode!=='fixed'){activityClock.resume();publishInteraction(true);}broadcastSettings();}setLocale(settings.preferences?.language);if(panel&&!panel.isDestroyed()){panel.setTitle(workspaceTitle());const theme=resolvedTheme(settings.preferences,themeCharacter);panel.setBackgroundColor(windowBackground(theme));if(process.platform==='win32')panel.setTitleBarOverlay({color:chromeColor(theme),symbolColor:chromeSymbolColor(theme),height:34});}if(tray){tray.setToolTip(settings.preferences?.language==='en'?'AI Buddy':'AI 酱');updateTray();}}
 let themeCharacter=resources.fallback('deepseek');
 function openPanel(page='overview',focus=true) {
   if(page==='sessions')page='overview';
   if(!panel || panel.isDestroyed()) {
-    panel=new BrowserWindow({width:1180,height:820,minWidth:900,minHeight:650,title:workspaceTitle(),icon:appIconPath,backgroundColor:chromeColor(resolvedTheme(settings.preferences,themeCharacter)),show:false,
-      ...(process.platform==='win32'?{titleBarStyle:'hidden',titleBarOverlay:{color:'#0b1628',symbolColor:'#c8deef',height:34},accentColor:false}:{}),
+    panel=new BrowserWindow({width:1180,height:820,minWidth:900,minHeight:650,title:workspaceTitle(),icon:appIconPath,backgroundColor:windowBackground(resolvedTheme(settings.preferences,themeCharacter)),show:false,
+      ...(process.platform==='win32'?{titleBarStyle:'hidden',titleBarOverlay:{color:chromeColor(resolvedTheme(settings.preferences,themeCharacter)),symbolColor:chromeSymbolColor(resolvedTheme(settings.preferences,themeCharacter)),height:34},accentColor:false}:{}),
       webPreferences:{preload:join(build,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,partition:'whale-memory'}});
     brandWindow(panel);applyChrome();
     lockPageZoom(panel,error=>audit({type:'zoom-policy-error',message:error.message}));
-    panel.setMenuBarVisibility(false);panel.loadFile(join(build,'index.html'),{hash:page,...previewQuery,query:{...previewQuery.query,petCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter))}});
+    panel.setMenuBarVisibility(false);panel.loadFile(join(build,'index.html'),{hash:page,...previewQuery,query:{...previewQuery.query,theme:resolvedTheme(settings.preferences,themeCharacter),petCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter))}});
     panel.on('close',event=>{if(!quitting){event.preventDefault();petAuto();panel.hide();}});
     // Lets the panel release heavy media (action gallery decoders, stills) while hidden.
     for(const [name,visible] of [['hide',false],['show',true]])panel.on(name,()=>{if(panel&&!panel.isDestroyed())panel.webContents.send('panel:visibility',{visible});});

@@ -1,0 +1,701 @@
+<title>AI 酱 UI 设计稿</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: a review desk. Sticky theme switcher on top, section index on the left, one card per app surface with
+   the redesigned mock (switchable to the real "before" screenshot), numbered change notes and an approve/revise control. */
+:root{
+  --pg-bg:#ECEDF1;--pg-surface:#FFFFFF;--pg-raised:#F5F6F8;--pg-text:#16171B;--pg-muted:#575A65;--pg-line:#D6D8DF;
+  --pg-ink:#1D1F25;--pg-on-ink:#FFFFFF;--pg-good:#1B7550;--pg-warn:#9A5B00;--pg-bad:#B0302B;
+  --pg-shadow:0 24px 60px -30px rgba(20,24,34,.45);
+  --pg-sans:"Segoe UI","Microsoft YaHei UI","PingFang SC","Noto Sans SC",system-ui,sans-serif;
+  --pg-serif:"Source Han Serif SC","Noto Serif SC","Songti SC","SimSun",serif;
+  --pg-mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --pg-bg:#111216;--pg-surface:#1A1B20;--pg-raised:#22232A;--pg-text:#ECEDF1;--pg-muted:#A0A3AE;--pg-line:#2E3038;
+  --pg-ink:#ECEDF1;--pg-on-ink:#15161A;--pg-good:#6FCB9C;--pg-warn:#E8B45E;--pg-bad:#FF8F88;--pg-shadow:0 24px 60px -30px rgba(0,0,0,.85);color-scheme:dark}}
+:root[data-theme="dark"]{
+  --pg-bg:#111216;--pg-surface:#1A1B20;--pg-raised:#22232A;--pg-text:#ECEDF1;--pg-muted:#A0A3AE;--pg-line:#2E3038;
+  --pg-ink:#ECEDF1;--pg-on-ink:#15161A;--pg-good:#6FCB9C;--pg-warn:#E8B45E;--pg-bad:#FF8F88;--pg-shadow:0 24px 60px -30px rgba(0,0,0,.85);color-scheme:dark}
+*,*::before,*::after{box-sizing:border-box}
+body{background:var(--pg-bg);color:var(--pg-text);font-family:var(--pg-sans);font-size:14px;line-height:1.55}
+::selection{background:color-mix(in srgb,var(--pg-ink) 16%,transparent)}
+html{scrollbar-color:var(--pg-line) transparent;accent-color:var(--pg-ink)}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--pg-ink);outline-offset:2px}
+.wrap{max-width:1560px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--pg-surface)}
+
+/* top bar */
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--pg-surface);border-bottom:1px solid var(--pg-line)}
+.topbar .wrap{display:flex;flex-wrap:wrap;align-items:center;gap:10px 24px;padding-block:12px}
+.topbar h1{margin:0;font-family:var(--pg-serif);font-size:22px;line-height:1.2;white-space:nowrap}
+.tchips{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+.tchip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px 3px 3px;border-radius:999px;border:1px solid var(--pg-line);background:var(--pg-surface);font-size:12px;cursor:pointer;white-space:nowrap}
+.tchip:hover{border-color:var(--pg-muted)}
+.tchip[aria-pressed="true"]{background:var(--pg-ink);color:var(--pg-on-ink);border-color:var(--pg-ink)}
+.tchip .face{width:22px;height:22px;border-radius:50%;overflow:hidden;flex:none;box-shadow:0 0 0 2px var(--ring,transparent)}
+.tchip .face img{width:100%;height:100%;object-fit:cover;transform:scale(1.9);transform-origin:50% 14%}
+.progress{margin-left:auto;display:flex;align-items:center;gap:12px;font-size:13px;color:var(--pg-muted);white-space:nowrap}
+.progress b{color:var(--pg-text);font-size:18px;font-variant-numeric:tabular-nums}
+.pg-btn{appearance:none;border:1px solid var(--pg-line);background:var(--pg-surface);border-radius:999px;padding:6px 14px;cursor:pointer;font-size:13px}
+.pg-btn:hover{border-color:var(--pg-muted)}
+.pg-btn.ink{background:var(--pg-ink);color:var(--pg-on-ink);border-color:var(--pg-ink)}
+.pg-check{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;white-space:nowrap}
+
+.layout{display:grid;grid-template-columns:240px minmax(0,1fr);gap:28px;padding-block:24px 48px}
+.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 76px);align-self:start;max-height:calc(100vh - 96px);overflow:auto;font-size:13px}
+.toc h2{margin:16px 0 6px;font-size:12px;letter-spacing:.02em;color:var(--pg-muted)}
+.toc h2:first-child{margin-top:0}
+.toc a{display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:6px;color:inherit;text-decoration:none}
+.toc a:hover{background:var(--pg-raised)}
+.toc .code{font-variant-numeric:tabular-nums;color:var(--pg-muted);min-width:26px}
+.toc .st{margin-left:auto;width:8px;height:8px;border-radius:50%;flex:none;box-shadow:inset 0 0 0 1px var(--pg-line)}
+.st.ok{background:var(--pg-good);box-shadow:none}.st.change{background:var(--pg-warn);box-shadow:none}
+.toc .todo{color:var(--pg-muted);padding:4px 8px}
+.intro{margin:0 0 20px;max-width:72ch;color:var(--pg-muted)}
+.intro b{color:var(--pg-text)}
+.sec-h{margin:8px 0 14px;font-family:var(--pg-serif);font-size:24px}
+.sec-h small{font-family:var(--pg-sans);font-size:13px;color:var(--pg-muted);margin-left:10px;font-weight:400}
+
+/* surface card */
+.sfc{background:var(--pg-surface);border:1px solid var(--pg-line);border-radius:12px;margin-bottom:28px;scroll-margin-top:90px;overflow:hidden}
+.sfc-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:14px 18px;border-bottom:1px solid var(--pg-line)}
+.sfc-h .code{font-family:var(--pg-mono);font-size:12px;color:var(--pg-muted)}
+.sfc-h h3{margin:0;font-size:16px}
+.view{margin-left:auto;display:inline-flex;padding:2px;border-radius:8px;background:var(--pg-raised);border:1px solid var(--pg-line)}
+.view button{appearance:none;border:0;background:transparent;padding:4px 12px;border-radius:6px;font-size:12px;cursor:pointer;color:var(--pg-muted)}
+.view button[aria-pressed="true"]{background:var(--pg-surface);color:var(--pg-text);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.stage-area{padding:16px 18px;background:var(--pg-raised)}
+.mock-frame{position:relative;max-width:100%;overflow:hidden;border-radius:10px;box-shadow:var(--pg-shadow)}
+.mock-inner{position:absolute;left:0;top:0;width:1280px;transform:scale(var(--s,.5));transform-origin:0 0}
+.before-img{display:block;width:100%;height:auto;border-radius:10px;box-shadow:var(--pg-shadow)}
+.before-cap{margin:8px 0 0;font-size:12px;color:var(--pg-muted)}
+.no-before{display:grid;place-items:center;min-height:220px;border:1px dashed var(--pg-line);border-radius:10px;color:var(--pg-muted);font-size:13px;text-align:center;padding:24px}
+.sfc-b{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(260px,1fr);gap:20px;padding:16px 18px}
+.notes{margin:0;padding:0;list-style:none;display:grid;align-content:start;gap:8px;font-size:13px}
+.notes li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:10px;align-items:start}
+.notes .n{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:#C7353A;color:#fff;font-size:11px;font-weight:700;margin-top:1px}
+.review{display:flex;flex-direction:column;gap:8px}
+.review .rv-h{margin:0;font-size:12px;color:var(--pg-muted);font-weight:600}
+.rbtns{display:flex;gap:8px}
+.rbtn{flex:1;appearance:none;border:1px solid var(--pg-line);background:var(--pg-raised);border-radius:8px;padding:7px 0;cursor:pointer;font-weight:600}
+.rbtn[aria-pressed="true"][data-v="ok"]{background:var(--pg-good);border-color:var(--pg-good);color:var(--pg-surface)}
+.rbtn[aria-pressed="true"][data-v="change"]{background:var(--pg-warn);border-color:var(--pg-warn);color:var(--pg-surface)}
+.review textarea{width:100%;min-height:64px;resize:vertical;font:inherit;font-size:13px;background:var(--pg-raised);color:var(--pg-text);border:1px solid var(--pg-line);border-radius:8px;padding:8px 10px;caret-color:var(--pg-ink)}
+.review textarea::placeholder{color:var(--pg-muted)}
+.rstatus{margin:0;font-size:12px;color:var(--pg-muted)}
+.foot{padding-block:24px 40px;color:var(--pg-muted);font-size:12px}
+#copy-out{width:100%;min-height:140px;margin-top:8px;font-family:var(--pg-mono);font-size:12px}
+@media (max-width:1100px){.layout{grid-template-columns:minmax(0,1fr)}.toc{position:static;max-height:none}.sfc-b{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:700px){.progress{margin-left:0}.tchips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin-inline:-16px;padding-inline:16px;flex-basis:calc(100% + 32px)}.tchips::-webkit-scrollbar{display:none}.tchip{flex:none}}
+
+/* annotation pins (outside the theme) */
+.pin{position:absolute;z-index:60;width:26px;height:26px;border-radius:50%;background:#C7353A;color:#fff;font:700 14px/26px "Segoe UI",system-ui,sans-serif;text-align:center;box-shadow:0 0 0 3px #fff,0 4px 10px rgba(0,0,0,.35);pointer-events:none}
+.pins-off .pin{display:none}
+
+/*@@MOCK_CSS@@*/
+
+/* ===== design-system additions for every app surface (all colors come from the theme scope) ===== */
+.tscope{--scrim:rgba(4,8,16,.62)}
+.tscope[data-mode="light"]{--scrim:rgba(24,28,40,.38)}
+.win{position:relative}
+.ico{display:inline-block;flex:none;vertical-align:-3px}
+.btn .ico{margin-right:6px}
+.btn.sm{height:28px;padding:0 12px;font-size:var(--fs-sm)}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--accent-text)}
+.btn.ghost:hover{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.btn.danger{color:var(--err)}
+.ibtn{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:var(--r-btn-s);color:var(--muted);cursor:pointer}
+.ibtn:hover{background:color-mix(in srgb,var(--text) 8%,transparent);color:var(--text)}
+.seg{display:inline-flex;gap:2px;padding:3px;border-radius:calc(var(--r-btn-s) + 3px);background:var(--surface2);box-shadow:inset 0 0 0 1px var(--border)}
+.seg>span{display:inline-flex;align-items:center;height:30px;padding:0 20px;border-radius:var(--r-btn-s);font-size:var(--fs-sm);color:var(--muted);cursor:pointer}
+.seg>span:hover{color:var(--text)}
+.seg>span.on{background:var(--surface);color:var(--accent-text);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.14),inset 0 0 0 1px var(--border)}
+.tabs-bar{display:flex;align-items:center;gap:12px}
+.tabs-bar .grow{flex:1}
+.range-chip{font-size:var(--fs-sm);color:var(--muted)}
+.stats{grid-template-columns:repeat(var(--cols,3),minmax(0,1fr))}
+.stat.total{background:color-mix(in srgb,var(--accent) 7%,var(--surface))}
+.stat-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.stat-top .tool{display:inline-flex;align-items:center;gap:6px}
+.spark{display:flex;align-items:flex-end;gap:4px;height:30px;margin-top:12px}
+.spark i{flex:1;border-radius:2px 2px 0 0;background:color-mix(in srgb,var(--accent) 32%,transparent)}
+.spark i:last-child{background:var(--accent)}
+.spark-cap{display:flex;justify-content:space-between;margin-top:4px;font-size:var(--fs-cap);color:var(--muted)}
+.rrow .tool-ico{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:8px;background:var(--surface2);color:var(--accent-text);flex:none}
+.rrow .who{display:flex;align-items:center;gap:12px;min-width:0}
+.rrow .tok{font-variant-numeric:tabular-nums;font-weight:600;text-align:right}
+.rrow.r4{grid-template-columns:minmax(0,1fr) auto 96px}
+.section-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+/* menus */
+.menu{position:absolute;z-index:30;min-width:200px;padding:6px;border-radius:calc(var(--r-btn-s) + 2px);background:var(--surface);box-shadow:0 16px 36px -14px rgba(0,0,0,.5),0 0 0 1px var(--border)}
+.mi{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:var(--r-btn-s);font-size:var(--fs-body);color:var(--text);cursor:pointer}
+.mi .ico{color:var(--muted)}
+.mi:hover,.mi.hl{background:color-mix(in srgb,var(--accent) 12%,var(--surface));color:var(--accent-text)}
+.mi:hover .ico,.mi.hl .ico{color:var(--accent-text)}
+.mi kbd{margin-left:auto;font:inherit;font-size:var(--fs-cap);color:var(--muted)}
+.msep{height:1px;margin:6px 4px;background:var(--border)}
+/* dialogs */
+.scrim{position:absolute;inset:0;z-index:40;background:var(--scrim)}
+.mdl{position:absolute;z-index:41;left:50%;top:var(--top,72px);width:var(--w,560px);transform:translateX(-50%);display:flex;flex-direction:column;max-height:calc(100% - var(--top,72px) - 32px);background:var(--surface);border-radius:var(--r-dlg);box-shadow:0 30px 70px -24px rgba(0,0,0,.6),0 0 0 1px var(--border);overflow:hidden}
+.mdl-h{display:flex;align-items:center;gap:12px;padding:16px 16px 14px 24px;border-bottom:1px solid var(--border)}
+.mdl-h h2{margin:0;font-family:var(--f-head);font-size:var(--fs-lg);font-weight:700}
+.mdl-h .sub{font-size:var(--fs-sm);color:var(--muted)}
+.mdl-h .ibtn{margin-left:auto}
+.mdl-b{padding:20px 24px;overflow:auto;display:flex;flex-direction:column;gap:16px}
+.mdl-f{display:flex;align-items:center;gap:8px;padding:12px 24px;border-top:1px solid var(--border);background:color-mix(in srgb,var(--surface2) 55%,var(--surface))}
+.mdl-f .grow{flex:1}
+/* forms */
+.fgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.fld{display:grid;gap:6px;min-width:0}
+.fld>label{font-size:var(--fs-sm);font-weight:600}
+.fld small{font-size:var(--fs-cap);color:var(--muted)}
+.fld.span2{grid-column:1/-1}
+.inp{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;border-radius:var(--r-btn-s);background:var(--surface2);box-shadow:inset 0 0 0 1px var(--border);font-size:var(--fs-body);min-width:0;white-space:nowrap;overflow:hidden}
+.inp.ph{color:var(--muted)}
+.inp .ico{color:var(--muted)}
+.inp.focus{box-shadow:inset 0 0 0 1px var(--accent),0 0 0 3px color-mix(in srgb,var(--accent) 24%,transparent)}
+.select.full{display:flex;width:100%;height:34px}
+.fset{border:1px solid var(--border);border-radius:var(--r-btn-s);padding:12px 14px;margin:0}
+.fset legend{padding:0 6px;font-size:var(--fs-sm);font-weight:600}
+.chk-row{display:flex;gap:10px;align-items:flex-start}
+.chk-row .check{margin-top:1px}
+.chk-row b{display:block;font-weight:600;font-size:var(--fs-body)}
+.chk-row small{display:block;font-size:var(--fs-cap);color:var(--muted)}
+.filters{display:grid;grid-template-columns:200px minmax(0,1fr) 180px;gap:12px}
+/* tables */
+.tbl-wrap{border-radius:var(--r-btn-s);box-shadow:inset 0 0 0 1px var(--border);overflow:hidden}
+.tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:var(--fs-sm);color:var(--text);line-height:1.45}
+.tbl th{background:var(--surface2);color:var(--muted);font-weight:600;text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+.tbl td{padding:10px 12px;border-bottom:1px solid color-mix(in srgb,var(--border) 70%,transparent);vertical-align:middle}
+.tbl tr:last-child td{border-bottom:0}
+.tbl tr:hover td{background:color-mix(in srgb,var(--accent) 5%,transparent)}
+.tbl .r{text-align:right;font-variant-numeric:tabular-nums}
+.tbl .m{color:var(--muted)}
+.tbl b{font-weight:600}
+.tbl small{display:block;font-size:var(--fs-cap);color:var(--muted)}
+.tag{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:var(--fs-cap);background:var(--surface2);color:var(--muted);box-shadow:inset 0 0 0 1px var(--border);white-space:nowrap}
+.pager{display:flex;align-items:center;gap:8px;justify-content:flex-end;font-size:var(--fs-sm);color:var(--muted);font-variant-numeric:tabular-nums}
+/* notes, alerts, banners, states */
+.note{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:var(--r-btn-s);background:color-mix(in srgb,var(--accent) 8%,var(--surface));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 22%,transparent);font-size:var(--fs-sm)}
+.note .ico{color:var(--accent-text);margin-top:1px}
+.note.warn{background:color-mix(in srgb,var(--warn) 10%,var(--surface));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--warn) 30%,transparent)}
+.note.warn .ico,.note.warn b{color:var(--warn)}
+.alert{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:var(--r-btn-s);background:color-mix(in srgb,var(--err) 10%,var(--surface));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--err) 32%,transparent);font-size:var(--fs-sm)}
+.alert .ico,.alert b{color:var(--err)}
+.banner{display:grid;gap:8px;padding:12px 16px;border-radius:var(--r-card);background:color-mix(in srgb,var(--surface) 92%,transparent);box-shadow:inset 0 0 0 1px var(--border);font-size:var(--fs-sm)}
+.banner .row{display:flex;align-items:center;gap:10px}
+.banner .row .grow{flex:1}
+.bar{height:4px;border-radius:2px;background:var(--surface2);overflow:hidden}
+.bar b{display:block;height:100%;width:var(--p,40%);border-radius:2px;background:linear-gradient(90deg,var(--accent),var(--bar-end))}
+.spinner{width:14px;height:14px;border-radius:50%;border:2px solid color-mix(in srgb,var(--accent) 30%,transparent);border-top-color:var(--accent);flex:none}
+.pill.busy{color:var(--accent-text);background:color-mix(in srgb,var(--accent) 14%,var(--surface));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 35%,transparent)}
+.pill.off{color:var(--muted);background:var(--surface2);box-shadow:inset 0 0 0 1px var(--border)}
+.pill .live{width:6px;height:6px;border-radius:50%;background:currentColor;box-shadow:0 0 0 3px color-mix(in srgb,currentColor 25%,transparent)}
+.details{border-radius:var(--r-btn-s);box-shadow:inset 0 0 0 1px var(--border);font-size:var(--fs-sm)}
+.details summary{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;list-style:none;color:var(--warn);font-weight:600}
+.details.open .sum{display:flex;align-items:center;gap:8px;padding:10px 12px;color:var(--text);font-weight:600}
+.details.open .sum .ico{transform:rotate(180deg)}
+.fgrid.adv{padding:4px 12px 12px}
+.card>.srow:first-child{border-top:0}
+.set .set-head img{height:64px;margin:-6px 0 -12px}
+/*@@PART_CSS@@*/
+.row-acts{display:inline-flex;gap:2px;align-items:center}
+.errtxt{color:var(--err);font-weight:600}
+.details p{margin:0;padding:6px 12px 6px 34px;border-top:1px solid var(--border);color:var(--muted);font-family:ui-monospace,Consolas,monospace;font-size:var(--fs-cap)}
+.empty{display:grid;justify-items:center;gap:8px;padding:36px 20px;text-align:center}
+.empty img{height:110px;width:auto}
+.empty b{font-size:var(--fs-title)}
+.empty p{margin:0;max-width:44ch;font-size:var(--fs-sm);color:var(--muted)}
+.empty .btn{margin-top:8px}
+.skel{border-radius:6px;background:linear-gradient(90deg,var(--surface2) 30%,color-mix(in srgb,var(--surface2) 55%,var(--surface)) 50%,var(--surface2) 70%)}
+.dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 20px;margin:0;font-size:var(--fs-body)}
+.dl dt{color:var(--muted)}
+.dl dd{margin:0;font-variant-numeric:tabular-nums}
+.statebox{display:flex;flex-direction:column;gap:12px}
+.statebox>h5{margin:0;font-size:var(--fs-cap);font-weight:600;color:var(--muted);letter-spacing:.02em}
+.quota-card .meter{margin-top:10px}
+.quota-card .kv{display:flex;justify-content:space-between;font-size:var(--fs-cap);color:var(--muted);margin-top:6px}
+.cov{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:16px}
+.identity{display:grid;gap:4px;padding:12px 14px;border-radius:var(--r-btn-s);box-shadow:inset 0 0 0 1px var(--border)}
+.identity .head{display:flex;align-items:center;gap:8px}
+.identity small{font-size:var(--fs-cap);color:var(--muted)}
+.path{font-family:ui-monospace,Consolas,monospace;font-size:var(--fs-cap);color:var(--muted);word-break:break-all}
+/* section 2 components */
+.page-head .ph-actions{display:flex;gap:8px;align-items:center}
+.m{color:var(--muted)}
+.sumstrip{display:flex;gap:32px;padding:14px 20px;border-radius:var(--r-card);background:color-mix(in srgb,var(--surface) 90%,transparent);box-shadow:inset 0 0 0 1px var(--border)}
+.sumstrip small{display:block;font-size:var(--fs-cap);color:var(--muted)}
+.sumstrip b{font-size:var(--fs-lg);font-variant-numeric:tabular-nums}
+.tbl th.sorted{color:var(--accent-text)}
+.tbl th.sorted .ico{vertical-align:-3px}
+.tbl tr.sel td{background:color-mix(in srgb,var(--accent) 9%,transparent)}
+.tbl .who{display:flex;align-items:center;gap:10px}
+.share{height:6px;border-radius:3px;background:var(--surface2);overflow:hidden;margin-bottom:4px}
+.share i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--bar-end))}
+.seg.sm>span{height:26px;padding:0 12px;font-size:var(--fs-cap)}
+.chart-card{padding:16px 20px 12px}
+.chart{display:grid;grid-template-columns:44px minmax(0,1fr);gap:8px;height:220px;margin-top:8px}
+.yaxis{position:relative;font-size:var(--fs-cap);color:var(--muted);font-variant-numeric:tabular-nums}
+.yaxis span{position:absolute;right:0;bottom:calc(22px + (100% - 22px) * var(--k) / 3);transform:translateY(50%);line-height:1}
+.gl{position:absolute;left:0;right:0;height:1px;bottom:calc(22px + (100% - 22px) * var(--k) / 3);background:color-mix(in srgb,var(--border) 80%,transparent)}
+.plot{position:relative;display:flex;align-items:stretch;gap:10px;padding-bottom:22px}
+.bcol{position:relative;z-index:1;flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center}
+.bcol i{display:block;width:70%;min-height:2px;border-radius:3px 3px 0 0;background:color-mix(in srgb,var(--accent) 40%,transparent)}
+.bcol.today i{background:var(--accent)}
+.bcol.hover i{background:color-mix(in srgb,var(--accent) 65%,transparent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 30%,transparent)}
+.bcol>span{position:absolute;bottom:-20px;font-size:var(--fs-cap);color:var(--muted);font-variant-numeric:tabular-nums}
+.bcol.today>span{color:var(--accent-text);font-weight:600}
+.tip{position:absolute;bottom:calc(var(--h) - 12px);right:calc(50% + 22px);display:grid;gap:2px;padding:8px 10px;border-radius:var(--r-btn-s);background:var(--surface);box-shadow:0 10px 24px -10px rgba(0,0,0,.5),0 0 0 1px var(--border);font-size:var(--fs-cap);white-space:nowrap;z-index:2}
+.tip b{font-size:var(--fs-sm)}
+.prof{padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.prof.using{box-shadow:inset 0 0 0 1px var(--ok)}
+.prof-h{display:flex;align-items:center;gap:12px}
+.prof-h>div{min-width:0;flex:1}
+.prof-h b{display:block;font-size:var(--fs-body)}
+.prof-h small{display:block;font-size:var(--fs-cap);color:var(--muted)}
+.prof-tags{display:flex;flex-wrap:wrap;gap:6px}
+.prof-f{display:flex;align-items:center;gap:8px}
+.prof-f .grow{flex:1}
+.srccard{padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.pgrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.pchip{display:grid;gap:2px;padding:8px 10px;border-radius:var(--r-btn-s);background:var(--surface2);box-shadow:inset 0 0 0 1px var(--border)}
+.pchip b{font-size:var(--fs-sm)}
+.pchip code{font-family:ui-monospace,Consolas,monospace;font-size:var(--fs-cap);color:var(--muted)}
+.alias{display:grid;grid-template-columns:180px minmax(0,1fr) minmax(0,1fr) auto;gap:12px;align-items:end}
+.inline{display:flex;gap:8px;align-items:center;min-width:0}
+.inline .select.full{flex:1}
+.fgroup{display:flex;flex-direction:column;gap:10px}
+.fgroup>h4{margin:0;font-size:var(--fs-cap);font-weight:700;letter-spacing:.04em;color:var(--muted)}
+.tgl{position:relative;width:38px;height:22px;border-radius:999px;flex:none;background:color-mix(in srgb,var(--text) 22%,var(--surface));cursor:pointer;transition:background-color .15s var(--ease)}
+.tgl::after{content:"";position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;background:var(--surface);box-shadow:0 1px 2px rgba(0,0,0,.3);transition:left .15s var(--ease)}
+.tgl.on{background:var(--accent)}
+.tgl.on::after{left:19px;background:var(--on-accent)}
+.sub-h{margin:12px 0 0;font-size:var(--fs-cap);font-weight:700;letter-spacing:.04em;color:var(--muted)}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:28px}
+.saved{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:color-mix(in srgb,var(--ok) 12%,var(--surface));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ok) 30%,transparent)}
+.reset-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 20px;border-radius:var(--r-card);background:color-mix(in srgb,var(--surface) 90%,transparent);box-shadow:inset 0 0 0 1px var(--border)}
+.reset-row b{display:block}
+.reset-row small{font-size:var(--fs-cap);color:var(--muted)}
+.actgrid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+.act{display:flex;flex-direction:column;overflow:hidden}
+.act.playing{box-shadow:inset 0 0 0 2px var(--accent)}
+.act-stage{display:grid;place-items:center;height:132px;background:color-mix(in srgb,var(--surface2) 70%,var(--surface));border-bottom:1px solid var(--border)}
+.act-stage img{height:116px;width:auto}
+.act-f{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 8px 8px 12px;font-size:var(--fs-sm)}
+.ibtn.sm{width:26px;height:26px}
+.btn.dis,.ibtn.dis{opacity:.45;cursor:not-allowed;pointer-events:none}
+.mini-face{width:20px;height:20px;border-radius:50%;overflow:hidden;flex:none}
+.mini-face img{width:100%;height:100%;object-fit:cover;transform:scale(1.9);transform-origin:50% 14%}
+.select .mini-face{margin-right:-4px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<header class="topbar">
+  <div class="wrap">
+    <h1>AI 酱 UI 设计稿</h1>
+    <div class="tchips" id="theme-chips" role="group" aria-label="切换主题"></div>
+    <div class="progress"><span><b id="done">0</b> / <span id="total">0</span> 已批准</span>
+      <label class="pg-check" for="pins"><input type="checkbox" id="pins" checked>显示标注</label>
+      <button class="pg-btn ink" id="copy" type="button">复制审批结果</button></div>
+  </div>
+</header>
+<div class="wrap layout">
+  <nav class="toc" id="toc" aria-label="界面目录"></nav>
+  <main id="main">
+    <p class="intro">这是 AI 酱每个界面的改版设计稿，按最新版（1.9.0 基线）的真实界面一比一重做。每张卡片默认显示<b>改后</b>，点「改前」看现在 App 的真实截图；顶部切换 11 套主题。每个界面选「通过」或「要改」，要改的写一句。<b>全部通过后才会动 App 的代码。</b> <span id="store-note"></span></p>
+    <div id="sections"></div>
+  </main>
+</div>
+<footer class="wrap foot">设计稿里的字体都用 Windows 自带的（雅黑、宋体、楷体、Bahnschrift、Georgia），因为 App 的安全设置不允许加载网络字体，设计稿和实际效果保持一致。改前截图来自当前在用的构建 r30-memory-budget-output-30fps-20261021，数据是合成的示例。</footer>
+<textarea id="copy-out" class="wrap" readonly hidden aria-label="审批结果（文字）"></textarea>
+<!--ASSETS-->
+<script>
+/*@@SLICE_THEMES@@*/
+const ASSET = {};
+try{ const raw=JSON.parse(document.getElementById('assets').textContent); for(const [k,b] of Object.entries(raw)) ASSET[k]='data:image/webp;base64,'+b; }catch(e){}
+const A = p=>ASSET[p]||p;
+const BY_ID = Object.fromEntries(THEMES.map(t=>[t.id,t]));
+const $ = (s,el=document)=>el.querySelector(s);
+const esc = s=>String(s).replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+/*@@SLICE_ORN@@*/
+/*@@SLICE_HEAD@@*/
+// Fonts the app can actually render (system fonts only; the app's CSP blocks web fonts)
+const HEAD_SYS = {grok:'Georgia,"Source Han Serif SC","SimSun",serif',seed:'"Bahnschrift","Microsoft YaHei UI",sans-serif',qwen:'"Source Han Serif SC","Noto Serif SC","SimSun",serif',minimax:'"Bahnschrift SemiCondensed","Bahnschrift","Microsoft YaHei UI",sans-serif',gemini:'"Segoe UI Variable Display","Segoe UI","Microsoft YaHei UI",sans-serif',claude:'"Source Han Serif SC","Noto Serif SC","SimSun",serif'};
+const ACC_SIZE = {deepseek:[88,44],grok:[54,52],minimax:[76,44],glm:[95,44],seed:[52,52],kimi:[48,52],qwen:[49,52],chatgpt:[63,52],gemini:[50,52],claude:[52,52],hunyuan:[51,52]};
+(function injectThemeCSS(){
+  let css='';
+  for(const t of THEMES){
+    let v='';
+    for(const [k,val] of Object.entries(t.c)) v+=`${kebab(k)}:${val};`;
+    v+=`--r-card:${t.r.card}px;--r-btn:${t.r.btn}px;--r-dlg:${t.r.dlg}px;--f-head:${HEAD_SYS[t.id]||'var(--f-ui)'};${EXTRA[t.id]||''}`;
+    v+='--pat-main:none;--pat-side:none;';
+    for(const [k,s] of Object.entries(ORN[t.id]||{})) v+=`${k}:${s.startsWith('url(')?s:svgUrl(s)};`;
+    const gb=ASSET[`gen/web/${t.id}-bg.webp`], go=ASSET[`gen/web/${t.id}-orn.webp`];
+    if(gb) v+=`--gen-bg:url("${gb}");--gen-pos:${GEN_POS[t.id]||'center'};`;
+    if(go) v+=`--gen-orn:url("${go}");--gen-w:${ACC_SIZE[t.id][0]}px;--gen-h:${ACC_SIZE[t.id][1]}px;`;
+    css+=`[data-t="${t.id}"]{${v}}\n`;
+  }
+  css+='[data-t="glm"] .slogan{font-family:"STKaiti","KaiTi",serif}\n';
+  const el=document.createElement('style');el.textContent=css;document.head.appendChild(el);
+})();
+/*@@SLICE_ICON@@*/
+// avatars use per-character head crops centred on the eyes (extra/head-<id>.webp, made by faces.py)
+const face = (id,cls='face')=>`<span class="${cls}"><img class="hd" src="${A(`extra/head-${id}.webp`)}" alt=""></span>`;
+
+/* ---------- small icon set for buttons and menus (24px grid, 1.7 stroke, same family as the nav icons) ---------- */
+const I = {
+  sliders:'<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
+  more:'<circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18" cy="12" r="1.3"/>',
+  chevron:'<path d="M7 10l5 5 5-5"/>',
+  refresh:'<path d="M19 8a7.5 7.5 0 1 0 1 6"/><path d="M20 4v4h-4"/>',
+  download:'<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+  info:'<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/>',
+  close:'<path d="M6 6l12 12M18 6L6 18"/>',
+  search:'<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.2-4.2"/>',
+  alert:'<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  coin:'<circle cx="12" cy="12" r="8"/><path d="M9.5 9.5h4a1.8 1.8 0 0 1 0 3.6h-3a1.8 1.8 0 0 0 0 3.6h4M12 7.5v1.5M12 16.7v1.5"/>',
+  gauge:'<path d="M4.5 16a8 8 0 1 1 15 0"/><path d="M12 13l3.5-3.5"/>',
+  terminal:'<rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M7.5 10l3 2.5-3 2.5M12.5 15h4"/>',
+  retry:'<path d="M5 12a7 7 0 1 0 2.2-5.1"/><path d="M5 4v4h4"/>',
+  play:'<path d="M8 5.5v13l10.5-6.5z"/>',
+  pause:'<path d="M9 6v12M15 6v12"/>',
+  plug:'<path d="M9 3v5M15 3v5M6.5 8h11v3.5a5.5 5.5 0 0 1-11 0zM12 17v4"/>',
+  external:'<path d="M14 5h5v5M19 5l-8 8M18 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h4"/>'
+};
+const ic = (n,s=16)=>`<svg class="ico" viewBox="0 0 24 24" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
+
+/* ---------- the app shell (title bar, sidebar, header) ---------- */
+const NAVKEY = {overview:0,projects:1,history:2,galgame:3,actions:4,api:5,tokens:6,settings:7};
+function shell(t,{page='overview',content='',overlay='',height=800,header=null,pins=[]}){
+  const nav = NAV.map(([k,l],i)=>`<span class="ni${i===NAVKEY[page]?' on':''}">${icon(k)}<span>${l}</span></span>`).join('');
+  const head = header ?? `<div class="top"><span>你的本地工作空间</span><div class="top-r"><span class="pill ok"><i class="live"></i>监控中</span><span>2026-10-21</span></div></div>`;
+  return `<div class="win tscope" data-t="${t.id}" data-o="gen" data-mode="${t.mode}" style="height:${height}px">
+    <div class="win-bar">${face(t.id)}<span>AI 酱 · 本地工作监控</span>${CAPTION}</div><div class="strip"></div>
+    <div class="app-body">
+      <aside class="side">
+        <div class="logo"><span class="ava">${face(t.id)}</span><div><b>AI 酱</b><small>AI Buddy</small></div></div>
+        <nav class="nav">${nav}</nav>
+        <div class="side-foot"><b><i class="dot"></i>离线监控</b>本机数据 · 零模型调用</div>
+      </aside>
+      <section class="main">${head}<div class="content">${content}</div></section>
+    </div>${overlay}${pins.map(([n,x,y])=>`<b class="pin" style="left:${x}px;top:${y}px">${n}</b>`).join('')}</div>`;
+}
+/* ---------- overview building blocks ---------- */
+const DATA = {total:'574.62K',req:12,tz:'America/New_York',spark:[38,62,45,80,52,71,96],
+  recent:[['余烬之铳','Codex · gpt-5.5-codex','296.61K','进行中'],['AI-Buddy','Codex · gpt-5.5-codex','278.01K','已完成'],['LetMeGo-MV','Codex · gpt-5.5-codex','182.40K','已完成']]};
+function hero(t,{sub=`今日 · ${DATA.tz}`,adjust=true}={}){
+  return `<article class="card hero"><i class="acc" aria-hidden="true"></i>
+    <div class="hero-txt"><span class="eyebrow">工作概览</span><h2 class="slogan"><span class="ph">每一份努力，</span><span class="ph">都有记录。</span></h2><p class="meta">${sub}</p>
+      <div class="btns">${adjust?`<span class="btn">${ic('sliders')}调整</span>`:''}<span class="btn">${ic('more')}更多</span></div></div>
+    <div class="hero-art"><img src="${A(`art/portrait-${t.id}.webp`)}" alt=""></div></article>`;
+}
+const seg = on=>`<div class="tabs-bar"><div class="seg">${['用量','费用','额度'].map(x=>`<span class="${x===on?'on':''}">${x}</span>`).join('')}</div><span class="grow"></span><span class="range-chip">范围：今日 · 全部工具</span></div>`;
+function usageCards(){
+  const max=Math.max(...DATA.spark);
+  return `<div class="stats" style="--cols:2">
+    <article class="card stat total"><div class="stat-top"><h3>总用量</h3><span class="tag">今日</span></div><span class="num">574.62<span class="u">K</span></span><small>Token · 12 次请求</small>
+      <div class="spark">${DATA.spark.map(v=>`<i style="height:${Math.round(v/max*100)}%"></i>`).join('')}</div><div class="spark-cap"><span>近 7 天</span><span>今天</span></div></article>
+    <article class="card stat"><div class="stat-top"><h3 class="tool">${ic('terminal')}Codex</h3><span class="tag">gpt-5.5-codex</span></div><span class="num">574.62<span class="u">K</span></span><small>Token · 12 次请求</small>
+      <div class="meter" style="margin-top:20px"><b style="width:100%"></b></div><div class="spark-cap"><span>占今日用量</span><span>100%</span></div></article>
+  </div>`;
+}
+function recent(){
+  return `<article class="card recent"><div class="section-title"><h3 class="sec">最近的工作</h3><span class="btn ghost sm">查看项目用量</span></div>
+    ${DATA.recent.map(([n,s,v,st])=>`<div class="rrow r4"><div class="who"><span class="tool-ico">${ic('terminal')}</span><div><b>${n}</b><small>${s}</small></div></div><span class="pill ${st==='进行中'?'ok':'busy'}"><i class="dot"></i>${st}</span><span class="tok">${v.replace(/K$/,'<span style="font-size:.8em;font-weight:500">K</span>')}</span></div>`).join('')}
+  </article>`;
+}
+const overviewUsage = t=>hero(t)+seg('用量')+usageCards()+recent();
+
+/* ---------- surfaces of section 1 ---------- */
+const SURFACES = [];
+const S = o=>SURFACES.push(o);
+S({id:'1.1',sec:1,title:'窗口外壳 · 工作概览（用量）',before:[['claude-overview-usage','Claude 主题（有数据）'],['deepseek-overview-usage','DeepSeek 主题（刚启动，还没数据）']],
+  render:t=>shell(t,{content:overviewUsage(t),height:900,pins:[[1,60,6],[2,24,190],[3,40,74],[4,1150,54],[5,700,118],[6,199,268],[7,199,368],[8,470,470],[9,199,640]]}),
+  notes:['标题栏和侧栏用主题的「斗篷色」；原生窗口按钮的颜色跟着亮暗主题变（现在固定浅色，亮色主题下看不清）。',
+    '侧栏图标从字符（◌▦◷♡✺⇄◎⚙）换成同一套线条矢量图标；选中项左侧加一条短竖条，各主题有自己的选中标记。',
+    '侧栏头像和标题栏小图标跟随当前角色（现在固定是 DeepSeek）。',
+    '顶栏加磨砂底，压在生图背景上也看得清；「监控中」前面是一个带光圈的点。',
+    '概览大卡：立绘跟随当前角色（现在固定是女仆图），顶边正中挂这个角色的立绘小装饰。',
+    '「调整」「更多」加图标，「更多」改成下拉菜单（见 1.5）。',
+    '用量 / 费用 / 额度改成分段切换，选中项更醒目；右侧显示当前筛选范围，不用点开「调整」也知道看的是什么。',
+    '统计卡：数字用等宽数字、单位缩小；总用量卡下加「近 7 天」小柱图（用已有的按天统计，不新增数据）；单个工具的卡片显示它占今日用量的比例。',
+    '最近的工作：每行加工具图标和进行中 / 已完成状态，Token 数右对齐；右上角可直接跳到项目用量。']});
+S({id:'1.2',sec:1,title:'用量页签的四种状态：空 · 加载中 · 读取失败 · 正在建索引',before:[['deepseek-overview-usage','DeepSeek · 刚启动时的空状态']],
+  render:t=>shell(t,{height:900,content:`<div class="stats" style="--cols:2;gap:20px">
+    <div class="statebox"><h5>空：当前范围没有记录</h5><article class="card"><div class="empty"><img src="${A(`art/pet-${t.id}.webp`)}" alt=""><b>当前范围还没有工作记录</b><p>用 Codex、Claude Code 等工具工作后，这里会自动出现用量。也可以放宽时间范围看看。</p><span class="btn">${ic('sliders')}调整范围</span></div></article></div>
+    <div class="statebox"><h5>加载中：骨架屏代替「读取中…」</h5><article class="card" style="padding:20px;display:grid;gap:14px"><div class="skel" style="height:14px;width:30%"></div><div class="skel" style="height:34px;width:55%"></div><div class="skel" style="height:12px;width:40%"></div><div class="skel" style="height:30px;width:100%;margin-top:6px"></div></article></div>
+    <div class="statebox"><h5>读取失败</h5><div class="alert">${ic('alert')}<div><b>读取失败：无法打开用量索引</b><div style="margin-top:4px;color:var(--text)">本地记录文件被占用或已损坏，已显示的数据可能不完整。</div><div style="display:flex;gap:8px;margin-top:10px"><span class="btn sm">${ic('retry')}重试</span><span class="btn sm ghost">查看日志读取问题</span></div></div></div></div>
+    <div class="statebox"><h5>正在建立索引（顶部横幅）</h5><div class="banner"><div class="row"><span class="spinner"></span><b>正在建立本地历史索引</b><span class="grow"></span><span style="font-variant-numeric:tabular-nums;color:var(--muted)">已读取 128 / 342 个文件</span></div><div class="bar" style="--p:37%"><b></b></div><span style="color:var(--muted)">完成前用量为部分结果。</span></div>
+      <div class="note warn">${ic('alert')}<div><b>3 条请求缺少完整用量</b>，合计为已记录部分。</div></div>
+      <details class="details" open><summary>${ic('alert')}2 个日志读取问题</summary><p>C:\\Users\\…\\.codex\\sessions\\2026\\10\\20\\rollout-…jsonl · 文件被占用</p><p>C:\\Users\\…\\.claude\\projects\\ai-buddy\\…jsonl · 第 412 行格式错误</p></details></div>
+  </div>`,pins:[[1,330,290],[2,950,290],[3,330,640],[4,950,560]]}),
+  notes:['空状态：放当前角色的桌宠小图，说明为什么是空的、下一步做什么，并给「调整范围」按钮（现在只有一行小字）。',
+    '加载中：用骨架屏占位，页面不跳动（现在是一行「读取中…」）。',
+    '读取失败：红色提示卡写清楚原因和影响，带「重试」和「查看日志读取问题」。',
+    '建索引横幅加进度条和转圈；「缺少完整用量」和「日志读取问题」改成统一的提示卡和可展开列表（文案不变）。']});
+S({id:'1.3',sec:1,title:'工作概览 · 费用页签',before:[['deepseek-overview-cost','DeepSeek']],
+  render:t=>shell(t,{height:800,content:hero(t)+seg('费用')+`<div class="cov">
+    <article class="card stat"><div class="stat-top"><h3>Token 估算覆盖率</h3><span class="tag">今日</span></div><span class="num">0.0<span class="u">%</span></span><small>已覆盖 0 / 已记录 574.62K Token</small><div class="meter" style="margin-top:14px"><b style="width:1%"></b></div></article>
+    <article class="card" style="padding:16px 20px;display:flex;flex-direction:column;gap:10px"><div class="note warn">${ic('alert')}<div><b>当前记录暂不能估算费用</b><div style="color:var(--text);margin-top:2px">gpt-5.5-codex 还没有参考价格。补上价格后会自动重新计算。</div></div></div>
+      <div style="display:flex;gap:8px;margin-top:auto"><span class="btn primary">${ic('coin')}价格设置</span><span class="btn">查看详情</span></div></article></div>`,pins:[[1,199,420],[2,720,420],[3,720,560]]}),
+  notes:['覆盖率卡加进度条，0% 时一眼能看出「还没算」。','「暂不能估算」从一行小字改成提示卡，写明缺的是哪个模型的价格。','「价格设置」是解决问题的主操作，改成主按钮；「查看详情」次要。']});
+S({id:'1.4',sec:1,title:'工作概览 · 额度页签（未配置 / 已配置）',before:[['deepseek-overview-quota','DeepSeek · 未配置']],
+  render:t=>shell(t,{height:900,content:hero(t,{sub:'服务端额度',adjust:false})+seg('额度')+`<div class="stats" style="--cols:2;gap:20px">
+    <div class="statebox"><h5>未配置</h5><article class="card"><div class="empty">${ic('gauge',40)}<b>尚未启用额度连接</b><p>连上 Codex、DeepSeek 等服务的额度接口后，这里显示剩余额度和重置时间。</p><span class="btn primary">${ic('plus')}添加连接</span></div></article></div>
+    <div class="statebox"><h5>已配置（示例）</h5>
+      <article class="card stat quota-card"><div class="stat-top"><h3>Codex · 订阅额度</h3><span class="tag">5 小时窗口</span></div><span class="num">72<span class="u">%</span></span><small>剩余 · 账号 x***@gmail.com</small><div class="meter"><b style="width:72%"></b></div><div class="kv"><span>重置 10/21 18:00</span><span>更新于 13:42</span></div></article>
+      <article class="card stat quota-card"><div class="stat-top"><h3>DeepSeek API</h3><span class="tag">余额</span></div><span class="num"><span class="u">¥</span>23.50</span><small>CNY · 账号已确认</small><div class="kv"><span>不重置</span><span>更新于 13:40</span></div></article>
+      <span class="btn" style="align-self:flex-start">管理额度连接</span></div></div>`,pins:[[1,330,560],[2,950,470]]}),
+  notes:['未配置：说明额度连接能看到什么，「添加连接」改成主按钮（现在是一行小字链接）。','已配置的额度卡：剩余百分比配进度条，重置时间和更新时间分两端放，账号信息变弱；余额类直接显示金额。']});
+S({id:'1.5',sec:1,title:'「更多」下拉菜单',before:[['deepseek-menu-more','DeepSeek']],
+  render:t=>shell(t,{height:800,content:overviewUsage(t),overlay:`<div class="menu" style="left:322px;top:330px"><div class="mi hl">${ic('refresh')}刷新<kbd>F5</kbd></div><div class="msep"></div><div class="mi">${ic('download')}导出 CSV</div><div class="mi">${ic('download')}导出 JSON</div><div class="msep"></div><div class="mi">${ic('info')}数据说明</div></div>`,pins:[[1,540,330]]}),
+  notes:['菜单加图标、分组分隔线和悬停高亮，宽度和按钮对齐；有阴影和描边，不再和背后的卡片糊在一起（现在是一块没边界的深色小块）。']});
+S({id:'1.6',sec:1,title:'弹窗 · 调整显示',before:[['deepseek-modal-adjust','DeepSeek']],
+  render:t=>shell(t,{height:900,content:overviewUsage(t),overlay:`<div class="scrim"></div><div class="mdl" style="--w:620px;--top:70px"><div class="mdl-h"><h2>调整显示</h2><span class="sub">只影响这一页看到的数据</span><span class="ibtn">${ic('close')}</span></div>
+    <div class="mdl-b"><div class="fgrid">
+      <div class="fld"><label>时间范围</label><span class="select full">今日</span></div><div class="fld"><label>工具</label><span class="select full">全部</span></div>
+      <div class="fld"><label>模型厂商</label><span class="select full">全部</span></div><div class="fld"><label>模型</label><span class="select full">全部</span></div>
+      <div class="fld"><label>项目</label><span class="select full">全部</span></div><div class="fld"><label>来源</label><span class="select full">全部</span></div>
+      <div class="fld"><label>用途</label><span class="select full">全部</span></div><div class="fld"><label>服务平台</label><span class="select full">全部</span><small>选项太多时可在下拉框里直接输入搜索</small></div>
+      <div class="fld span2"><label>搜索</label><span class="inp ph">${ic('search')}项目、模型或会话</span></div></div>
+      <fieldset class="fset"><legend>显示工具卡片</legend><div class="chk-row"><span class="check on"></span><div><b>自动显示有请求的工具</b><small>卡片显隐不改变统计总量。</small></div></div></fieldset></div>
+    <div class="mdl-f"><span class="btn ghost">恢复默认</span><span class="grow"></span><span class="btn">取消</span><span class="btn primary">应用</span></div></div>`,pins:[[1,296,96],[2,296,560],[3,982,820]]}),
+  notes:['弹窗统一样式：标题加一句说明，右上角是图标关闭按钮；底部操作区和内容分开，「应用」是主按钮，「恢复默认」放左边弱化。','「服务平台」原来是搜索框加下拉框两个控件，合成一个可搜索的下拉框；「搜索」框加放大镜图标。','所有输入框、下拉框统一高度 34，圆角跟主题走。']});
+S({id:'1.7',sec:1,title:'弹窗 · 价格设置',before:[['deepseek-modal-prices','DeepSeek']],
+  render:t=>shell(t,{height:900,content:overviewUsage(t),overlay:`<div class="scrim"></div><div class="mdl" style="--w:980px;--top:48px"><div class="mdl-h"><h2>价格设置</h2><span class="sub">每百万 Token 的参考单价，跟随实际 Token 计算</span><span class="ibtn">${ic('close')}</span></div>
+    <div class="mdl-b"><div class="seg" style="align-self:flex-start"><span class="on">模型价格目录</span><span>自定义价格 · 2</span></div>
+      <div class="filters"><span class="select full">全部平台</span><span class="inp ph">${ic('search')}搜索完整模型名称</span><span class="select full">全部价格</span></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>平台 / 模型</th><th>币种</th><th class="r">输入</th><th class="r">输出</th><th class="r">缓存读取</th><th class="r">缓存写入</th><th></th></tr></thead><tbody>
+      ${[['claude-fable-5','302ai',10,50],['claude-fable-5-1','302ai',10,50],['claude-haiku-4-5','302ai',1,5],['claude-haiku-4-5-20251001','302ai',1,5],['claude-haiku-5-5','302ai',0.1,0.5,0.01,0.125],['claude-opus-4-1-20250805','302ai',15,75]].map(([m,p,i,o,cr,cw])=>`<tr><td><b>${m}</b><small>${p}</small></td><td class="m">USD</td><td class="r">${i}</td><td class="r">${o}</td><td class="r ${cr==null?'m':''}">${cr??'—'}</td><td class="r ${cw==null?'m':''}">${cw??'—'}</td><td class="r"><span class="btn ghost sm">详情</span></td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="pager"><span>共 8,027 条 · 第 1 / 161 页</span><span class="btn sm">上一页</span><span class="btn sm">下一页</span></div></div>
+    <div class="mdl-f"><span style="font-size:var(--fs-cap);color:var(--muted)">价格版本 2026-10-11 19:38</span><span class="grow"></span><span class="btn primary">完成</span></div></div>`,pins:[[1,118,140],[2,118,250],[3,118,330],[4,1100,640]]}),
+  notes:['「模型价格目录」和「自定义价格」原来上下堆在一个长弹窗里，改成分段切换。','筛选条三个控件等高对齐。','价格表：表头浅底、数字右对齐等宽，未提供的价格显示成浅色「—」而不是「未提供」四个字；「▸ 价格详情」改成行尾的小按钮。','分页显示千分位和「第 x / y 页」；价格版本挪到底部角落。']});
+S({id:'1.8',sec:1,title:'弹窗 · 费用明细',before:[['deepseek-modal-cost-details','DeepSeek']],
+  render:t=>shell(t,{height:800,content:overviewUsage(t),overlay:`<div class="scrim"></div><div class="mdl" style="--w:760px;--top:80px"><div class="mdl-h"><h2>费用明细</h2><span class="sub">按模型 API 单价估算 · 仅供参考，非实际账单</span><span class="ibtn">${ic('close')}</span></div>
+    <div class="mdl-b"><div class="note">${ic('info')}<div>优先使用已配置价格；服务平台或计费路线未记录时，按该模型的 API 参考价格估算。</div></div>
+      <h3 class="sec" style="margin:0">已估算 <span class="tag" style="margin-left:8px">0</span></h3><div class="tbl-wrap"><div class="empty" style="padding:20px"><p>今天还没有能估算的请求。</p></div></div>
+      <h3 class="sec" style="margin:0">暂未覆盖 <span class="tag" style="margin-left:8px">1</span></h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>服务平台 / 模型</th><th>原因</th><th class="r">请求</th><th></th></tr></thead><tbody><tr><td><b>gpt-5.5-codex</b><small>OpenAI</small></td><td>缺少该模型的参考价格</td><td class="r">12</td><td class="r"><span class="btn ghost sm">去补价格</span></td></tr></tbody></table></div></div>
+    <div class="mdl-f"><span style="font-size:var(--fs-cap);color:var(--muted)">价格版本 2026-10-11 19:38</span><span class="grow"></span><span class="btn">关闭</span></div></div>`,pins:[[1,228,190],[2,228,290],[3,1050,410]]}),
+  notes:['说明文字收进一张提示卡；「已估算」「暂未覆盖」标题旁显示条数。','「已估算」为空时显示一句话，而不是只剩一个表头。','未覆盖的行尾加「去补价格」，直接跳到价格设置并预填这个模型。']});
+S({id:'1.9',sec:1,title:'弹窗 · 数据说明',before:[['deepseek-modal-about','DeepSeek']],
+  render:t=>shell(t,{height:800,content:overviewUsage(t),overlay:`<div class="scrim"></div><div class="mdl" style="--w:560px;--top:150px"><div class="mdl-h"><h2>数据说明</h2><span class="ibtn">${ic('close')}</span></div>
+    <div class="mdl-b"><dl class="dl"><dt>输入</dt><dd>未缓存输入；缓存读取、写入单独列出</dd><dt>推理</dt><dd>输出的一部分，不重复计入</dd><dt>缺失字段</dt><dd>保留为未知，部分记录已标记</dd></dl>
+      <div class="tbl-wrap"><table class="tbl"><tbody><tr><td>服务报告</td><td class="r">12 条</td></tr><tr><td>计算值</td><td class="r">0 条</td></tr><tr><td>部分记录</td><td class="r">0 条</td></tr><tr><td>统计时区</td><td class="r">本机（America/New_York）</td></tr></tbody></table></div></div>
+    <div class="mdl-f"><span class="grow"></span><span class="btn">关闭</span></div></div>`,pins:[[1,330,230],[2,330,340]]}),
+  notes:['一段连着的说明拆成「名词 — 解释」对照，好查。','条数统计改成小表格，数字右对齐；时区写成「本机（时区名）」，不再是 local。']});
+S({id:'1.10',sec:1,title:'弹窗 · 用量详情（点统计卡打开）',before:[],
+  render:t=>shell(t,{height:900,content:overviewUsage(t),overlay:`<div class="scrim"></div><div class="mdl" style="--w:700px;--top:60px"><div class="mdl-h"><h2>总用量 · 今日</h2><span class="ibtn">${ic('close')}</span></div>
+    <div class="mdl-b"><div class="stats" style="--cols:4;gap:10px">${[['总 Token','574.62K'],['未缓存输入','431.70K'],['输出','74.30K'],['请求','12']].map(([k,v])=>`<div class="card" style="padding:12px 14px"><small style="color:var(--muted);font-size:var(--fs-cap)">${k}</small><div class="num" style="font-size:var(--fs-xl);margin-top:2px">${v}</div></div>`).join('')}</div>
+      <dl class="dl"><dt>缓存读取</dt><dd>68.62K</dd><dt>缓存写入</dt><dd>—</dd><dt>推理（输出细分）</dt><dd>12.08K</dd></dl>
+      <h3 class="sec" style="margin:0">服务归属</h3>
+      <div class="identity"><div class="head"><b>OpenAI</b><span class="tag">官方 API</span><span class="grow" style="flex:1"></span><span style="font-variant-numeric:tabular-nums;color:var(--muted)">12 次请求</span></div><span>Codex / OpenAI / gpt-5.5-codex</span><small>通道：官方 · 依据：会话记录 · 来源：本机 Codex</small></div>
+      <div class="identity"><div class="head"><b>未知平台</b><span class="tag">待补充</span><span class="grow" style="flex:1"></span><span class="btn sm primary">补充归属</span></div><span>Claude Code / Anthropic / claude-opus-4-1</span><small>通道：未记录 · 来源：本机 Claude</small></div></div>
+    <div class="mdl-f"><span class="grow"></span><span class="btn">关闭</span></div></div>`,pins:[[1,258,150],[2,258,420],[3,1000,560]]}),
+  notes:['最常看的四个数（总量、输入、输出、请求）放成一排小卡，其余明细放在下面的对照表里。','服务归属每条一张小卡：平台名加标签，下一行写工具 / 厂商 / 模型，来源信息变弱。','未知平台的那条突出显示，「补充归属」做成主按钮。']});
+S({id:'1.11',sec:1,title:'顶栏状态药丸的三种状态',before:[],
+  render:t=>shell(t,{height:800,content:hero(t)+`<div class="stats" style="--cols:3;gap:16px">${[['ok','监控中','平时：绿色点带光圈'],['busy','核对新增记录…','后台核对：主题色加转圈'],['busy','整理历史记录…','首次建索引：主题色加转圈']].map(([c,l,d])=>`<div class="statebox"><h5>${d}</h5><div class="card" style="padding:18px;display:flex;gap:12px;align-items:center"><span class="pill ${c}">${c==='ok'?'<i class="live"></i>':'<span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span>'}${l}</span><span style="color:var(--muted);font-size:var(--fs-sm)">2026-10-21</span></div></div>`).join('')}</div>`,pins:[[1,330,400]]}),
+  notes:['三种状态区分颜色和图形：正常是绿点，后台在做事是主题色加转圈（现在三种都是同一个绿色药丸，只换文字）。']});
+
+/* ---------- section 2: the other workspace pages ---------- */
+const pageHead = (title,sub,actions='')=>`<div class="page-head"><div><h2 class="ptitle">${title}</h2><p class="meta">${sub}</p></div><div class="ph-actions">${actions}</div></div>`;
+const tgl = on=>`<span class="tgl${on?' on':''}" role="switch" aria-checked="${on}"></span>`;
+const srow = (label,hint,ctrl)=>`<div class="srow"><div><b>${label}</b>${hint?`<small>${hint}</small>`:''}</div>${ctrl}</div>`;
+const PROJ = [['余烬之铳',722.43,466.2,62.73],['AI-Buddy',666.63,410.4,62.73],['LetMeGo-MV',610.83,354.6,62.73]];
+S({id:'2.1',sec:2,title:'项目用量',before:[['claude-projects','Claude 主题']],
+  render:t=>{const tot=PROJ.reduce((a,p)=>a+p[1],0);return shell(t,{page:'projects',height:800,content:pageHead('项目用量','全部历史 · America/New_York',`<span class="btn">${ic('sliders')}调整</span><span class="btn">${ic('more')}更多</span>`)+`
+    <div class="sumstrip"><div><small>项目</small><b>3</b></div><div><small>总 Token</small><b>${(tot/1000).toFixed(2)}<span class="u">M</span></b></div><div><small>最多</small><b>余烬之铳</b></div></div>
+    <div class="tbl-wrap" style="background:var(--surface)"><table class="tbl"><thead><tr><th>项目</th><th style="width:30%">占比</th><th class="r sorted">总 Token ${ic('chevron',14)}</th><th class="r">输入</th><th class="r">输出</th></tr></thead><tbody>
+    ${PROJ.map(([n,a,i,o],k)=>`<tr${k===2?' class="sel"':''}><td><div class="who"><span class="tool-ico">${ic('terminal',15)}</span><div><b>${n}</b><small>Codex · gpt-5.5-codex</small></div></div></td><td><div class="share"><i style="width:${(a/PROJ[0][1]*100).toFixed(0)}%"></i></div><small>${(a/tot*100).toFixed(1)}%</small></td><td class="r"><b>${a}K</b></td><td class="r">${i}K</td><td class="r">${o}K</td></tr>`).join('')}
+    </tbody></table></div>`,pins:[[1,199,225],[2,906,296],[3,514,296],[4,199,433]]})},
+  notes:['页面顶部加一行汇总：项目数、总 Token、用量最多的项目。','排序从右上角单独的下拉框改成点表头，当前排序列标箭头（下拉框保留在「调整」里）。','每行加一条占比条，和最大的项目比，一眼看出差距。','数字右对齐、等宽，单位统一；行高加大，项目名下面写工具和模型。选中行用浅色底，不再是一整行深蓝色块。']});
+const HIST = [['10-21','二',574.62,403.8,41.82,129],['10-20','一',259.41,174,20.91,64.5],['10-19','日',85.11,53.4,8.21,23.5],['10-18','六',155.7,102,12.7,41],['10-17','五',222.21,136.8,20.91,64.5],['10-15','三',203.41,118.2,20.91,64.5],['10-13','一',185.01,99.6,20.91,64.5]];
+S({id:'2.2',sec:2,title:'历史统计',before:[['claude-history','Claude 主题']],
+  render:t=>{const days=[['10-10',147.81],['10-11',0],['10-12',166.41],['10-13',185.01],['10-14',0],['10-15',203.41],['10-16',0],['10-17',222.21],['10-18',155.7],['10-19',85.11],['10-20',259.41],['10-21',574.62]];
+    return shell(t,{page:'history',height:940,content:pageHead('历史统计','近三十天 · America/New_York',`<span class="btn">${ic('sliders')}调整</span><span class="btn">${ic('more')}更多</span>`)+`
+    <article class="card chart-card"><div class="section-title"><h3 class="sec">用量趋势</h3><div class="seg sm"><span class="on">按日</span><span>按周</span><span>按月</span></div></div>
+      <div class="chart"><div class="yaxis">${['0','200K','400K','600K'].map((l,k)=>`<span style="--k:${k}">${l}</span>`).join('')}</div><div class="plot">${[0,1,2,3].map(k=>`<b class="gl" style="--k:${k}"></b>`).join('')}${days.map(([d,v],k)=>`<div class="bcol${k===11?' today':''}${k===10?' hover':''}" style="--h:${(v/600*100).toFixed(1)}%"><i style="height:var(--h)"></i><span>${d}</span>${k===10?`<div class="tip"><b>10-20 周一</b><span>259.41K Token</span><span class="m">输入 174K · 输出 20.91K</span></div>`:''}</div>`).join('')}</div></div></article>
+    <div class="tbl-wrap" style="background:var(--surface)"><table class="tbl"><thead><tr><th>日期</th><th class="r">总 Token</th><th class="r">输入</th><th class="r">输出</th><th class="r">缓存读取</th></tr></thead><tbody>
+    ${HIST.map(([d,w,a,i,o,c])=>`<tr><td><b>2026-${d}</b> <span class="m">周${w}</span></td><td class="r"><b>${a}K</b></td><td class="r">${i}K</td><td class="r">${o}K</td><td class="r">${c}K</td></tr>`).join('')}
+    </tbody></table></div>`,pins:[[1,1150,190],[2,199,300],[3,1149,457],[4,199,640]]})},
+  notes:['按日 / 周 / 月的切换从「调整」弹窗里挪到图表标题旁边（现在要点开弹窗才能改聚合粒度）。','柱状图加 Y 轴刻度和横向参考线，没有数据的日子也占位，看得出间隔。','今天的柱子用主题色，其余用浅色；悬停显示当天的总量、输入和输出。','表格日期后面加星期，数字右对齐等宽。']});
+const prof = (name,use,lines,tags,lock=false)=>{const d=lock?' dis':'';return `<article class="card prof${use?' using':''}"><div class="prof-h"><span class="tool-ico">${ic('terminal',15)}</span><div><b>${name}</b><small>${lines}</small></div>${use?'<span class="pill ok"><i class="dot"></i>正在使用</span>':''}</div><div class="prof-tags">${tags.map(x=>`<span class="tag">${x}</span>`).join('')}</div><div class="prof-f">${use?'':`<span class="btn sm primary${d}">使用此配置</span>`}<span class="btn sm${d}">编辑</span><span class="grow"></span><span class="ibtn${d}" title="删除">${ic('close',15)}</span></div></article>`};
+const apiTabs = on=>`<div class="seg">${['聊天 API','CG 绘图','额度连接'].map(x=>`<span class="${x===on?'on':''}">${x}</span>`).join('')}</div>`;
+S({id:'2.3',sec:2,title:'API 配置 · 聊天 API（空 / 已配置）',before:[['deepseek-api-chat','DeepSeek · 空']],
+  render:t=>shell(t,{page:'api',height:860,content:pageHead('API 配置','管理已保存的配置。聊天和绘图分别选择。',`<span class="btn primary">${ic('plus')}新增配置</span>`)+apiTabs('聊天 API')+`<div class="stats" style="--cols:2;gap:20px">
+    <div class="statebox"><h5>还没有配置</h5><article class="card"><div class="empty">${ic('plug',40)}<b>还没有聊天 API 配置</b><p>Galgame 聊天、群聊和角色对话会用这里选中的配置。可以用本机 Codex 登录，也可以填自己的 API Key。</p><span class="btn primary">${ic('plus')}新增配置</span></div></article></div>
+    <div class="statebox"><h5>已配置两个（示例）</h5>${prof('本机 Codex 登录',true,'本机 Codex · gpt-6-astra',['effort: low','上下文 200K'])}${prof('DeepSeek 官方',false,'api.deepseek.com · deepseek-chat',['effort: 默认','Key 已保存'])}</div></div>`,pins:[[1,1110,150],[2,330,520],[3,940,300]]}),
+  notes:['「新增配置」挪到页面右上角作为主按钮，任何页签下都在同一个位置。','空状态说明配置会用在哪里、有哪两种接法（现在只有「尚未配置，请新增配置」一句）。','配置卡：正在使用的那张有绿色标记和描边；模型、推理强度、上下文容量写成小标签；「使用此配置」是主操作，删除收成角落的图标按钮。']});
+S({id:'2.4',sec:2,title:'API 配置 · CG 绘图（含生成中锁定提示）',before:[['deepseek-api-cg','DeepSeek · 空']],
+  render:t=>shell(t,{page:'api',height:820,content:pageHead('API 配置','管理已保存的配置。聊天和绘图分别选择。',`<span class="btn primary">${ic('plus')}新增配置</span>`)+apiTabs('CG 绘图')+`
+    <div class="note">${ic('info')}<div><b>CG 正在生成，暂时不能切换或编辑配置。</b><div style="margin-top:2px">「Claude · 升级奖励」第 2 张 · 已等待 38 秒</div></div><span class="grow" style="flex:1"></span><span class="btn sm">查看任务</span></div>
+    <div class="stats" style="--cols:2;gap:20px">${prof('Codex 内置绘图',true,'本机 Codex · image_gen',['1536×1024','质量 高','参考图 开'],true)}${prof('自定义 OpenAI 兼容',false,'api.example.com · gpt-image-2',['1024×1024','质量 中'],true)}</div>`,pins:[[1,199,250],[2,199,360]]}),
+  notes:['生成中的锁定提示改成顶部提示卡，写明是哪个任务、等了多久，可以直接查看任务（现在是零散的文字行）。','CG 配置卡和聊天配置卡同一套样式，尺寸、质量、参考图写成小标签；锁定期间按钮整体变灰，悬停说明原因。']});
+S({id:'2.5',sec:2,title:'API 配置 · 额度连接',before:[['deepseek-api-quota','DeepSeek · 空']],
+  render:t=>shell(t,{page:'api',height:760,content:pageHead('API 配置','管理已保存的配置。聊天和绘图分别选择。',`<span class="btn primary">${ic('plus')}添加额度连接</span>`)+apiTabs('额度连接')+`
+    <div class="note">${ic('info')}<div>可同时监控多个账号。与聊天和 CG 配置分别保存，查询不会发送模型对话。</div></div>
+    <div class="tbl-wrap" style="background:var(--surface)"><table class="tbl"><thead><tr><th>连接</th><th>状态</th><th>最近结果</th><th class="r">更新于</th><th class="r">操作</th></tr></thead><tbody>
+      <tr><td><b>Codex 订阅额度</b><small>本机 Codex · 当前登录账号</small></td><td><span class="pill ok"><i class="dot"></i>监控已启用</span></td><td><b>周额度剩 72%</b></td><td class="r m">13:42</td><td class="r"><div class="row-acts"><span class="btn ghost sm">${ic('refresh',14)}刷新</span><span class="btn ghost sm">编辑</span><span class="btn ghost sm">停用</span><span class="ibtn" title="删除">${ic('close',15)}</span></div></td></tr>
+      <tr><td><b>DeepSeek API</b><small>DeepSeek · 中国大陆</small></td><td><span class="pill ok"><i class="dot"></i>监控已启用</span></td><td><b>余额 ¥23.50</b></td><td class="r m">13:40</td><td class="r"><div class="row-acts"><span class="btn ghost sm">${ic('refresh',14)}刷新</span><span class="btn ghost sm">编辑</span><span class="btn ghost sm">停用</span><span class="ibtn" title="删除">${ic('close',15)}</span></div></td></tr>
+      <tr><td><b>Kimi 开放平台</b><small>Kimi · 中国大陆</small></td><td><span class="pill err"><i class="dot"></i>查询失败</span></td><td><span class="errtxt">API Key 无效，请编辑后重试</span></td><td class="r m">13:38</td><td class="r"><div class="row-acts"><span class="btn ghost sm">${ic('refresh',14)}刷新</span><span class="btn ghost sm">编辑</span><span class="btn ghost sm">停用</span><span class="ibtn" title="删除">${ic('close',15)}</span></div></td></tr>
+      <tr><td><b>MiniMax</b><small>MiniMax · 国际</small></td><td><span class="pill off"><i class="dot"></i>未启用</span></td><td><span class="m">—</span></td><td class="r m">—</td><td class="r"><div class="row-acts"><span class="btn ghost sm dis">${ic('refresh',14)}刷新</span><span class="btn ghost sm">编辑</span><span class="btn ghost sm">启用监控</span><span class="ibtn" title="删除">${ic('close',15)}</span></div></td></tr>
+      </tbody></table></div>`,pins:[[1,199,250],[2,199,330],[3,560,510],[4,1010,330]]}),
+  notes:['说明文字收进提示卡。','已有连接用表格列出：名称、提供方和地区、监控状态、最近结果、更新时间，一行一个（现在每个连接是一张大卡片，状态只有一行小字）。','查询失败的连接用红色状态，原因直接写在「最近结果」里；未启用的连接「刷新」变灰。','操作按钮收在行尾：刷新、编辑、停用 / 启用监控、删除，正在查询时整行按钮变灰并显示「正在查询」。']});
+S({id:'2.6',sec:2,title:'弹窗 · 新增 / 编辑 API 配置',before:[['deepseek-api-dialog','DeepSeek'],['deepseek-api-dialog-advanced','DeepSeek · 展开高级设置']],
+  render:t=>shell(t,{page:'api',height:780,content:pageHead('API 配置','管理已保存的配置。聊天和绘图分别选择。','')+apiTabs('聊天 API'),overlay:`<div class="scrim"></div><div class="mdl" style="--w:640px;--top:40px"><div class="mdl-h"><h2>新增配置</h2><span class="sub">聊天 API</span><span class="ibtn">${ic('close')}</span></div>
+    <div class="mdl-b"><div class="fgroup"><h4>连接</h4><div class="fgrid"><div class="fld"><label>配置名称</label><span class="inp focus">DeepSeek 官方</span></div><div class="fld"><label>提供方</label><span class="select full">DeepSeek</span></div>
+      <div class="fld"><label>服务地址</label><span class="inp">https://api.deepseek.com</span></div><div class="fld"><label>API Key</label><span class="inp ph">已加密保存；留空保留</span></div></div></div>
+      <div class="fgroup"><h4>模型</h4><div class="fgrid"><div class="fld span2"><label>模型 ID</label><div class="inline"><span class="select full">deepseek-chat</span><span class="btn">${ic('refresh')}获取模型列表</span></div><small>已读取 6 个模型 · 13:46，也可以手动填写</small></div>
+        <div class="fld"><label>推理强度（effort）</label><div class="seg sm" style="width:100%"><span class="on">模型默认</span><span>low</span><span>medium</span><span>high</span></div><small>仅对支持 reasoning effort 的模型生效。</small></div>
+        <div class="fld"><label>上下文容量（tokens）</label><span class="inp ph">留空 · 按模型目录（保守 8192）</span><small>只在确认接口容量后填写。</small></div></div></div>
+      <div class="details open"><div class="sum">${ic('chevron')}高级设置</div><div class="fgrid adv"><div class="fld"><label>接口协议</label><span class="select full">OpenAI 兼容 · Chat Completions</span></div><div class="fld"><label>&nbsp;</label><div class="chk-row"><span class="check"></span><div><b>清除已保存的 Key</b><small>保存后删除本机加密的 Key。</small></div></div></div></div></div>
+      <div class="note">${ic('info')}<div>测试会发送一条很短的请求，用来确认地址、Key 和模型可用。</div></div></div>
+    <div class="mdl-f"><span class="btn">测试连接</span><span class="grow"></span><span class="btn">取消</span><span class="btn">仅保存</span><span class="btn primary">保存并使用</span></div></div>`,pins:[[1,288,110],[2,288,330],[3,288,450],[4,288,560],[5,288,676]]}),
+  notes:['字段分成「连接」「模型」两组，两列排列，弹窗不再是一长条（现在所有字段从上到下一列）。','「获取模型列表」放在模型下拉框旁边，并显示获取了多少个、什么时候获取的。','推理强度改成分段按钮，说明写在下面；上下文容量的占位文字直接说明留空的含义。','「高级设置」收成一行可展开的条，展开后只有接口协议和「清除已保存的 Key」两项；本机 Codex 没有高级项时整条隐藏（现在展开是空的）。','底部：「测试连接」放左边，「保存并使用」是主按钮。']});
+const src = (name,state,path,time)=>`<article class="card srccard"><div class="prof-h"><span class="tool-ico">${ic('terminal',15)}</span><div><b>${name}</b><small>${name} · ${state}</small></div><span class="pill ${state==='正常读取'?'ok':'warn'}"><i class="dot"></i>${state}</span></div><div class="path">${path}</div><div class="prof-f"><small style="color:var(--muted);font-size:var(--fs-cap)">最近读取 ${time}</small><span class="grow"></span><span class="btn sm">检查</span><span class="btn sm">编辑</span><span class="btn sm">停用</span><span class="ibtn" title="移除">${ic('close',15)}</span></div></article>`;
+const tokTabs = on=>`<div class="seg">${['数据源','平台与模型','服务归属'].map(x=>`<span class="${x===on?'on':''}">${x}</span>`).join('')}</div>`;
+const tokHead = ()=>pageHead('Token 检测','只读本机记录 · 不调用模型',`<span class="btn">${ic('refresh')}重新检测</span><span class="btn primary">${ic('plus')}添加数据源</span>`);
+S({id:'2.7',sec:2,title:'Token 检测 · 数据源',before:[['deepseek-tokens-sources','DeepSeek']],
+  render:t=>shell(t,{page:'tokens',height:860,content:tokHead()+tokTabs('数据源')+`
+    <article class="card set" style="padding-bottom:8px">${srow('自动发现当前用户的标准日志目录','未安装的工具显示目录不存在。没有用量记录时显示未知，不估算 token。',tgl(true))}<div class="srow"><div><b>模板</b><small>把自定义数据源的读取规则导出给别人，或导入别人的。</small></div><div style="display:flex;gap:8px"><span class="btn sm">${ic('download')}导出模板</span><span class="btn sm">导入模板</span></div></div></article>
+    ${src('Codex','正常读取','C:\\Users\\Administrator\\.codex\\sessions','2026/10/21 10:01:57')}${src('Claude Code','目录不存在','C:\\Users\\Administrator\\.claude\\projects','—')}`,pins:[[1,968,145],[2,199,208],[3,199,300],[4,199,470]]}),
+  notes:['「重新检测」「添加数据源」放右上角，「添加数据源」是主按钮。','三个页签改成和其他页面一样的分段切换（现在是三个高亮按钮，看不出哪个是当前页）。','「自动发现」用开关代替复选框；导出 / 导入模板挪进同一张卡，写清楚用途。','数据源卡：右上角状态标签（正常读取 / 目录不存在），路径用等宽小字，最近读取时间和操作在一行；「移除」收成图标。']});
+S({id:'2.8',sec:2,title:'Token 检测 · 平台与模型',before:[['deepseek-tokens-models','DeepSeek']],
+  render:t=>{const P=[['OpenAI','openai'],['Anthropic','anthropic'],['Google','google'],['智谱 / Z.ai','zhipu'],['Moonshot / Kimi','moonshot'],['DeepSeek','deepseek'],['阿里云百炼 / 通义','qwen'],['火山方舟 / 豆包','volcengine'],['xAI / Grok','xai'],['MiniMax','minimax'],['OpenRouter','openrouter'],['Azure','azure'],['Amazon Bedrock','bedrock'],['Vertex AI','vertex'],['硅基流动','siliconflow'],['Groq','groq'],['Mistral','mistral'],['Together AI','together'],['Fireworks AI','fireworks'],['DeepInfra','deepinfra']];
+    return shell(t,{page:'tokens',height:900,content:tokHead()+tokTabs('平台与模型')+`
+    <article class="card set"><h3 class="sec">服务平台</h3><p class="meta" style="margin:0 0 12px">模型厂商与服务平台分别识别。平台未知时，可在服务归属中补充。</p><div class="pgrid">${P.map(([n,i])=>`<div class="pchip"><b>${n}</b><code>${i}</code></div>`).join('')}</div></article>
+    <article class="card set"><h3 class="sec">模型显示名称</h3><p class="meta" style="margin:0 0 12px">给难认的模型 ID 起个好认的名字，只改显示，不改统计。</p>
+      <div class="alias"><div class="fld"><label>服务平台</label><span class="select full">OpenAI</span></div><div class="fld"><label>提供方 / 模型 ID</label><span class="inp ph">如 gpt-5.5-codex</span></div><div class="fld"><label>显示名称</label><span class="inp ph">如 Codex 5.5</span></div><span class="btn primary">保存名称</span></div>
+      <div class="empty" style="padding:16px"><p>还没有自定义名称。</p></div></article>`,pins:[[1,199,250],[2,199,600]]})},
+  notes:['平台列表改成整齐的小卡片网格，平台 ID 用等宽小字，对齐更好读。','「模型别名」改名「模型显示名称」并加一句说明；三个输入框带标签对齐在一行，「保存名称」是主按钮，下面显示已有名称或空状态。']});
+S({id:'2.9',sec:2,title:'Token 检测 · 服务归属',before:[['deepseek-tokens-attribution','DeepSeek']],
+  render:t=>shell(t,{page:'tokens',height:760,content:tokHead()+tokTabs('服务归属')+`
+    <div class="note">${ic('info')}<div>只补充未确认平台。原日志和 Token 数量保持不变，删除规则即可恢复。</div></div>
+    <article class="card"><div class="empty">${ic('search',40)}<b>还没有归属规则</b><p>在用量详情里遇到「未知平台」时，可以在这里说明它实际走的是哪个服务平台。</p><span class="btn primary">${ic('plus')}添加归属规则</span></div></article>`,pins:[[1,199,250],[2,199,420]]}),
+  notes:['说明文字收进提示卡。','空状态说明什么时候需要用到这个功能，「添加归属规则」从右上角的小链接改成主按钮。']});
+S({id:'2.10',sec:2,title:'弹窗 · 添加数据源',before:[['deepseek-tokens-form','DeepSeek']],
+  render:t=>shell(t,{page:'tokens',height:660,content:tokHead()+tokTabs('数据源'),overlay:`<div class="scrim"></div><div class="mdl" style="--w:680px;--top:56px"><div class="mdl-h"><h2>添加数据源</h2><span class="sub">只读取，不修改原日志</span><span class="ibtn">${ic('close')}</span></div>
+    <div class="mdl-b"><div class="fgrid"><div class="fld"><label>名称</label><span class="inp focus ph">如 公司电脑的 Gemini</span></div><div class="fld"><label>工具模板</label><span class="select full">Gemini CLI</span></div>
+      <div class="fld span2"><label>绝对路径</label><div class="inline"><span class="inp ph" style="flex:1">选择或粘贴日志目录、文件或数据库</span><span class="btn">选择目录</span><span class="btn">选择文件</span></div></div></div>
+      <details class="details"><summary style="color:var(--text)">${ic('chevron')}高级 · 格式与计数口径</summary></details>
+      <div class="fgroup"><h4>本地解析预览</h4><div class="tbl-wrap"><table class="tbl"><thead><tr><th>时间</th><th>模型</th><th class="r">输入</th><th class="r">输出</th></tr></thead><tbody><tr><td class="m" colspan="4" style="text-align:center;padding:18px">选好路径后点「预览」，这里显示读到的前几条记录</td></tr></tbody></table></div></div></div>
+    <div class="mdl-f"><span class="btn">${ic('search')}预览</span><span class="grow"></span><span class="btn">取消</span><span class="btn">仅保存</span><span class="btn primary">保存并启用</span></div></div>`,pins:[[1,272,90],[2,272,250],[3,272,420]]}),
+  notes:['现在是一张浮在页面顶部、没有遮罩的卡片，改成标准弹窗，和其他弹窗一致。','路径输入框和「选择目录」「选择文件」放一行；名称给出示例占位。','「本地解析预览」的结果直接显示在弹窗里的表格；底部「保存并启用」是主按钮。']});
+const themeChips = cur=>`<div class="chips">${THEMES.map(o=>`<span class="chip${o.id===cur?' on':''}"><i class="trio">${[o.c.bg,o.c.accent,o.c.a2].map(c=>`<b style="background:${c}"></b>`).join('')}</i>${esc(o.name)}</span>`).join('')}</div>`;
+S({id:'2.11',sec:2,title:'通用设置（上半）：外观与语言 · 桌宠',before:[['deepseek-settings-1','DeepSeek · 顶部'],['deepseek-settings-2','DeepSeek · 中部']],
+  render:t=>shell(t,{page:'settings',height:1400,content:`<div class="page-head"><div><h2 class="ptitle">通用设置</h2><p class="meta">让 AI 酱按你的习惯陪你工作。</p></div><span class="saved">${ic('info',14)} 修改会立即生效并自动保存</span></div>
+    <article class="card set"><h3 class="sec">外观与语言</h3>${srow('语言 / Language','界面和新对话使用所选语言，历史内容保留原文。','<span class="select">简体中文</span>')}
+      ${srow('主题','跟随的是当前角色，与聊天 API 分开。','<div class="seg sm"><span>固定主题</span><span class="on">跟随角色</span></div>')}${themeChips(t.id)}
+      ${srow('使用 CG 背景时自动隐藏立绘','自动模式下避免背景人物与立绘重叠；也可在 Galgame 手动切换。',tgl(true))}</article>
+    <article class="card set"><div class="set-head"><div><h3 class="sec">桌宠</h3><small>当前桌宠 · ${esc(t.name)} · 单击摸摸，右键打开工作空间</small></div><img src="${A(`art/pet-${t.id}.webp`)}" alt=""></div>
+      <h4 class="sub-h">角色</h4>${srow('桌宠角色','跟随 Galgame 最近选中的角色，与聊天 API 分开。','<span class="select">跟随 Galgame 角色</span>')}${srow('角色资源','已安装 11 / 11 · 30fps','<span class="btn sm">管理角色资源</span>')}
+      <h4 class="sub-h">显示</h4><div class="two">${srow('显示桌宠','隐藏后可从托盘重新显示。',tgl(true))}${srow('保持置顶','显示在其他窗口上方。',tgl(true))}${srow('桌宠大小','角色、状态条和气泡一起缩放。','<span class="select">125% · 大</span>')}${srow('动作播放速度','鼠标跟随和拖动仍及时响应。','<span class="select">75% · 默认</span>')}${srow('显示状态条','显示工作会话数；点状态条右边的 × 可以关掉，在这里或桌宠右键菜单里重新打开。',tgl(true))}${srow('任务提示气泡','任务等待确认或完成时显示提示。',tgl(true))}</div>
+      <h4 class="sub-h">互动</h4><div class="two">${srow('透明区域点击穿透','可以点到角色周围的桌面内容。',tgl(true))}${srow('跟随鼠标方向','待机时看向鼠标所在的位置。',tgl(true))}${srow('自动睡眠','五分钟没有活动就入睡，点一下醒来。',tgl(true))}${srow('物理互动','左键拖动走路，右键拖动飞行和抛出。',tgl(true))}</div>
+      ${srow('抛掷力度','只调整抛出的力度，不影响拖动。','<span class="select">标准</span>')}
+      <div class="note" style="margin:8px 0">${ic('info')}<div>左键单击会播放表情：同一角色每 60 秒最多 +1 好感，每天最多 30 点。<br><span class="m">六段新动作尚待审核；缺少该组资源的角色暂不启用睡眠和抛掷。</span></div></div>
+      <div class="srow"><span></span><span class="btn sm">重置桌宠位置</span></div></article>`,pins:[[1,1024,148],[2,199,300],[3,1158,499],[4,199,640],[5,199,1170]]}),
+  notes:['「修改会立即生效并自动保存」从右上角的绿字改成带图标的状态提示，保存中和保存失败也用同一位置显示。','主题模式改成分段按钮；主题芯片用三色小样（底色 · 主色 · 第二色），一眼看出每套的样子。','所有开关类设置从复选框改成开关，放在每行最右边，对齐一致。','桌宠卡里 15 个设置按「角色 / 显示 / 互动」分组，显示和互动两组改成两列，卡片短了将近一半。','点击好感的规则说明和「6 段新动作待审核」收进提示卡；「重置桌宠位置」放到卡片底部右侧。']});
+S({id:'2.12',sec:2,title:'通用设置（下半）：模型 · 检测与时间 · 数据源 · 本地安装',before:[['deepseek-settings-2','DeepSeek · 中部'],['deepseek-settings-3','DeepSeek · 底部']],
+  render:t=>shell(t,{page:'settings',height:1000,content:`<div class="set2">
+    <article class="card set"><h3 class="sec">聊天模型</h3><div class="srow col"><b>当前使用配置</b><span class="select wide">本机 Codex 登录 · gpt-6-astra</span></div>${srow('联网聊天','需要时开启，重启后默认关闭。',tgl(false))}<div class="srow"><small style="color:var(--muted)">共 2 个配置</small><span class="btn sm">管理配置</span></div></article>
+    <article class="card set"><h3 class="sec">CG 绘图</h3><div class="srow col"><b>当前使用配置</b><span class="select wide">尚未配置</span></div>${srow('自动生成 CG','好感升级达到解锁条件后，在后台生成并保存到图鉴。',tgl(false))}<div class="srow"><small style="color:var(--muted)">还没有配置</small><span class="btn sm primary">${ic('plus')}添加配置</span></div></article>
+    <article class="card set"><h3 class="sec">检测与时间</h3>${srow('备用检查间隔','文件变化会即时读取，这一项只管兜底检查。','<span class="select">1 秒 · 默认</span>')}${srow('活动时间显示','用于最近工作和活动时间。','<span class="select">相对时间</span>')}${srow('统计时区','按此时区划分日、周、月，修改后重新聚合。','<span class="select">系统本地时间</span>')}${srow('每日更新价格目录','只下载公开价格，不发送日志。',tgl(false))}<div class="srow"><small style="color:var(--muted)">本地监控不调用模型。</small><span class="btn sm">${ic('refresh')}立即刷新日志</span></div></article>
+    <div style="display:flex;flex-direction:column;gap:16px"><article class="card set"><h3 class="sec">Token 数据源</h3>${srow('自动发现','1 个来源正在读取 · 0 个等待数据',tgl(true))}<div class="srow"><span></span><span class="btn sm">管理数据源 →</span></div></article>
+      <article class="card set"><h3 class="sec">角色与对话</h3><p class="meta" style="margin:0 0 8px">角色、好感度、记忆、立绘和背景都在 Galgame 里设置。</p><div class="srow"><span></span><span class="btn sm">打开 Galgame →</span></div></article></div></div>
+    <details class="details"><summary style="color:var(--text)">${ic('chevron')}本地安装 · AI 酱 1.9.0 · 30fps</summary></details>
+    <div class="reset-row"><div><b>恢复默认设置</b><small>只还原通用设置，保留桌宠位置、用量和 Galgame 存档。</small></div><span class="btn danger">恢复默认设置</span></div>`,pins:[[1,199,110],[2,199,560],[3,199,825]]}),
+  notes:['聊天模型和 CG 绘图两张卡同一结构：当前配置下拉框（显示配置名和模型）、开关、底部写配置数量和入口；没配置时「添加配置」是主按钮。','检测与时间、Token 数据源、角色与对话的开关统一放右边；说明文字缩短。','「恢复默认设置」单独一行放在最下面，说明保留什么；按钮用红色文字提示这是重置操作。']});
+S({id:'2.13',sec:2,title:'动作展示',before:[['deepseek-actions','DeepSeek（当时桌宠角色是混元）']],
+  render:t=>{const A1=['待机','向右移动','向左移动','挥手','跳跃','失败','等待用户','工作中','审查中'],A2=['入睡过渡','睡眠','唤醒','起飞','飞行','落稳恢复'];
+    const card=(n,on,dis)=>`<article class="card act${on?' playing':''}"><div class="act-stage"><img src="${A(`art/pet-${t.id}.webp`)}" alt=""></div><div class="act-f"><b>${n}</b><span class="ibtn sm${dis?' dis':''}" title="在桌宠播放" aria-label="在桌宠播放">${ic('play',14)}</span></div></article>`;
+    return shell(t,{page:'actions',height:1010,header:'',content:`<div class="page-head"><div><h2 class="ptitle">动作展示</h2><p class="meta">预览 ${esc(t.name)} 的全部桌宠动作，点 ▶ 在桌宠上播放一遍。</p></div><div class="ph-actions"><span class="select" style="min-width:150px">${face(t.id,'mini-face')}${esc(t.name)}</span><span class="btn">${ic('pause')}暂停预览</span></div></div>
+      <h4 class="sub-h">日常动作 · 9</h4><div class="actgrid">${A1.map((n,k)=>card(n,k===0,false)).join('')}</div>
+      <h4 class="sub-h">互动动作 · 6 <span class="m" style="font-weight:500;letter-spacing:0">睡眠、抛掷时自动播放</span></h4><div class="actgrid">${A2.map(n=>card(n,false,false)).join('')}</div>
+      <div class="statebox" style="margin-top:4px"><h5>桌宠隐藏时</h5><div class="note">${ic('info')}<div><b>桌宠已隐藏，暂时不能在桌宠上播放。</b> 预览照常播放。</div><span style="flex:1"></span><span class="btn sm">显示桌宠</span></div></div>`,pins:[[1,1000,52],[2,199,138],[3,199,316],[4,199,560],[5,199,836]]})},
+  notes:['页面加一句说明；角色下拉框带头像，「暂停」改成「暂停预览」，说清楚暂停的是什么。','卡片缩小成一排 6 个，9 个日常动作一屏看完；正在预览播放的卡片描边高亮。','「在桌宠播放」改成卡片右下角的 ▶ 小按钮（悬停显示全称），15 张卡不再重复 15 遍同一句话。','动作分成「日常动作 · 9」和「互动动作 · 6」两组，6 个睡眠、抛掷动作不再接在日常动作后面。','桌宠隐藏时顶部出现提示条和「显示桌宠」按钮，卡片上的 ▶ 变灰（现在按钮只是变暗，没有说明）。']});
+
+/*@@PART_JS@@*/
+
+/* ---------- planned sections (filled in later, listed so the full scope is visible) ---------- */
+const SECTIONS = [
+  {n:1,title:'外壳与工作概览'},
+  {n:2,title:'其余工作区页面'},
+  {n:3,title:'Galgame 私聊'},
+  {n:4,title:'角色与对话管理、群聊'},
+  {n:5,title:'桌宠'}
+];
+
+/* ---------- review state: db when available, browser storage otherwise ---------- */
+const LS='aibuddy-ui-design-r1';
+const marks={}; try{Object.assign(marks,JSON.parse(localStorage.getItem(LS)||'{}'))}catch(e){}
+const saveLocal=()=>{try{localStorage.setItem(LS,JSON.stringify(marks))}catch(e){}};
+let db=null, store='pending'; const chains={}, lastSent={};
+let theme='deepseek'; try{theme=localStorage.getItem(LS+'-theme')||'deepseek'}catch(e){}
+const docId = id=>'s'+id.replace('.','-');
+function setStatus(id,msg){const el=document.querySelector(`[data-rs="${id}"]`);if(el)el.textContent=msg}
+function persist(id){
+  saveLocal(); refreshMarks();
+  if(!db){setStatus(id,'已存在这个浏览器里。看完点顶部「复制审批结果」发给我。');return}
+  chains[id]=(chains[id]||Promise.resolve()).then(()=>{const m=marks[id]||{};const body={surface:id,status:m.status||'',note:m.note||''};const key=JSON.stringify(body);if(lastSent[id]===key)return;
+    return db.doc('design/'+docId(id)).set({...body,at:Date.now()}).then(()=>{lastSent[id]=key;setStatus(id,'已保存，我这边能直接读到。')})})
+   .catch(e=>{setStatus(id,'云端保存失败（'+(e&&e.code||'unknown')+'），已留在本机浏览器。');if(e&&e.code==='invalid_argument'){db=null;store='local';storeNote()}});
+}
+function storeNote(){$('#store-note').textContent= store==='db'?'审批结果会自动保存，我这边能直接读到。':store==='pending'?'':'这里连不上云端保存，结果只留在这个浏览器里，看完点「复制审批结果」发给我。'}
+(async()=>{let h=null;try{h=(window.claude&&typeof window.claude.use==='function')?await window.claude.use('db'):null}catch(e){h=null}
+  if(!h){store='local';storeNote();return} db=h;store='db';storeNote();let first=true;
+  db.collection('design').onSnapshot(snap=>{const seen=new Set();for(const d of snap.docs){if(!d.exists)continue;const v=d.data()||{};const id=v.surface||d.id;seen.add(id);const editing=document.activeElement&&document.activeElement.dataset.note===id;
+      marks[id]={status:v.status||'',note:editing?(marks[id]||{}).note||'':(v.note||'')};lastSent[id]=JSON.stringify({surface:id,status:v.status||'',note:v.note||''});}
+    if(first){first=false;for(const id of Object.keys(marks))if(!seen.has(id)&&(marks[id].status||marks[id].note))persist(id)}
+    saveLocal();refreshMarks();},()=>{db=null;store='local';storeNote()});})();
+
+/* ---------- rendering ---------- */
+function renderChips(){
+  $('#theme-chips').innerHTML=THEMES.map(t=>`<button class="tchip" type="button" data-theme="${t.id}" aria-pressed="${t.id===theme}" style="--ring:${t.c.accent}">${face(t.id)}${esc(t.name)}</button>`).join('');
+  document.querySelectorAll('#theme-chips .tchip').forEach(b=>b.addEventListener('click',()=>{theme=b.dataset.theme;try{localStorage.setItem(LS+'-theme',theme)}catch(e){}renderChips();renderMocks()}));
+}
+function renderToc(){
+  $('#toc').innerHTML=SECTIONS.map(s=>`<h2>${s.n} · ${s.title}</h2>`+(s.todo?`<div class="todo">待补：${s.todo}</div>`:SURFACES.filter(x=>x.sec===s.n).map(x=>`<a href="#${docId(x.id)}"><span class="code">${x.id}</span><span>${esc(x.title.includes('：')?x.title.split('：')[0]:x.title.split(' · ').slice(-1)[0])}</span><i class="st" data-st="${x.id}"></i></a>`).join(''))).join('');
+}
+function renderSections(){
+  $('#sections').innerHTML=SECTIONS.filter(s=>!s.todo).map(s=>`<h2 class="sec-h">${s.n} · ${s.title}<small>${SURFACES.filter(x=>x.sec===s.n).length} 个界面</small></h2>`+SURFACES.filter(x=>x.sec===s.n).map(x=>`
+    <article class="sfc" id="${docId(x.id)}">
+      <header class="sfc-h"><span class="code">${x.id}</span><h3>${esc(x.title)}</h3>
+        <div class="view" role="group" aria-label="改后或改前"><button type="button" data-view="after" aria-pressed="true">改后 · 设计稿</button><button type="button" data-view="before" aria-pressed="false">改前 · 现在</button></div></header>
+      <div class="stage-area"><div class="mock-frame" data-mock="${x.id}"><div class="mock-inner"></div></div>
+        <div class="before-wrap" hidden>${x.before.length?x.before.map(([f,cap],i)=>`<figure style="margin:${i?'16px':0} 0 0"><img class="before-img" src="${A(`before/${f}.webp`)}" alt="改前截图：${esc(cap)}" loading="lazy"><figcaption class="before-cap">改前 · ${esc(cap)}</figcaption></figure>`).join(''):'<div class="no-before">这个界面需要特定数据或操作才会出现，这次没截到改前图。<br>设计稿按源码里的结构和文案还原。</div>'}</div></div>
+      <div class="sfc-b"><ol class="notes">${x.notes.map((n,i)=>`<li><span class="n">${i+1}</span><span>${esc(n)}</span></li>`).join('')}</ol>
+        <div class="review"><p class="rv-h">你的意见</p><div class="rbtns"><button class="rbtn" type="button" data-v="ok" data-id="${x.id}" aria-pressed="false">通过</button><button class="rbtn" type="button" data-v="change" data-id="${x.id}" aria-pressed="false">要改</button></div>
+          <textarea data-note="${x.id}" placeholder="要改的话写一句，比如：菜单再窄一点、图标换成填充的" aria-label="${x.id} 修改意见"></textarea><p class="rstatus" data-rs="${x.id}"></p></div></div>
+    </article>`).join('')).join('');
+  document.querySelectorAll('.sfc').forEach(card=>{
+    const btns=card.querySelectorAll('.view button');
+    btns.forEach(b=>b.addEventListener('click',()=>{btns.forEach(x=>x.setAttribute('aria-pressed',String(x===b)));const before=b.dataset.view==='before';card.querySelector('.mock-frame').hidden=before;card.querySelector('.before-wrap').hidden=!before;if(!before)fit(card.querySelector('.mock-frame'))}));
+  });
+  document.querySelectorAll('.rbtn').forEach(b=>b.addEventListener('click',()=>{const m=marks[b.dataset.id]||(marks[b.dataset.id]={status:'',note:''});m.status=m.status===b.dataset.v?'':b.dataset.v;refreshMarks();persist(b.dataset.id)}));
+  document.querySelectorAll('textarea[data-note]').forEach(n=>{let timer=null;const id=n.dataset.note;n.addEventListener('input',()=>{const m=marks[id]||(marks[id]={status:'',note:''});m.note=n.value;saveLocal();clearTimeout(timer);timer=setTimeout(()=>persist(id),900)});n.addEventListener('blur',()=>{if(timer){clearTimeout(timer);timer=null;persist(id)}})});
+}
+function fit(frame){const inner=frame.firstElementChild;const s=frame.clientWidth/1280;frame.style.setProperty('--s',s.toFixed(4));frame.style.height=Math.ceil(inner.offsetHeight*s)+'px'}
+let ro=null;
+function renderMocks(){
+  const t=BY_ID[theme];
+  document.querySelectorAll('[data-mock]').forEach(f=>{const x=SURFACES.find(s=>s.id===f.dataset.mock);f.firstElementChild.innerHTML=x.render(t);fit(f)});
+  if(window.ResizeObserver){if(ro)ro.disconnect();ro=new ResizeObserver(es=>es.forEach(e=>{if(!e.target.hidden)fit(e.target)}));document.querySelectorAll('[data-mock]').forEach(f=>ro.observe(f))}
+}
+function refreshMarks(){
+  const total=SURFACES.length;$('#total').textContent=total;$('#done').textContent=SURFACES.filter(x=>(marks[x.id]||{}).status==='ok').length;
+  document.querySelectorAll('[data-st]').forEach(i=>{i.className='st '+((marks[i.dataset.st]||{}).status||'')});
+  document.querySelectorAll('.rbtn').forEach(b=>b.setAttribute('aria-pressed',String((marks[b.dataset.id]||{}).status===b.dataset.v)));
+  document.querySelectorAll('textarea[data-note]').forEach(n=>{if(document.activeElement!==n)n.value=(marks[n.dataset.note]||{}).note||''});
+}
+function summary(){
+  const lines=['AI 酱 UI 设计稿 · 审批结果'];
+  for(const x of SURFACES){const m=marks[x.id]||{};lines.push(`${x.id} ${x.title}：${m.status==='ok'?'通过':m.status==='change'?'要改':'未看'}${m.note?' —— '+m.note.trim():''}`)}
+  return lines.join('\n');
+}
+$('#copy').addEventListener('click',()=>{const text=summary(),out=$('#copy-out'),btn=$('#copy');const fb=()=>{out.hidden=false;out.value=text;out.focus();out.select();btn.textContent='已选中，按 Ctrl+C'};try{navigator.clipboard.writeText(text).then(()=>{btn.textContent='已复制';setTimeout(()=>btn.textContent='复制审批结果',1800)},fb)}catch(e){fb()}});
+$('#pins').addEventListener('change',e=>document.body.classList.toggle('pins-off',!e.target.checked));
+storeNote();renderChips();renderToc();renderSections();renderMocks();refreshMarks();
+</script>

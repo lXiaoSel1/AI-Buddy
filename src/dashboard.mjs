@@ -16,6 +16,8 @@ import {APP_NAME,PANEL_TITLE,APP_ICON_PNG} from './app-brand.mjs';
 const overlay=navigator.windowControlsOverlay;
 function syncWindowChrome(){document.documentElement.classList.toggle('desktop-titlebar',!!overlay?.visible);}
 overlay?.addEventListener('geometrychange',syncWindowChrome);syncWindowChrome();
+// Paint the first frame in the resolved theme the main process passed along (?theme=).
+const initialTheme=new URLSearchParams(location.search).get('theme');if(initialTheme)applyAppearance({theme:initialTheme,themeMode:'fixed'});
 const h=React.createElement;
 const fmt=n=>new Intl.NumberFormat('en-US').format(n || 0);
 const compact=n=>n>=1e6?(n/1e6).toFixed(2)+'M':n>=1e3?(n/1e3).toFixed(1)+'K':fmt(n);
