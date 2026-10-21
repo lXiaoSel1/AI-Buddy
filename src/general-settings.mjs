@@ -1,12 +1,23 @@
 import {t} from './i18n.mjs';
 import {THEMES} from './appearance.mjs';
-import React,{useState} from 'react';
+import React,{useEffect,useState} from 'react';
 import {ConnectionSelection} from './connection-selection.mjs';
 import {TokenDetectionControl} from './token-settings.mjs';
 import {PET_CHARACTERS,petCharacterName} from './pet-characters.mjs';
 import {frameSequence} from './frame-sequence.mjs';
 const h=React.createElement;
 const providerName=value=>value==='claude'?'Claude Code':value;
+// B2: maxOutputTokens is 'auto' or a whole number from 256 to 65536 (default 8192).
+export const OUTPUT_LIMIT={min:256,max:65536,fallback:8192};
+export function parseOutputLimit(value){const text=String(value??'').trim();if(!/^\d+$/.test(text))return null;const n=Number(text);return Number.isSafeInteger(n)&&n>=OUTPUT_LIMIT.min&&n<=OUTPUT_LIMIT.max?n:null;}
+export function OutputLimitSetting({value,disabled,onSave}){
+  const auto=value==='auto',[draft,setDraft]=useState(auto?'':String(value??OUTPUT_LIMIT.fallback)),[invalid,setInvalid]=useState(false);
+  useEffect(()=>{if(value!=='auto'){setDraft(String(value));setInvalid(false);}},[value]);
+  const commit=()=>{const n=parseOutputLimit(draft);if(n===null){setInvalid(true);return;}setInvalid(false);if(n!==value)onSave({maxOutputTokens:n});};
+  return h('div',{className:'setting-row output-limit','data-setting-row':'maxOutputTokens'},h('span',{className:'setting-label'},h('strong',null,t('模型最多输出（tokens）')),h('small',null,t('按实际输出计费；数值越大越不容易被截断；“自动”表示交给模型自己的默认值。')),invalid&&h('small',{id:'output-limit-error',className:'output-limit-error',role:'alert'},t('请输入 256 到 65536 之间的整数。'))),
+    h('span',{className:'output-limit-controls'},h('select',{'data-setting':'maxOutputTokensMode','aria-label':t('模型最多输出（tokens）'),value:auto?'auto':'custom',disabled,onChange:e=>{if(e.target.value==='auto')onSave({maxOutputTokens:'auto'});else onSave({maxOutputTokens:parseOutputLimit(draft)??OUTPUT_LIMIT.fallback});}},h('option',{value:'auto'},t('自动')),h('option',{value:'custom'},t('自定义'))),
+      !auto&&h('input',{'data-setting':'maxOutputTokens',type:'number',inputMode:'numeric',min:OUTPUT_LIMIT.min,max:OUTPUT_LIMIT.max,step:256,value:draft,disabled,'aria-label':t('最多输出的 token 数'),'aria-invalid':invalid||undefined,'aria-describedby':invalid?'output-limit-error':undefined,onChange:e=>{setDraft(e.target.value);setInvalid(false);},onBlur:commit,onKeyDown:e=>{if(e.key==='Enter'){e.preventDefault();commit();}}})));
+}
 export function GeneralSettings({view,onSaved,onPage,onManage}){
   const [busy,setBusy]=useState(false),[status,setStatus]=useState(t("修改会立即生效并自动保存")),[error,setError]=useState('');
   if(!view)return h('p',null,t("正在读取本地设置…"));
@@ -55,6 +66,7 @@ export function GeneralSettings({view,onSaved,onPage,onManage}){
       h('div',{className:'settings-column'},
         h(ConnectionSelection,{type:'model',initial:view.modelConnections,onManage:()=>onManage('model')}),
         h(ConnectionSelection,{type:'cg',initial:view.cgConnections,onManage:()=>onManage('cg')}),
+        h('section',{className:'card settings-output'},h('h2',null,t('模型输出')),h(OutputLimitSetting,{value:prefs.maxOutputTokens??OUTPUT_LIMIT.fallback,disabled:busy,onSave:patch=>void save(patch)}),h('p',{className:'settings-note'},t('回复被截断时，可以在这里调高上限后重试。'))),
         h('section',{className:'card'},h('h2',null,t("检测与时间")),
           select('monitorRefreshMs',t("备用检查间隔"),t("文件变化会即时触发读取；此项控制轮询。"),[[1000,t("1 秒 · 默认")],[2000,t("2 秒")],[5000,t("5 秒")]]),
           select('displayTimeZone',t("活动时间显示"),t("用于最近工作的活动时间。"),[['America/New_York',t("纽约时间")],['local',t("系统本地时间")],['UTC','UTC']]),

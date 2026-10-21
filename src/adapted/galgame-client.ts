@@ -19,7 +19,7 @@ import { WHALE_ART as LEGACY_ART } from './art.generated'
 import { CHARACTER_ART } from '../character-catalog.mjs'
 import { ExpressionPortrait, CastPortrait } from './character-portrait'
 import {validPetCharacter} from '../pet-characters.mjs'
-import {CompanionCSS,CompanionManager,CompanionGroupStage,CompanionGroupDialogue,activeCompanionGroup,companionCharacterName,companionImage} from '../companion-ui.mjs'
+import {CompanionCSS,CompanionManager,CompanionGroupStage,CompanionGroupDialogue,LifeRecoveryBanner,activeCompanionGroup,companionCharacterName,companionImage,modelErrorText,modelOutputTruncated} from '../companion-ui.mjs'
 const WHALE_ART = { ...LEGACY_ART, ...CHARACTER_ART }
 
 const CSS = [
@@ -1086,7 +1086,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     if (selecting) companionRequestEpoch.current++
     const epoch = companionRequestEpoch.current
     const result = await callApi(action, args)
-    if (result?.ok === false) throw new Error(result.error || result.message || t('操作失败'))
+    if (result?.ok === false) throw Object.assign(new Error(result.error || result.message || t('操作失败')), { code: result.code, missing: result.missing })
     if (epoch !== companionRequestEpoch.current) return result
     if (result?.view) setS(result.view)
     else if (result?.companion) setS((previous: any) => ({ ...previous, companion: result.companion }))
@@ -3253,7 +3253,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       }),
       React.createElement('button', { className: 'whg-send', disabled: busy || !text.trim(), onClick: send }, t("回复")))
     const fallbackNote = s.fallbackUsed
-      ? React.createElement('div', { className: 'whg-fallback-note' }, t("（模型调用失败，") + s.name + t(" 用了备用台词。原因：") + (s.fallbackReason || t("未知")) + t(" · 目标模型：") + (s.lastModel || s.modelLabel || t("未知")) + '）')
+      ? React.createElement('div', { className: 'whg-fallback-note' }, t("（模型调用失败，") + s.name + t(" 用了备用台词。原因：") + (s.fallbackReason ? modelErrorText(s.fallbackReason) : t("未知")) + t(" · 目标模型：") + (s.lastModel || s.modelLabel || t("未知")) + '）')
       : null
     const now = last
       ? React.createElement('div', { key: 'now-' + ((s.history || []).length), className: 'whg-line-now ' + last.who }, last.text)
@@ -3265,7 +3265,8 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         React.createElement('div', { className: 'whg-level-track' },
           React.createElement('div', { className: 'whg-level-fill', style: { width: Math.min(100, Math.round((s.affection / Math.max(1, s.cap)) * 100)) + '%' } }))),
       now,
-      apiError ? React.createElement('p', { className: 'buddy-error', role: 'alert' }, apiError) : null,
+      s.companion?.lifeRecovery?.characterId === s.current ? React.createElement(LifeRecoveryBanner, { state: s.companion, request: companionRequest, characterId: s.current, setFeedback: (text: string, error?: boolean) => setApiError(error ? text : null) }) : null,
+      apiError ? React.createElement('p', { className: 'buddy-error', role: 'alert' }, modelErrorText(apiError), modelOutputTruncated(apiError) ? React.createElement('button', { type: 'button', className: 'whg-btn', style: { marginLeft: 8 }, onClick: () => (window as any).whale?.open?.('settings') }, t('打开通用设置')) : null) : null,
       fallbackNote,
       choices,
       input,
