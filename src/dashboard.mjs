@@ -61,7 +61,7 @@ function App(){
      !actionsPage&&h('div',{className:'sidebar-bottom'},h('b',null,h('span',{className:'offline-dot'}),t("离线监控")),h('small',null,t("本机数据 · 零模型调用")))),
    h('main',null,!actionsPage&&h('header',null,h('span',null,t("你的本地工作空间")),h('div',null,h(StatusPill,{tone:data?.indexing?'busy':'ok','data-live-pill':true},data?.indexing?(data.indexPhase==='checking'?t("核对新增记录…"):t("整理历史记录…")):t("监控中")),h('span',{className:'header-date'},data?.today||''))),
      h('div',{className:'content'},settings?.safeMode&&!['safe-mode','galgame'].includes(page)&&h('div',{className:'index-banner safe-mode-banner',role:'status'},h('span',null,t("陪伴功能已停用（安全模式），桌宠和用量监控照常可用。")),h('button',{onClick:()=>setPage('safe-mode')},t("查看原因"))),!hideDiagnostics&&data?.indexing&&h('div',{className:'index-banner'},(data.indexPhase==='checking'?t("正在核对新增记录 · 已检查 "):t("正在建立本地历史索引 · 已读取 "))+(data.progress?.scanned||0)+' / '+(data.progress?.total||'—')+t(" 个文件。完成前用量为部分结果。")),
-       !hideDiagnostics&&data?.missingRequests>0&&h('p',{className:'settings-note'},data.missingRequests+t(" 条请求缺少完整用量，合计为已记录部分。")),!hideDiagnostics&&!data&&h('p',null,t("正在读取本地记录…")),content,
+       page==='tokens'&&data?.missingRequests>0&&h('p',{className:'settings-note'},data.missingRequests+t(" 条请求缺少完整用量，合计为已记录部分。")),!hideDiagnostics&&!data&&h('p',null,t("正在读取本地记录…")),content,
        !hideDiagnostics&&data?.errors?.length>0&&h('details',{className:'read-errors'},h('summary',null,data.errors.length+t(" 个日志读取问题")),...data.errors.slice(0,10).map(e=>h('p',{key:e.path},e.path+' · '+e.message)))))));
 }
 // A first launch must not mount App's settings/game/monitor requests until the

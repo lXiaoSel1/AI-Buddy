@@ -1721,5 +1721,6 @@
   "无法确认旧请求是否已提交。请核对服务端记录后手动重试，避免重复收费。": "The old submission cannot be confirmed. Check the provider records before retrying to avoid duplicate charges.",
   "正在恢复…": "Resuming…",
   "继续此 CG": "Resume this CG",
-  "已暂停 · 手动继续": "Paused · resume manually"
+  "已暂停 · 手动继续": "Paused · resume manually",
+  "关闭提示；之后只在 Token 检测中显示": "Dismiss; this note stays in Token detection"
 }
