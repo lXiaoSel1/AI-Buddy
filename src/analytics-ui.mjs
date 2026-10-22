@@ -119,6 +119,11 @@ function EmptyUsage({pet,onAdjust}){
  const still=frameSequence('idle',pet)?.staticFrames?.[0]?.src;
  return h('div',{className:'ws-card ws-empty'},still&&h('img',{src:still,alt:''}),h('b',null,t("当前范围还没有工作记录")),h('p',null,t("用 Codex、Claude Code 等工具工作后，这里会自动出现用量。也可以放宽时间范围看看。")),h('button',{className:'ui-btn',onClick:onAdjust},Icon('sliders'),t("调整范围")));
 }
+// Requests whose usage is incomplete. Dismissing it here keeps the same note in Token detection only.
+export function UsageGapNotice({count,onDismiss}){
+ const label=t("关闭提示；之后只在 Token 检测中显示");
+ return h('div',{className:'ui-alert warn usage-gap',role:'status'},Icon('alert',{size:16}),h('div',null,count+t(" 条请求缺少完整用量，合计为已记录部分。")),onDismiss&&h('button',{type:'button',className:'ui-icon-btn sm','aria-label':label,title:label,onClick:onDismiss},Icon('close',{size:14})));
+}
 export function AnalyticsPage({page='overview',settings,revision,onManage,onSaved,onAttribution,onPage,monitor}){
  const [tab,setTab]=useState('usage'),[result,setResult]=useState(null),[spark,setSpark]=useState(null),[error,setError]=useState(''),[refresh,setRefresh]=useState(0),[loading,setLoading]=useState(true),[modal,setModal]=useState(null),[detail,setDetail]=useState(null),[more,setMore]=useState(null),[priceSearch,setPriceSearch]=useState(''),[priceVersion,setPriceVersion]=useState(''),detailId=useRef(0),refreshQuery=useRef(null),moreRef=useRef(null),errorsRef=useRef(null);
  const views=settings?.preferences.statisticsViews||defaultViews(),filters=views[page]||defaultView(page),zone=settings?.preferences.statisticsTimeZone||'America/New_York',isQuota=page==='overview'&&tab==='quota';
@@ -142,6 +147,7 @@ export function AnalyticsPage({page='overview',settings,revision,onManage,onSave
  // the "More" menu closes on Escape or a click anywhere else
  useEffect(()=>{if(!more)return;const close=()=>setMore(null),away=e=>{if(!moreRef.current?.contains(e.target))close();},key=e=>{if(e.key==='Escape'){close();moreRef.current?.querySelector('button')?.focus();}},scroller=document.querySelector('.content');document.addEventListener('pointerdown',away,true);document.addEventListener('keydown',key);scroller?.addEventListener('scroll',close,{passive:true});window.addEventListener('resize',close);return()=>{document.removeEventListener('pointerdown',away,true);document.removeEventListener('keydown',key);scroller?.removeEventListener('scroll',close);window.removeEventListener('resize',close);};},[more]);
  async function save(value){const updated=await window.whale.setSettings({statisticsViews:{...views,[page]:value}});onSaved?.(updated);setModal(null);}
+ async function hideUsageGap(){onSaved?.(await window.whale.setSettings({showUsageGapNotice:false}));}
  async function showUsage(title,extra={},path){const id=++detailId.current;setDetail({title,path});try{const r=await window.whale.tokens.action('statistics',{...query,...extra,timeZone:zone,page:1,pageSize:5});if(id===detailId.current)setDetail({title,path,result:r});}catch(e){if(id===detailId.current)setDetail({title,path,error:e.message});}}
  async function exportReport(format){setMore(null);try{await window.whale.statisticsExport({...query,timeZone:zone,format,view:page});}catch(e){setError(e.message);}}
  const summary=filters.preset==='custom'?(filters.from||t("开始"))+' — '+(filters.to||t("至今")):rangeName[filters.preset],title={overview:t("工作概览"),projects:t("项目用量"),history:t("历史统计")}[page];
@@ -161,7 +167,7 @@ export function AnalyticsPage({page='overview',settings,revision,onManage,onSave
   page==='overview'&&h('div',{className:'ws-tabs-bar'},h('div',{className:'ui-seg ws-seg',role:'tablist','aria-label':title},...Object.entries({usage:t("用量"),cost:t("费用"),quota:t("额度")}).map(([id,n])=>h('button',{'data-analytics-tab':id,key:id,type:'button',role:'tab','aria-selected':tab===id,className:tab===id?'active':'',onClick:()=>{setTab(id);setMore(null);}},n))),!isQuota&&h('span',{className:'ws-range'},scope)),
   error&&h('div',{className:'ui-alert settings-error',role:'alert'},Icon('alert',{size:16}),h('div',null,h('b',null,t("读取失败：")+error),h('div',{className:'ws-text'},t("已显示的数据可能不完整。")),h('div',{className:'ws-row-btns'},h('button',{className:'ui-btn sm',onClick:()=>setRefresh(v=>v+1)},Icon('retry'),t("重试")),errors.length>0&&h('button',{className:'ui-btn sm ghost',onClick:()=>{if(errorsRef.current){errorsRef.current.open=true;errorsRef.current.scrollIntoView({block:'nearest'});}}},t("查看日志读取问题"))))),
   !isQuota&&monitor?.indexing&&h(IndexBanner,{monitor}),
-  !isQuota&&monitor?.missingRequests>0&&h('div',{className:'ui-alert warn',role:'status'},Icon('alert',{size:16}),h('div',null,monitor.missingRequests+t(" 条请求缺少完整用量，合计为已记录部分。"))),
+  !isQuota&&monitor?.missingRequests>0&&settings?.preferences.showUsageGapNotice!==false&&h(UsageGapNotice,{count:monitor.missingRequests,onDismiss:hideUsageGap}),
   !isQuota&&loading&&!result&&h(Skeleton),report,
   !isQuota&&errors.length>0&&h('details',{className:'ws-details read-errors',ref:errorsRef},h('summary',null,Icon('alert',{size:16}),errors.length+t(" 个日志读取问题")),...errors.slice(0,10).map(e=>h('p',{key:e.path},e.path+' · '+e.message))),
   modal==='adjust'&&h(Adjust,{page,tab,current:filters,result,settings,onApply:save,onClose:()=>setModal(null)}),
