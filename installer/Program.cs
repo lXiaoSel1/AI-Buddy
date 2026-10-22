@@ -17,8 +17,8 @@ internal static class Program {
             using var buffer=new MemoryStream();input.CopyTo(buffer);ManifestBytes=buffer.ToArray();
             Manifest=Manifests.Parse(ManifestBytes,BuildIdentity.ManifestSha256);
             Http=new HttpClient(new SocketsHttpHandler{AllowAutoRedirect=true,MaxAutomaticRedirections=8,AutomaticDecompression=System.Net.DecompressionMethods.None,ConnectTimeout=TimeSpan.FromSeconds(30)}){Timeout=Timeout.InfiniteTimeSpan};
-            Http.DefaultRequestHeaders.UserAgent.ParseAdd("AI-Buddy-Setup/1.8.0");
-            Engine=new(Manifest,ManifestBytes,BuildIdentity.ManifestSha256,new Downloader(Http),new WindowsHost(),Self);
+            Http.DefaultRequestHeaders.UserAgent.ParseAdd("AI-Buddy-Setup/"+ReleaseIdentity.Version);
+            Engine=new(Manifest,ManifestBytes,BuildIdentity.ManifestSha256,new Downloader(Http),new WindowsHost(Argument(args,"roots")),Self);
             if(args.Contains("--headless"))return Task.Run(()=>RunHeadless(args)).GetAwaiter().GetResult();
             Application.Run(new SetupForm(args));return 0;
         } catch(Exception ex) {
@@ -38,9 +38,9 @@ internal static class Program {
             if(command=="rollback")await Engine.Rollback(root,progress,default);
             else if(command=="uninstall")await Engine.Uninstall(root,false,progress,default);
             else {
-                var existing=InstallEngine.Existing(root);var ids=(Argument(args,"characters")??string.Join(',',existing?.Characters??Manifest.Characters.Select(c=>c.Id).ToArray())).Split(',');
-                var initial=Argument(args,"initial")??(existing is not null&&ids.Contains(existing.InitialCharacter)?existing.InitialCharacter:ids.Contains("deepseek")?"deepseek":ids[0]);
-                await Engine.Install(new(root,Argument(args,"cache")??Cache,Argument(args,"edition")??existing?.Edition??Manifest.DefaultEdition,ids,initial,Argument(args,"offline"),args.Contains("--shortcuts"),!args.Contains("--no-launch"),Argument(args,"data"),Argument(args,"pipe")),progress,default);
+                var defaults=InstallEngine.Defaults(root,Manifest);var ids=(Argument(args,"characters")??string.Join(',',defaults.Characters)).Split(',');
+                var initial=Argument(args,"initial")??(ids.Contains(defaults.InitialCharacter)?defaults.InitialCharacter:ids.Contains("deepseek")?"deepseek":ids[0]);
+                await Engine.Install(new(root,Argument(args,"cache")??Cache,Argument(args,"edition")??defaults.Edition,ids,initial,Argument(args,"offline"),args.Contains("--shortcuts"),!args.Contains("--no-launch"),Argument(args,"data"),Argument(args,"pipe")),progress,default);
             }
             Json.Save(receipt,new{ok=true,version=Manifest.AppVersion,command,installation=InstallEngine.Existing(root),events=log.ToArray(),at=DateTimeOffset.UtcNow});return 0;
         }catch(Exception ex){Json.Save(receipt,new{ok=false,error=ex.ToString(),events=log.ToArray(),at=DateTimeOffset.UtcNow});return 1;}

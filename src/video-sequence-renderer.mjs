@@ -62,8 +62,12 @@ export class VideoSequenceRenderer{
  pumpStills(){
   this.staticQueue.sort((a,b)=>a.priority-b.priority||b.order-a.order);
   while(this.staticActive<this.staticConcurrency&&this.staticQueue.length){
-   const job=this.staticQueue.shift(),image=new Image();this.staticActive++;image.src=job.record.src;
-   image.decode().then(async()=>{
+   const job=this.staticQueue.shift(),image=new Image();this.staticActive++;
+   // Direction stills are only read by createImageBitmap, which decodes them itself.
+   // decode() would also keep a full-size compositor copy of every still (M-3).
+   const loaded=job.size?new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=()=>reject(Error('Animation still failed to load'));}):null;
+   image.src=job.record.src;
+   (loaded??image.decode()).then(async()=>{
     if(image.naturalWidth!==job.clip.canvas.width||image.naturalHeight!==job.clip.canvas.height)throw Error('Animation still dimensions differ');
     if(!job.size){if(job.epoch===this.staticEpoch){this.stills.set(job.key,{image,used:++this.serial});this.trimStills();}else image.src='';job.done(image);return;}
     let frame=image;
@@ -142,7 +146,7 @@ export class VideoSequenceRenderer{
  }
  trimStills(){const keep=new Set([...this.targets.values()].filter(s=>s.stillKey).map(s=>s.stillKey));const oldest=[...this.stills].filter(([k])=>!keep.has(k)).sort((a,b)=>a[1].used-b[1].used);while(this.stills.size>this.maxStaticFrames&&oldest.length){const[k,e]=oldest.shift();this.stills.delete(k);e.image.src='';}}
  createSlot(clip){
-  const video=document.createElement('video');video.muted=true;video.loop=true;video.playsInline=true;video.preload='auto';
+  const video=document.createElement('video');video.muted=true;video.loop=clip.loop!==false;video.playsInline=true;video.preload='auto';
   const s={resource:this.resource(clip),clip,video,ready:false,closed:false,serial:0,mediaMs:0,callback:null,seekPending:false,loadStarted:performance.now(),lastSync:0,error:null};
   const loaded=()=>{if(s.closed)return;if(video.videoWidth!==clip.canvas.width||video.videoHeight!==clip.canvas.height){s.error='动画尺寸不一致';return;}s.ready=true;s.serial++;};
   video.addEventListener('loadeddata',loaded);video.addEventListener('error',()=>{if(s.closed)return;s.error=video.error?.message||'动画暂时无法播放';this.errors.set(s.resource,s.error);});
@@ -167,9 +171,9 @@ export class VideoSequenceRenderer{
  seek(slot,ms){if(slot.seekPending||!slot.ready)return;slot.seekPending=true;slot.video.currentTime=Math.max(0,Math.min(slot.video.duration-.001,ms/1000));this.seekCount++;}
  draw(target,sample,{force=false}={}){
   const clip=this.sequences[sample.actionId];if(!clip)return this.fallback.draw(target,sample,{force});if(!target)return false;
-  const state=this.acquire(target,clip),slot=state.slot,elapsed=Math.max(0,sample.elapsedMs??0),phase=elapsed%clip.cycleMs,rate=sample.playbackRate??1,playing=sample.playing!==false&&!sample.reducedMotion;
-  const index=sequenceSampleFrame(clip,sample),direction=clip.directionFrames&&(Number.isFinite(sample.lookAngle)||Number.isInteger(sample.lookIndex));
-  const stillMode=sample.reducedMotion||direction||slot.error||!slot.ready;
+  const state=this.acquire(target,clip),slot=state.slot,elapsed=Math.max(0,sample.elapsedMs??0),phase=clip.loop===false?Math.min(elapsed,clip.cycleMs-.01):elapsed%clip.cycleMs,rate=sample.playbackRate??1,playing=sample.playing!==false&&!sample.reducedMotion&&!(clip.loop===false&&elapsed>=clip.cycleMs-40);
+  const index=sequenceSampleFrame(clip,{...sample,elapsedMs:phase}),direction=clip.directionFrames&&(Number.isFinite(sample.lookAngle)||Number.isInteger(sample.lookIndex));
+  const stillMode=Number.isInteger(sample.staticFrame)||sample.reducedMotion||direction||slot.error||!slot.ready;
   let image,region,shownFrame=index,key;
   if(stillMode){
    slot.video.pause();
@@ -182,7 +186,7 @@ export class VideoSequenceRenderer{
     if(found.index!==index)this.directionApprox++;
     found.entry.used=++this.serial;image=found.entry.image;region=found.entry.region;shownFrame=found.index;key='direction/'+found.key;state.shownDirectionKey=found.key;
    }else{
-    const fixed=sample.reducedMotion?(clip.emotionPeakFrame??0):0;state.stillKey=this.resource(clip)+'/'+fixed;this.clearDirection(state);this.pruneStaticQueue();
+    const fixed=Number.isInteger(sample.staticFrame)?sample.staticFrame:sample.reducedMotion?(clip.emotionPeakFrame??0):0;state.stillKey=this.resource(clip)+'/'+fixed;this.clearDirection(state);this.pruneStaticQueue();
     const cached=this.stills.get(state.stillKey);if(cached){cached.used=++this.serial;image=cached.image;shownFrame=fixed;key='still/'+state.stillKey;}else{void this.still(clip,fixed).catch(()=>{});return false;}
    }
    if(slot.error)target.dataset.sequenceError='动画暂时无法播放';

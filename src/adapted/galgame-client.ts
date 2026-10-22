@@ -1,4 +1,10 @@
 import {t} from '../i18n.mjs';
+import {GalgameTitle} from '../galgame-title.mjs';
+import {GroupHeader} from '../group-header.mjs';
+import {GroupCgCSS} from '../group-cg-ui.mjs';
+import {GroupStageCSS} from '../group-stage-ui.mjs';
+import {CompanionDesignCSS} from '../companion-design.mjs';
+import {CgImageViewer,CgImageViewerCSS} from '../cg-image-viewer.mjs';
 import {isSpriteVisible} from '../character-display.mjs';
 import {messageEmotion,validEmotion} from '../emotions.mjs'
 /**
@@ -16,9 +22,18 @@ import { WHALE_ART as LEGACY_ART } from './art.generated'
 import { CHARACTER_ART } from '../character-catalog.mjs'
 import { ExpressionPortrait, CastPortrait } from './character-portrait'
 import {validPetCharacter} from '../pet-characters.mjs'
+import {plateVars} from '../plate-colors.mjs'
+import {Icon} from '../ui-icons.mjs'
+import {Switch} from '../ui-controls.mjs'
+import {themeAsset,THEMES} from '../appearance.mjs'
+import {THEME_PALETTES} from '../theme-palettes.mjs'
+import {GalgameDesignCSS} from '../galgame-design.mjs'
+import {CompanionCSS,CompanionManager,CompanionGroupStage,CompanionGroupDialogue,LifeRecoveryBanner,activeCompanionGroup,companionCharacterName,companionImage,modelErrorText,modelOutputTruncated} from '../companion-ui.mjs'
 const WHALE_ART = { ...LEGACY_ART, ...CHARACTER_ART }
 
 const CSS = [
+  CgImageViewerCSS,
+  CompanionCSS,
   // ── pet ────────────────────────────────────────────────────────────────
   '.whg-pet{--whg-scale:1.15;--whg-y:0px;position:fixed;right:18px;bottom:124px;width:calc(192px * var(--whg-scale));height:calc(208px * var(--whg-scale));padding:0;border:0;border-radius:18px;background:transparent;cursor:zoom-in;filter:drop-shadow(0 10px 16px rgb(0 0 0 / 36%));transition:width 180ms ease,height 180ms ease,filter 180ms ease;z-index:9999}',
   '.whg-pet[data-mode="running"]{--whg-y:-1456px}',
@@ -28,77 +43,77 @@ const CSS = [
   '.whg-pet[data-mode="waiting"] .whg-pet-sprite{animation-duration:1.35s}',
   '.whg-pet[data-looking="true"] .whg-pet-sprite{animation:none;background-position:var(--whg-look-x) var(--whg-look-y)}',
   '@keyframes whgPetFrames{0%,16.66%{background-position:0 var(--whg-y)}16.67%,33.32%{background-position:-192px var(--whg-y)}33.33%,49.99%{background-position:-384px var(--whg-y)}50%,66.65%{background-position:-576px var(--whg-y)}66.66%,83.32%{background-position:-768px var(--whg-y)}83.33%,99.99%{background-position:-960px var(--whg-y)}100%{background-position:0 var(--whg-y)}}',
-  '.whg-pet-status{position:absolute;right:8px;bottom:-28px;max-width:184px;overflow:hidden;padding:5px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;color:var(--dsw-alias-text-secondary);background:color-mix(in srgb,var(--dsw-alias-bg-base) 88%,transparent);font:12px/1.2 system-ui,sans-serif;text-overflow:ellipsis;white-space:nowrap;opacity:0;transform:translateY(4px);transition:opacity 150ms ease,transform 150ms ease;pointer-events:none}',
+  '.whg-pet-status{position:absolute;right:8px;bottom:-28px;max-width:184px;overflow:hidden;padding:5px 10px;border:1px solid var(--buddy-border);border-radius:999px;color:var(--buddy-muted);background:color-mix(in srgb,var(--buddy-bg) 88%,transparent);font:12px/1.2 system-ui,sans-serif;text-overflow:ellipsis;white-space:nowrap;opacity:0;transform:translateY(4px);transition:opacity 150ms ease,transform 150ms ease;pointer-events:none}',
   '.whg-pet:hover .whg-pet-status,.whg-pet:focus-visible .whg-pet-status{opacity:1;transform:translateY(0)}',
-  '.whg-pet:focus-visible{outline:2px solid var(--dsw-alias-border-l3);outline-offset:4px}',
+  '.whg-pet:focus-visible{outline:2px solid var(--buddy-accent);outline-offset:4px}',
   '@media (max-width:760px){.whg-pet{--whg-scale:.9;right:8px;bottom:106px}}',
   '@media (prefers-reduced-motion:reduce){.whg-pet-sprite{animation:none}}',
   // ── fullscreen VN ──────────────────────────────────────────────────────
-  '.whg-root{position:fixed;inset:0;z-index:8000;font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;user-select:none;pointer-events:auto;overflow:hidden;background:#050b18;color:#eaf5ff}',
-  '.whg-root-tab{position:relative;flex:1 1 0;width:100%;height:100%;min-height:0;box-sizing:border-box;z-index:auto;font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;user-select:none;overflow:hidden;background:#050b18;color:#eaf5ff;border:0;border-radius:0}',
+  '.whg-root{position:fixed;inset:0;z-index:8000;font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;user-select:none;pointer-events:auto;overflow:hidden;background:var(--buddy-bg);color:var(--buddy-text)}',
+  '.whg-root-tab{position:relative;flex:1 1 0;width:100%;height:100%;min-height:0;box-sizing:border-box;z-index:auto;font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;user-select:none;overflow:hidden;background:var(--buddy-bg);color:var(--buddy-text);border:0;border-radius:0}',
   '.whg-root-tab .whg-sprite-wrap{height:88vh;margin-bottom:0}',
   '.whg-root-tab .whg-panel{min-height:20vh;max-height:30vh;bottom:0;border-radius:16px}',
   '.whg-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:brightness(.94)}',
-  '.whg-bg-fallback{background:linear-gradient(180deg,#0a1e3d,#06203f)}',
-  '.whg-vignette{position:absolute;inset:0;background:linear-gradient(180deg,rgba(3,8,20,.4) 0%,rgba(3,8,20,0) 28%,rgba(3,8,20,0) 55%,rgba(3,8,20,.82) 100%);pointer-events:none}',
+  '.whg-bg-fallback{background:linear-gradient(180deg,var(--buddy-surface),var(--buddy-surface))}',
+  '.whg-vignette{position:absolute;inset:0;background:linear-gradient(180deg,color-mix(in srgb,var(--buddy-bg) 40%,transparent) 0%,color-mix(in srgb,var(--buddy-bg) 0%,transparent) 28%,color-mix(in srgb,var(--buddy-bg) 0%,transparent) 55%,color-mix(in srgb,var(--buddy-bg) 82%,transparent) 100%);pointer-events:none}',
   '.whg-top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:10px;padding:14px 20px;z-index:5}',
-  '.whg-title{font-size:17px;font-weight:800;letter-spacing:1px;color:#dcecff;text-shadow:0 2px 12px rgba(0,20,60,.9)}',
+  '.whg-title{font-size:17px;font-weight:800;letter-spacing:1px;color:var(--buddy-accent-text);text-shadow:0 2px 12px rgba(0,20,60,.9)}',
   '.whg-chip-wrap{position:relative;display:flex;min-width:0}',
-  '.whg-chip{display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap;font-size:11px;color:#bcd6f2;background:rgba(6,18,38,.55);border:1px solid rgba(140,200,255,.25);border-radius:999px;padding:4px 10px;font-family:inherit}',
+  '.whg-chip{display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap;font-size:11px;color:var(--buddy-accent-text);background:color-mix(in srgb,var(--buddy-bg) 55%,transparent);border:1px solid color-mix(in srgb,var(--buddy-accent-text) 25%,transparent);border-radius:999px;padding:4px 10px;font-family:inherit}',
   '.whg-chip-button{appearance:none;cursor:pointer;text-align:left;transition:border-color .16s ease,background .16s ease}',
-  '.whg-chip-button:hover,.whg-chip-button[aria-expanded="true"]{border-color:rgba(159,232,255,.58);background:rgba(16,49,72,.82)}',
-  '.whg-chip-button:focus-visible{outline:2px solid #9fe8ff;outline-offset:2px}',
-  '.whg-chip strong{max-width:170px;overflow:hidden;color:#eff9ff;font-weight:700;text-overflow:ellipsis}',
-  '.whg-chip-caret{color:#8bc8da;font-size:9px;transition:transform .16s ease}',
+  '.whg-chip-button:hover,.whg-chip-button[aria-expanded="true"]{border-color:color-mix(in srgb,var(--buddy-accent-text) 58%,transparent);background:color-mix(in srgb,var(--buddy-surface2) 82%,transparent)}',
+  '.whg-chip-button:focus-visible{outline:2px solid var(--buddy-accent-text);outline-offset:2px}',
+  '.whg-chip strong{max-width:170px;overflow:hidden;color:var(--buddy-text);font-weight:700;text-overflow:ellipsis}',
+  '.whg-chip-caret{color:var(--buddy-accent-text);font-size:9px;transition:transform .16s ease}',
   '.whg-chip-button[aria-expanded="true"] .whg-chip-caret{transform:rotate(180deg)}',
-  '.whg-dot{width:7px;height:7px;border-radius:50%;background:#46d98a;box-shadow:0 0 8px #46d98a}',
-  '.whg-dot.off{background:#8aa0bd;box-shadow:none}',
+  '.whg-dot{width:7px;height:7px;border-radius:50%;background:var(--buddy-ok);box-shadow:0 0 8px var(--buddy-ok)}',
+  '.whg-dot.off{background:var(--buddy-surface2);box-shadow:none}',
   '.whg-spacer{flex:1}',
   '.whg-top-actions{display:flex;align-items:center;gap:8px}',
-  '.whg-btn{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);color:#cfe6ff;border-radius:10px;padding:6px 12px;font-size:13px;cursor:pointer;line-height:1.3;font-family:inherit}',
-  '.whg-btn:hover{background:rgba(255,255,255,.18)}',
-  '.whg-btn:focus-visible,.whg-choice:focus-visible,.whg-cg-btn:focus-visible{outline:2px solid #9fe8ff;outline-offset:2px}',
-  '.whg-btn[aria-pressed="true"]{border-color:rgba(126,222,244,.62);background:rgba(68,164,198,.24);color:#effcff}',
-  '.whg-count{display:inline-grid;place-items:center;min-width:16px;height:16px;margin-left:5px;padding:0 4px;border-radius:999px;background:rgba(143,216,239,.18);color:#dff8ff;font:700 10px/1 Consolas,monospace}',
+  '.whg-btn{background:color-mix(in srgb,var(--buddy-text) 10%,transparent);border:1px solid color-mix(in srgb,var(--buddy-text) 18%,transparent);color:var(--buddy-accent-text);border-radius:10px;padding:6px 12px;font-size:13px;cursor:pointer;line-height:1.3;font-family:inherit}',
+  '.whg-btn:hover{background:color-mix(in srgb,var(--buddy-text) 18%,transparent)}',
+  '.whg-btn:focus-visible,.whg-choice:focus-visible,.whg-cg-btn:focus-visible{outline:2px solid var(--buddy-accent-text);outline-offset:2px}',
+  '.whg-btn[aria-pressed="true"]{border-color:color-mix(in srgb,var(--buddy-accent-text) 62%,transparent);background:color-mix(in srgb,var(--buddy-accent) 20%,var(--buddy-raised));color:var(--buddy-text)}',
+  '.whg-count{display:inline-grid;place-items:center;min-width:16px;height:16px;margin-left:5px;padding:0 4px;border-radius:999px;background:color-mix(in srgb,var(--buddy-accent) 18%,transparent);color:var(--buddy-accent-text);font:700 10px/1 Consolas,monospace}',
   '.whg-btn:disabled{opacity:.45;cursor:default}',
-  '.whg-btn.back{background:linear-gradient(135deg,#2f7fd6,#7a5fd6);border:none;color:#fff;font-weight:700;padding:8px 16px;font-size:14px}',
-  '.whg-picker{position:absolute;top:calc(100% + 8px);left:0;z-index:18;width:min(330px,calc(100vw - 28px));max-height:min(430px,70vh);overflow:auto;padding:7px;border:1px solid rgba(215,182,108,.48);border-radius:14px;background:linear-gradient(180deg,rgba(7,30,45,.985),rgba(3,17,31,.995));box-shadow:0 20px 55px rgba(0,5,16,.72);scrollbar-color:rgba(143,216,239,.45) transparent}',
+  '.whg-btn.back{background:linear-gradient(135deg,var(--buddy-accent),var(--buddy-accent));border:none;color:var(--buddy-on-accent);font-weight:700;padding:8px 16px;font-size:14px}',
+  '.whg-picker{position:absolute;top:calc(100% + 8px);left:0;z-index:18;width:min(330px,calc(100vw - 28px));max-height:min(430px,70vh);overflow:auto;padding:7px;border:1px solid color-mix(in srgb,var(--buddy-a2) 48%,transparent);border-radius:14px;background:linear-gradient(180deg,color-mix(in srgb,var(--buddy-surface) 99%,transparent),color-mix(in srgb,var(--buddy-bg) 100%,transparent));box-shadow:0 20px 55px rgba(0,5,16,.72);scrollbar-color:rgba(143,216,239,.45) transparent}',
   '.whg-picker.right{right:0;left:auto}',
-  '.whg-picker.whg-picker-floating{box-sizing:border-box;overflow-x:hidden;overscroll-behavior:contain;color:#dff3ff;font-family:inherit;isolation:isolate}',
-  '.whg-picker-floating .whg-bg-preview,.whg-picker-floating .whg-bg-builtin-img{object-fit:contain;background:#08182b}',
+  '.whg-picker.whg-picker-floating{box-sizing:border-box;overflow-x:hidden;overscroll-behavior:contain;color:var(--buddy-accent-text);font-family:inherit;isolation:isolate}',
+  '.whg-picker-floating .whg-bg-preview,.whg-picker-floating .whg-bg-builtin-img{object-fit:contain;background:var(--buddy-side-bg)}',
   '.whg-picker-floating .whg-sprite-preview-shell{height:min(360px,48vh,max(100px,calc(var(--whg-picker-height,430px) - 158px)))}',
   '.whg-picker-floating .whg-sprite-preview{position:absolute;inset:0;max-width:100%;max-height:100%;object-fit:contain}',
-  '.whg-picker-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 9px 9px;color:#d7c48f;font:700 10px/1.3 Consolas,monospace;letter-spacing:1.4px}',
-  '.whg-picker-note{padding:7px 9px;color:#8fb1c5;font-size:11px;line-height:1.55}',
-  '.whg-picker-option{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;width:100%;padding:9px 10px;border:0;border-radius:9px;background:transparent;color:#dff3ff;cursor:pointer;text-align:left;font-family:inherit}',
-  '.whg-picker-option:hover,.whg-picker-option:focus-visible{background:rgba(143,216,239,.12);outline:none}',
-  '.whg-picker-option[aria-selected="true"]{background:linear-gradient(90deg,rgba(47,127,214,.28),rgba(215,182,108,.12));color:#fff}',
+  '.whg-picker-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 9px 9px;color:var(--buddy-accent-text);font:700 10px/1.3 Consolas,monospace;letter-spacing:1.4px}',
+  '.whg-picker-note{padding:7px 9px;color:var(--buddy-muted);font-size:11px;line-height:1.55}',
+  '.whg-picker-option{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;width:100%;padding:9px 10px;border:0;border-radius:9px;background:transparent;color:var(--buddy-accent-text);cursor:pointer;text-align:left;font-family:inherit}',
+  '.whg-picker-option:hover,.whg-picker-option:focus-visible{background:color-mix(in srgb,var(--buddy-accent) 12%,transparent);outline:none}',
+  '.whg-picker-option[aria-selected="true"]{background:linear-gradient(90deg,color-mix(in srgb,var(--buddy-accent) 28%,transparent),color-mix(in srgb,var(--buddy-a2) 12%,transparent));color:var(--buddy-text)}',
   '.whg-picker-option-main{display:block;overflow:hidden;font-size:12px;font-weight:700;text-overflow:ellipsis;white-space:nowrap}',
-  '.whg-picker-option-sub{display:block;overflow:hidden;margin-top:2px;color:#83a9bd;font:10px/1.35 Consolas,monospace;text-overflow:ellipsis;white-space:nowrap}',
-  '.whg-picker-check{color:#f0d99d;font-size:12px}',
+  '.whg-picker-option-sub{display:block;overflow:hidden;margin-top:2px;color:var(--buddy-muted);font:10px/1.35 Consolas,monospace;text-overflow:ellipsis;white-space:nowrap}',
+  '.whg-picker-check{color:var(--buddy-accent-text);font-size:12px}',
   '.whg-bg-picker{width:min(360px,calc(100vw - 28px));padding:12px}',
-  '.whg-bg-preview{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;margin:2px 0 10px;border:1px solid rgba(143,216,239,.28);border-radius:10px;background:#020a14}',
-  '.whg-bg-empty{display:grid;place-items:center;width:100%;aspect-ratio:16/9;margin:2px 0 10px;border:1px dashed rgba(143,216,239,.28);border-radius:10px;color:#7f9cae;font-size:11px;background:rgba(1,10,20,.25)}',
-  '.whg-bg-builtins{margin:2px 0 12px;padding:10px;border:1px solid rgba(143,216,239,.18);border-radius:11px;background:rgba(1,10,20,.24)}',
-  '.whg-bg-builtins-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;color:#dff3ff;font-size:11px;font-weight:700}',
-  '.whg-bg-builtins-role{max-width:170px;overflow:hidden;color:#83a9bd;font:10px/1.3 Consolas,monospace;text-overflow:ellipsis;white-space:nowrap}',
+  '.whg-bg-preview{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;margin:2px 0 10px;border:1px solid color-mix(in srgb,var(--buddy-accent-text) 28%,transparent);border-radius:10px;background:var(--buddy-bg)}',
+  '.whg-bg-empty{display:grid;place-items:center;width:100%;aspect-ratio:16/9;margin:2px 0 10px;border:1px dashed color-mix(in srgb,var(--buddy-accent-text) 28%,transparent);border-radius:10px;color:var(--buddy-muted);font-size:11px;background:color-mix(in srgb,var(--buddy-bg) 25%,transparent)}',
+  '.whg-bg-builtins{margin:2px 0 12px;padding:10px;border:1px solid color-mix(in srgb,var(--buddy-accent-text) 18%,transparent);border-radius:11px;background:color-mix(in srgb,var(--buddy-bg) 24%,transparent)}',
+  '.whg-bg-builtins-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;color:var(--buddy-accent-text);font-size:11px;font-weight:700}',
+  '.whg-bg-builtins-role{max-width:170px;overflow:hidden;color:var(--buddy-muted);font:10px/1.3 Consolas,monospace;text-overflow:ellipsis;white-space:nowrap}',
   '.whg-bg-builtins-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}',
-  '.whg-bg-builtin{position:relative;min-width:0;overflow:hidden;padding:0;border:1px solid rgba(143,216,239,.2);border-radius:9px;background:#041422;color:#dff3ff;cursor:pointer;text-align:left;font-family:inherit}',
-  '.whg-bg-builtin:hover,.whg-bg-builtin:focus-visible{border-color:rgba(143,216,239,.58);outline:none}',
-  '.whg-bg-builtin[aria-pressed="true"]{border-color:rgba(215,182,108,.72);box-shadow:0 0 0 1px rgba(215,182,108,.18)}',
+  '.whg-bg-builtin{position:relative;min-width:0;overflow:hidden;padding:0;border:1px solid color-mix(in srgb,var(--buddy-accent-text) 20%,transparent);border-radius:9px;background:var(--buddy-bg);color:var(--buddy-accent-text);cursor:pointer;text-align:left;font-family:inherit}',
+  '.whg-bg-builtin:hover,.whg-bg-builtin:focus-visible{border-color:color-mix(in srgb,var(--buddy-accent-text) 58%,transparent);outline:none}',
+  '.whg-bg-builtin[aria-pressed="true"]{border-color:color-mix(in srgb,var(--buddy-a2) 72%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--buddy-a2) 18%,transparent)}',
   '.whg-bg-builtin:only-child{grid-column:1/-1}',
   '.whg-bg-builtin:disabled{opacity:.48;cursor:default}',
-  '.whg-bg-builtin-img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:#020a14}',
-  '.whg-bg-builtin-fallback{display:grid;place-items:center;color:#607f91;font:10px/1.3 Consolas,monospace}',
+  '.whg-bg-builtin-img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:var(--buddy-bg)}',
+  '.whg-bg-builtin-fallback{display:grid;place-items:center;color:var(--buddy-muted);font:10px/1.3 Consolas,monospace}',
   '.whg-bg-builtin-meta{display:flex;align-items:center;gap:5px;min-width:0;padding:7px 8px}',
   '.whg-bg-builtin-name{min-width:0;flex:1;overflow:hidden;font-size:11px;font-weight:700;text-overflow:ellipsis;white-space:nowrap}',
-  '.whg-bg-builtin-tag{flex:none;color:#d7c48f;font:700 9px/1 Consolas,monospace}',
-  '.whg-bg-override-note{margin:-3px 0 9px;padding:7px 9px;border-left:2px solid rgba(215,182,108,.52);background:rgba(215,182,108,.07);color:#b9a978;font-size:10px;line-height:1.5}',
+  '.whg-bg-builtin-tag{flex:none;color:var(--buddy-accent-text);font:700 9px/1 Consolas,monospace}',
+  '.whg-bg-override-note{margin:-3px 0 9px;padding:7px 9px;border-left:2px solid color-mix(in srgb,var(--buddy-a2) 52%,transparent);background:color-mix(in srgb,var(--buddy-a2) 7%,transparent);color:var(--buddy-muted);font-size:10px;line-height:1.5}',
   '.whg-bg-actions{display:flex;flex-wrap:wrap;gap:7px}',
   '.whg-bg-file{display:none}',
-  '.whg-bg-error{margin:8px 1px 0;color:#ffb5bd;font-size:11px;line-height:1.5}',
+  '.whg-bg-error{margin:8px 1px 0;color:var(--buddy-err);font-size:11px;line-height:1.5}',
   '.whg-sprite-picker{width:min(340px,calc(100vw - 28px));padding:12px}',
-  '.whg-sprite-preview-shell{position:relative;display:grid;place-items:end center;width:100%;height:min(48vh,360px);overflow:hidden;margin:2px 0 10px;border:1px solid rgba(143,216,239,.28);border-radius:12px;background-color:#061725;background-image:linear-gradient(45deg,rgba(143,216,239,.055) 25%,transparent 25%),linear-gradient(-45deg,rgba(143,216,239,.055) 25%,transparent 25%),linear-gradient(45deg,transparent 75%,rgba(143,216,239,.055) 75%),linear-gradient(-45deg,transparent 75%,rgba(143,216,239,.055) 75%);background-position:0 0,0 8px,8px -8px,-8px 0;background-size:16px 16px;box-shadow:inset 0 -45px 70px rgba(0,8,18,.34)}',
+  '.whg-sprite-preview-shell{position:relative;display:grid;place-items:end center;width:100%;height:min(48vh,360px);overflow:hidden;margin:2px 0 10px;border:1px solid color-mix(in srgb,var(--buddy-accent-text) 28%,transparent);border-radius:12px;background-color:var(--buddy-side-bg);background-image:linear-gradient(45deg,color-mix(in srgb,var(--buddy-accent) 6%,transparent) 25%,transparent 25%),linear-gradient(-45deg,color-mix(in srgb,var(--buddy-accent) 6%,transparent) 25%,transparent 25%),linear-gradient(45deg,transparent 75%,color-mix(in srgb,var(--buddy-accent) 6%,transparent) 75%),linear-gradient(-45deg,transparent 75%,color-mix(in srgb,var(--buddy-accent) 6%,transparent) 75%);background-position:0 0,0 8px,8px -8px,-8px 0;background-size:16px 16px;box-shadow:inset 0 -45px 70px rgba(0,8,18,.34)}',
   '.whg-sprite-preview{display:block;width:100%;height:100%;object-fit:contain;object-position:center bottom;filter:drop-shadow(0 12px 24px rgba(0,8,24,.5))}',
   '.whg-sprite-custom{max-width:min(70vw,100%);object-fit:contain;object-position:center bottom}',
   '.whg-stage{position:absolute;inset:0;z-index:2;pointer-events:none;display:flex;align-items:flex-end;justify-content:center}',
@@ -114,152 +129,152 @@ const CSS = [
   '.whg-cast-slot[data-active="false"]{filter:brightness(.5) saturate(.75);transform:scale(.92) translateY(2%);opacity:.85}',
   '.whg-cast-slot[data-active="true"]{filter:none;transform:scale(1)}',
   '.whg-cast-slot[data-lead="true"]{height:88vh;z-index:1}',
-  '.whg-cast-name{position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);padding:2px 10px;border-radius:10px;background:rgba(6,18,38,.72);font-size:12px;white-space:nowrap}',
-  '.whg-side-badge{display:inline-flex;align-items:center;gap:5px;margin-right:8px;padding:2px 9px;border-radius:10px;background:rgba(255,190,120,.16);border:1px solid rgba(255,190,120,.4);color:#ffd9a8;font-size:12px}',
+  '.whg-cast-name{position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);padding:2px 10px;border-radius:10px;background:color-mix(in srgb,var(--buddy-bg) 72%,transparent);font-size:12px;white-space:nowrap}',
+  '.whg-side-badge{display:inline-flex;align-items:center;gap:5px;margin-right:8px;padding:2px 9px;border-radius:10px;background:color-mix(in srgb,var(--buddy-a2) 16%,transparent);border:1px solid color-mix(in srgb,var(--buddy-a2) 40%,transparent);color:var(--buddy-accent-text);font-size:12px}',
   '.whg-side-seed{margin:2px 0 8px;font-size:12px;opacity:.72;line-height:1.5}',
   '.whg-skit-picker{width:min(320px,calc(100vw - 28px));padding:12px}',
   '.whg-skit-picker .whg-input{width:100%;margin-bottom:8px}',
   '.whg-skit-start{width:100%}',
   '.whg-side-sources{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}',
-  '.whg-side-sources a{font-size:11px;color:#9fd4ff;opacity:.8;text-decoration:none;border-bottom:1px dotted rgba(159,212,255,.5)}',
+  '.whg-side-sources a{font-size:11px;color:var(--buddy-accent-text);opacity:.8;text-decoration:none;border-bottom:1px dotted color-mix(in srgb,var(--buddy-accent-text) 50%,transparent)}',
   '@media (max-width:720px){.whg-cast-slot{max-width:48%;height:70vh}.whg-cast-slot[data-lead="true"]{height:74vh}.whg-cast-slot[data-overflow="true"]{display:none}}',
-  '.whg-sprite-portrait{height:34vh;width:auto;border-radius:22px;box-shadow:0 10px 50px rgba(0,10,30,.7);background:rgba(6,18,38,.35)}',
+  '.whg-sprite-portrait{height:34vh;width:auto;border-radius:22px;box-shadow:0 10px 50px rgba(0,10,30,.7);background:color-mix(in srgb,var(--buddy-bg) 35%,transparent)}',
   '.whg-mood-happy .whg-sprite{filter:drop-shadow(0 18px 40px rgba(0,10,30,.65)) brightness(1.1) saturate(1.2)}',
   '.whg-mood-shy .whg-sprite{filter:drop-shadow(0 18px 40px rgba(0,10,30,.65)) brightness(1.04) saturate(1.25) hue-rotate(-12deg)}',
   '.whg-mood-angry .whg-sprite{filter:drop-shadow(0 18px 40px rgba(0,10,30,.65)) saturate(1.15) contrast(1.06) hue-rotate(-26deg)}',
-  '.whg-blush{position:absolute;left:14%;top:16%;width:72%;height:28%;background:radial-gradient(ellipse at center,rgba(255,120,160,.9),transparent 70%);border-radius:50%;mix-blend-mode:screen;transition:opacity .5s ease}',
+  '.whg-blush{position:absolute;left:14%;top:16%;width:72%;height:28%;background:radial-gradient(ellipse at center,color-mix(in srgb,var(--buddy-accent) 90%,transparent),transparent 70%);border-radius:50%;mix-blend-mode:screen;transition:opacity .5s ease}',
   '.whg-sprite-fallback{height:100%;display:flex;align-items:center;font-size:20vh;filter:drop-shadow(0 18px 40px rgba(0,10,30,.6))}',
-  '.whg-panel{position:absolute;left:5vw;right:5vw;bottom:2.6vh;min-height:26vh;max-height:38vh;background:linear-gradient(180deg,rgba(8,20,42,.9),rgba(4,12,28,.94));border:1px solid rgba(140,200,255,.22);border-radius:22px;backdrop-filter:blur(12px);padding:26px 30px 18px;z-index:4;box-shadow:0 24px 60px rgba(0,8,24,.6);display:flex;flex-direction:column}',
-  '.whg-plate{position:absolute;top:-17px;left:26px;padding:6px 20px;border-radius:999px;font-weight:800;font-size:15px;color:#04121f;letter-spacing:2px;box-shadow:0 4px 16px rgba(0,10,30,.4)}',
-  '.whg-plate.user{background:#ff9cc8}',
-  '.whg-plate.narrator{background:#8fb4dd}',
-  '.whg-level{position:absolute;top:14px;right:24px;display:flex;align-items:center;gap:8px;font-size:12px;color:#a9c6e8}',
-  '.whg-level-track{width:140px;height:6px;border-radius:3px;background:rgba(255,255,255,.14);overflow:hidden}',
-  '.whg-level-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,#4aa8ff,#ff7ab8);transition:width .6s ease}',
+  '.whg-panel{position:absolute;left:5vw;right:5vw;bottom:2.6vh;min-height:26vh;max-height:38vh;background:linear-gradient(180deg,color-mix(in srgb,var(--buddy-side-bg) 90%,transparent),color-mix(in srgb,var(--buddy-bg) 94%,transparent));border:1px solid color-mix(in srgb,var(--buddy-accent-text) 22%,transparent);border-radius:22px;backdrop-filter:blur(12px);padding:26px 30px 18px;z-index:4;box-shadow:0 24px 60px rgba(0,8,24,.6);display:flex;flex-direction:column}',
+  '.whg-plate{position:absolute;top:-17px;left:26px;padding:6px 20px;border-radius:999px;font-weight:800;font-size:15px;background:var(--plate-bg,var(--buddy-plate-bg));color:var(--plate-text,var(--buddy-plate-text));letter-spacing:2px;box-shadow:0 4px 16px rgba(0,10,30,.4)}',
+  '.whg-plate.user{}',
+  '.whg-plate.narrator{font-style:italic}',
+  '.whg-level{position:absolute;top:14px;right:24px;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--buddy-accent-text)}',
+  '.whg-level-track{width:140px;height:6px;border-radius:3px;background:color-mix(in srgb,var(--buddy-text) 14%,transparent);overflow:hidden}',
+  '.whg-level-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--buddy-accent),var(--buddy-accent));transition:width .6s ease}',
   '.whg-line-now{font-size:clamp(16px,1.7vw,22px);line-height:1.8;animation:whgIn .45s ease;padding-top:6px}',
-  '.whg-line-now.narrator{color:#8fb4dd;font-style:italic;font-size:clamp(14px,1.4vw,18px)}',
-  '.whg-line-now.user{color:#ffd9ec}',
+  '.whg-line-now.narrator{color:var(--buddy-accent-text);font-style:italic;font-size:clamp(14px,1.4vw,18px)}',
+  '.whg-line-now.user{color:var(--buddy-accent-text)}',
   '@keyframes whgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}',
-  '.whg-fallback-note{font-size:11px;color:#e8b04b;margin-top:6px}',
+  '.whg-fallback-note{font-size:11px;color:var(--buddy-warn);margin-top:6px}',
   '.whg-choices{display:flex;flex-direction:column;gap:8px;margin-top:10px}',
-  '.whg-choice{background:rgba(140,200,255,.1);border:1px solid rgba(140,200,255,.35);color:#dcebff;border-radius:14px;padding:9px 16px;font-size:clamp(13px,1.3vw,16px);cursor:pointer;text-align:left;line-height:1.5;font-family:inherit}',
-  '.whg-choice:hover{background:rgba(140,200,255,.22);border-color:rgba(160,215,255,.65)}',
+  '.whg-choice{background:color-mix(in srgb,var(--buddy-accent) 10%,transparent);border:1px solid color-mix(in srgb,var(--buddy-accent-text) 35%,transparent);color:var(--buddy-accent-text);border-radius:14px;padding:9px 16px;font-size:clamp(13px,1.3vw,16px);cursor:pointer;text-align:left;line-height:1.5;font-family:inherit}',
+  '.whg-choice:hover{background:color-mix(in srgb,var(--buddy-accent) 22%,transparent);border-color:color-mix(in srgb,var(--buddy-accent-text) 65%,transparent)}',
   '.whg-choice:disabled{opacity:.5;cursor:default}',
   '.whg-input-row{display:flex;gap:8px;margin-top:10px}',
-  '.whg-input{flex:1;background:rgba(255,255,255,.09);border:1px solid rgba(140,200,255,.32);color:#eaf5ff;border-radius:14px;padding:10px 14px;font-size:clamp(13px,1.3vw,16px);outline:none;font-family:inherit;min-width:0}',
-  '.whg-input:focus{border-color:rgba(160,215,255,.75)}',
-  '.whg-send{background:linear-gradient(135deg,#2f7fd6,#7a5fd6);border:none;color:#fff;border-radius:14px;padding:0 20px;font-size:14px;cursor:pointer;font-weight:700;font-family:inherit}',
+  '.whg-input{flex:1;background:color-mix(in srgb,var(--buddy-text) 9%,transparent);border:1px solid color-mix(in srgb,var(--buddy-accent-text) 32%,transparent);color:var(--buddy-text);border-radius:14px;padding:10px 14px;font-size:clamp(13px,1.3vw,16px);outline:none;font-family:inherit;min-width:0}',
+  '.whg-input:focus{border-color:color-mix(in srgb,var(--buddy-accent-text) 75%,transparent)}',
+  '.whg-send{background:linear-gradient(135deg,var(--buddy-accent),var(--buddy-accent));border:none;color:var(--buddy-on-accent);border-radius:14px;padding:0 20px;font-size:14px;cursor:pointer;font-weight:700;font-family:inherit}',
   '.whg-send:disabled{opacity:.5;cursor:default}',
   // ── CG reward ──────────────────────────────────────────────────────────
-  '.whg-cg-backdrop{position:fixed;inset:0;z-index:9500;background:rgba(2,6,18,.85);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:18px;backdrop-filter:blur(6px)}',
-  '.whg-cg-img{max-width:80vw;max-height:72vh;border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.7);border:2px solid rgba(140,200,255,.35)}',
-  '.whg-cg-title{font-size:18px;font-weight:800;color:#dcecff;letter-spacing:1px}',
+  '.whg-cg-backdrop{position:fixed;inset:0;z-index:9500;background:color-mix(in srgb,var(--buddy-bg) 85%,transparent);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:18px;backdrop-filter:blur(6px)}',
+  '.whg-cg-img{max-width:80vw;max-height:72vh;border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.7);border:2px solid color-mix(in srgb,var(--buddy-accent-text) 35%,transparent)}',
+  '.whg-cg-title{font-size:18px;font-weight:800;color:var(--buddy-accent-text);letter-spacing:1px}',
   '.whg-cg-btns{display:flex;gap:12px}',
-  '.whg-cg-btn{background:linear-gradient(135deg,#2f7fd6,#7a5fd6);border:none;color:#fff;border-radius:12px;padding:9px 18px;font-size:14px;cursor:pointer;font-weight:700;font-family:inherit}',
-  '.whg-cg-btn.alt{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#dcebff}',
-  '.whg-toast{position:fixed;right:24px;bottom:24px;z-index:9600;background:rgba(6,18,38,.9);border:1px solid rgba(140,200,255,.3);color:#dcebff;border-radius:14px;padding:12px 18px;font-size:13px;font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;box-shadow:0 12px 40px rgba(0,8,24,.6);max-width:340px}',
+  '.whg-cg-btn{background:linear-gradient(135deg,var(--buddy-accent),var(--buddy-accent));border:none;color:var(--buddy-on-accent);border-radius:12px;padding:9px 18px;font-size:14px;cursor:pointer;font-weight:700;font-family:inherit}',
+  '.whg-cg-btn.alt{background:color-mix(in srgb,var(--buddy-text) 12%,transparent);border:1px solid color-mix(in srgb,var(--buddy-text) 25%,transparent);color:var(--buddy-accent-text)}',
+  '.whg-toast{position:fixed;right:24px;bottom:24px;z-index:9600;background:color-mix(in srgb,var(--buddy-bg) 90%,transparent);border:1px solid color-mix(in srgb,var(--buddy-accent-text) 30%,transparent);color:var(--buddy-accent-text);border-radius:14px;padding:12px 18px;font-size:13px;font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;box-shadow:0 12px 40px rgba(0,8,24,.6);max-width:340px}',
   // ── deep-sea archive cabinet ───────────────────────────────────────────
-  '.whg-archive-scrim{position:absolute;inset:0;z-index:20;background:linear-gradient(90deg,rgba(1,7,16,.26),rgba(1,7,16,.72));display:flex;justify-content:flex-end;animation:whgArchiveFade .18s ease}',
-  '.whg-archive{--whg-brass:#d7b66c;position:relative;box-sizing:border-box;flex:none;min-width:0;width:min(470px,calc(100% - 42px));height:100%;padding:0;overflow:visible;color:#eaf7ff;background:linear-gradient(180deg,rgba(7,30,45,.985),rgba(3,17,31,.995));border-left:1px solid rgba(215,182,108,.58);box-shadow:-24px 0 70px rgba(0,5,16,.68),inset 8px 0 24px rgba(27,111,137,.08);display:flex;flex-direction:column;animation:whgArchiveSlide .28s cubic-bezier(.2,.8,.2,1)}',
-  '.whg-archive:before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.2;background:repeating-linear-gradient(180deg,transparent 0,transparent 46px,rgba(130,216,239,.13) 47px,transparent 48px)}',
-  '.whg-archive-spine{position:absolute;left:-33px;top:92px;width:32px;padding:14px 0;border:1px solid rgba(215,182,108,.5);border-right:0;border-radius:9px 0 0 9px;background:#09283a;color:#d7c48f;writing-mode:vertical-rl;text-orientation:mixed;font:700 10px/1 Consolas,monospace;letter-spacing:3px;text-align:center;box-shadow:-8px 8px 22px rgba(0,5,16,.35)}',
-  '.whg-archive-head{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) 32px;flex:none;height:auto;align-items:start;gap:14px;padding:24px 24px 18px;border-bottom:1px solid rgba(215,182,108,.32)}',
+  '.whg-archive-scrim{position:absolute;inset:0;z-index:20;background:linear-gradient(90deg,color-mix(in srgb,var(--buddy-bg) 26%,transparent),color-mix(in srgb,var(--buddy-bg) 72%,transparent));display:flex;justify-content:flex-end;animation:whgArchiveFade .18s ease}',
+  '.whg-archive{--whg-brass:#d7b66c;position:relative;box-sizing:border-box;flex:none;min-width:0;width:min(470px,calc(100% - 42px));height:100%;padding:0;overflow:visible;color:var(--buddy-text);background:linear-gradient(180deg,color-mix(in srgb,var(--buddy-surface) 99%,transparent),color-mix(in srgb,var(--buddy-bg) 100%,transparent));border-left:1px solid color-mix(in srgb,var(--buddy-a2) 58%,transparent);box-shadow:-24px 0 70px rgba(0,5,16,.68),inset 8px 0 24px color-mix(in srgb,var(--buddy-accent) 8%,transparent);display:flex;flex-direction:column;animation:whgArchiveSlide .28s cubic-bezier(.2,.8,.2,1)}',
+  '.whg-archive:before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.2;background:repeating-linear-gradient(180deg,transparent 0,transparent 46px,color-mix(in srgb,var(--buddy-accent) 13%,transparent) 47px,transparent 48px)}',
+  '.whg-archive-spine{position:absolute;left:-33px;top:92px;width:32px;padding:14px 0;border:1px solid color-mix(in srgb,var(--buddy-a2) 50%,transparent);border-right:0;border-radius:9px 0 0 9px;background:var(--buddy-surface2);color:var(--buddy-accent-text);writing-mode:vertical-rl;text-orientation:mixed;font:700 10px/1 Consolas,monospace;letter-spacing:3px;text-align:center;box-shadow:-8px 8px 22px rgba(0,5,16,.35)}',
+  '.whg-archive-head{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) 32px;flex:none;height:auto;align-items:start;gap:14px;padding:24px 24px 18px;border-bottom:1px solid color-mix(in srgb,var(--buddy-a2) 32%,transparent)}',
   '.whg-archive-heading{display:block;grid-area:1/1;min-width:0}',
-  '.whg-archive-kicker{display:block;margin-bottom:5px;overflow-wrap:anywhere;color:#8fd8e9;font:700 10px/1.4 Consolas,"SFMono-Regular",monospace;letter-spacing:2.3px;text-transform:uppercase}',
-  '.whg-archive-title{margin:0;white-space:nowrap;color:#f3fbff;font-family:"STSong","Songti SC",Georgia,serif;font-size:24px;font-weight:700;line-height:1.35;letter-spacing:1px}',
+  '.whg-archive-kicker{display:block;margin-bottom:5px;overflow-wrap:anywhere;color:var(--buddy-accent-text);font:700 10px/1.4 Consolas,"SFMono-Regular",monospace;letter-spacing:2.3px;text-transform:uppercase}',
+  '.whg-archive-title{margin:0;white-space:nowrap;color:var(--buddy-text);font-family:"STSong","Songti SC",Georgia,serif;font-size:24px;font-weight:700;line-height:1.35;letter-spacing:1px}',
   '.whg-archive-actions{display:flex;grid-column:1/-1;min-width:0;flex-wrap:wrap;gap:8px}',
   '.whg-archive-actions .whg-btn{max-width:100%;white-space:normal;overflow-wrap:anywhere}',
   '.whg-archive-actions .whg-archive-tabs{margin-top:0;flex-wrap:wrap}',
   '.whg-archive-tabs{display:flex;gap:6px;margin-top:10px}',
-  '.whg-archive-tab{padding:4px 12px;border:1px solid rgba(143,216,239,.28);border-radius:999px;background:transparent;color:#9dc4dd;font-size:12px;font-family:inherit;cursor:pointer}',
-  '.whg-archive-tab:hover{border-color:rgba(160,215,255,.6);color:#dcebff}',
-  '.whg-archive-tab.active{border-color:rgba(215,182,108,.6);background:rgba(215,182,108,.16);color:#f7e6bd}',
-  '.whg-archive-tab:focus-visible{outline:2px solid #9fe8ff;outline-offset:2px}',
-  '.whg-archive-close{display:grid;grid-area:1/2;place-items:center;flex:none;width:32px;height:32px;border:1px solid rgba(215,182,108,.36);border-radius:50%;background:rgba(3,14,25,.5);color:#dcefff;cursor:pointer;font-size:18px}',
-  '.whg-archive-close:hover{background:rgba(130,216,239,.13)}',
-  '.whg-archive-close:focus-visible,.whg-gallery-card:focus-visible,.whg-archive-back:focus-visible{outline:2px solid #9fe8ff;outline-offset:2px}',
+  '.whg-archive-tab{padding:4px 12px;border:1px solid color-mix(in srgb,var(--buddy-accent-text) 28%,transparent);border-radius:999px;background:transparent;color:var(--buddy-accent-text);font-size:12px;font-family:inherit;cursor:pointer}',
+  '.whg-archive-tab:hover{border-color:color-mix(in srgb,var(--buddy-accent-text) 60%,transparent);color:var(--buddy-accent-text)}',
+  '.whg-archive-tab.active{border-color:color-mix(in srgb,var(--buddy-a2) 60%,transparent);background:color-mix(in srgb,var(--buddy-a2) 16%,transparent);color:var(--buddy-accent-text)}',
+  '.whg-archive-tab:focus-visible{outline:2px solid var(--buddy-accent-text);outline-offset:2px}',
+  '.whg-archive-close{display:grid;grid-area:1/2;place-items:center;flex:none;width:32px;height:32px;border:1px solid color-mix(in srgb,var(--buddy-a2) 36%,transparent);border-radius:50%;background:color-mix(in srgb,var(--buddy-bg) 50%,transparent);color:var(--buddy-accent-text);cursor:pointer;font-size:18px}',
+  '.whg-archive-close:hover{background:color-mix(in srgb,var(--buddy-accent) 13%,transparent)}',
+  '.whg-archive-close:focus-visible,.whg-gallery-card:focus-visible,.whg-archive-back:focus-visible{outline:2px solid var(--buddy-accent-text);outline-offset:2px}',
   '.whg-archive-body{position:relative;z-index:1;min-height:0;min-width:0;flex:1;overflow-y:auto;overscroll-behavior:contain;padding:18px 22px 28px;scrollbar-color:rgba(143,216,239,.45) transparent}',
-  '.whg-archive-empty{display:grid;place-items:center;min-height:220px;padding:24px;color:#8fb1c5;text-align:center;font-size:13px;line-height:1.8;border:1px dashed rgba(143,216,239,.22);border-radius:14px;background:rgba(1,10,20,.18)}',
-  '.whg-archive-error{padding:14px;border:1px solid rgba(255,154,154,.3);border-radius:12px;background:rgba(102,25,35,.2);color:#ffc1c1;font-size:13px;line-height:1.6}',
+  '.whg-archive-empty{display:grid;place-items:center;min-height:220px;padding:24px;color:var(--buddy-muted);text-align:center;font-size:13px;line-height:1.8;border:1px dashed color-mix(in srgb,var(--buddy-accent-text) 22%,transparent);border-radius:14px;background:color-mix(in srgb,var(--buddy-bg) 18%,transparent)}',
+  '.whg-archive-error{padding:14px;border:1px solid color-mix(in srgb,var(--buddy-err) 30%,transparent);border-radius:12px;background:color-mix(in srgb,var(--buddy-surface2) 20%,transparent);color:var(--buddy-err);font-size:13px;line-height:1.6}',
   '.whg-archive-error .whg-btn{display:block;margin-top:10px}',
   '.whg-history{display:flex;flex-direction:column;gap:12px;user-select:text}',
   '.whg-history-row{display:grid;grid-template-columns:48px minmax(0,1fr);gap:10px;align-items:start}',
   '.whg-skit-log{display:flex;flex-direction:column;gap:20px}',
-  '.whg-skit{padding:12px 14px;border:1px solid rgba(143,216,239,.2);border-radius:14px;background:rgba(8,22,44,.42)}',
+  '.whg-skit{padding:12px 14px;border:1px solid color-mix(in srgb,var(--buddy-accent-text) 20%,transparent);border-radius:14px;background:color-mix(in srgb,var(--buddy-side-bg) 42%,transparent)}',
   '.whg-skit-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:4px}',
   '.whg-skit-cast{display:flex;flex-wrap:wrap;gap:8px;font-size:13px;font-weight:600}',
   '.whg-skit-time{font-size:11px;opacity:.55;white-space:nowrap}',
   '.whg-skit-seed{margin:0 0 10px;font-size:12px;opacity:.7;line-height:1.5}',
   '.whg-skit-cg{margin-bottom:10px;font-size:12px}',
-  '.whg-history-who{padding-top:8px;color:#85bbca;font:700 10px/1.3 Consolas,monospace;letter-spacing:1px;text-align:right}',
-  '.whg-history-text{margin:0;padding:9px 12px;border-left:2px solid rgba(127,208,255,.4);background:rgba(4,22,36,.56);color:#dff3ff;font-size:13px;line-height:1.7;white-space:pre-wrap;word-break:break-word}',
-  '.whg-history-row.user .whg-history-text{border-left-color:#ff9cc8;color:#ffe4f1}',
-  '.whg-history-row.narrator .whg-history-text{border-left-color:#748ea8;color:#9eb6ca;font-style:italic}',
+  '.whg-history-who{padding-top:8px;color:var(--buddy-muted);font:700 10px/1.3 Consolas,monospace;letter-spacing:1px;text-align:right}',
+  '.whg-history-text{margin:0;padding:9px 12px;border-left:2px solid color-mix(in srgb,var(--buddy-accent-text) 40%,transparent);background:color-mix(in srgb,var(--buddy-side-bg) 56%,transparent);color:var(--buddy-accent-text);font-size:13px;line-height:1.7;white-space:pre-wrap;word-break:break-word}',
+  '.whg-history-row.user .whg-history-text{border-left-color:var(--buddy-accent-text);color:var(--buddy-text)}',
+  '.whg-history-row.narrator .whg-history-text{border-left-color:var(--buddy-muted);color:var(--buddy-muted);font-style:italic}',
   '.whg-gallery{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}',
-  '.whg-gallery-card{position:relative;min-width:0;overflow:hidden;padding:0;border:1px solid rgba(143,216,239,.24);border-radius:12px;background:#061725;color:#eaf7ff;cursor:pointer;text-align:left}',
-  '.whg-gallery-card:hover{border-color:rgba(215,182,108,.65);transform:translateY(-1px)}',
-  '.whg-gallery-thumb{display:block;width:100%;aspect-ratio:16/10;object-fit:cover;background:#03101f}',
-  '.whg-gallery-placeholder{display:grid;place-items:center;color:#6f91a5;font:700 12px/1 Consolas,monospace}',
+  '.whg-gallery-card{position:relative;min-width:0;overflow:hidden;padding:0;border:1px solid color-mix(in srgb,var(--buddy-accent-text) 24%,transparent);border-radius:12px;background:var(--buddy-side-bg);color:var(--buddy-text);cursor:pointer;text-align:left}',
+  '.whg-gallery-card:hover{border-color:color-mix(in srgb,var(--buddy-a2) 65%,transparent);transform:translateY(-1px)}',
+  '.whg-gallery-thumb{display:block;width:100%;aspect-ratio:16/10;object-fit:cover;background:var(--buddy-bg)}',
+  '.whg-gallery-placeholder{display:grid;place-items:center;color:var(--buddy-muted);font:700 12px/1 Consolas,monospace}',
   '.whg-gallery-meta{display:flex;align-items:center;gap:8px;padding:9px 10px}',
-  '.whg-gallery-level{color:#f0d99d;font:700 11px/1 Consolas,monospace}',
-  '.whg-gallery-date{min-width:0;overflow:hidden;color:#8fb1c5;font-size:10px;text-overflow:ellipsis;white-space:nowrap}',
-  '.whg-gallery-bg{position:absolute;top:8px;right:8px;padding:3px 7px;border:1px solid rgba(215,182,108,.5);border-radius:999px;background:rgba(3,14,25,.82);color:#f0d99d;font:700 9px/1.3 Consolas,monospace}',
+  '.whg-gallery-level{color:var(--buddy-accent-text);font:700 11px/1 Consolas,monospace}',
+  '.whg-gallery-date{min-width:0;overflow:hidden;color:var(--buddy-muted);font-size:10px;text-overflow:ellipsis;white-space:nowrap}',
+  '.whg-gallery-bg{position:absolute;top:8px;right:8px;padding:3px 7px;border:1px solid color-mix(in srgb,var(--buddy-a2) 50%,transparent);border-radius:999px;background:color-mix(in srgb,var(--buddy-bg) 82%,transparent);color:var(--buddy-accent-text);font:700 9px/1.3 Consolas,monospace}',
   '.whg-gallery-detail{display:flex;min-height:100%;flex-direction:column;gap:14px}',
-  '.whg-archive-back{align-self:flex-start;padding:6px 10px;border:0;border-radius:8px;background:rgba(143,216,239,.1);color:#cfefff;cursor:pointer;font-family:inherit}',
-  '.whg-gallery-full{display:block;width:100%;max-height:54vh;object-fit:contain;border:1px solid rgba(215,182,108,.35);border-radius:12px;background:#020a14}',
-  '.whg-gallery-caption{display:flex;align-items:center;gap:10px;color:#9bb9ca;font-size:12px}',
-  '.whg-gallery-caption strong{color:#f0d99d;font:700 12px/1 Consolas,monospace}',
-  '.whg-gallery-prompt{margin:0;padding:12px 14px;border-left:2px solid rgba(215,182,108,.55);background:rgba(2,12,22,.42);color:#9fbccb;font-size:11px;line-height:1.65;white-space:pre-wrap;word-break:break-word;user-select:text}',
+  '.whg-archive-back{align-self:flex-start;padding:6px 10px;border:0;border-radius:8px;background:color-mix(in srgb,var(--buddy-accent) 10%,transparent);color:var(--buddy-accent-text);cursor:pointer;font-family:inherit}',
+  '.whg-gallery-full{display:block;width:100%;max-height:54vh;object-fit:contain;border:1px solid color-mix(in srgb,var(--buddy-a2) 35%,transparent);border-radius:12px;background:var(--buddy-bg)}',
+  '.whg-gallery-caption{display:flex;align-items:center;gap:10px;color:var(--buddy-muted);font-size:12px}',
+  '.whg-gallery-caption strong{color:var(--buddy-accent-text);font:700 12px/1 Consolas,monospace}',
+  '.whg-gallery-prompt{margin:0;padding:12px 14px;border-left:2px solid color-mix(in srgb,var(--buddy-a2) 55%,transparent);background:color-mix(in srgb,var(--buddy-bg) 42%,transparent);color:var(--buddy-muted);font-size:11px;line-height:1.65;white-space:pre-wrap;word-break:break-word;user-select:text}',
   '.whg-profile-archive{width:min(560px,calc(100% - 42px))}',
-  '.whg-profile-intro{margin-bottom:16px;padding:12px 14px;border:1px solid rgba(143,216,239,.2);border-left:3px solid rgba(215,182,108,.66);border-radius:0 11px 11px 0;background:rgba(2,16,28,.48);color:#aec8d6;font-size:12px;line-height:1.7}',
-  '.whg-profile-intro strong{color:#eff9ff;font-weight:700}',
-  '.whg-profile-guard{display:block;margin-top:7px;color:#d2bf89;font-size:11px}',
+  '.whg-profile-intro{margin-bottom:16px;padding:12px 14px;border:1px solid color-mix(in srgb,var(--buddy-accent-text) 20%,transparent);border-left:3px solid color-mix(in srgb,var(--buddy-a2) 66%,transparent);border-radius:0 11px 11px 0;background:color-mix(in srgb,var(--buddy-bg) 48%,transparent);color:var(--buddy-muted);font-size:12px;line-height:1.7}',
+  '.whg-profile-intro strong{color:var(--buddy-text);font-weight:700}',
+  '.whg-profile-guard{display:block;margin-top:7px;color:var(--buddy-muted);font-size:11px}',
   '.whg-profile-form{display:flex;flex-direction:column;gap:17px;user-select:text}',
   '.whg-profile-section{margin:0;padding:0;border:0}',
-  '.whg-profile-section-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 9px;padding-bottom:7px;border-bottom:1px solid rgba(215,182,108,.22)}',
-  '.whg-profile-section-head strong{color:#d7c48f;font:700 10px/1.3 Consolas,monospace;letter-spacing:1.35px}',
-  '.whg-profile-section-head span{color:#789bad;font-size:10px}',
+  '.whg-profile-section-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 9px;padding-bottom:7px;border-bottom:1px solid color-mix(in srgb,var(--buddy-a2) 22%,transparent)}',
+  '.whg-profile-section-head strong{color:var(--buddy-accent-text);font:700 10px/1.3 Consolas,monospace;letter-spacing:1.35px}',
+  '.whg-profile-section-head span{color:var(--buddy-muted);font-size:10px}',
   '.whg-profile-head-fields,.whg-profile-main-fields,.whg-profile-secondary-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}',
   '.whg-profile-field{display:flex;min-width:0;flex-direction:column;gap:6px}',
-  '.whg-profile-field label{color:#e5f4fb;font-size:12px;font-weight:700;line-height:1.4}',
-  '.whg-profile-field small{color:#789bad;font-size:10px;line-height:1.45}',
-  '.whg-profile-control{box-sizing:border-box;width:100%;min-width:0;border:1px solid rgba(143,216,239,.24);border-radius:9px;background:rgba(1,11,21,.58);color:#eaf7ff;padding:9px 10px;font:12px/1.55 system-ui,"Segoe UI","Microsoft YaHei",sans-serif;outline:none;transition:border-color .16s ease,box-shadow .16s ease}',
-  '.whg-profile-control::placeholder{color:#567687}',
-  '.whg-profile-control:hover{border-color:rgba(143,216,239,.42)}',
-  '.whg-profile-control:focus{border-color:rgba(159,232,255,.76);box-shadow:0 0 0 2px rgba(85,185,216,.14)}',
+  '.whg-profile-field label{color:var(--buddy-text);font-size:12px;font-weight:700;line-height:1.4}',
+  '.whg-profile-field small{color:var(--buddy-muted);font-size:10px;line-height:1.45}',
+  '.whg-profile-control{box-sizing:border-box;width:100%;min-width:0;border:1px solid color-mix(in srgb,var(--buddy-accent-text) 24%,transparent);border-radius:9px;background:color-mix(in srgb,var(--buddy-bg) 58%,transparent);color:var(--buddy-text);padding:9px 10px;font:12px/1.55 system-ui,"Segoe UI","Microsoft YaHei",sans-serif;outline:none;transition:border-color .16s ease,box-shadow .16s ease}',
+  '.whg-profile-control::placeholder{color:var(--buddy-muted)}',
+  '.whg-profile-control:hover{border-color:color-mix(in srgb,var(--buddy-accent-text) 42%,transparent)}',
+  '.whg-profile-control:focus{border-color:color-mix(in srgb,var(--buddy-accent-text) 76%,transparent);box-shadow:0 0 0 2px color-mix(in srgb,var(--buddy-accent) 14%,transparent)}',
   '.whg-profile-control:disabled{opacity:.58;cursor:default}',
   'textarea.whg-profile-control{min-height:112px;resize:vertical}',
   '.whg-profile-secondary-fields textarea.whg-profile-control{min-height:92px}',
-  '.whg-profile-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding-top:14px;border-top:1px solid rgba(215,182,108,.22)}',
+  '.whg-profile-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding-top:14px;border-top:1px solid color-mix(in srgb,var(--buddy-a2) 22%,transparent)}',
   '.whg-profile-actions .whg-cg-btn{padding:8px 16px}',
-  '.whg-profile-message{min-height:18px;flex:1 1 180px;margin:0;color:#8fd8e9;font-size:11px;line-height:1.5;text-align:right}',
-  '.whg-profile-message.error{color:#ffb5bd}',
-  '.whg-profile-loading{display:grid;place-items:center;min-height:240px;color:#8fb1c5;font-size:13px;letter-spacing:.2px}',
-  '.whg-disabled{position:absolute;inset:0;z-index:6;display:grid;place-items:center;padding:24px;background:linear-gradient(180deg,#071629,#03101f)}',
-  '.whg-disabled-card{width:min(480px,100%);padding:28px;border:1px solid rgba(215,182,108,.4);border-radius:18px;background:rgba(5,25,39,.86);box-shadow:0 22px 60px rgba(0,4,14,.46);text-align:center}',
-  '.whg-disabled-card h2{margin:0 0 8px;color:#eefaff;font-family:"STSong","Songti SC",Georgia,serif;font-size:23px}',
-  '.whg-disabled-card p{margin:0;color:#8fb1c5;font-size:13px;line-height:1.7}',
+  '.whg-profile-message{min-height:18px;flex:1 1 180px;margin:0;color:var(--buddy-accent-text);font-size:11px;line-height:1.5;text-align:right}',
+  '.whg-profile-message.error{color:var(--buddy-err)}',
+  '.whg-profile-loading{display:grid;place-items:center;min-height:240px;color:var(--buddy-muted);font-size:13px;letter-spacing:.2px}',
+  '.whg-disabled{position:absolute;inset:0;z-index:6;display:grid;place-items:center;padding:24px;background:linear-gradient(180deg,var(--buddy-side-bg),var(--buddy-bg))}',
+  '.whg-disabled-card{width:min(480px,100%);padding:28px;border:1px solid color-mix(in srgb,var(--buddy-a2) 40%,transparent);border-radius:18px;background:color-mix(in srgb,var(--buddy-side-bg) 86%,transparent);box-shadow:0 22px 60px rgba(0,4,14,.46);text-align:center}',
+  '.whg-disabled-card h2{margin:0 0 8px;color:var(--buddy-text);font-family:"STSong","Songti SC",Georgia,serif;font-size:23px}',
+  '.whg-disabled-card p{margin:0;color:var(--buddy-muted);font-size:13px;line-height:1.7}',
   // ── native DSH plugin-settings card ────────────────────────────────────
   '.whg-settings-tab-list{max-width:760px;margin:0;padding:0;list-style:none}',
-  '.whg-settings-card{list-style:none;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);overflow:hidden}',
-  '.whg-settings-card[data-open="true"]{border-color:color-mix(in srgb,var(--dsw-alias-label-dimmed) 70%,#d7b66c);background:var(--dsw-alias-bg-layer-2)}',
+  '.whg-settings-card{list-style:none;border:1px solid var(--buddy-border);border-radius:12px;background:var(--buddy-surface2);color:var(--buddy-text);overflow:hidden}',
+  '.whg-settings-card[data-open="true"]{border-color:color-mix(in srgb,var(--buddy-muted) 70%,var(--buddy-a2));background:var(--buddy-surface2)}',
   '.whg-settings-head{appearance:none;width:100%;display:flex;align-items:center;gap:12px;padding:14px 16px;border:0;background:transparent;color:inherit;cursor:pointer;text-align:left;font-family:inherit}',
-  '.whg-settings-head:focus-visible,.whg-settings-toggle:focus-visible,.whg-settings-select:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#2f7fd6);outline-offset:-2px}',
+  '.whg-settings-head:focus-visible,.whg-settings-toggle:focus-visible,.whg-settings-select:focus-visible{outline:2px solid var(--buddy-accent);outline-offset:-2px}',
   '.whg-settings-heading{display:flex;min-width:0;flex:1;flex-direction:column;gap:4px}',
   '.whg-settings-name{font-size:15px;font-weight:650;line-height:1.4}',
-  '.whg-settings-desc{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}',
-  '.whg-settings-status{flex:none;padding:2px 8px;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:11px}',
-  '.whg-settings-chevron{color:var(--dsw-alias-label-tertiary);font-size:12px;transition:transform .16s ease}',
+  '.whg-settings-desc{color:var(--buddy-muted);font-size:13px;line-height:1.5}',
+  '.whg-settings-status{flex:none;padding:2px 8px;border-radius:999px;background:var(--buddy-surface);color:var(--buddy-muted);font-size:11px}',
+  '.whg-settings-chevron{color:var(--buddy-muted);font-size:12px;transition:transform .16s ease}',
   '.whg-settings-card[data-open="true"] .whg-settings-chevron{transform:rotate(180deg)}',
-  '.whg-settings-body{display:flex;flex-direction:column;gap:14px;margin:0 16px;padding:16px 0;border-top:1px solid var(--dsw-alias-border-l2)}',
+  '.whg-settings-body{display:flex;flex-direction:column;gap:14px;margin:0 16px;padding:16px 0;border-top:1px solid var(--buddy-border)}',
   '.whg-settings-row{display:grid;grid-template-columns:minmax(150px,.8fr) minmax(210px,1.2fr);align-items:center;gap:18px}',
   '.whg-settings-copy strong{display:block;font-size:13px;font-weight:600}',
-  '.whg-settings-copy small{display:block;margin-top:3px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.45}',
-  '.whg-settings-toggle{justify-self:end;min-width:74px;padding:6px 13px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;line-height:1.35}',
-  '.whg-settings-toggle[aria-checked="true"]{border-color:#3da87a;background:color-mix(in srgb,#3da87a 18%,transparent);color:var(--dsw-alias-label-primary)}',
-  '.whg-settings-select{box-sizing:border-box;width:100%;min-width:0;padding:7px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:13px;line-height:1.4}',
-  '.whg-settings-message{min-height:18px;margin:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5}',
-  '.whg-settings-message.error{color:var(--dsw-alias-label-error,#c33)}',
+  '.whg-settings-copy small{display:block;margin-top:3px;color:var(--buddy-muted);font-size:12px;line-height:1.45}',
+  '.whg-settings-toggle{justify-self:end;min-width:74px;padding:6px 13px;border:1px solid var(--buddy-border);border-radius:999px;background:transparent;color:var(--buddy-muted);cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;line-height:1.35}',
+  '.whg-settings-toggle[aria-checked="true"]{border-color:var(--buddy-ok);background:color-mix(in srgb,var(--buddy-ok) 18%,transparent);color:var(--buddy-text)}',
+  '.whg-settings-select{box-sizing:border-box;width:100%;min-width:0;padding:7px 10px;border:1px solid var(--buddy-border);border-radius:8px;background:var(--buddy-surface2);color:var(--buddy-text);font-family:inherit;font-size:13px;line-height:1.4}',
+  '.whg-settings-message{min-height:18px;margin:0;color:var(--buddy-muted);font-size:12px;line-height:1.5}',
+  '.whg-settings-message.error{color:var(--buddy-err)}',
   '@keyframes whgArchiveFade{from{opacity:0}to{opacity:1}}',
   '@keyframes whgArchiveSlide{from{transform:translateX(36px);opacity:.6}to{transform:none;opacity:1}}',
   // ── workspace chrome hidden while the galgame tab is active ─────────────
@@ -269,6 +284,10 @@ const CSS = [
   '@media (max-width:900px){.whg-top{gap:6px;padding:10px 12px;flex-wrap:wrap}.whg-title{font-size:14px}.whg-chip{padding:3px 8px}.whg-spacer{display:none}.whg-top-actions{width:100%;justify-content:flex-end}.whg-btn{padding:5px 9px;font-size:12px}.whg-archive{width:min(470px,calc(100% - 12px))}.whg-archive-spine{display:none}}',
   '@media (max-width:560px){.whg-chip-wrap{max-width:calc(50% - 4px)}.whg-chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.whg-picker{position:fixed;top:92px;right:10px;left:10px;width:auto;max-height:55vh}.whg-top-actions{gap:5px;overflow-x:auto;padding-bottom:2px}.whg-archive{width:100%;border-left:0}.whg-archive-head{padding:18px 16px 14px}.whg-archive-body{padding:14px 14px 24px}.whg-gallery{grid-template-columns:1fr}.whg-history-row{grid-template-columns:38px minmax(0,1fr);gap:8px}.whg-archive-title{font-size:21px}.whg-profile-head-fields,.whg-profile-main-fields,.whg-profile-secondary-fields{grid-template-columns:1fr}.whg-profile-section-head{align-items:flex-start;flex-direction:column;gap:3px}.whg-profile-message{flex-basis:100%;text-align:left}.whg-settings-row{grid-template-columns:1fr;gap:8px}.whg-settings-toggle{justify-self:start}.whg-settings-head{padding:13px}.whg-settings-body{margin:0 13px}}',
   '@media (prefers-reduced-motion:reduce){.whg-archive-scrim,.whg-archive{animation:none}.whg-gallery-card:hover{transform:none}}',
+  GroupStageCSS,
+  GroupCgCSS,
+  GalgameDesignCSS,
+  CompanionDesignCSS,
 ].join('\n')
 
 function art(key: any): string | undefined {
@@ -318,7 +337,13 @@ function CgThumbnail({ item, sessionId }: any): React.ReactElement {
     return () => { alive = false; observer.disconnect() }
   }, [item.id, item.status, item.thumbnailRef, image, sessionId])
   const label = item.status === 'planning' ? t("正在设计主题") : item.status === 'queued' ? t("排队中") : item.status === 'generating' ? t("绘制中") : item.status === 'failed' ? t("生成失败 · 点击重试") : item.status === 'cancelled' ? t("已取消 · 点击重试") : 'CG'
-  return React.createElement('div', { ref, className: 'whg-gallery-thumb whg-gallery-placeholder' }, image ? React.createElement('img', { className: 'whg-gallery-thumb', src: image, alt: '', loading: 'lazy' }) : label)
+  if (image) return React.createElement('div', { ref, className: 'gx-cg-img' }, React.createElement('img', { src: image, alt: '', loading: 'lazy' }))
+  const step = item.status === 'planning' ? 1 : item.status === 'queued' ? 2 : item.status === 'generating' ? 3 : 0
+  const failed = item.status === 'failed' || item.status === 'cancelled'
+  return React.createElement('div', { ref, className: 'gx-cg-img ' + (failed ? 'fail' : step ? 'wait' : 'idle') },
+    failed ? Icon('alert', { size: 20 }) : step ? React.createElement('span', { className: 'ui-spinner', 'aria-hidden': 'true' }) : null,
+    React.createElement('span', null, label),
+    step ? React.createElement('span', { className: 'gx-steps', 'aria-hidden': 'true' }, [1, 2, 3].map(n => React.createElement('i', { key: n, className: n < step ? 'd' : n === step ? 'n' : '' }))) : null)
 }
 
 function galleryDetailItem(result: any, fallback: any): any | null {
@@ -361,7 +386,7 @@ const API_WRITE_ACTIONS = new Set([
 ])
 
 function apiTimeoutMs(action: string): number {
-  if (action === 'chat' || action === 'side-story' || action === 'bg-upload' || action === 'sprite-upload') return API_LONG_TIMEOUT_MS
+  if (action === 'companion-group-send' || action === 'companion-group-continue' || action === 'chat' || action === 'side-story' || action === 'bg-upload' || action === 'sprite-upload') return API_LONG_TIMEOUT_MS
   if (API_WRITE_ACTIONS.has(action)) return API_WRITE_TIMEOUT_MS
   return API_READ_TIMEOUT_MS
 }
@@ -691,272 +716,8 @@ function assertApiResult(result: any, fallback: string): void {
   throw new Error(errors || fallback)
 }
 
-function PluginSettingsCard(): React.ReactElement {
-  const [open, setOpen] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [settings, setSettings] = useState<any>(null)
-  const [options, setOptions] = useState<any>({ characters: [], models: [] })
-  const [message, setMessage] = useState('')
-  const [error, setError] = useState('')
-  const [catalogError, setCatalogError] = useState('')
 
-  useEffect(() => {
-    let alive = true
-    api('settings-get').then((nextSettings) => {
-      if (!alive) return
-      setSettings(settingsFromResult(nextSettings) || nextSettings)
-      setError('')
-    }).catch((err) => {
-      if (alive) setError(t("插件设置读取失败：") + String(err && err.message ? err.message : err))
-    }).finally(() => {
-      if (alive) setLoading(false)
-    })
-    requestModelOptions().then((nextOptions) => {
-      if (!alive) return
-      setOptions(nextOptions && typeof nextOptions === 'object' ? nextOptions : { characters: [], models: [] })
-      setCatalogError('')
-    }).catch((err) => {
-      if (alive) setCatalogError(t("模型目录暂时不可用：") + String(err && err.message ? err.message : err))
-    })
-    return () => { alive = false }
-  }, [])
-
-  useEffect(() => {
-    const onSettingsChanged = (event: Event) => {
-      const detail = (event as CustomEvent).detail
-      if (detail && detail.settings) setSettings(detail.settings)
-      requestModelOptions(undefined, true).then((nextOptions) => {
-        if (nextOptions && typeof nextOptions === 'object') {
-          setOptions(nextOptions)
-          setCatalogError('')
-        }
-      }).catch(() => { /* keep the last usable catalog */ })
-    }
-    window.addEventListener('whg:settings-changed', onSettingsChanged)
-    return () => window.removeEventListener('whg:settings-changed', onSettingsChanged)
-  }, [])
-
-  useEffect(() => {
-    const onPetSetting = (event: Event) => {
-      const enabled = (event as CustomEvent).detail
-      if (typeof enabled === 'boolean') {
-        setSettings((prev: any) => prev ? { ...prev, petEnabled: enabled } : prev)
-      }
-    }
-    window.addEventListener('whg:pet-setting', onPetSetting)
-    return () => window.removeEventListener('whg:pet-setting', onPetSetting)
-  }, [])
-
-  useEffect(() => {
-    if (!open) return undefined
-    let alive = true
-    api('settings-get').then((nextSettings) => {
-      if (!alive) return
-      setSettings(settingsFromResult(nextSettings) || nextSettings)
-      setError('')
-    }).catch(() => { /* keep the last readable settings */ })
-    requestModelOptions().then((nextOptions) => {
-      if (!alive) return
-      if (nextOptions && typeof nextOptions === 'object') {
-        setOptions(nextOptions)
-        setCatalogError('')
-      }
-    }).catch(() => { /* the card already shows the last usable catalog */ })
-    return () => { alive = false }
-  }, [open])
-
-  function save(patch: any): void {
-    if (saving) return
-    setSaving(true)
-    setMessage(t("正在保存…"))
-    setError('')
-    api('settings-set', patch).then(async (result) => {
-      assertApiResult(result, t("设置未被接受"))
-      let nextSettings = settingsFromResult(result)
-      if (!nextSettings) {
-        const refreshed = await api('settings-get')
-        nextSettings = settingsFromResult(refreshed) || refreshed
-      }
-      setSettings(nextSettings)
-      setMessage(t("已保存"))
-      if (Object.prototype.hasOwnProperty.call(patch, 'petEnabled')
-        && typeof nextSettings?.petEnabled === 'boolean') {
-        window.dispatchEvent(new CustomEvent('whg:pet-setting', { detail: nextSettings.petEnabled }))
-      }
-      window.dispatchEvent(new CustomEvent('whg:settings-changed', {
-        detail: { settings: nextSettings, view: viewFromResult(result), sourceSessionId: null },
-      }))
-    }).catch((err) => {
-      setMessage('')
-      setError(t("保存失败：") + String(err && err.message ? err.message : err))
-    }).finally(() => setSaving(false))
-  }
-
-  const characters: any[] = Array.isArray(options && options.characters) ? options.characters : []
-  const models: any[] = Array.isArray(options && options.models) ? options.models : []
-  const characterValue = settings && settings.characterMode === 'manual' && settings.characterId
-    ? 'character:' + String(settings.characterId)
-    : 'follow'
-  const chatValue = settings && settings.chatMode === 'manual' && settings.chatSelection
-    ? 'model:' + selectionKey(settings.chatSelection)
-    : settings && settings.chatMode === 'main' ? 'main' : 'configured'
-  const enabled = !settings || settings.enabled !== false
-  const petEnabled = !settings || settings.petEnabled !== false
-  const configuredModel = optionText(
-    (options && options.configuredSelection) || (settings && settings.configuredSelection),
-    t("插件配置模型"),
-  )
-
-  return React.createElement('li', { className: 'whg-settings-card', 'data-open': String(open) },
-    React.createElement('button', {
-      'aria-expanded': open,
-      'aria-label': (open ? t("收起") : t("展开")) + t("AI娘 Galgame 设置"),
-      className: 'whg-settings-head',
-      onClick: () => setOpen(!open),
-      type: 'button',
-    },
-      React.createElement('span', { className: 'whg-settings-heading' },
-        React.createElement('span', { className: 'whg-settings-name' }, t("AI娘 Galgame")),
-        React.createElement('span', { className: 'whg-settings-desc' }, t("控制插件、桌宠显示、出场角色与台词模型。")),
-      ),
-      React.createElement('span', { className: 'whg-settings-status' }, loading ? t("读取中") : error ? t("不可用") : enabled ? t("已启用") : t("已关闭")),
-      React.createElement('span', { className: 'whg-settings-chevron', 'aria-hidden': 'true' }, '▼'),
-    ),
-    open
-      ? React.createElement('div', { className: 'whg-settings-body' },
-        React.createElement('div', { className: 'whg-settings-row' },
-          React.createElement('span', { className: 'whg-settings-copy' },
-            React.createElement('strong', null, t("启用插件")),
-            React.createElement('small', null, t("关闭后隐藏桌宠，并暂停 galgame 对话入口内容。")),
-          ),
-          React.createElement('button', {
-            'aria-checked': enabled,
-            className: 'whg-settings-toggle',
-            disabled: loading || saving || !settings,
-            onClick: () => save({ enabled: !enabled }),
-            role: 'switch',
-            type: 'button',
-          }, enabled ? t("已开启") : t("已关闭")),
-        ),
-        React.createElement('div', { className: 'whg-settings-row' },
-          React.createElement('span', { className: 'whg-settings-copy' },
-            React.createElement('strong', null, t("显示桌宠")),
-            React.createElement('small', null, t("关闭后仍可从会话顶部的 galgame 页签进入，并在这里重新开启。")),
-          ),
-          React.createElement('button', {
-            'aria-checked': petEnabled,
-            'aria-label': t("显示桌宠"),
-            className: 'whg-settings-toggle',
-            disabled: loading || saving || !settings,
-            onClick: () => save({ petEnabled: !petEnabled }),
-            role: 'switch',
-            type: 'button',
-          }, petEnabled ? t("已显示") : t("已隐藏")),
-        ),
-        React.createElement('label', { className: 'whg-settings-row' },
-          React.createElement('span', { className: 'whg-settings-copy' },
-            React.createElement('strong', null, t("小剧场取材")),
-            React.createElement('small', null,
-              settings && settings.sideStoryWebAvailable === false
-                ? t("当前环境没有可用的联网检索，只会使用本地任务类别。")
-                : t("联网检索只发送角色对应的模型名与题材词，不含你的对话或工作内容。")),
-          ),
-          React.createElement('select', {
-            className: 'whg-settings-select',
-            disabled: loading || saving || !settings,
-            onChange: (event: any) => { save({ sideStorySeedSource: String(event.target.value) }) },
-            value: settings && settings.sideStorySeedSource === 'activity' ? 'activity' : 'auto',
-          },
-            React.createElement('option', { value: 'auto' }, t("优先联网检索，失败回落本地")),
-            React.createElement('option', { value: 'activity' }, t("只用本地任务类别（不联网）")),
-          ),
-        ),
-        React.createElement('label', { className: 'whg-settings-row' },
-          React.createElement('span', { className: 'whg-settings-copy' },
-            React.createElement('strong', null, t("小剧场冷却")),
-            React.createElement('small', null, t("两场小剧场之间要等多少分钟。填 0 表示不限制。")),
-          ),
-          React.createElement('input', {
-            className: 'whg-settings-select',
-            type: 'number',
-            min: 0,
-            max: settings && settings.sideStoryCooldownMax ? settings.sideStoryCooldownMax : 1440,
-            step: 5,
-            disabled: loading || saving || !settings,
-            defaultValue: settings && Number.isFinite(Number(settings.sideStoryCooldownMinutes))
-              ? Number(settings.sideStoryCooldownMinutes)
-              : 30,
-            key: 'skit-cooldown-' + String(settings && settings.sideStoryCooldownMinutes),
-            onBlur: (event: any) => {
-              const minutes = Number(event.target.value)
-              if (!Number.isFinite(minutes) || minutes < 0) return
-              if (settings && Number(settings.sideStoryCooldownMinutes) === Math.round(minutes)) return
-              save({ sideStoryCooldownMinutes: Math.round(minutes) })
-            },
-          }),
-        ),
-        React.createElement('label', { className: 'whg-settings-row' },
-          React.createElement('span', { className: 'whg-settings-copy' },
-            React.createElement('strong', null, t("角色来源")),
-            React.createElement('small', null, t("默认跟随工作区模型，也可固定为某位模型娘。")),
-          ),
-          React.createElement('select', {
-            className: 'whg-settings-select',
-            disabled: loading || saving || !settings,
-            onChange: (event: any) => {
-              const value = String(event.target.value)
-              if (value === 'follow') save({ characterMode: 'follow', characterId: null })
-              else if (value.startsWith('character:')) save({ characterMode: 'manual', characterId: value.slice(10) })
-            },
-            value: characterValue,
-          },
-            React.createElement('option', { value: 'follow' }, t("跟随工作区 · ") + mainModelText(options)),
-            characters.map((character: any, index: number) => React.createElement('option', {
-              key: String(character.id || index),
-              value: 'character:' + String(character.id || ''),
-            }, optionText(character, t("角色 ") + (index + 1)))),
-          ),
-        ),
-        React.createElement('label', { className: 'whg-settings-row' },
-          React.createElement('span', { className: 'whg-settings-copy' },
-            React.createElement('strong', null, t("对话模型")),
-            React.createElement('small', null, settings?.modelConfigurationCentral ? t("统一使用通用设置中选定的模型。") : t("可继续使用插件默认模型、跟随工作区，或单独指定。")),
-          ),
-          settings?.modelConfigurationCentral ? React.createElement('button', {
-            className: 'whg-settings-select', onClick: () => (window as any).whale?.open('settings'),
-          }, t("配置模型与 API")) : React.createElement('select', {
-            className: 'whg-settings-select',
-            disabled: loading || saving || !settings,
-            onChange: (event: any) => {
-              const value = String(event.target.value)
-              if (value === 'configured') save({ chatMode: 'configured', chatSelection: null })
-              else if (value === 'main') save({ chatMode: 'main', chatSelection: null })
-              else if (value.startsWith('model:')) {
-                const selection = parseSelectionKey(value.slice(6))
-                if (selection) save({ chatMode: 'manual', chatSelection: selection })
-              }
-            },
-            value: chatValue,
-          },
-            React.createElement('option', { value: 'configured' }, t("使用插件默认 · ") + configuredModel),
-            React.createElement('option', { value: 'main' }, t("跟随工作区 · ") + mainModelText(options)),
-            models.map((model: any, index: number) => React.createElement('option', {
-              key: selectionKey(model) || String(index),
-              value: 'model:' + selectionKey(model),
-            }, optionText(model, t("模型 ") + (index + 1)))),
-          ),
-        ),
-        React.createElement('p', {
-          className: 'whg-settings-message' + (error ? ' error' : ''),
-          role: error ? 'alert' : 'status',
-        }, error || message || catalogError || t("角色、模型和素材设置会在所有工作区共享，顶部标签也可以随时快捷切换。")),
-      )
-      : null,
-  )
-}
-
-function App(props: { useSessions: any; variant?: string; sessionId?: string; hideSpriteOnCg?: boolean; onCharacter?: (id: string) => void }): React.ReactElement {
+function App(props: { useSessions: any; variant?: string; sessionId?: string; hideSpriteOnCg?: boolean; onCharacter?: (id: string) => void; onDisplayMode?: (mode: string) => void; chat?: any; onToggleChat?: () => void; onManage?: (type: string) => void }): React.ReactElement {
   const callApi = (action: string, args?: any) => api(action, props.sessionId
     ? { ...(args && typeof args === 'object' ? args : {}), sessionId: props.sessionId }
     : args)
@@ -973,6 +734,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     setViewState((previous: any) => {
       const base = previous && previous.key === cacheKey ? previous.value : cachedView(cacheKey)
       const next = typeof nextOrUpdater === 'function' ? nextOrUpdater(base) : nextOrUpdater
+      if (base?.companion && next?.companion && Number(next.companion.revision) < Number(base.companion.revision)) return previous
       rememberView(cacheKey, next)
       return { key: cacheKey, value: next }
     })
@@ -988,10 +750,37 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     })
   }, [cacheKey])
   const [open, setOpen] = useState(false)
+  const [companionPanel, setCompanionPanel] = useState<string | null>(null)
+  const privatePresentation=useRef(new Set<string>())
+  useEffect(()=>{
+    const companion=s?.companion
+    if(!companion||companion.activeGroupId||companionPanel||document.hidden||document.querySelector('dialog[open]'))return
+    const last=companion.messages?.at(-1)
+    if(last?.role!=='assistant'||last.presentation!=='pending'||privatePresentation.current.has(last.id))return
+    privatePresentation.current.add(last.id)
+    let cancelled=false
+    const frame=requestAnimationFrame(()=>{if(cancelled||document.hidden){privatePresentation.current.delete(last.id);return}callApi('companion-private-present',{conversationId:companion.activeConversationId,id:last.id}).then(result=>{if(result?.view)setS(result.view)}).catch(()=>privatePresentation.current.delete(last.id))})
+    return()=>{cancelled=true;cancelAnimationFrame(frame);privatePresentation.current.delete(last.id)}
+  })
+  const [groupBrowseRequest,setGroupBrowseRequest] = useState<any>(null)
+  const [groupPanelRequest,setGroupPanelRequest] = useState<any>(null)
+  const [groupToolbarTarget,setGroupToolbarTarget] = useState<HTMLElement|null>(null)
   const [busy, setBusy] = useState(false)
   const [text, setText] = useState('')
   const [skitText, setSkitText] = useState('')
   const [armReset, setArmReset] = useState(false)
+  const [pendingChat, setPendingChat] = useState<any>(null)
+  const [failedChat, setFailedChat] = useState<any>(null)
+  const resetRef = useRef<HTMLSpanElement | null>(null)
+  // the restart bubble closes on Escape or a click elsewhere
+  useEffect(() => {
+    if (!armReset) return
+    const away = (event: any) => { if (!resetRef.current?.contains(event.target)) setArmReset(false) }
+    const key = (event: any) => { if (event.key === 'Escape') setArmReset(false) }
+    document.addEventListener('pointerdown', away, true)
+    document.addEventListener('keydown', key)
+    return () => { document.removeEventListener('pointerdown', away, true); document.removeEventListener('keydown', key) }
+  }, [armReset])
   const [imgFail, setImgFail] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
   const [settled, setSettled] = useState(false)
@@ -1058,6 +847,45 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   const galleryDetailRequestSeq = useRef(0)
   const rewardCgRequestSeq = useRef(0)
 
+  const companionRequestEpoch = useRef(0)
+  async function companionRequest(action: string, args?: any): Promise<any> {
+    const selecting = /companion-(?:character-select|persona-select|conversation-(?:new|select)|group-(?:select|close))$/.test(action)
+    if (selecting) companionRequestEpoch.current++
+    const epoch = companionRequestEpoch.current
+    const result = await callApi(action, args)
+    if (result?.ok === false) throw Object.assign(new Error(result.error || result.message || t('操作失败')), { code: result.code, missing: result.missing })
+    if (epoch !== companionRequestEpoch.current) return result
+    if (result?.view) setS(result.view)
+    else if (result?.companion) setS((previous: any) => ({ ...previous, companion: result.companion }))
+    return result
+  }
+  function openCompanion(panel: string): void {
+    closePicker(false)
+    setArchivePanel(null)
+    setCompanionPanel(panel)
+    companionRequest('companion-state').catch((error: any) => setApiError(String(error?.message || error)))
+  }
+  const companionConversationId = s?.companion?.activeConversationId || ''
+  const draftConversation = useRef('')
+  const draftText = useRef('')
+  useEffect(() => { draftText.current = text }, [text])
+  useEffect(() => {
+    if (!companionConversationId || draftConversation.current === companionConversationId) return
+    if (draftConversation.current) void callApi('companion-conversation-update', { id: draftConversation.current, draft: draftText.current }).catch(() => {})
+    draftConversation.current = companionConversationId
+    const conversation = s?.companion?.conversations?.find((row: any) => row.id === companionConversationId)
+    setText(String(conversation?.draft || s?.companion?.draft || ''))
+  }, [companionConversationId])
+  useEffect(() => {
+    if (!companionConversationId || busy) return
+    const timer = setTimeout(() => callApi('companion-conversation-update', { id: companionConversationId, draft: text }).catch(() => {}), 450)
+    return () => clearTimeout(timer)
+  }, [companionConversationId, text, busy])
+  useEffect(() => () => {
+    if (draftConversation.current) void callApi('companion-conversation-update', { id: draftConversation.current, draft: draftText.current }).catch(() => {})
+  }, [props.sessionId])
+  const group = activeCompanionGroup(s?.companion)
+  useEffect(() => { props.onDisplayMode?.(group ? 'group' : 'private') }, [group?.id, props.onDisplayMode])
   const currentStory = s?.sideStory?.scene
   useEffect(() => {
     if (!cgMenu) return
@@ -1066,14 +894,14 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     window.addEventListener('pointerdown', outside)
     return () => {cancelAnimationFrame(frame);window.removeEventListener('pointerdown',outside)}
   }, [cgMenu])
-  useEffect(() => {if (!cgUndo) return;const timer=setTimeout(()=>setCgUndo(null),8000);return()=>clearTimeout(timer)},[cgUndo])
+  const [undoLeft, setUndoLeft] = useState(8)
+  useEffect(() => {if (!cgUndo) return;setUndoLeft(8);const started=Date.now(),tick=setInterval(()=>setUndoLeft(Math.max(1,8-Math.floor((Date.now()-started)/1000))),250),timer=setTimeout(()=>setCgUndo(null),8000);return()=>{clearTimeout(timer);clearInterval(tick)}},[cgUndo])
   useEffect(() => (window as any).whale?.onChatCommitted(() => {
     callApi('view').then((value) => { setS(value); setApiError(null) }).catch(() => {})
   }), [props.sessionId])
   useEffect(() => (window as any).whale?.onCgUpdated(() => {
     callApi('view').then(setS).catch(() => {})
     if (archivePanel === 'gallery') loadGallery()
-    if (archivePanel === 'skits') loadSkitLog()
   }), [props.sessionId, archivePanel, galleryTrash, s && s.current])
   useEffect(() => {
     if ((!open && props.variant !== 'tab') || !currentStory?.beats?.length) return
@@ -1282,20 +1110,6 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       const eventView = scopedEventView(detail, props.sessionId)
       const characterId = String(detail.characterId || detail.charId || (eventView && eventView.current) || currentId)
       const nextProfile = profileFromResult(detail)
-      if (archivePanel === 'profile' && characterId && characterId === (profileCharacterId || currentId)) {
-        if (nextProfile) {
-          const nextBuiltIn = builtInProfileFromResult(detail)
-          setProfileDraft(nextProfile)
-          setProfileBaseline(nextProfile)
-          if (nextBuiltIn) setProfileBuiltIn(nextBuiltIn)
-          setProfileLoaded(true)
-          setProfileLoading(false)
-          setProfileHasOverrides(profileHasOverridesFromResult(detail, profileHasOverrides))
-          setProfileError('')
-        } else {
-          loadCharacterProfile(characterId)
-        }
-      }
       if (eventView) {
         setS(eventView)
       } else {
@@ -1331,6 +1145,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       else archiveCloseRef.current?.focus()
     })
     const onKeyDown = (event: KeyboardEvent) => {
+      if (document.querySelector('.buddy-cg-lightbox[open]')) return
       if (event.key === 'Escape') {
         event.preventDefault()
         if (cgMenu) {setCgMenu(null);cgMenuTarget.current?.focus({preventScroll:true})}
@@ -1473,12 +1288,6 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       setArchivePanel(null)
     }
   }, [s && s.enabled])
-
-  useEffect(() => {
-    if (archivePanel !== 'profile') return
-    const currentId = String(s && s.current ? s.current : '')
-    if (currentId && currentId !== profileCharacterId && !profileLoading) loadCharacterProfile(currentId)
-  }, [archivePanel, profileCharacterId, profileLoading, s && s.current])
 
   useEffect(() => {
     if (archivePanel !== 'history') return
@@ -1781,161 +1590,15 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     }).finally(() => setPickerLoading(false))
   }
 
-  function loadCharacterProfile(characterId: string): void {
-    if (!characterId) {
-      setProfileLoaded(false)
-      setProfileLoading(false)
-      setProfileError(t("当前角色未识别，暂时无法读取角色设定。"))
-      return
-    }
-    const requestId = ++profileRequestSeq.current
-    setProfileCharacterId(characterId)
-    setProfileLoaded(false)
-    setProfileLoading(true)
-    setProfileError('')
-    setProfileMessage('')
-    callApi('profile-get', { characterId }).then((result) => {
-      assertApiResult(result, t("角色设定读取失败"))
-      if (requestId !== profileRequestSeq.current) return
-      const profile = profileFromResult(result)
-      if (!profile) throw new Error(t("服务未返回可编辑的角色设定"))
-      const returnedId = String(result && (result.charId || result.characterId) ? (result.charId || result.characterId) : characterId)
-      const builtIn = builtInProfileFromResult(result) || profile
-      setProfileCharacterId(returnedId)
-      setProfileDraft(profile)
-      setProfileBaseline(profile)
-      setProfileBuiltIn(builtIn)
-      setProfileHasOverrides(profileHasOverridesFromResult(result, false))
-      setProfileLoaded(true)
-    }).catch((err) => {
-      if (requestId !== profileRequestSeq.current) return
-      setProfileError(t("角色设定读取失败：") + String(err && err.message ? err.message : err))
-    }).finally(() => {
-      if (requestId === profileRequestSeq.current) setProfileLoading(false)
-    })
-  }
 
-  function updateProfileField(key: ProfileKey, value: string): void {
-    setProfileDraft((current) => ({ ...current, [key]: value }))
-    setProfileMessage('')
-    setProfileError('')
-  }
 
-  function saveCharacterProfile(): void {
-    const characterId = String(s && s.current ? s.current : profileCharacterId)
-    if (!characterId || !profileLoaded || profileSaving) return
-    if (profileCharacterId && characterId !== profileCharacterId) {
-      loadCharacterProfile(characterId)
-      return
-    }
-    const overrides: Partial<Record<ProfileKey, string | null>> = {}
-    PROFILE_KEYS.forEach((key) => {
-      overrides[key] = profileDraft[key] === profileBuiltIn[key] ? null : profileDraft[key]
-    })
-    setProfileSaving(true)
-    setProfileError('')
-    setProfileMessage('')
-    callApi('profile-set', { characterId, overrides }).then(async (result) => {
-      assertApiResult(result, t("角色设定未保存"))
-      const returnedId = String(result && (result.charId || result.characterId) ? (result.charId || result.characterId) : characterId)
-      const effective = profileFromResult(result) || { ...profileDraft }
-      const builtIn = builtInProfileFromResult(result) || profileBuiltIn
-      let nextView = viewFromResult(result)
-      let refreshError = ''
-      if (!nextView) {
-        try {
-          nextView = await callApi('view')
-        } catch (err: any) {
-          refreshError = t("设定已保存，但画面刷新失败：") + String(err && err.message ? err.message : err)
-        }
-      }
-      setProfileCharacterId(returnedId)
-      setProfileDraft(effective)
-      setProfileBaseline(effective)
-      setProfileBuiltIn(builtIn)
-      setProfileHasOverrides(profileHasOverridesFromResult(result, true))
-      setProfileLoaded(true)
-      if (nextView && typeof nextView === 'object') setS(nextView)
-      window.dispatchEvent(new CustomEvent('whg:profile-changed', {
-        detail: {
-          characterId: returnedId,
-          builtIn,
-          effective,
-          overrides: profileOverridesFromResult(result) || Object.fromEntries(
-            PROFILE_KEYS.filter((key) => overrides[key] !== null).map((key) => [key, overrides[key]]),
-          ),
-          view: nextView,
-          sourceSessionId: broadcastSessionId,
-        },
-      }))
-      setProfileMessage(refreshError ? t("设定已保存；画面会在服务恢复后自动同步。") : t("角色设定已保存。"))
-      setProfileError(refreshError)
-    }).catch((err) => {
-      setProfileError(t("角色设定保存失败：") + String(err && err.message ? err.message : err))
-    }).finally(() => setProfileSaving(false))
-  }
 
-  function resetCharacterProfile(): void {
-    const characterId = String(s && s.current ? s.current : profileCharacterId)
-    if (!characterId || profileSaving) return
-    setProfileSaving(true)
-    setProfileError('')
-    setProfileMessage('')
-    callApi('profile-reset', { characterId }).then(async (result) => {
-      assertApiResult(result, t("默认角色设定未恢复"))
-      const returnedId = String(result && (result.charId || result.characterId) ? (result.charId || result.characterId) : characterId)
-      let effective = profileFromResult(result)
-      let builtIn = builtInProfileFromResult(result)
-      let refreshError = ''
-      if (!effective) {
-        try {
-          const refreshed = await callApi('profile-get', { characterId: returnedId })
-          assertApiResult(refreshed, t("默认角色设定读取失败"))
-          effective = profileFromResult(refreshed)
-          builtIn = builtInProfileFromResult(refreshed)
-        } catch (err: any) {
-          refreshError = t("默认设定已恢复，但内容刷新失败：") + String(err && err.message ? err.message : err)
-        }
-      }
-      let nextView = viewFromResult(result)
-      if (!nextView) {
-        try {
-          nextView = await callApi('view')
-        } catch (err: any) {
-          refreshError = refreshError || (t("默认设定已恢复，但画面刷新失败：") + String(err && err.message ? err.message : err))
-        }
-      }
-      if (effective) {
-        setProfileDraft(effective)
-        setProfileBaseline(effective)
-        setProfileBuiltIn(builtIn || effective)
-        setProfileLoaded(true)
-      }
-      setProfileCharacterId(returnedId)
-      setProfileHasOverrides(false)
-      if (nextView && typeof nextView === 'object') setS(nextView)
-      window.dispatchEvent(new CustomEvent('whg:profile-changed', {
-        detail: {
-          characterId: returnedId,
-          builtIn: builtIn || effective,
-          effective,
-          overrides: {},
-          view: nextView,
-          sourceSessionId: broadcastSessionId,
-        },
-      }))
-      setProfileMessage(refreshError ? t("默认设定已恢复；内容会在服务恢复后自动同步。") : t("已恢复该角色的默认设定。"))
-      setProfileError(refreshError)
-    }).catch((err) => {
-      setProfileError(t("恢复默认设定失败：") + String(err && err.message ? err.message : err))
-    }).finally(() => setProfileSaving(false))
-  }
 
   function send(): void {
     const t = text
     if (!t.trim()) return
     setText('')
-    act('chat', { text: t })
+    say({ text: t }, t)
   }
 
   // whale-girl emotion sprites: filename = emotion (local asset keys)
@@ -1974,7 +1637,9 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
 
   function lastLine(): any {
     const lines: any[] = (s && s.history) || []
-    return lines.length > 0 ? lines[lines.length - 1] : null
+    if (lines.length > 0) return lines[lines.length - 1]
+    const greeting = s?.companion?.characters?.find((row: any) => row.id === s.current)?.effective?.greeting
+    return greeting ? { who: 'heroine', text: greeting, opening: true } : null
   }
 
   function loadRewardCg(cgId: string): void {
@@ -2075,7 +1740,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   function openCgMenu(event: any, item: any): void {
     event.preventDefault(); event.stopPropagation(); cgMenuTarget.current = event.currentTarget
     const rect = event.currentTarget.getBoundingClientRect()
-    setCgMenu({item,x:Math.max(8,Math.min(event.clientX || rect.left,window.innerWidth-244)),y:Math.max(8,Math.min(event.clientY || rect.bottom,window.innerHeight-104))})
+    setCgMenu({item,x:Math.max(8,Math.min(event.clientX || rect.left,window.innerWidth-224)),y:Math.max(8,Math.min(event.clientY || rect.bottom,window.innerHeight-170))})
   }
   async function recycleCg(id: string, restore = false): Promise<void> {
     if (busy) return
@@ -2131,16 +1796,6 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     })
   }
 
-  function loadSkitLog(): void {
-    setSkitLogLoading(true)
-    setSkitLogError(null)
-    callApi('side-story-log').then((result: any) => {
-      setSkitLog(Array.isArray(result && result.skits) ? result.skits : [])
-      setSkitCgAvailable(!!(result && result.cgAvailable))
-    }).catch((err: any) => {
-      setSkitLogError(String(err && err.message ? err.message : err))
-    }).finally(() => { setSkitLogLoading(false) })
-  }
 
   function openArchive(kind: 'history' | 'gallery' | 'profile', trigger: HTMLElement): void {
     setPickerPanel(null)
@@ -2149,7 +1804,6 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     closeGalleryDetail()
     setArchivePanel(kind)
     if (kind === 'gallery') loadGallery()
-    if (kind === 'profile') loadCharacterProfile(String(s && s.current ? s.current : ''))
   }
 
   function saveGalleryBackground(item: any): void {
@@ -2187,34 +1841,40 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
 
   function characterPicker(): React.ReactElement | null {
     if (pickerPanel !== 'character') return null
-    const characters: any[] = Array.isArray(modelOptions && modelOptions.characters) ? modelOptions.characters : []
+    const characters: any[] = Array.isArray(s?.companion?.characters) ? s.companion.characters : Array.isArray(modelOptions && modelOptions.characters) ? modelOptions.characters : []
     const mode = (pluginSettings && pluginSettings.characterMode) || s.characterMode || 'follow'
     const selectedId = (pluginSettings && pluginSettings.characterId) || s.characterId || s.current
+    const followMode = mode !== 'manual'
     return React.createElement('div', {
       'aria-label': t("选择出场角色"),
-      className: 'whg-picker',
+      className: 'whg-picker gx-pop gx-pop-wide',
       id: 'whg-character-picker-' + appScope,
       ref: pickerRef,
       role: 'listbox',
     },
-      React.createElement('div', { className: 'whg-picker-head' },
-        React.createElement('span', null, 'CHARACTER SOURCE'),
-        React.createElement('span', null, pickerCatalogLoading ? t("读取中…") : String(characters.length + 1).padStart(2, '0')),
-      ),
-      pickerOption({
-        selected: mode !== 'manual',
-        title: t("跟随工作区"),
-        subtitle: mainModelText(modelOptions),
-        onChoose: () => updateRuntimeSettings({ characterMode: 'follow', characterId: null }),
-      }),
-      characters.map((character: any, index: number) => pickerOption({
-        key: String(character.id || index),
-        selected: mode === 'manual' && String(selectedId) === String(character.id),
-        title: optionText(character, t("角色 ") + (index + 1)) + (s.resources?.characters?.find((c:any)=>c.id===character.id)?.installed===false?' · '+t('待安装'):''),
-        subtitle: character.model ? String(character.model) : character.description ? String(character.description) : undefined,
-        onChoose: () => updateRuntimeSettings({ characterMode: 'manual', characterId: String(character.id) }),
-      })),
-      pickerError ? React.createElement('div', { className: 'whg-bg-error', role: 'alert' }, pickerError) : null,
+      React.createElement('div', { className: 'gx-pop-h' }, t("出场角色"), React.createElement('small', null, pickerCatalogLoading ? t("读取中…") : characters.length + t(" 个"))),
+      React.createElement('div', { className: 'gx-pop-b' },
+        React.createElement('button', { type: 'button', role: 'option', 'aria-selected': followMode, className: 'gx-follow' + (followMode ? ' sel' : ''), disabled: pickerLoading, onClick: () => updateRuntimeSettings({ characterMode: 'follow', characterId: null }) },
+          Icon('refresh', { size: 16 }),
+          React.createElement('span', null, React.createElement('b', null, t("跟随工作区")), React.createElement('small', null, t("按当前工作区的模型自动换角色") + (mainModelText(modelOptions) ? ' · ' + t("现在是 ") + mainModelText(modelOptions) : ''))),
+          followMode ? Icon('check', { size: 16 }) : null),
+        React.createElement('div', { className: 'gx-cgrid' },
+          characters.map((character: any, index: number) => {
+            const id = String(character.id || index)
+            const chosen = s?.companion ? id === String(s.current) : mode === 'manual' && String(selectedId) === id
+            const role = THEME_PALETTES.find((row: any) => row.id === id)?.zh || character.description || character.model || ''
+            return React.createElement('button', {
+              key: id,
+              type: 'button',
+              role: 'option',
+              'aria-selected': chosen,
+              className: 'gx-copt' + (chosen ? ' sel' : ''),
+              disabled: pickerLoading,
+              onClick: () => { if (s?.companion) { closePicker(); companionRequest('companion-character-select', { id: String(character.id) }).catch((error: any) => setApiError(error.message)) } else updateRuntimeSettings({ characterMode: 'manual', characterId: String(character.id) }) },
+            }, face(id), React.createElement('span', null, React.createElement('b', null, (s?.companion ? companionCharacterName(character) : optionText(character, t("角色 ") + (index + 1))) + (s.resources?.characters?.find((c:any)=>c.id===character.id)?.installed===false?' · '+t('待安装'):'')), role ? React.createElement('small', null, t(role)) : null), chosen ? Icon('check', { size: 16 }) : null)
+          })),
+        pickerError ? React.createElement('div', { className: 'whg-bg-error', role: 'alert' }, pickerError) : null),
+      React.createElement('div', { className: 'gx-pop-f' }, React.createElement('span', { className: 'grow' }, t("点角色就切换，聊天记录按角色分开保存")), React.createElement('button', { type: 'button', className: 'ui-btn sm', onClick: () => openCompanion('characters') }, Icon('users', { size: 14 }), t('管理角色'))),
     )
   }
 
@@ -2284,10 +1944,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     const visiblePreview = backgroundPreview || currentActual
     const builtinSection = builtinOptions.length > 0
       ? React.createElement('section', { className: 'whg-bg-builtins', 'aria-label': (s && s.name ? s.name : t("当前角色")) + t("的内置背景") },
-        React.createElement('div', { className: 'whg-bg-builtins-head' },
-          React.createElement('span', null, t("角色内置背景")),
-          React.createElement('span', { className: 'whg-bg-builtins-role' }, s && s.name ? s.name : ''),
-        ),
+        React.createElement('p', { className: 'gx-sec' }, t("内置背景")),
         hasSavedBackground
           ? React.createElement('div', { className: 'whg-bg-override-note' },
             backgroundMode === 'cg' ? t("特殊 CG 正在覆盖角色背景。选择下方背景会退出 CG 覆盖。") : t("自定义图片正在覆盖角色背景。选择下方背景会退出自定义覆盖。"),
@@ -2324,20 +1981,19 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       : null
     return React.createElement('div', {
       'aria-label': t("修改 galgame 背景图"),
-      className: 'whg-picker right whg-bg-picker',
+      className: 'whg-picker right whg-bg-picker gx-pop gx-pop-wide',
       id: 'whg-background-picker-' + appScope,
       ref: pickerRef,
       role: 'dialog',
     },
-      React.createElement('div', { className: 'whg-picker-head' },
-        React.createElement('span', null, 'BACKGROUND FILE'),
-        React.createElement('span', null, backgroundPreview ? t("预览") : hasSavedBackground ? t("覆盖中") : t("角色背景")),
-      ),
+      React.createElement('div', { className: 'gx-pop-h' }, t("背景图"), React.createElement('small', null, (s && s.name ? s.name : t("当前角色")) + t(" 专用")), React.createElement('span', { className: 'grow' }), React.createElement('span', { className: 'ws-tag' }, backgroundPreview ? t("预览") : backgroundMode === 'cg' ? t("CG 覆盖") : backgroundMode === 'custom' ? t("自定义图片") : t("角色背景"))),
+      React.createElement('div', { className: 'gx-pop-b' },
       visiblePreview
-        ? React.createElement('img', { className: 'whg-bg-preview', src: visiblePreview, alt: backgroundPreview ? t("待应用背景预览") : t("当前 galgame 背景") })
+        ? React.createElement('div', { className: 'gx-prev' }, React.createElement('img', { className: 'whg-bg-preview', src: visiblePreview, alt: backgroundPreview ? t("待应用背景预览") : t("当前 galgame 背景") }), React.createElement('span', { className: 'ws-tag' }, backgroundPreview ? t("预览") : t("正在使用")))
         : React.createElement('div', { className: 'whg-bg-empty' }, t("选择一张本地图片后在这里预览")),
       builtinSection,
-      React.createElement('div', { className: 'whg-picker-note' }, t("上传背景和 CG 背景仅用于当前角色，切换角色不会改变其他角色的背景。")),
+      React.createElement('p', { className: 'gx-hint' }, t("上传的图片和 CG 背景只用在 ") + (s && s.name ? s.name : t("当前角色")) + t(" 身上，换角色不影响别人。支持 PNG、JPG、WebP、AVIF，12 MB 以内。")),
+      pickerError ? React.createElement('div', { className: 'whg-bg-error', role: 'alert' }, pickerError) : null),
       React.createElement('input', {
         accept: 'image/png,image/jpeg,image/webp,image/avif',
         className: 'whg-bg-file',
@@ -2345,83 +2001,19 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         ref: bgFileRef,
         type: 'file',
       }),
-      React.createElement('div', { className: 'whg-bg-actions' },
-        React.createElement('button', {
-          className: 'whg-btn',
-          disabled: pickerLoading,
-          onClick: () => bgFileRef.current?.click(),
-          type: 'button',
-        }, backgroundPreview ? t("重新选择") : t("上传图片")),
+      React.createElement('div', { className: 'gx-pop-f' },
+        React.createElement('button', { className: 'ui-btn sm', disabled: pickerLoading, onClick: () => bgFileRef.current?.click(), type: 'button' }, Icon('upload', { size: 14 }), backgroundPreview ? t("重新选择") : t("上传图片")),
+        React.createElement('span', { className: 'grow' }),
         backgroundPreview
-          ? React.createElement('button', {
-            className: 'whg-cg-btn',
-            disabled: pickerLoading,
-            onClick: applyBackgroundUpload,
-            type: 'button',
-          }, pickerLoading ? t("保存中…") : t("应用这张背景"))
-          : null,
+          ? React.createElement('button', { className: 'ui-btn sm', disabled: pickerLoading, onClick: () => { setBackgroundPreview(null); setBackgroundFileName(''); setPickerError('') }, type: 'button' }, t("取消预览"))
+          : React.createElement('button', { className: 'ui-btn sm', disabled: pickerLoading || !hasSavedBackground, onClick: restoreDefaultBackground, type: 'button' }, t("恢复默认")),
         backgroundPreview
-          ? React.createElement('button', {
-            className: 'whg-btn',
-            disabled: pickerLoading,
-            onClick: () => { setBackgroundPreview(null); setBackgroundFileName(''); setPickerError('') },
-            type: 'button',
-          }, t("取消预览"))
-          : null,
-        hasSavedBackground
-          ? React.createElement('button', {
-            className: 'whg-btn',
-            disabled: pickerLoading,
-            onClick: restoreDefaultBackground,
-            type: 'button',
-          }, t("恢复默认"))
+          ? React.createElement('button', { className: 'ui-btn sm primary', disabled: pickerLoading, onClick: applyBackgroundUpload, type: 'button' }, pickerLoading ? t("保存中…") : t("应用这张背景"))
           : null,
       ),
-      pickerError ? React.createElement('div', { className: 'whg-bg-error', role: 'alert' }, pickerError) : null,
     )
   }
 
-  function skitPicker(): React.ReactElement | null {
-    if (pickerPanel !== 'skit') return null
-    const side = (s && s.sideStory) || {}
-    const cooling = Number(side.cooldownMs) > 0
-    const mins = cooling ? Math.ceil(Number(side.cooldownMs) / 60000) : 0
-    const start = () => {
-      if (busy || cooling) return
-      const topic = skitTopic.trim()
-      setSkitTopic('')
-      closePicker(false)
-      act('side-story', topic ? { op: 'start', topic } : { op: 'start' })
-    }
-    return React.createElement('div', {
-      'aria-label': t("开一场小剧场"),
-      className: 'whg-picker right whg-skit-picker',
-      id: 'whg-skit-picker-' + appScope,
-      ref: pickerRef,
-      role: 'dialog',
-    },
-      React.createElement('div', { className: 'whg-picker-head' },
-        React.createElement('span', null, 'SIDE ACT'),
-        React.createElement('span', null, cooling ? t("冷却中 · 约 ") + mins + t(" 分钟") : t("可开演")),
-      ),
-      React.createElement('p', { className: 'whg-side-seed' },
-        t("不填就让她们自己找话题：优先看看外面在聊什么，找不到就聊主人最近在忙的事。")),
-      React.createElement('input', {
-        className: 'whg-input',
-        value: skitTopic,
-        placeholder: t("想让她们聊点什么？（可留空）"),
-        disabled: busy || cooling,
-        onChange: (event: any) => { setSkitTopic(event.target.value) },
-        onKeyDown: (event: any) => { if (event.key === 'Enter') start() },
-      }),
-      React.createElement('button', {
-        className: 'whg-btn whg-skit-start',
-        disabled: busy || cooling,
-        onClick: start,
-        type: 'button',
-      }, cooling ? t("冷却中") : t("开演")),
-    )
-  }
 
   function spritePicker(): React.ReactElement | null {
     if (pickerPanel !== 'sprite') return null
@@ -2430,15 +2022,13 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     const hasSavedSprite = !!customSprite || !!(s && (s.hasCustomSprite === true || s.customSprite === true || s.spriteMode === 'custom'))
     return React.createElement('div', {
       'aria-label': t("修改") + (s && s.name ? s.name : t("当前角色")) + t("的角色立绘"),
-      className: 'whg-picker right whg-sprite-picker',
+      className: 'whg-picker right whg-sprite-picker gx-pop',
       id: 'whg-sprite-picker-' + appScope,
       ref: pickerRef,
       role: 'dialog',
     },
-      React.createElement('div', { className: 'whg-picker-head' },
-        React.createElement('span', null, 'CHARACTER PORTRAIT'),
-        React.createElement('span', null, spritePreview ? t("预览") : hasSavedSprite ? t("使用中") : t("默认")),
-      ),
+      React.createElement('div', { className: 'gx-pop-h' }, t("角色立绘"), React.createElement('small', null, s && s.name ? s.name : ''), React.createElement('span', { className: 'grow' }), React.createElement('span', { className: 'ws-tag' }, spritePreview ? t("预览") : hasSavedSprite ? t("自己上传") : t("默认"))),
+      React.createElement('div', { className: 'gx-pop-b' },
       visiblePreview
         ? React.createElement('div', { className: 'whg-sprite-preview-shell' },
           React.createElement('img', {
@@ -2448,9 +2038,8 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
           }),
         )
         : React.createElement('div', { className: 'whg-bg-empty' }, t("选择一张本地图片后在这里预览")),
-      React.createElement('div', { className: 'whg-picker-note' },
-        t("当前角色 · ") + (s && s.name ? s.name : t("未识别")) + t("。立绘按角色分别保存，并在所有工作区共享；建议使用透明背景的竖向图片。"),
-      ),
+      React.createElement('p', { className: 'gx-hint' }, t("立绘按角色保存，所有工作区共用。建议用透明背景的竖图，12 MB 以内。")),
+      pickerError ? React.createElement('div', { className: 'whg-bg-error', role: 'alert' }, pickerError) : null),
       React.createElement('input', {
         accept: 'image/png,image/jpeg,image/webp,image/avif',
         className: 'whg-bg-file',
@@ -2458,571 +2047,215 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         ref: spriteFileRef,
         type: 'file',
       }),
-      React.createElement('div', { className: 'whg-bg-actions' },
-        React.createElement('button', {
-          className: 'whg-btn',
-          disabled: pickerLoading,
-          onClick: () => spriteFileRef.current?.click(),
-          type: 'button',
-        }, spritePreview ? t("重新选择") : t("上传图片")),
+      React.createElement('div', { className: 'gx-pop-f' },
+        React.createElement('button', { className: 'ui-btn sm', disabled: pickerLoading, onClick: () => spriteFileRef.current?.click(), type: 'button' }, Icon('upload', { size: 14 }), spritePreview ? t("重新选择") : t("上传图片")),
+        React.createElement('span', { className: 'grow' }),
         spritePreview
-          ? React.createElement('button', {
-            className: 'whg-cg-btn',
-            disabled: pickerLoading,
-            onClick: applySpriteUpload,
-            type: 'button',
-          }, pickerLoading ? t("保存中…") : t("应用这张立绘"))
-          : null,
-        React.createElement('button', {
-          className: 'whg-btn',
-          disabled: pickerLoading,
-          onClick: () => closePicker(),
-          type: 'button',
-        }, t("取消")),
-        hasSavedSprite
-          ? React.createElement('button', {
-            className: 'whg-btn',
-            disabled: pickerLoading,
-            onClick: restoreDefaultSprite,
-            type: 'button',
-          }, t("恢复默认"))
-          : null,
-      ),
-      pickerError ? React.createElement('div', { className: 'whg-bg-error', role: 'alert' }, pickerError) : null,
-    )
-  }
-
-  function profileField(
-    key: ProfileKey,
-    label: string,
-    hint: string,
-    multiline = false,
-  ): React.ReactElement {
-    const id = 'whg-profile-' + appScope + '-' + key
-    const hintId = id + '-hint'
-    const common = {
-      'aria-describedby': hintId,
-      className: 'whg-profile-control',
-      disabled: profileLoading || profileSaving,
-      id,
-      onChange: (event: any) => updateProfileField(key, String(event.target.value || '')),
-      spellCheck: true,
-      value: profileDraft[key],
-    }
-    const control = multiline
-      ? React.createElement('textarea', { ...common, rows: key === 'persona' || key === 'tone' ? 5 : 4 })
-      : React.createElement('input', {
-        ...common,
-        autoComplete: 'off',
-        ref: key === 'displayName' ? profileFirstFieldRef : undefined,
-        type: 'text',
-      })
-    return React.createElement('div', { className: 'whg-profile-field' },
-      React.createElement('label', { htmlFor: id }, label),
-      control,
-      React.createElement('small', { id: hintId }, hint),
-    )
-  }
-
-  function profileEditor(): React.ReactElement {
-    if (profileLoading) {
-      return React.createElement('div', { className: 'whg-profile-loading', role: 'status' }, t("正在调取角色档案……"))
-    }
-    if (!profileLoaded) {
-      return React.createElement('div', { className: 'whg-archive-error', role: 'alert' },
-        profileError || t("角色设定暂时无法读取。"),
-        React.createElement('button', {
-          className: 'whg-btn',
-          onClick: () => loadCharacterProfile(String(s && s.current ? s.current : '')),
-          type: 'button',
-        }, t("重新读取")),
-      )
-    }
-    const dirty = PROFILE_KEYS.some((key) => profileDraft[key] !== profileBaseline[key])
-    const message = profileError
-      || profileMessage
-      || (dirty ? t("有未保存的修改。") : profileHasOverrides ? t("当前角色使用自定义设定。") : t("当前角色使用默认设定。"))
-    return React.createElement(React.Fragment, null,
-      React.createElement('div', { className: 'whg-profile-intro' },
-        React.createElement('strong', null, (s && s.name ? s.name : t("当前角色")) + t(" · 独立角色档案")),
-        t("。设定按角色分别保存，并在所有工作区共享；保存或恢复默认都不会改变好感度、记忆或角色立绘，已经开始互动的对话历史也不会被改写。"),
-        React.createElement('span', { className: 'whg-profile-guard' },
-          t("若尚未开始互动，编辑会原位更新当前开场问候；开始对话后不再改写历史。安全规则与单句回复限制始终保留。"),
-        ),
-      ),
-      React.createElement('form', {
-        'aria-busy': profileSaving,
-        className: 'whg-profile-form',
-        onSubmit: (event: any) => { event.preventDefault(); saveCharacterProfile() },
-      },
-        React.createElement('section', { 'aria-labelledby': 'whg-profile-heading-' + appScope, className: 'whg-profile-section' },
-          React.createElement('div', { className: 'whg-profile-section-head', id: 'whg-profile-heading-' + appScope },
-            React.createElement('strong', null, 'DOSSIER HEADING'),
-            React.createElement('span', null, t("姓名牌与彼此称呼")),
-          ),
-          React.createElement('div', { className: 'whg-profile-head-fields' },
-            profileField('displayName', t("角色昵称"), t("显示在标题、姓名牌与对话记录中。")),
-            profileField('address', t("对用户称呼"), t("角色在台词中如何称呼你。")),
-          ),
-        ),
-        React.createElement('section', { 'aria-labelledby': 'whg-profile-core-' + appScope, className: 'whg-profile-section' },
-          React.createElement('div', { className: 'whg-profile-section-head', id: 'whg-profile-core-' + appScope },
-            React.createElement('strong', null, 'CHARACTER CORE'),
-            React.createElement('span', null, t("主要对话依据")),
-          ),
-          React.createElement('div', { className: 'whg-profile-main-fields' },
-            profileField('persona', t("性格"), t("角色的性格、价值取向与互动边界。"), true),
-            profileField('tone', t("语气"), t("措辞、节奏、口癖等表达偏好。"), true),
-          ),
-        ),
-        React.createElement('section', { 'aria-labelledby': 'whg-profile-scenes-' + appScope, className: 'whg-profile-section' },
-          React.createElement('div', { className: 'whg-profile-section-head', id: 'whg-profile-scenes-' + appScope },
-            React.createElement('strong', null, 'SCENE NOTES'),
-            React.createElement('span', null, t("开场与纪念 CG")),
-          ),
-          React.createElement('div', { className: 'whg-profile-secondary-fields' },
-            profileField('greeting', t("首次问候"), t("尚未开始互动时可更新当前开场问候；已有真实对话后不会改写。"), true),
-            profileField('visual', t("CG 外观描述"), t("用于生成升级纪念 CG，不会更换当前角色立绘。"), true),
-          ),
-        ),
-        React.createElement('div', { className: 'whg-profile-actions' },
-          React.createElement('button', {
-            className: 'whg-cg-btn',
-            disabled: profileSaving || !dirty,
-            type: 'submit',
-          }, profileSaving ? t("保存中…") : t("保存设定")),
-          React.createElement('button', {
-            className: 'whg-btn',
-            disabled: profileSaving || (!profileHasOverrides && !dirty),
-            onClick: resetCharacterProfile,
-            title: t("只恢复当前角色的六项设定，不清除其他存档内容"),
-            type: 'button',
-          }, profileSaving ? t("处理中…") : t("恢复默认")),
-          React.createElement('p', {
-            className: 'whg-profile-message' + (profileError ? ' error' : ''),
-            role: profileError ? 'alert' : 'status',
-          }, message),
-        ),
+          ? React.createElement('button', { className: 'ui-btn sm primary', disabled: pickerLoading, onClick: applySpriteUpload, type: 'button' }, pickerLoading ? t("保存中…") : t("应用这张立绘"))
+          : React.createElement('button', { className: 'ui-btn sm', disabled: pickerLoading || !hasSavedSprite, onClick: restoreDefaultSprite, type: 'button' }, t("恢复默认")),
       ),
     )
   }
 
+
+
+  // The CG gallery drawer (its only use since the history and skits panels moved into the companion manager).
   function archiveDrawer(): React.ReactElement | null {
-    if (!archivePanel || !s) return null
-    const history: any[] = Array.isArray(s.history) ? s.history : []
+    if (archivePanel !== 'gallery' || !s) return null
     const galleryCount = typeof s.galleryCount === 'number' ? s.galleryCount : galleryItems.length
-    const isHistory = archivePanel === 'history'
-    const isProfile = archivePanel === 'profile'
-    const isSkits = archivePanel === 'skits'
-    const recordCount = isHistory ? history.length : isSkits ? skitLog.length : galleryCount
-    const kicker = isProfile
-      ? 'DEEP-SEA DOSSIER · ' + String(profileCharacterId || s.current || 'PROFILE').toUpperCase()
-      : 'DEEP-SEA ARCHIVE · ' + (isHistory ? 'LOG ' : isSkits ? 'ACT ' : 'CG ') + String(recordCount).padStart(3, '0')
+    const waiting = (item: any) => ['queued', 'planning', 'generating'].includes(item.status)
+    const nameOf = (item: any) => item.name || s.name
+    let title = galleryTrash ? t("CG 回收站") : t("CG 图鉴")
+    let kicker = galleryTrash ? galleryItems.length + t(" 张 · 恢复后回到图鉴") : galleryCount + t(" 张 · 按角色分开收藏")
     let body: React.ReactElement
-
-    if (isProfile) {
-      body = profileEditor()
-    } else if (isSkits) {
-      body = skitLogError
-        ? React.createElement('div', { className: 'whg-archive-error', role: 'alert' }, t("小剧场记录读取失败：") + skitLogError)
-        : skitLogLoading
-          ? React.createElement('div', { className: 'whg-archive-empty' }, t("正在翻出后台的演出记录……"))
-          : skitLog.length === 0
-            ? React.createElement('div', { className: 'whg-archive-empty' }, t("还没有演过小剧场。等主人忙点什么，她们就有话题了。"))
-            : React.createElement('div', { className: 'whg-skit-log' },
-              skitLog.map((skit: any) => React.createElement('section', { className: 'whg-skit', key: String(skit.id) },
-                React.createElement('header', { className: 'whg-skit-head' },
-                  React.createElement('span', { className: 'whg-skit-cast' },
-                    (skit.cast || []).map((member: any) => React.createElement('span', {
-                      key: member.id,
-                      style: { color: member.color },
-                    }, member.name))),
-                  React.createElement('time', { className: 'whg-skit-time' },
-                    new Date(Number(skit.at) || 0).toLocaleString()),
-                ),
-                skit.seed ? React.createElement('p', { className: 'whg-skit-seed' }, skit.seed) : null,
-                skitCgAvailable
-                  ? React.createElement('button', {
-                    className: 'whg-btn whg-skit-cg',
-                    disabled: busy || ['queued', 'generating', 'ready'].includes(skit.cgStatus),
-                    onClick: () => {
-                      if(skit.cgStatus === 'trashed'){setArchivePanel('gallery');loadGallery(true);return}
-                      callApi('skit-cg', { skitId: skit.id }).then(result => { assertApiResult(result, t("合影生成暂时失败")); loadSkitLog() }).catch((err: any) => {
-                        setSkitLogError(String(err && err.message ? err.message : err))
-                      })
-                    },
-                    type: 'button',
-                  }, skit.cgStatus === 'trashed' ? t("已移入回收站 · 点击恢复") : skit.cgStatus === 'ready'
-                    ? t("合影已生成 · 见 CG图鉴")
-                    : ['queued', 'generating'].includes(skit.cgStatus)
-                      ? t("合影绘制中…")
-                      : skit.cgStatus === 'failed'
-                        ? t("重试这场的合影 CG")
-                        : t("生成这场的合影 CG"))
-                  : null,
-                React.createElement('div', { className: 'whg-history' },
-                  (skit.lines || []).map((line: any, index: number) => React.createElement('div', {
-                    className: 'whg-history-row ' + String(line.who || 'narrator'),
-                    key: index,
-                  },
-                    React.createElement('div', { className: 'whg-history-who' }, line.name || t("旁白")),
-                    React.createElement('p', { className: 'whg-history-text' }, line.text || ''),
-                  ))),
-              )))
-    } else if (isHistory) {
-      body = history.length === 0
-        ? React.createElement('div', { className: 'whg-archive-empty' }, t("还没有对话记录。和") + s.name + t("说句话，第一份深海档案就会在这里归档。"))
-        : React.createElement('div', { className: 'whg-history' },
-          history.map((line: any, index: number) => {
-            const who = line && line.who === 'heroine' ? s.name : line && line.who === 'user' ? t("主人") : t("旁白")
-            const kind = line && line.who ? String(line.who) : 'narrator'
-            return React.createElement('div', { className: 'whg-history-row ' + kind, key: index + '-' + kind },
-              React.createElement('div', { className: 'whg-history-who' }, who),
-              React.createElement('p', { className: 'whg-history-text' }, line && typeof line.text === 'string' ? line.text : ''),
-            )
-          }),
-        )
-    } else if (gallerySelected) {
-      body = React.createElement('div', { className: 'whg-gallery-detail' },
-        React.createElement('button', {
-          className: 'whg-archive-back',
-          onClick: closeGalleryDetail,
-          type: 'button',
-        }, t("← 返回图鉴")),
+    if (gallerySelected) {
+      const item = gallerySelected
+      const index = galleryItems.findIndex((row: any) => row.id === item.id)
+      title = item.theme?.title || ('Lv.' + (item.level || '?') + ' · ' + nameOf(item))
+      kicker = (galleryTrash ? t("CG 回收站") : t("CG 图鉴")) + (index >= 0 ? ' · ' + t("第 {k} 张 / 共 {n} 张").replace('{k}', String(index + 1)).replace('{n}', String(galleryItems.length)) : '')
+      const notes = [item.referenceNotice, item.theme?.fallbackReason, item.prompt].filter(Boolean)
+      body = React.createElement('div', { className: 'gx-detail whg-gallery-detail' },
+        React.createElement('button', { className: 'gx-back', onClick: closeGalleryDetail, type: 'button' }, Icon('chevron', { size: 14 }), galleryTrash ? t("返回回收站") : t("返回图鉴")),
         galleryDetailLoading
-          ? React.createElement('div', { className: 'whg-archive-empty', role: 'status' }, t("正在读取这张特殊 CG……"))
+          ? React.createElement('div', { className: 'gx-big gx-big-wait', role: 'status' }, React.createElement('span', { className: 'ui-spinner', 'aria-hidden': 'true' }), t("正在读取这张特殊 CG……"))
           : galleryDetailError
-            ? React.createElement('div', { className: 'whg-archive-error', role: 'alert' },
-              t("CG 图片读取失败：") + galleryDetailError,
-              React.createElement('button', {
-                className: 'whg-btn',
-                onClick: () => openGalleryDetail(gallerySelected),
-                type: 'button',
-              }, t("重新读取")),
-            )
-            : gallerySelected.dataUrl
-              ? React.createElement('img', {
-                className: 'whg-gallery-full',
-                src: gallerySelected.dataUrl,
-                alt: (gallerySelected.name || s.name) + t("的特殊CG"),
-              })
-              : React.createElement('div', { className: 'whg-archive-error', role: 'alert' }, t("这张 CG 暂时无法读取。")),
-        React.createElement('div', { className: 'whg-gallery-caption' },
-          React.createElement('strong', null, 'Lv.' + (gallerySelected.level || '?')),
-          React.createElement('span', null, (gallerySelected.name || s.name) + ' · ' + formatCgDate(gallerySelected.at)),
-        ),
-        gallerySelected.referenceNotice ? React.createElement('p',{className:'whg-gallery-prompt'},gallerySelected.referenceNotice) : null,
-        gallerySelected.theme ? React.createElement('p',{className:'whg-gallery-prompt'},gallerySelected.theme.title + ' · ' + (gallerySelected.theme.source === 'model' ? t("模型设计") : t("本地主题")) + (gallerySelected.theme.fallbackReason ? ' · '+gallerySelected.theme.fallbackReason : '')) : null,
-        gallerySelected.prompt
-          ? React.createElement('p', { className: 'whg-gallery-prompt' }, gallerySelected.prompt)
-          : null,
-        React.createElement('button', {
-          className: 'whg-cg-btn',
-          disabled: busy || gallerySelected.savedAsBg === true,
-          onClick: () => saveGalleryBackground(gallerySelected),
-          type: 'button',
-        }, gallerySelected.savedAsBg ? t("当前galgame背景") : t("设为galgame背景")),
+            ? React.createElement('div', { className: 'gx-big gx-big-wait err', role: 'alert' }, Icon('alert', { size: 22 }), t("CG 图片读取失败：") + galleryDetailError, React.createElement('button', { className: 'ui-btn sm', onClick: () => openGalleryDetail(item), type: 'button' }, t("重新读取")))
+            : item.dataUrl
+              ? React.createElement(CgImageViewer, { src: item.dataUrl, alt: nameOf(item) + t("的特殊CG"), title, subtitle: nameOf(item) + ' · Lv.' + (item.level || '?') + ' · ' + formatCgDate(item.at) })
+              : React.createElement('div', { className: 'gx-big gx-big-wait err', role: 'alert' }, t("这张 CG 暂时无法读取。")),
+        React.createElement('div', { className: 'gx-meta' },
+          React.createElement('b', null, 'Lv.' + (item.level || '?') + (item.theme?.title ? ' · ' + item.theme.title : '')),
+          React.createElement('small', null, [nameOf(item), formatCgDate(item.at), item.theme ? (item.theme.source === 'model' ? t("主题由模型设计") : t("本地主题")) : ''].filter(Boolean).join(' · '))),
+        React.createElement('div', { className: 'gx-acts' },
+          galleryTrash
+            ? React.createElement('button', { className: 'ui-btn sm primary', disabled: busy, onClick: () => recycleCg(item.id, true), type: 'button' }, Icon('undo', { size: 14 }), t("恢复到图鉴"))
+            : React.createElement(React.Fragment, null,
+              React.createElement('button', { className: 'ui-btn sm', disabled: busy || item.savedAsBg === true, onClick: () => saveGalleryBackground(item), type: 'button' }, Icon(item.savedAsBg ? 'check' : 'image', { size: 14 }), item.savedAsBg ? t("已是 Galgame 背景") : t("设为 Galgame 背景")),
+              React.createElement('button', { className: 'ui-btn sm danger', disabled: busy, onClick: () => recycleCg(item.id), type: 'button' }, Icon('trash', { size: 14 }), t("移入回收站")))),
+        notes.length ? React.createElement('details', { className: 'ws-details ws-plain' }, React.createElement('summary', null, Icon('chevron', { size: 16 }), t("画面描述（生成时用的提示词）")), ...notes.map((text: string, i: number) => React.createElement('p', { key: i, className: 'whg-gallery-prompt' }, text))) : null,
       )
     } else if (galleryLoading) {
-      body = React.createElement('div', { className: 'whg-archive-empty', role: 'status' }, t("正在打开深海图鉴柜……"))
+      body = React.createElement('div', { className: 'gx-cg-grid', role: 'status', 'aria-label': t("正在打开图鉴……") }, [0, 1, 2, 3].map(i => React.createElement('span', { key: i, className: 'ui-skel gx-cg-skel' })))
     } else if (galleryError) {
-      body = React.createElement('div', { className: 'whg-archive-error', role: 'alert' },
-        t("CG 图鉴读取失败：") + galleryError,
-        React.createElement('button', { className: 'whg-btn', onClick: loadGallery, type: 'button' }, t("重新读取")),
-      )
+      body = React.createElement('div', { className: 'ui-alert', role: 'alert' }, Icon('alert', { size: 16 }), React.createElement('div', { className: 'spacer' }, React.createElement('b', null, t("CG 图鉴读取失败")), galleryError), React.createElement('button', { className: 'ui-btn sm', onClick: () => loadGallery(), type: 'button' }, t("重新读取")))
     } else if (galleryItems.length === 0) {
-      body = React.createElement('div', { className: 'whg-archive-empty' }, galleryTrash ? t("回收站是空的。") : t("图鉴柜还是空的。提升等级后，收到的特殊 CG 会依角色分别收藏在这里。"))
+      body = React.createElement('div', { className: 'ws-empty gx-cg-empty' }, Icon(galleryTrash ? 'trash' : 'gallery', { size: 36 }), React.createElement('b', null, galleryTrash ? t("回收站是空的。") : t("还没有特殊 CG")), galleryTrash ? null : React.createElement('p', null, t("图鉴柜还是空的。提升等级后，收到的特殊 CG 会依角色分别收藏在这里。")))
     } else {
-      body = React.createElement('div', { className: 'whg-gallery' },
+      body = React.createElement('div', { className: 'gx-cg-grid whg-gallery' },
         galleryItems.map((item: any, index: number) => React.createElement('button', {
-          'aria-label': t("查看") + (item.name || s.name) + ' Lv.' + (item.level || '?') + t(" 特殊CG"),
-          className: 'whg-gallery-card',
+          'aria-label': t("查看") + nameOf(item) + ' Lv.' + (item.level || '?') + t(" 特殊CG"),
+          className: 'gx-cg whg-gallery-card' + (cgMenu?.item.id === item.id ? ' hl' : ''),
           'data-cg-id': item.id,
           'data-selected': cgMenu?.item.id === item.id,
-          onContextMenu: (event: any) => openCgMenu(event,item),
-          onKeyDown: (event: any) => {if(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))openCgMenu(event,item)},
+          onContextMenu: (event: any) => openCgMenu(event, item),
+          onKeyDown: (event: any) => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) openCgMenu(event, item) },
           key: item.id || index,
           onClick: () => busy ? undefined : galleryTrash ? item.status === 'ready' ? openGalleryDetail(item) : undefined : ['failed', 'cancelled'].includes(item.status) ? generateGalleryCg(item) : item.status === 'ready' ? openGalleryDetail(item) : undefined,
-          'aria-disabled': busy || ['queued', 'planning', 'generating'].includes(item.status),
+          'aria-disabled': busy || waiting(item),
           type: 'button',
         },
           React.createElement(CgThumbnail, { item, sessionId: props.sessionId }),
-          item.savedAsBg
-            ? React.createElement('span', { className: 'whg-gallery-bg' }, t("背景中"))
-            : null,
-          React.createElement('span', { className: 'whg-gallery-meta' },
-            React.createElement('span', { className: 'whg-gallery-level' }, 'Lv.' + (item.level || '?')),
-            React.createElement('span', { className: 'whg-gallery-date' }, (item.name || s.name) + ' · ' + formatCgDate(item.at)),
-          ),
+          item.savedAsBg ? React.createElement('span', { className: 'ws-tag gx-cg-tag' }, t("当前背景")) : null,
+          React.createElement('span', { className: 'gx-cg-m' }, React.createElement('b', null, 'Lv.' + (item.level || '?')), React.createElement('span', null, (item.theme?.title || nameOf(item)) + ' · ' + formatCgDate(item.at))),
         )),
       )
     }
-
+    const menuItem = (icon: string, label: string, onSelect: () => void, extra: any = {}) => React.createElement('button', { role: 'menuitem', type: 'button', ...extra, onClick: () => { setCgMenu(null); onSelect() } }, Icon(icon, { size: 16 }), label)
     return React.createElement('div', {
-      className: 'whg-archive-scrim',
+      className: 'whg-archive-scrim gx-scrim',
       onMouseDown: (event: any) => { if (event.target === event.currentTarget) closeArchive() },
     },
       React.createElement('aside', {
         'aria-labelledby': 'whg-archive-title-' + appScope,
         'aria-modal': 'true',
-        className: 'whg-archive' + (isProfile ? ' whg-profile-archive' : ''),
-        id: isProfile ? 'whg-profile-editor-' + appScope : undefined,
+        className: 'whg-archive gx-drawer',
         ref: archiveRef,
         role: 'dialog',
       },
-        React.createElement('div', { className: 'whg-archive-spine', 'aria-hidden': 'true' }, isProfile ? 'CHARACTER DOSSIER' : 'DEEP-SEA ARCHIVE'),
-        React.createElement('header', { className: 'whg-archive-head' },
-          React.createElement('div', { className: 'whg-archive-heading' },
-            React.createElement('div', { className: 'whg-archive-kicker' }, kicker),
-            React.createElement('h2', { className: 'whg-archive-title', id: 'whg-archive-title-' + appScope }, isProfile ? t("角色设定") : isHistory ? t("对话历史") : isSkits ? t("小剧场") : galleryTrash ? t("CG 回收站") : t("CG图鉴")),
-          ),
-          React.createElement('button', {
-            'aria-label': t("关闭") + (isProfile ? t("角色设定") : isHistory ? t("对话历史") : isSkits ? t("小剧场") : galleryTrash ? t("CG 回收站") : t("CG图鉴")),
-            className: 'whg-archive-close',
-            onClick: closeArchive,
-            ref: archiveCloseRef,
-            type: 'button',
-          }, '×'),
-          archivePanel === 'gallery' || isHistory || isSkits
-            ? React.createElement('div', { className: 'whg-archive-actions' },
-              archivePanel === 'gallery'
-                ? React.createElement(React.Fragment, null, React.createElement('button', {className:'whg-btn','data-cg-trash-toggle':true,onClick:()=>{closeGalleryDetail();loadGallery(!galleryTrash)},type:'button'},galleryTrash?t("返回图鉴"):t("回收站")), !galleryTrash && React.createElement('button', { className: 'whg-btn', 'data-cg-generate': true, disabled: busy, onClick: () => s.cgAvailable ? generateGalleryCg() : (window as any).whale?.open('settings'), type: 'button' }, s.cgAvailable ? t("生成当前角色纪念 CG") : t("配置 CG 绘图连接")))
-                : React.createElement('div', { className: 'whg-archive-tabs', role: 'tablist' },
-                  React.createElement('button', {
-                    'aria-selected': isHistory,
-                    className: 'whg-archive-tab' + (isHistory ? ' active' : ''),
-                    onClick: () => { setArchivePanel('history') },
-                    role: 'tab', type: 'button',
-                  }, t("对话历史")),
-                  React.createElement('button', {
-                    'aria-selected': isSkits,
-                    className: 'whg-archive-tab' + (isSkits ? ' active' : ''),
-                    onClick: () => { setArchivePanel('skits'); loadSkitLog() },
-                    role: 'tab', type: 'button',
-                  }, t("小剧场")),
-                ),
-            ) : null,
+        React.createElement('header', { className: 'gx-dh' },
+          React.createElement('span', { className: 'kick' }, kicker),
+          React.createElement('h3', { id: 'whg-archive-title-' + appScope }, title),
+          React.createElement('button', { 'aria-label': t("关闭") + (galleryTrash ? t("CG 回收站") : t("CG 图鉴")), className: 'ui-icon-btn gx-dh-x', onClick: closeArchive, ref: archiveCloseRef, type: 'button' }, Icon('close', { size: 18 })),
+          gallerySelected ? null : React.createElement('div', { className: 'gx-dh-row' },
+            React.createElement('div', { className: 'ui-seg sm', role: 'tablist', 'aria-label': t("CG 图鉴") },
+              React.createElement('button', { type: 'button', role: 'tab', 'aria-selected': !galleryTrash, 'data-cg-trash-toggle': galleryTrash || undefined, onClick: () => { if (galleryTrash) { closeGalleryDetail(); loadGallery(false) } } }, t("图鉴") + ' ' + galleryCount),
+              React.createElement('button', { type: 'button', role: 'tab', 'aria-selected': galleryTrash, 'data-cg-trash-toggle': !galleryTrash || undefined, onClick: () => { if (!galleryTrash) { closeGalleryDetail(); loadGallery(true) } } }, t("回收站") + (galleryTrash ? ' ' + galleryItems.length : ''))),
+            React.createElement('span', { className: 'grow' }),
+            galleryTrash ? null : React.createElement('button', { className: 'ui-btn sm primary', 'data-cg-generate': true, disabled: busy, onClick: () => s.cgAvailable ? generateGalleryCg() : (window as any).whale?.open('settings'), type: 'button' }, Icon(s.cgAvailable ? 'brush' : 'plug', { size: 14 }), s.cgAvailable ? t("生成纪念 CG") : t("配置 CG 绘图连接"))),
         ),
-        React.createElement('div', {
-          className: 'whg-archive-body',
-          ref: isHistory ? historyScrollRef : undefined,
-        }, body),
-        archivePanel === 'gallery' && cgUndo ? React.createElement('div',{className:'whg-recycle-notice',role:'status'},t("已移入回收站。"),React.createElement('button',{className:'whg-btn',onClick:()=>recycleCg(cgUndo,true),type:'button'},t("撤销"))) : null,
-        archivePanel === 'gallery' && gallerySelected && galleryTrash ? React.createElement('button',{className:'whg-btn',onClick:()=>recycleCg(gallerySelected.id,true),type:'button'},t("恢复到图鉴")) : null,
-        cgMenu ? createPortal(React.createElement('div',{className:'whg-cg-menu',role:'menu',ref:cgMenuRef,style:{left:cgMenu.x,top:cgMenu.y}},React.createElement('button',{role:'menuitem',type:'button',disabled:busy || ['planning','generating'].includes(cgMenu.item.status),onClick:()=>recycleCg(cgMenu.item.id,galleryTrash)},galleryTrash ? t("恢复到图鉴") : ['planning','generating'].includes(cgMenu.item.status) ? t("请等待当前 CG 生成完成") : t("移入回收站"))),document.body) : null,
+        React.createElement('div', { className: 'whg-archive-body gx-db' }, body),
+        cgUndo ? React.createElement('div', { className: 'ui-snackbar gx-snack', role: 'status' }, Icon('trash', { size: 16 }), React.createElement('span', { className: 'grow' }, t("已移入回收站")), React.createElement('button', { onClick: () => recycleCg(cgUndo, true), type: 'button' }, Icon('undo', { size: 14 }), t("撤销")), React.createElement('span', { className: 'gx-snack-left' }, undoLeft + t(" 秒"))) : null,
+        cgMenu ? createPortal(React.createElement('div', { className: 'ui-menu gx-cg-menu whg-cg-menu', role: 'menu', 'aria-label': t("CG 操作"), ref: cgMenuRef, style: { position: 'fixed', left: cgMenu.x, top: cgMenu.y } },
+          !galleryTrash && cgMenu.item.status === 'ready' ? menuItem('zin', t("查看大图"), () => openGalleryDetail(cgMenu.item)) : null,
+          !galleryTrash && cgMenu.item.status === 'ready' ? menuItem('image', cgMenu.item.savedAsBg ? t("已是 Galgame 背景") : t("设为 Galgame 背景"), () => saveGalleryBackground(cgMenu.item), { disabled: busy || cgMenu.item.savedAsBg === true }) : null,
+          !galleryTrash && cgMenu.item.status === 'ready' ? React.createElement('hr') : null,
+          menuItem(galleryTrash ? 'undo' : 'trash', galleryTrash ? t("恢复到图鉴") : waiting(cgMenu.item) ? t("请等待当前 CG 生成完成") : t("移入回收站"), () => recycleCg(cgMenu.item.id, galleryTrash), { className: galleryTrash ? undefined : 'danger', disabled: busy || ['planning', 'generating'].includes(cgMenu.item.status) })), document.body) : null,
       ),
     )
   }
 
+  // Head crop for a character chip: built-ins use their theme's centred head, custom characters their own avatar.
+  function headOf(id: string): string | null {
+    if ((THEMES as any)[id]) return './' + themeAsset(id, 'head.webp')
+    const avatar = s?.companion?.characters?.find((row: any) => row.id === id)?.avatar
+    return avatar ? companionImage(avatar, art) : null
+  }
+  function face(id: string, className = 'gx-face'): React.ReactElement {
+    const src = headOf(id)
+    return React.createElement('span', { className, 'aria-hidden': 'true' }, src ? React.createElement('img', { src, alt: '', draggable: false }) : String(companionCharacterName(s?.companion, id) || id || '?').slice(0, 1))
+  }
   function topbar(showBack: boolean): React.ReactElement {
+    if (group) return React.createElement(GroupHeader, { key:group.id, toolbarRef:setGroupToolbarTarget, state:s.companion, request:companionRequest, resolveArt:art, onBrowse:(characterId:string)=>setGroupBrowseRequest({groupId:group.id,characterId,nonce:Date.now()}), panelRequest:groupPanelRequest,loadCg:(id:string)=>requestCgData(id,props.sessionId), petEnabled:s.petEnabled!==false, onPetToggle:()=>act('pet-set',{enabled:s.petEnabled===false}), chat:props.chat, onToggleChat:props.onToggleChat })
     const characterModel = s.characterModelLabel || s.modelLabel || ''
-    const chatModel = s.chatModelLabel || s.lastModel || ''
     const petEnabled = s.petEnabled !== false
     const galleryCount = typeof s.galleryCount === 'number' ? s.galleryCount : 0
     const characterMode = (pluginSettings && pluginSettings.characterMode) || s.characterMode || 'follow'
     const chatMode = (pluginSettings && pluginSettings.chatMode) || s.chatMode || 'configured'
-    return React.createElement('div', { className: 'whg-top' },
-      React.createElement('span', { className: 'whg-title' }, t("与") + s.name + t("的galgame")),
-      React.createElement('div', { className: 'whg-chip-wrap' },
-        React.createElement('button', {
-          'aria-controls': 'whg-character-picker-' + appScope,
-          'aria-expanded': pickerPanel === 'character',
-          'aria-haspopup': 'listbox',
-          className: 'whg-chip whg-chip-button',
-          onClick: (event: any) => openPicker('character', event.currentTarget),
-          title: t("点击切换出场角色。当前") + (characterMode === 'manual' ? t("已固定") : t("跟随工作区")) + '：' + (characterModel || t("未识别")),
-          type: 'button',
-        },
-          React.createElement('span', { className: 'whg-dot' + (s.modelOnline ? '' : ' off') }),
-          React.createElement('span', null, t("角色来源 · ")),
-          React.createElement('strong', null, characterModel || t("未识别")),
-          React.createElement('span', { className: 'whg-chip-caret', 'aria-hidden': 'true' }, '▼'),
-        ),
-        pickerOverlay(characterPicker()),
-      ),
-      React.createElement('div', { className: 'whg-chip-wrap' },
-        React.createElement('button', {
-          'aria-controls': 'whg-chat-picker-' + appScope,
-          'aria-expanded': pickerPanel === 'chat',
-          'aria-haspopup': 'listbox',
-          className: 'whg-chip whg-chip-button',
-          onClick: (event: any) => s.modelConfigurationCentral ? (window as any).whale?.open('settings') : openPicker('chat', event.currentTarget),
-          title: s.modelConfigurationCentral ? t("在通用设置中配置模型") : t("点击切换 galgame 对话模型。当前模式：") + (chatMode === 'manual' ? t("单独指定") : chatMode === 'main' ? t("跟随工作区") : t("插件默认")) + t("；实际使用：") + (chatModel || t("离线")),
-          type: 'button',
-        },
-          React.createElement('span', { className: 'whg-dot' + (chatModel && !s.fallbackUsed ? '' : ' off') }),
-          React.createElement('span', null, t("实际对话 · ")),
-          React.createElement('strong', null, chatModel || t("离线")),
-          React.createElement('span', { className: 'whg-chip-caret', 'aria-hidden': 'true' }, '▼'),
-        ),
-        !s.modelConfigurationCentral && pickerOverlay(chatPicker()),
-      ),
-      React.createElement('div', { className: 'whg-spacer' }),
-      s.resourcePendingCharacter ? React.createElement('button',{className:'whg-btn',onClick:()=> (window as any).whale.resources.manage(s.resourcePendingCharacter)},t('补装角色')+' · '+s.resourcePendingCharacter) : null,
-      React.createElement('div', { className: 'whg-top-actions' },
+    const spriteShown = isSpriteVisible(s.spriteVisibility, s.backgroundMode, props.hideSpriteOnCg !== false)
+    const persona = s?.companion?.personas?.find((row: any) => row.id === s.companion.activePersonaId)?.name
+    const modelText = (() => { const current = s.companion?.characters?.find((c: any) => c.id === s.current); const route = current?.effectiveConnection; return (route?.error ? route.error : route?.model ? route.name + ' · ' + route.model : (s.chatModelLabel || s.lastModel || '')) || t('离线') })()
+    const tool = (icon: string, label: any, extra: any = {}) => React.createElement('button', { type: 'button', ...extra, className: 'gx-tb' + (extra.className ? ' ' + extra.className : '') }, Icon(icon, { size: 15 }), label)
+    const sep = (key: string) => React.createElement('i', { className: 'gx-sep', key, 'aria-hidden': 'true' })
+    return React.createElement('div', { className: 'gx-top' },
+      React.createElement('div', { className: 'gx-row' },
+        React.createElement(GalgameTitle, { key:s.current, characterId:s.current, defaultTitle:t("与") + s.name + t("的galgame"), value:s.companion?.settings?.galgameTitles?.[s.current]||'', request:companionRequest }),
         React.createElement('div', { className: 'whg-chip-wrap' },
           React.createElement('button', {
-            'aria-controls': 'whg-background-picker-' + appScope,
-            'aria-expanded': pickerPanel === 'background',
-            'aria-haspopup': 'dialog',
-            className: 'whg-btn',
-            onClick: (event: any) => openPicker('background', event.currentTarget),
+            'aria-controls': 'whg-character-picker-' + appScope,
+            'aria-expanded': pickerPanel === 'character',
+            'aria-haspopup': 'listbox',
+            className: 'gx-chip' + (pickerPanel === 'character' ? ' open' : ''),
+            onClick: (event: any) => openPicker('character', event.currentTarget),
+            title: t("点击切换出场角色。当前") + (characterMode === 'manual' ? t("已固定") : t("跟随工作区")) + '：' + (characterModel || t("未识别")),
             type: 'button',
-          }, t("背景图")),
+          }, face(s.current), React.createElement('small', null, t("角色来源")), React.createElement('strong', null, s.name), Icon('chevron', { size: 14 })),
+          pickerOverlay(characterPicker()),
+        ),
+        React.createElement('div', { className: 'whg-chip-wrap' },
+          React.createElement('button', {
+            'aria-controls': s.modelConfigurationCentral ? undefined : 'whg-chat-picker-' + appScope,
+            'aria-expanded': s.modelConfigurationCentral ? undefined : pickerPanel === 'chat',
+            'aria-haspopup': s.modelConfigurationCentral ? undefined : 'listbox',
+            className: 'gx-chip np' + (pickerPanel === 'chat' ? ' open' : ''),
+            onClick: (event: any) => s.modelConfigurationCentral ? (window as any).whale?.open('settings') : openPicker('chat', event.currentTarget),
+            title: s.modelConfigurationCentral ? t("在通用设置里换模型") : t("点击切换 galgame 对话模型。当前模式：") + (chatMode === 'manual' ? t("单独指定") : chatMode === 'main' ? t("跟随工作区") : t("插件默认")),
+            type: 'button',
+          }, React.createElement('i', { className: 'gx-dot' + (props.chat?.enabled ?? (s.chatModelLabel && !s.fallbackUsed) ? '' : ' off'), 'aria-hidden': 'true' }), React.createElement('small', null, t("实际对话")), React.createElement('strong', null, modelText), Icon(s.modelConfigurationCentral ? 'jump' : 'chevron', { size: 14 })),
+          !s.modelConfigurationCentral && pickerOverlay(chatPicker()),
+        ),
+        React.createElement('span', { className: 'gx-grow' }),
+        s.resourcePendingCharacter && validPetCharacter(s.resourcePendingCharacter) ? React.createElement('button',{className:'gx-tb gx-glass',type:'button',onClick:()=> (window as any).whale.resources.manage(s.resourcePendingCharacter)},Icon('download',{size:15}),t('补装角色')+' · '+s.resourcePendingCharacter) : null,
+        s.customCharacter ? React.createElement('span', { className: 'gx-chip np buddy-pet-note' }, t('此角色没有桌宠资源，保留当前桌宠')) : null,
+        props.chat ? React.createElement('div', { className: 'gx-net', 'data-galgame-net': true }, Icon('globe', { size: 15 }), React.createElement('span', null, t("联网聊天")), React.createElement(Switch, { checked: !!props.chat.enabled, label: t("联网聊天"), onChange: () => props.onToggleChat?.() })) : null,
+      ),
+      React.createElement('div', { className: 'gx-tools', role: 'toolbar', 'aria-label': t("Galgame 工具") },
+        React.createElement('div', { className: 'whg-chip-wrap' },
+          tool('image', t("背景图"), { 'aria-controls': 'whg-background-picker-' + appScope, 'aria-expanded': pickerPanel === 'background', 'aria-haspopup': 'dialog', className: pickerPanel === 'background' ? 'open' : '', onClick: (event: any) => openPicker('background', event.currentTarget) }),
           pickerOverlay(backgroundPicker()),
         ),
         React.createElement('div', { className: 'whg-chip-wrap' },
-          React.createElement('button', {
-            'aria-controls': 'whg-sprite-picker-' + appScope,
-            'aria-expanded': pickerPanel === 'sprite',
-            'aria-haspopup': 'dialog',
-            className: 'whg-btn',
-            onClick: (event: any) => openPicker('sprite', event.currentTarget),
-            title: t("为") + (s.name || t("当前角色")) + t("上传本地角色立绘"),
-            type: 'button',
-          }, t("角色立绘")),
+          tool('person', t("角色立绘"), { 'aria-controls': 'whg-sprite-picker-' + appScope, 'aria-expanded': pickerPanel === 'sprite', 'aria-haspopup': 'dialog', className: pickerPanel === 'sprite' ? 'open' : '', title: t("为") + (s.name || t("当前角色")) + t("上传本地角色立绘"), onClick: (event: any) => openPicker('sprite', event.currentTarget) }),
           pickerOverlay(spritePicker()),
         ),
-        React.createElement('button',{className:'whg-btn','data-sprite-toggle':true,type:'button','aria-pressed':isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg !== false),onClick:()=>act('sprite-visibility',{characterId:s.current,mode:isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg !== false)?'hide':'show'})},isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg !== false)?t("立绘：显示"):t("立绘：隐藏")),
-        s.spriteVisibility !== 'auto' && React.createElement('button',{className:'whg-btn',type:'button',onClick:()=>act('sprite-visibility',{characterId:s.current,mode:'auto'})},t("恢复自动")),
-        React.createElement('button', {
-          'aria-controls': 'whg-profile-editor-' + appScope,
-          'aria-expanded': archivePanel === 'profile',
-          'aria-haspopup': 'dialog',
-          className: 'whg-btn',
-          onClick: (event: any) => openArchive('profile', event.currentTarget),
-          title: t("修改") + (s.name || t("当前角色")) + t("的昵称、称呼、问候、性格、语气与 CG 外观描述"),
-          type: 'button',
-        }, t("角色设定")),
-        React.createElement('button', {
-          'aria-expanded': archivePanel === 'history',
-          className: 'whg-btn',
-          onClick: (event: any) => openArchive('history', event.currentTarget),
-          type: 'button',
-        }, t("对话历史")),
-        React.createElement('button', {
-          'aria-expanded': archivePanel === 'gallery',
-          className: 'whg-btn',
-          onClick: (event: any) => openArchive('gallery', event.currentTarget),
-          type: 'button',
-        },
-          t("CG图鉴"),
-          galleryCount > 0 ? React.createElement('span', { className: 'whg-count' }, galleryCount) : null,
+        tool('eye', t("立绘"), { 'data-sprite-toggle': true, 'aria-pressed': spriteShown, title: spriteShown ? t("隐藏立绘") : t("显示立绘"), onClick: () => act('sprite-visibility', { characterId: s.current, mode: spriteShown ? 'hide' : 'show' }) }),
+        s.spriteVisibility !== 'auto' && tool('undo', t("恢复自动"), { onClick: () => act('sprite-visibility', { characterId: s.current, mode: 'auto' }) }),
+        sep('s1'),
+        tool('users', t("管理角色"), { 'aria-controls': 'buddy-companion-dialog', 'aria-expanded': companionPanel === 'characters', 'aria-haspopup': 'dialog', title: t("修改") + (s.name || t("当前角色")) + t("的昵称、称呼、问候、性格、语气与 CG 外观描述"), onClick: () => openCompanion('characters') }),
+        tool('idcard', t('我的身份') + (persona ? ' · ' + persona : ''), { title: t('选择和管理我的身份'), 'data-companion-personas': true, onClick: () => openCompanion('personas') }),
+        tool('clock', t("对话历史"), { 'aria-controls': 'buddy-companion-dialog', 'aria-expanded': companionPanel === 'history', 'aria-haspopup': 'dialog', onClick: () => openCompanion('history') }),
+        sep('s2'),
+        tool('chats', t('群聊'), { 'data-companion-groups': true, onClick: () => openCompanion('groups') }),
+        sep('s3'),
+        tool('gallery', React.createElement(React.Fragment, null, t("CG 图鉴"), galleryCount > 0 ? React.createElement('span', { className: 'gx-cnt' }, galleryCount) : null), { 'aria-expanded': archivePanel === 'gallery', className: archivePanel === 'gallery' ? 'open' : '', onClick: (event: any) => openArchive('gallery', event.currentTarget) }),
+        sep('s4'),
+        tool('paw', t("桌宠"), { 'aria-pressed': petEnabled, disabled: busy, title: petEnabled ? t("关闭桌宠，避免与其他悬浮插件冲突") : t("开启可跳转 galgame 的桌宠"), onClick: () => act('pet-set', { enabled: !petEnabled }) }),
+        // restarting clears level and affection, so it asks once in a small bubble
+        React.createElement('span', { className: 'gx-confirm-wrap', ref: resetRef },
+          React.createElement('button', { type: 'button', className: 'gx-tb only', 'aria-label': t("重新开始"), title: t("重新开始（清零等级与好感度）"), 'aria-expanded': armReset, onClick: (e: any) => { e.stopPropagation(); setArmReset(!armReset) } }, Icon('retry', { size: 15 })),
+          armReset ? React.createElement('div', { className: 'gx-confirm', role: 'alertdialog', 'aria-label': t("重新开始") },
+            React.createElement('b', null, t("重新开始？")),
+            React.createElement('span', null, t("等级和好感度会清零，聊天记录保留。")),
+            React.createElement('div', { className: 'gx-confirm-btns' },
+              React.createElement('button', { type: 'button', className: 'ui-btn sm', onClick: () => setArmReset(false) }, t("取消")),
+              React.createElement('button', { type: 'button', className: 'ui-btn sm danger', onClick: () => { setArmReset(false); act('reset') } }, t("重新开始"))),
+          ) : null,
         ),
-        React.createElement('div', { className: 'whg-chip-wrap' },
-          (() => {
-            const side = (s && s.sideStory) || {}
-            const cooling = Number(side.cooldownMs) > 0
-            const active = !!(side.scene)
-            const mins = cooling ? Math.ceil(Number(side.cooldownMs) / 60000) : 0
-            return React.createElement('button', {
-              'aria-controls': 'whg-skit-picker-' + appScope,
-              'aria-expanded': pickerPanel === 'skit',
-              'aria-haspopup': 'dialog',
-              className: 'whg-btn',
-              disabled: busy || active || side.available === false,
-              onClick: (event: any) => openPicker('skit', event.currentTarget),
-              title: active
-                ? t("小剧场正在上演")
-                : cooling
-                  ? t("小剧场冷却中，约 ") + mins + t(" 分钟后可再开一场")
-                  : t("让角色们演一段小剧场，可以自己指定话题"),
-              type: 'button',
-            }, t("小剧场"))
-          })(),
-          pickerOverlay(skitPicker()),
-        ),
-        React.createElement('button', {
-          'aria-pressed': petEnabled,
-          className: 'whg-btn',
-          disabled: busy,
-          onClick: () => act('pet-set', { enabled: !petEnabled }),
-          title: petEnabled ? t("关闭桌宠，避免与其他悬浮插件冲突") : t("开启可跳转 galgame 的桌宠"),
-          type: 'button',
-        }, t("桌宠 · ") + (petEnabled ? t("开") : t("关"))),
-        React.createElement('button', {
-          className: 'whg-btn',
-          title: t("重新开始（清零等级与好感度）"),
-          onClick: (e: any) => {
-            e.stopPropagation()
-            if (armReset) { setArmReset(false); act('reset') } else { setArmReset(true) }
-          },
-          type: 'button',
-        }, armReset ? t("确认?") : '↺'),
         showBack
-          ? React.createElement('button', {
-            className: 'whg-btn back',
-            title: t("回到办公区（角色会继续在桌宠状态陪你）"),
-            onClick: (e: any) => { e.stopPropagation(); setOpen(false) },
-            type: 'button',
-          }, t("返回办公区"))
+          ? tool('exit', t("返回办公区"), { className: 'back', title: t("回到办公区（角色会继续在桌宠状态陪你）"), onClick: (e: any) => { e.stopPropagation(); setOpen(false) } })
           : null,
       ),
     )
   }
 
-  function sideStoryToast(): React.ReactElement | null {
-    const code = s && typeof s.sideStoryError === 'string' ? s.sideStoryError : ''
-    if (!code) return null
-    const message = code === 'no-seed'
-      ? t("这里暂时没有新故事，可以先聊一会儿。")
-      : code === 'cooldown'
-        ? t("刚热闹过一场，让她们缓一缓。")
-        : t("这次没编出像样的短剧，稍后再试一次吧。")
-    return React.createElement('div', { className: 'whg-toast', role: 'status' }, '🎭 ' + message)
-  }
 
-  function sideStoryScene(): any | null {
-    const side = s && s.sideStory
-    return side && side.scene && Array.isArray(side.scene.beats) && side.scene.beats.length ? side.scene : null
-  }
 
-  /** Index of the beat currently on screen; the cursor never runs past the last one. */
-  function sideStoryBeatIndex(scene: any): number {
-    return Math.max(0, Math.min(scene.cursor, scene.beats.length - 1))
-  }
 
-  function sideStoryAtEnd(scene: any): boolean {
-    return scene.cursor >= scene.beats.length - 1
-  }
 
-  function castStage(scene: any): React.ReactElement {
-    const beat = scene.beats[sideStoryBeatIndex(scene)]
-    const speaking = beat && beat.speaker !== 'narrator' ? beat.speaker : ''
-    return React.createElement('div', { className: 'whg-stage' },
-      React.createElement('div', {
-        className: 'whg-tint',
-        style: { background: 'radial-gradient(closest-side, ' + (scene.cast[0] ? scene.cast[0].color : '#8fd8ef') + '2e, transparent)' },
-      }),
-      React.createElement('div', { className: 'whg-cast' },
-        scene.cast.map((member: any, index: number) => {
-          const memberEmotion = speaking===member.id ? beat?.emotion||'normal' : 'normal'
-          const src = member.id==='deepseek'&&EMOTION_ART[memberEmotion] ? art(EMOTION_ART[memberEmotion]) : art(member.sprite)
-          return React.createElement('div', {
-            key: member.id,
-            className: 'whg-cast-slot',
-            'data-active': speaking === member.id ? 'true' : 'false',
-            'data-lead': index === 0 ? 'true' : 'false',
-            // All cast members remain visible and share the available stage.
-            'data-overflow': index >= 2 ? 'true' : 'false',
-          },
-            src
-              ? React.createElement(CastPortrait, { member, src, normalSrc:art(member.sprite), request: api, emotion:memberEmotion })
-              : React.createElement('div', { className: 'whg-sprite-fallback' }, '🐋'),
-            React.createElement('div', {
-              className: 'whg-cast-name',
-              style: { color: member.color },
-            }, member.name),
-          )
-        }),
-      ),
-    )
-  }
 
   function stage(): React.ReactElement {
-    const activeScene = sideStoryScene()
-    if (activeScene) return castStage(activeScene)
+    if (group) return React.createElement(CompanionGroupStage, { toolbarTarget:groupToolbarTarget, browseRequest:groupBrowseRequest, state: s.companion, request: companionRequest, resolveArt: art, renderPortrait: (member: any, src: string, emotion: string) => React.createElement(CastPortrait, { member: {...member, ...(s?.characters?.find((row: any) => row.id === member.id)||{}), name: companionCharacterName(member)}, src: member.id==='deepseek'&&emotion!=='normal'&&!member.hasCustomSprite&&!member.effective?.sprite ? art(EMOTION_ART[emotion])||src : src, normalSrc: src, request: callApi, emotion, align: 'top' }) })
     if (!isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg !== false)) return React.createElement('div',{className:'whg-stage','data-sprite-hidden':true})
+    if (s.customCharacter && !s.hasCustomSprite && !customSprite) return React.createElement('div', { className: 'whg-stage buddy-text-only-stage' }, React.createElement('div', { className: 'buddy-text-only-card' }, React.createElement('strong', null, s.name), React.createElement('span', null, t('未设置立绘，可以直接聊天'))))
     const emotion = emotionOf()
     const mood = emotion
     let src: string | undefined
@@ -3043,12 +2276,12 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       src = art(s.moods[mood]) || art(s.moods.normal)
       if (!src) src = art(s.sprite)
     } else {
-      src = art(s.sprite)
+      src = companionImage(s.sprite, art) || undefined
     }
     const wrap = s.hasCustomSprite&&!customSprite&&!imgFail
       ? React.createElement('div', {className:'whg-sprite-loading','aria-label':s.name})
       : (!src || imgFail)
-      ? React.createElement('div', { className: 'whg-sprite-fallback' }, '🐋')
+      ? React.createElement('div', { className: 'whg-sprite-fallback', 'aria-label': s.name }, s.companion?.characters?.find((row: any) => row.id === s.current)?.builtin === false ? String(s.name || '').slice(0, 2) : '🐋')
       : React.createElement(ExpressionPortrait, {
         characterId:s.current,
         normalSrc:art(s.sprite),
@@ -3077,144 +2310,91 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     )
   }
 
-  function sideStoryDialogue(scene: any): React.ReactElement {
-    const beat = scene.beats[sideStoryBeatIndex(scene)]
-    const isNarrator = !beat || beat.speaker === 'narrator'
-    const isUser = !!beat && beat.speaker === 'user'
-    const member = isNarrator || isUser ? null : scene.cast.find((row: any) => row.id === beat.speaker)
-    const plateLabel = isUser ? t("主人") : isNarrator ? t("旁白") : (member ? member.name : '???')
-    const plateColor = isUser ? '#ff9cc8' : isNarrator ? '#8fb4dd' : (member ? member.color : '#8fb4dd')
-    const atEnd = sideStoryAtEnd(scene)
-    // The server offers choices only at the interlude the master is standing in,
-    // so their presence decides what this panel shows.
-    const offered = Array.isArray(scene.choices) ? scene.choices : []
-    let controls: React.ReactElement
-    if (offered.length === 0 && !atEnd) {
-      controls = React.createElement('div', { className: 'whg-choices' },
-        React.createElement('button', {
-          className: 'whg-choice',
-          disabled: busy,
-          onClick: () => { act('side-story', { op: 'advance' }) },
-          type: 'button',
-        }, t("继续 ▸")))
-    } else if (offered.length === 0) {
-      controls = React.createElement('div', { className: 'whg-choices' },
-        React.createElement('button', {
-          className: 'whg-choice',
-          disabled: busy,
-          onClick: () => { act('side-story', { op: 'close' }) },
-          type: 'button',
-        }, t("回到日常")))
-    } else {
-      // Deltas stay hidden until the choice is made; the closing beat reveals
-      // who warmed up and who did not.
-      const speak = () => {
-        const spoken = skitText.trim()
-        if (!spoken || busy) return
-        setSkitText('')
-        act('side-story', { op: 'speak', text: spoken })
-      }
-      controls = React.createElement(React.Fragment, null,
-        React.createElement('div', { className: 'whg-choices' },
-          offered.map((choice: any, index: number) => React.createElement('button', {
-            key: choice.id || index,
-            className: 'whg-choice',
-            disabled: busy,
-            onClick: () => { act('side-story', { op: 'choose', choiceId: choice.id }) },
-            type: 'button',
-          }, choice.text))),
-        // The master may say something of her own instead of picking a line.
-        React.createElement('div', { className: 'whg-input-row' },
-          React.createElement('input', {
-            className: 'whg-input',
-            value: skitText,
-            placeholder: t("或者，你自己开口说……"),
-            disabled: busy,
-            onChange: (event: any) => { setSkitText(event.target.value) },
-            onKeyDown: (event: any) => { if (event.key === 'Enter') speak() },
-          }),
-          React.createElement('button', {
-            className: 'whg-send',
-            disabled: busy || !skitText.trim(),
-            onClick: speak,
-            type: 'button',
-          }, t("说")),
-        ),
-      )
-    }
-    const sources = (scene.sources || []).length
-      ? React.createElement('div', { className: 'whg-side-sources' },
-        scene.sources.map((row: any) => React.createElement('a', {
-          key: row.url,
-          href: row.url,
-          rel: 'noreferrer noopener',
-          target: '_blank',
-        }, row.title)))
-      : null
-    return React.createElement('div', { id: 'whg-panel', className: 'whg-panel' },
-      React.createElement('div', { className: 'whg-plate', style: { background: plateColor } }, plateLabel),
-      React.createElement('div', { className: 'whg-side-seed' },
-        React.createElement('span', { className: 'whg-side-badge' }, t("小剧场")),
-        scene.seed && scene.seed.summary ? scene.seed.summary : t("一段新的故事开始了。")),
-      React.createElement('div', {
-        key: 'side-' + scene.id + '-' + scene.cursor,
-        className: 'whg-line-now ' + (isUser ? 'user' : isNarrator ? 'narrator' : 'heroine'),
-      }, beat ? beat.text : ''),
-      controls,
-      sources,
-    )
+
+  // A chat turn: the typed text comes back into the box if the model call fails, so nothing has to be retyped.
+  function say(payload: any, typed = ''): void {
+    if (busy) return
+    setBusy(true)
+    setPendingChat(payload)
+    setFailedChat(null)
+    callApi('chat', payload).then((v) => {
+      if (v && typeof v === 'object') { setS(v); setApiError(null) }
+    }).catch((e) => {
+      setApiError(String(e && e.message ? e.message : e))
+      setFailedChat(payload)
+      if (typed) setText((current: string) => current || typed)
+    }).finally(() => { setBusy(false); setPendingChat(null) })
   }
 
   function dialogue(): React.ReactElement {
-    const activeScene = sideStoryScene()
-    if (activeScene) return sideStoryDialogue(activeScene)
+    if (group) return React.createElement(CompanionGroupDialogue, { state: s.companion, request: companionRequest, chat: props.chat, onToggleChat: props.onToggleChat, onApi: props.onManage, onPhoto: (cgId:string) => setGroupPanelRequest({groupId:group.id,panel:'gallery',cgId,nonce:Date.now()}), onManage: () => setGroupPanelRequest({groupId:group.id,panel:'settings',nonce:Date.now()}) })
     const last = lastLine()
-    const plateLabel = last
-      ? (last.who === 'heroine' ? s.name : last.who === 'user' ? t("主人") : t("旁白"))
-      : s.name
-    const plateClass = last ? (last.who === 'heroine' ? '' : ' ' + last.who) : ''
-    const plateColor = last
-      ? (last.who === 'heroine' ? s.color : last.who === 'user' ? '#ff9cc8' : '#8fb4dd')
-      : s.color
-    const showChoices = Array.isArray(s.choices) && s.choices.length > 0
+    const userName = last?.personaSnapshot?.nickname || s.companion?.personas?.find((p: any) => p.id === s.companion.activePersonaId)?.nickname || t("你")
+    const plateLabel = last ? (last.who === 'heroine' ? s.name : last.who === 'user' ? userName : t("旁白")) : s.name
+    const plateWho = last ? (last.who === 'heroine' ? 'heroine' : last.who) : 'heroine'
+    const plateStyle = plateVars({ who: plateWho, characterId: s.current, color: s.color })
+    const offline = props.chat ? props.chat.enabled === false : false
+    const replying = busy && !!pendingChat
+    const choiceList = Array.isArray(s.choices) ? s.choices.map((c: any) => ({ text: typeof c === 'string' ? c : c && typeof c.text === 'string' ? c.text : '', id: typeof c === 'object' && c && c.id !== undefined ? String(c.id) : undefined })) : []
+    const choose = (c: any) => { if (c && c.text) say(c.id ? { choiceId: c.id, text: c.text } : { text: c.text }) }
+    const showChoices = choiceList.length > 0 && !replying && !offline && !apiError
     const choices = showChoices
-      ? React.createElement('div', { className: 'whg-choices' },
-        s.choices.map((c: any, i: number) => {
-          const choiceText = typeof c === 'string' ? c : c && typeof c.text === 'string' ? c.text : ''
-          const choiceId = typeof c === 'object' && c && c.id !== undefined ? String(c.id) : undefined
-          return React.createElement('button', {
-            key: choiceId || i,
-            className: 'whg-choice',
-            disabled: busy || !choiceText,
-            onClick: () => { act('chat', choiceId ? { choiceId, text: choiceText } : { text: choiceText }) },
-            type: 'button',
-          }, choiceText)
-        }))
+      ? React.createElement('div', { className: 'whg-choices gx-choices' },
+        choiceList.map((c: any, i: number) => React.createElement('button', {
+          key: c.id || i,
+          className: 'whg-choice gx-choice',
+          disabled: busy || !c.text,
+          onClick: () => choose(c),
+          type: 'button',
+        }, React.createElement('kbd', { 'aria-hidden': 'true' }, i + 1), React.createElement('span', null, c.text))))
       : null
-    const input = React.createElement('div', { className: 'whg-input-row' },
-      React.createElement('input', {
-        className: 'whg-input',
-        value: text,
-        placeholder: t("回复 ") + s.name + ' …',
-        disabled: busy,
-        onChange: (e: any) => { setText(e.target.value) },
-        onKeyDown: (e: any) => { if (e.key === 'Enter') send() },
-      }),
-      React.createElement('button', { className: 'whg-send', disabled: busy || !text.trim(), onClick: send }, t("回复")))
-    const fallbackNote = s.fallbackUsed
-      ? React.createElement('div', { className: 'whg-fallback-note' }, t("（模型调用失败，") + s.name + t(" 用了备用台词。原因：") + (s.fallbackReason || t("未知")) + t(" · 目标模型：") + (s.lastModel || s.modelLabel || t("未知")) + '）')
-      : null
-    const now = last
-      ? React.createElement('div', { key: 'now-' + ((s.history || []).length), className: 'whg-line-now ' + last.who }, last.text)
-      : React.createElement('div', { className: 'whg-line-now narrator' }, t("（点击输入框，开始和") + s.name + t("对话吧）"))
-    return React.createElement('div', { id: 'whg-panel', className: 'whg-panel' },
-      React.createElement('div', { className: 'whg-plate' + plateClass, style: { background: plateColor } }, plateLabel),
-      React.createElement('div', { className: 'whg-level' },
-        React.createElement('span', null, 'Lv.' + s.level + t(" · 好感度 ") + s.affection + '/' + s.cap),
-        React.createElement('div', { className: 'whg-level-track' },
-          React.createElement('div', { className: 'whg-level-fill', style: { width: Math.min(100, Math.round((s.affection / Math.max(1, s.cap)) * 100)) + '%' } }))),
+    const blocked = busy || offline
+    const input = React.createElement('div', { className: 'whg-input-row gx-say' },
+      React.createElement('label', { className: 'gx-ta' + (blocked ? ' dis' : '') },
+        React.createElement('textarea', {
+          className: 'whg-input', rows: 2, 'aria-label': t('私聊消息'),
+          value: text,
+          placeholder: replying ? t("等 ") + s.name + t(" 说完…") : offline ? t("开启联网聊天后就能回复") : t("回复 ") + s.name + ' …',
+          disabled: blocked,
+          onChange: (e: any) => { setText(e.target.value) },
+          // an empty box takes 1 / 2 / 3 as the matching choice
+          onKeyDown: (e: any) => {
+            if (!text && showChoices && /^[1-9]$/.test(e.key) && !e.ctrlKey && !e.altKey && !e.metaKey) { const c = choiceList[Number(e.key) - 1]; if (c) { e.preventDefault(); choose(c) } return }
+            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send() }
+          },
+        }),
+        React.createElement('small', { 'aria-hidden': 'true' }, t("Enter 发送 · Shift+Enter 换行"))),
+      React.createElement('button', { className: 'whg-send gx-send', type: 'button', disabled: blocked || !text.trim(), onClick: send },
+        replying ? React.createElement('span', { className: 'ui-spinner', 'aria-hidden': 'true' }) : Icon('send', { size: 15 }),
+        replying ? t("回复中") : t("回复")))
+    const truncated = apiError ? modelOutputTruncated(apiError) : false
+    const alert = apiError
+      ? React.createElement('div', { className: 'gx-alert', role: 'alert' }, Icon('alert', { size: 16 }),
+        React.createElement('span', { className: 'grow' }, React.createElement('b', null, truncated ? t("回复被截断") : t("没连上模型")), ' · ', modelErrorText(String(apiError).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''))),
+        failedChat && !truncated ? React.createElement('button', { type: 'button', className: 'gx-gbtn', disabled: busy, onClick: () => { setText(''); say(failedChat) } }, Icon('retry', { size: 14 }), t("重试")) : null,
+        React.createElement('button', { type: 'button', className: 'gx-gbtn', onClick: () => (window as any).whale?.open?.('settings') }, truncated ? t('打开通用设置') : t("去设置")))
+      : s.fallbackUsed
+        ? React.createElement('div', { className: 'gx-alert warn whg-fallback-note', role: 'status' }, Icon('info', { size: 16 }),
+          React.createElement('span', { className: 'grow' }, React.createElement('b', null, t("这句是备用台词")), ' · ', s.fallbackReason ? modelErrorText(s.fallbackReason) : t("未知"), ' · ', t("目标模型 ") + (s.lastModel || s.modelLabel || t("未知"))))
+        : offline
+          ? React.createElement('div', { className: 'gx-alert info', role: 'status' }, Icon('globe', { size: 16 }),
+            React.createElement('span', { className: 'grow' }, t("联网聊天已关闭，现在只能翻看之前的对话。")),
+            props.onToggleChat ? React.createElement('button', { type: 'button', className: 'gx-gbtn pri', onClick: () => props.onToggleChat?.() }, t("开启联网聊天")) : null)
+          : null
+    const now = replying
+      ? React.createElement('div', { className: 'whg-line-now gx-typing', role: 'status' }, s.name + t(" 正在回复"), React.createElement('span', { 'aria-hidden': 'true' }, React.createElement('i'), React.createElement('i'), React.createElement('i')))
+      : last
+        ? React.createElement('div', { key: 'now-' + ((s.history || []).length), className: 'whg-line-now ' + last.who + (apiError ? ' muted' : '') }, last.text)
+        : React.createElement('div', { className: 'whg-line-now narrator' }, t("（点击输入框，开始和") + s.name + t("对话吧）"))
+    const pct = Math.min(100, Math.round((s.affection / Math.max(1, s.cap)) * 100))
+    return React.createElement('div', { id: 'whg-panel', className: 'whg-panel gx-dlg' },
+      React.createElement('div', { className: 'whg-plate gx-plate' + (plateWho === 'heroine' ? '' : ' ' + plateWho), style: plateStyle }, plateLabel, plateWho === 'heroine' ? React.createElement('i', { className: 'gx-acc', 'aria-hidden': 'true' }) : null),
+      React.createElement('div', { className: 'whg-level gx-lvl' },
+        React.createElement('span', null, 'Lv.', React.createElement('b', null, s.level), t(" · 好感度 "), React.createElement('b', null, s.affection), '/' + s.cap),
+        React.createElement('i', { className: 'gx-track', 'aria-hidden': 'true' }, React.createElement('s', { style: { width: pct + '%' } }))),
       now,
-      fallbackNote,
+      s.companion?.lifeRecovery?.characterId === s.current ? React.createElement(LifeRecoveryBanner, { state: s.companion, request: companionRequest, characterId: s.current, setFeedback: (text: string, error?: boolean) => setApiError(error ? text : null) }) : null,
+      alert,
       choices,
       input,
     )
@@ -3222,69 +2402,53 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
 
   function cgModal(): React.ReactElement | null {
     if (!settled || !s || !s.cg) return null
+    const who = s.cg.name || s.name
+    // design → queue → draw, shown as three steps
     if (s.cg.status === 'planning' || s.cg.status === 'generating' || s.cg.status === 'queued') {
-      return React.createElement('div', { className: 'whg-toast' }, s.cg.status === 'planning' ? t("正在设计纪念 CG 主题…") : s.cg.status === 'queued' ? t("CG 已排队。") : t("正在绘制纪念 CG…"))
+      const step = s.cg.status === 'planning' ? 1 : s.cg.status === 'queued' ? 2 : 3
+      return React.createElement('div', { className: 'whg-toast gx-toast', role: 'status' },
+        React.createElement('span', { className: 'ui-spinner', 'aria-hidden': 'true' }),
+        React.createElement('div', null,
+          React.createElement('b', null, step === 1 ? t("正在设计纪念 CG 主题…") : step === 2 ? t("CG 已排队。") : t("正在绘制纪念 CG…")),
+          React.createElement('span', { className: 'gx-steps', 'aria-hidden': 'true' }, [1, 2, 3].map(n => React.createElement('i', { key: n, className: n < step ? 'd' : n === step ? 'n' : '' }))),
+          React.createElement('small', null, t("第 {k} 步 / 共 3 步").replace('{k}', String(step)) + ' · ' + who + (s.level ? ' Lv.' + s.level : ''))))
     }
     if (s.cg.status === 'failed' && !s.cg.seen) {
-      return React.createElement('div', { className: 'whg-toast', onClick: () => { act('cg-ack') } },
-        t("⚠️ CG 生成失败：") + (s.cg.error || t("未知错误")) + t("（点击关闭）"))
+      return React.createElement('div', { className: 'whg-toast gx-toast err', role: 'alert' },
+        Icon('alert', { size: 18 }),
+        React.createElement('div', null,
+          React.createElement('b', null, t("CG 生成失败")),
+          React.createElement('small', null, s.cg.error || t("未知错误")),
+          React.createElement('span', { className: 'gx-row-btns' },
+            s.cg.id ? React.createElement('button', { type: 'button', className: 'ui-btn sm primary', disabled: busy, onClick: () => { generateGalleryCg({ id: s.cg.id, characterId: s.current }); act('cg-ack') } }, t("重试")) : null,
+            React.createElement('button', { type: 'button', className: 'ui-btn sm', disabled: busy, onClick: () => act('cg-ack') }, t("关闭")))))
     }
     if (s.cg.status === 'ready' && !s.cg.seen) {
       const detailReady = rewardCgDetail
         && String(rewardCgDetail.id || '') === rewardCgId
         && typeof rewardCgDetail.dataUrl === 'string'
         && rewardCgDetail.dataUrl
-      if (!detailReady) {
-        return React.createElement('div', { 'aria-modal': 'true', className: 'whg-cg-backdrop', role: 'dialog' },
-          React.createElement('div', { className: 'whg-cg-title' }, t("🎁 升级啦 · ") + (s.cg.name || s.name) + t("送给你的特殊CG")),
-          rewardCgError
-            ? React.createElement('div', { className: 'whg-archive-error', role: 'alert' }, t("特殊 CG 读取失败：") + rewardCgError)
-            : React.createElement('div', { className: 'whg-cg-title', role: 'status' }, rewardCgLoading ? t("正在取出这份深海礼物……") : t("正在准备这份深海礼物……")),
-          rewardCgError
-            ? React.createElement('div', { className: 'whg-cg-btns' },
-              React.createElement('button', {
-                className: 'whg-cg-btn',
-                disabled: rewardCgLoading,
-                onClick: () => loadRewardCg(rewardCgId),
-                type: 'button',
-              }, rewardCgLoading ? t("重新读取中…") : t("重新读取")),
-              React.createElement('button', {
-                className: 'whg-cg-btn alt',
-                disabled: busy,
-                onClick: acknowledgeRewardCg,
-                type: 'button',
-              }, t("暂时收下并关闭")),
-            )
+      const head = React.createElement('div', { className: 'gx-gift-b' },
+        face(s.current),
+        React.createElement('div', { className: 'grow' },
+          React.createElement('h4', null, t("升级啦 · ") + who + t(" 送你一张特殊 CG")),
+          React.createElement('p', null, (s.level ? 'Lv.' + s.level + t(" 纪念 · ") : '') + t("已收进 CG 图鉴"))),
+        detailReady
+          ? (s.cg.savedAsBg
+            ? React.createElement('button', { className: 'ui-btn', onClick: () => { bgCache.current = null; act('cg-clear-bg') }, type: 'button' }, t("恢复默认背景"))
+            : React.createElement('button', { className: 'ui-btn', disabled: busy, onClick: saveRewardCgBackground, type: 'button' }, Icon('image', { size: 15 }), t("设为 Galgame 背景")))
+          : rewardCgError
+            ? React.createElement('button', { className: 'ui-btn', disabled: rewardCgLoading, onClick: () => loadRewardCg(rewardCgId), type: 'button' }, rewardCgLoading ? t("重新读取中…") : t("重新读取"))
             : null,
-        )
-      }
-      return React.createElement('div', { 'aria-modal': 'true', className: 'whg-cg-backdrop', role: 'dialog' },
-        React.createElement('div', { className: 'whg-cg-title' }, t("🎁 升级啦 · ") + (s.cg.name || s.name) + t("送给你的特殊CG")),
-        React.createElement('img', { className: 'whg-cg-img', src: rewardCgDetail.dataUrl, alt: (s.cg.name || s.name) + t("送给你的特殊CG") }),
-        React.createElement('div', { className: 'whg-cg-btns' },
-          s.cg.savedAsBg
-            ? React.createElement('button', {
-              className: 'whg-cg-btn alt',
-              onClick: () => {
-                bgCache.current = null
-                act('cg-clear-bg')
-              },
-              type: 'button',
-            }, t("恢复默认背景"))
-            : React.createElement('button', {
-              className: 'whg-cg-btn',
-              disabled: busy,
-              onClick: saveRewardCgBackground,
-              type: 'button',
-            }, t("保存为galgame界面背景")),
-          React.createElement('button', {
-            className: 'whg-cg-btn alt',
-            disabled: busy,
-            onClick: acknowledgeRewardCg,
-            type: 'button',
-          }, t("收下并关闭")),
-        ),
-      )
+        React.createElement('button', { className: 'ui-btn primary', disabled: busy, onClick: acknowledgeRewardCg, type: 'button' }, detailReady ? t("收下") : t("先关闭")))
+      return React.createElement('div', { 'aria-modal': 'true', className: 'whg-cg-backdrop gx-veil', role: 'dialog', 'aria-label': t("升级啦 · ") + who + t(" 送你一张特殊 CG") },
+        React.createElement('div', { className: 'gx-gift' },
+          detailReady
+            ? React.createElement('div', { className: 'gx-big' }, React.createElement(CgImageViewer, { src: rewardCgDetail.dataUrl, alt: who + t("的特殊CG"), title: who + t("的特殊CG"), subtitle: (s.level ? 'Lv.' + s.level + ' · ' : '') + t("升级纪念") }))
+            : React.createElement('div', { className: 'gx-big gx-big-wait', role: rewardCgError ? 'alert' : 'status' },
+              rewardCgError ? Icon('alert', { size: 22 }) : React.createElement('span', { className: 'ui-spinner', 'aria-hidden': 'true' }),
+              rewardCgError ? t("特殊 CG 读取失败：") + rewardCgError : rewardCgLoading ? t("正在取出这份礼物……") : t("正在准备这份礼物……")),
+          head))
     }
     return null
   }
@@ -3292,23 +2456,19 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   const isTab = props.variant === 'tab'
 
   if (isTab) {
+    // whole-page states: connecting, failed to connect, switched off
+    const fullCard = (kind: string, icon: any, title: string, text: string, action: any) => React.createElement('div', { id: 'whg-tab-root', className: 'whg-root-tab' },
+      React.createElement('div', { className: 'whg-bg whg-bg-fallback' }),
+      React.createElement('div', { className: 'gx-full' }, React.createElement('div', { className: 'gx-fcard' + (kind === 'err' ? ' err' : ''), role: kind === 'err' ? 'alert' : 'status' }, icon, React.createElement('h4', null, title), React.createElement('p', null, text), action)))
     if (s === null) {
-      return React.createElement('div', { id: 'whg-tab-root', className: 'whg-root-tab' },
-        React.createElement('div', { className: 'whg-bg whg-bg-fallback' }),
-        React.createElement('div', { className: 'whg-toast' }, apiError ? '⚠️ ' + apiError : t("连接 galgame 服务中…")),
-      )
+      return apiError
+        ? fullCard('err', Icon('alert', { size: 28 }), t("Galgame 服务没有就绪"), apiError, React.createElement('button', { type: 'button', className: 'ui-btn sm primary', onClick: () => { setApiError(null); callApi('view').then((v: any) => { if (v && typeof v === 'object') setS(v) }).catch((e: any) => setApiError(String(e && e.message ? e.message : e))) } }, Icon('retry', { size: 14 }), t("重新连接")))
+        : fullCard('busy', React.createElement('span', { className: 'ui-spinner gx-big-spin', 'aria-hidden': 'true' }), t("正在连接 Galgame…"), t("通常几秒钟就好。"), null)
     }
     if (s.enabled === false) {
-      return React.createElement('div', { id: 'whg-tab-root', className: 'whg-root-tab' },
-        React.createElement('div', { className: 'whg-disabled' },
-          React.createElement('div', { className: 'whg-disabled-card' },
-            React.createElement('h2', null, t("AI娘 Galgame 已关闭")),
-            React.createElement('p', null, t("在通用设置中开启 Galgame 后，即可继续。")),
-          ),
-        ),
-      )
+      return fullCard('off', Icon('power', { size: 28 }), t("AI娘 Galgame 已关闭"), t("在通用设置中开启 Galgame 后，即可继续。"), React.createElement('button', { type: 'button', className: 'ui-btn sm', onClick: () => (window as any).whale?.open?.('settings') }, t("去通用设置")))
     }
-    const bgSrc = s.bg === 'cg' || s.bg === 'custom' ? bgCache.current : art(s.bg)
+    const bgSrc = group ? (companionImage(group.background, art) || art('bg-kimi-moonlit-reading-study') || art('palace-night')) : (s.bg === 'cg' || s.bg === 'custom' ? bgCache.current : companionImage(s.bg, art))
     const bgEl = bgSrc
       ? React.createElement('img', { className: 'whg-bg', src: bgSrc, alt: '', draggable: false })
       : React.createElement('div', { className: 'whg-bg whg-bg-fallback' })
@@ -3318,8 +2478,8 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       stage(),
       dialogue(),
       archiveDrawer(),
+      companionPanel && s.companion ? React.createElement(CompanionManager, { state: s.companion, request: companionRequest, panel: companionPanel, onClose: () => setCompanionPanel(null), resolveArt: art }) : null,
       cgModal(),
-      sideStoryToast(),
     )
   }
 
@@ -3340,7 +2500,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     )
   }
   if (s.enabled === false) return React.createElement(React.Fragment, null)
-  const bgSrc = s.bg === 'cg' || s.bg === 'custom' ? bgCache.current : art(s.bg)
+  const bgSrc = group ? (companionImage(group.background, art) || art('bg-kimi-moonlit-reading-study') || art('palace-night')) : (s.bg === 'cg' || s.bg === 'custom' ? bgCache.current : companionImage(s.bg, art))
   const bgEl = bgSrc
     ? React.createElement('img', { className: 'whg-bg', src: bgSrc, alt: '', draggable: false })
     : React.createElement('div', { className: 'whg-bg whg-bg-fallback' })
@@ -3350,8 +2510,8 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     stage(),
     dialogue(),
     archiveDrawer(),
+    companionPanel && s.companion ? React.createElement(CompanionManager, { state: s.companion, request: companionRequest, panel: companionPanel, onClose: () => setCompanionPanel(null), resolveArt: art }) : null,
     cgModal(),
-    sideStoryToast(),
   )
 }
 

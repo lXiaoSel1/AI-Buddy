@@ -73,7 +73,13 @@ export class TokenMonitor {
   if(this.repository)this.repository.publish({ready:true,state:cache});
   await this.restartLegacy();await this.scan(true);if(this.closed)return this;this.warm=true;this.timer=setInterval(()=>void this.scan(false).catch(e=>this.errors.set('scan',e.message)),this.refreshIntervalMs);return this;
  }
- async restartLegacy(){if(this.legacy)await this.legacy.close();const roots=this.sources.list().filter(s=>s.enabled&&['codex','claude'].includes(s.tool)).map(s=>({provider:s.tool,path:s.path}));this.legacy=new LocalMonitor({...this.options,persistentHistory:!!this.repository,roots,refreshIntervalMs:this.refreshIntervalMs,onUpdate:v=>{this.legacySnapshot=v;this.emit();}});await this.legacy.start();}
+ // Restarts run one after another, so two quick source changes cannot leave an
+ // earlier monitor running unseen (D2-5). A failed start is shown in errors.
+ restartLegacy(){
+  const run=async()=>{if(this.legacy)await this.legacy.close();const roots=this.sources.list().filter(s=>s.enabled&&['codex','claude'].includes(s.tool)).map(s=>({provider:s.tool,path:s.path}));this.legacy=new LocalMonitor({...this.options,persistentHistory:!!this.repository,roots,refreshIntervalMs:this.refreshIntervalMs,onUpdate:v=>{this.legacySnapshot=v;this.emit();}});
+   try{await this.legacy.start();this.errors.delete('legacy-monitor');}catch(error){this.errors.set('legacy-monitor','用量监控启动失败：'+error.message);this.emit();throw error;}};
+  return this.legacyRestart=(this.legacyRestart??Promise.resolve()).catch(()=>{}).then(run);
+ }
  setRefreshInterval(ms){this.refreshIntervalMs=ms;this.legacy?.setRefreshInterval(ms);if(this.timer){clearInterval(this.timer);this.timer=setInterval(()=>void this.scan(false).catch(e=>this.errors.set('scan',e.message)),ms);}}
  genericSnapshot(){
   const value=this.ledger.snapshot(this.sources.list(),Date.now(),new Set(this.legacySnapshot?.sessions.filter(s=>s.provider==='codex'&&s.usage.total>0).map(s=>s.id)||[]));
@@ -84,7 +90,7 @@ export class TokenMonitor {
    if(!session.model&&task.model)session.model=task.model;
   }return value;
  }
- emit(){if(!this.legacySnapshot)return;this.listeners({usageRevision:this.legacy.ledger.aggregationRevision+':'+this.ledger.revision,...mergeSnapshots(this.legacySnapshot,this.genericSnapshot(),this.sources.list(),this.sources.state?.aliases),modelAliases:this.sources.state?.modelAliases||{},errors:[...this.legacySnapshot.errors,...this.errors].map(e=>Array.isArray(e)?{path:e[0],message:e[1]}:e)});}
+ emit(){if(!this.legacySnapshot)return;this.listeners({activityEpoch:this.legacy.startedAt,usageRevision:this.legacy.ledger.aggregationRevision+':'+this.ledger.revision,...mergeSnapshots(this.legacySnapshot,this.genericSnapshot(),this.sources.list(),this.sources.state?.aliases),modelAliases:this.sources.state?.modelAliases||{},errors:[...this.legacySnapshot.errors,...this.errors].map(e=>Array.isArray(e)?{path:e[0],message:e[1]}:e)});}
  recordTask(event,source){
   if(!event.timestamp)return;
   const key='dsh:'+event.sessionId,old=this.taskStates.get(key);
@@ -179,5 +185,5 @@ export class TokenMonitor {
   const old=JSON.stringify(this.sources.list().filter(s=>s.enabled&&['codex','claude'].includes(s.tool)));const result=await this.sources.action(action,args);if(action!=='get'&&action!=='export'){if(old!==JSON.stringify(this.sources.list().filter(s=>s.enabled&&['codex','claude'].includes(s.tool))))await this.restartLegacy();this.lastDiscovery=0;await this.scan(true);}return result;
  }
  ingestCompanion(row){this.legacy.ingestCompanion(row);this.legacy.emit();}
- async close(){this.closed=true;clearInterval(this.timer);await this.starting?.catch(()=>{});for(const {watcher} of this.watchers)watcher.close();while(this.busy)await new Promise(r=>setTimeout(r,20));await this.persist();await this.legacy?.close();this.repository?.close();}
+ async close(){this.closed=true;clearInterval(this.timer);await this.starting?.catch(()=>{});await this.legacyRestart?.catch(()=>{});for(const {watcher} of this.watchers)watcher.close();while(this.busy)await new Promise(r=>setTimeout(r,20));await this.persist();await this.legacy?.close();this.repository?.close();}
 }

@@ -12,6 +12,10 @@ export const PET_ACTIONS=Object.freeze([...originalActions,...emotionActions]);
 export const DIRECTION_FRAMES=Object.freeze(manifest.directionFrames);
 export const DIRECTION_ANGLES=Object.freeze(manifest.directionAnglesDeg);
 const byId=new Map(PET_ACTIONS.map(action=>[action.id,action]));
+export const PET_INTERACTION_ACTIONS=Object.freeze([
+  ['sleep-enter','入睡过渡'],['sleep-loop','睡眠'],['wake','唤醒'],['throw-start','起飞'],['throw-loop','飞行'],['land-recover','落稳恢复'],
+].map(([id,label])=>({id,label,cycleMs:4000,frames:1,frameDurationsMs:[4000],fullFrame:true})));
+for(const action of PET_INTERACTION_ACTIONS)byId.set(action.id,action);
 const sequenceActions=new WeakMap();
 export const DIRECTION_LABELS=Object.freeze(manifest.directionLabels);
 export function getPetAction(id,characterId){const action=byId.get(id);if(!action)throw new Error('未知桌宠动作：'+id);const clip=frameSequence(id,characterId);if(!clip)return action;if(!sequenceActions.has(clip))sequenceActions.set(clip,{...action,...sequenceInfo(clip),fullFrame:true,frames:clip.frames.length,frameDurationsMs:clip.frames.map((frame,index)=>(clip.frames[index+1]?.timestampMs??clip.cycleMs)-frame.timestampMs)});return sequenceActions.get(clip);}

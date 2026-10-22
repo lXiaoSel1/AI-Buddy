@@ -1,0 +1,78 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createCompanionMemory,collectMemoryEvents,memoryRequestTokens,dailyMemoryOutputReserve} from '../src/companion-memory.mjs';
+
+const DAY='2026-10-20',NOW=Date.parse('2026-10-21T12:00:00Z');
+function fixture(count=15,{group=false,largeCard=false}={}){
+ const state={cards:{a:{id:'a',name:'A',revision:1,fields:{},defaults:{personality:largeCard?'非常长的初始角色设定。'.repeat(3000):'安静',tone:'温和'}},b:{id:'b',name:'B',revision:1,fields:{},defaults:{}}},personas:{p:{id:'p'},q:{id:'q'}},activePersonaId:'p',conversations:{c1:{id:'c1',characterId:'a',personaId:'p',lifeId:'life-a',messages:[]},c2:{id:'c2',characterId:'a',personaId:'p',lifeId:'life-a',messages:[]},privateq:{id:'privateq',characterId:'a',personaId:'q',lifeId:'life-a',messages:[{id:'secret',role:'user',text:'OTHER_PERSONA_SECRET',createdAt:NOW-86400000}]}},groups:{g:{id:'g',personaId:'p',memberIds:['a'],seq:count+1,intervals:{a:[{start:2,end:null}]},messages:[]}},lives:{a:{id:'life-a',operationId:'op-a',mode:'normal',startedAt:NOW-86400000,groupIntervals:{g:[{start:2,end:null}]},memory:{},growth:{},personalEvents:[]}},memorySettings:{timeZone:'UTC'}};
+ for(let index=0;index<count;index++){
+  const row={id:'source-'+index+'-'+String(index).padStart(80,'0'),requestId:'turn-'+Math.floor(index/2),role:index%2?'assistant':'user',text:'测试经历'+index+'：'+('原文'.repeat(50)),createdAt:Date.parse(DAY+'T12:00:00Z')+index,status:index%2?'presented':'sent',presentation:index%2?'presented':undefined,...(group?{seq:index+2,characterId:index%2?'a':undefined}:{})};
+  if(group)state.groups.g.messages.push(row);else state.conversations[index%2?'c2':'c1'].messages.push(row);
+ }
+ if(group)state.groups.g.messages.unshift({id:'prejoin-secret',seq:1,role:'user',text:'PREJOIN_SECRET',createdAt:NOW-86400000});
+ return state;
+}
+function memoryStore(initial){let value=structuredClone(initial),tail=Promise.resolve();return {get state(){return value;},snapshot:()=>structuredClone(value),mutate(fn){const task=tail.then(async()=>{const next=structuredClone(value),result=await fn(next);value=next;return result;});tail=task.catch(()=>{});return task;}};}
+function setup(initial,{summaryCharacters=120,override,onGrowth=()=>[],capacity=8192,capacityInfo={}}={}){
+ const store=memoryStore(initial),calls=[];
+ const memory=createCompanionMemory({store,autoStart:false,now:()=>NOW,getCapacity:()=>({tokens:capacity,source:'fixture-8192',verified:true,...capacityInfo}),onGrowth,runModel:async(characterId,request)=>{
+  const input=JSON.parse(request.messages[0].text);calls.push({characterId,request:structuredClone(request),input});assert(memoryRequestTokens(request.system,input,request.maxTokens)<=capacity,'every full normalized payload plus reply must fit');
+  const custom=await override?.({characterId,request,input,store});if(custom!==undefined)return typeof custom==='string'?custom:JSON.stringify(custom);
+  if(request.purpose==='memory-daily-segment'){const first=input.events[0].id;return JSON.stringify({coverageHash:input.coverageHash,items:[{text:'段'.repeat(summaryCharacters),eventIds:[first]}]});}
+  if(request.purpose==='memory-daily-merge'){const refs=[...new Set(input.parts.flatMap(row=>row.items??[]).flatMap(item=>item.eventIds))];return JSON.stringify({coverageHash:input.coverageHash,items:[{text:'合并后的来源受限摘要。',eventIds:refs.length?[refs[0]]:[]}]});}
+  return JSON.stringify({coverageHash:input.coverageHash,summary:{text:'按原文和范围完成日终。',eventIds:input.todayEventIds},guide:{text:'',eventIds:[]},core:[],branches:[],growthCandidates:[]});
+ }});return {store,memory,calls};
+}
+function assertCoverage(store,state,scope,count){
+ const summary=store.state.lives.a.memory.summaries[scope+'|'+DAY];assert(summary);assert.equal(summary.cutoff.length,count);assert.equal(new Set(summary.eventIds).size,count);assert(summary.eventIds.every(id=>id.startsWith('event-')));assert.equal(summary.budget.protocol,'daily-source-alias-v1');
+ assert.deepEqual(store.state.conversations,state.conversations);assert.deepEqual(store.state.groups,state.groups);
+ if(summary.segments.length)assert.equal(new Set(summary.segments.flatMap(row=>row.eventIds)).size,count);
+ return summary;
+}
+
+test('15 rows / 3033 UTF8 bytes / 120-Han leaf summaries fit final payload without truncating any raw',async()=>{
+ const state=fixture(15);let n=0;for(const conv of [state.conversations.c1,state.conversations.c2])for(const row of conv.messages)row.text='测'.repeat(66)+'a'.repeat(4+(n++<3?1:0));assert.equal(Object.values(state.conversations).filter(c=>c.personaId==='p').flatMap(c=>c.messages).reduce((sum,row)=>sum+Buffer.byteLength(row.text),0),3033);
+ const {memory,store,calls}=setup(state);const result=await memory.consolidate({characterId:'a',personaId:'p',day:DAY});assert.equal(result.status,'committed',result.error);assertCoverage(store,state,'persona:p',15);assert.equal(calls.filter(row=>row.request.purpose==='memory-daily').length,1);assert(calls.every(row=>!JSON.stringify(row.input).includes('OTHER_PERSONA_SECRET')));
+});
+for(const count of [50,100,500])for(const group of [false,true])test(`${count} records across ${group?'witnessed group sources':'two conversations'} preserve complete local coverage at 8192`,async()=>{
+ const state=fixture(count,{group}),{memory,store,calls}=setup(state),scope=group?'group:g':'persona:p';const result=await memory.consolidate({characterId:'a',...(group?{groupId:'g',personaId:'p'}:{personaId:'p'}),day:DAY});assert.equal(result.status,'committed',result.error);const summary=assertCoverage(store,state,scope,count);assert(summary.budget.requestWithReserve<=8192);assert(calls.every(row=>!JSON.stringify(row.input).includes('PREJOIN_SECRET')&&!JSON.stringify(row.input).includes('OTHER_PERSONA_SECRET')));assert(!JSON.stringify(calls.map(row=>row.input)).includes('event-'),'full source IDs stay in local receipt, never triplicated in wire payload');
+});
+test('normal mode does not send unrelated huge growth card and historical core versions remain local',async()=>{
+ const state=fixture(10,{largeCard:true}),events=collectMemoryEvents(state,'a'),source=events.find(row=>row.scope==='persona:p');state.lives.a.memory={core:{existing:{id:'existing',scope:'persona:p',day:DAY,kind:'experience',text:'原核心',perspective:'user-report',eventIds:[source.id],versions:Array.from({length:100},(_,index)=>({text:'旧版细节'+index+'。'.repeat(500),eventIds:[source.id]}))}}};
+ const {memory,store,calls}=setup(state,{override:({request,input})=>request.purpose==='memory-daily'?{coverageHash:input.coverageHash,summary:{text:'整理',eventIds:input.todayEventIds},guide:{text:'',eventIds:[]},core:[{id:input.core[0].id,kind:'experience',text:'新核心',perspective:'user-report',eventIds:[input.todayEventIds[0]],criteria:{occurred:true,enduring:true}}],branches:[],growthCandidates:[]}:undefined});
+ assert.equal((await memory.consolidate({characterId:'a',personaId:'p',day:DAY})).status,'committed');const final=calls.find(row=>row.request.purpose==='memory-daily').input;assert(!('currentCard'in final));assert(!('growthPolicy'in final));assert(!('observations'in final));assert(!('versions'in final.core[0]));assert.equal(store.state.lives.a.memory.core.existing.versions.length,101);assert.equal(store.state.lives.a.memory.core.existing.eventIds[0].startsWith('event-'),true);
+});
+test('typed leaf statements keep only their specific source refs; local coverage is not assigned to each fact',async()=>{
+ const state=fixture(500),{memory,store,calls}=setup(state,{override:({request,input})=>{if(request.purpose==='memory-daily'){const source=input.rawGroundedSegments?.flatMap(row=>row.items).find(item=>item.eventIds.length)?.eventIds[0]??input.events[0].id;return {coverageHash:input.coverageHash,summary:{text:'全量已处理',eventIds:[]},guide:{text:'',eventIds:[]},core:[{kind:'experience',text:'某条具体经历',perspective:'user-report',eventIds:[source],criteria:{occurred:true,enduring:true}}],branches:[],growthCandidates:[]};}}});
+ assert.equal((await memory.consolidate({characterId:'a',personaId:'p',day:DAY})).status,'committed');const summary=assertCoverage(store,state,'persona:p',500),core=Object.values(store.state.lives.a.memory.core)[0];assert.equal(core.eventIds.length,1);assert.equal(summary.eventIds.length,500);assert.equal(summary.modelEventIds.length,0);assert(calls.some(row=>row.request.purpose==='memory-daily-merge'),'long final request must trigger dynamic further merging');
+});
+test('navigation-only legacy segment responses cannot manufacture specific core evidence',async()=>{
+ const state=fixture(100),{memory,store}=setup(state,{override:({request,input})=>request.purpose==='memory-daily-segment'?{coverageHash:input.coverageHash,text:'旧版段级摘要',eventIds:[...new Set(input.events.map(row=>row.id))]}:request.purpose==='memory-daily'?{coverageHash:input.coverageHash,summary:{text:'摘要',eventIds:[]},guide:{text:'',eventIds:[]},core:[{kind:'experience',text:'不能冒充有单条证据',perspective:'user-report',eventIds:['e0'],criteria:{occurred:true,enduring:true}}],branches:[],growthCandidates:[]}:undefined});const result=await memory.consolidate({characterId:'a',personaId:'p',day:DAY});assert.equal(result.status,'failed');assert.equal(Object.keys(store.state.lives.a.memory.summaries).length,0);assert.deepEqual(store.state.conversations,state.conversations);
+});
+test('unknown / other-scope aliases and altered leaf coverage fail safely before any final commit',async()=>{
+ for(const scenario of ['forged','hash']){
+  const state=fixture(100),{memory,store}=setup(state,{override:({request,input})=>request.purpose==='memory-daily-segment'?{coverageHash:scenario==='hash'?'bad':input.coverageHash,items:[{text:'伪造引用',eventIds:[scenario==='forged'?'e999999':input.events[0].id]}]}:undefined});const result=await memory.consolidate({characterId:'a',personaId:'p',day:DAY});assert.equal(result.status,'failed');assert.equal(Object.keys(store.state.lives.a.memory.summaries).length,0);assert.deepEqual(store.state.conversations,state.conversations);
+ }
+});
+test('nonconverging merges stop with raw unchanged rather than dropping an early part',async()=>{
+ const state=fixture(500),{memory,store}=setup(state,{summaryCharacters:180,override:({request,input})=>request.purpose==='memory-daily-merge'?{coverageHash:input.coverageHash,items:input.parts.flatMap(row=>row.items??[])}:undefined});const result=await memory.consolidate({characterId:'a',personaId:'p',day:DAY});assert.equal(result.status,'failed');assert.match(result.error,/未缩小|有限次/);assert.equal(Object.keys(store.state.lives.a.memory.summaries).length,0);assert.deepEqual(store.state.conversations,state.conversations);
+});
+test('invalid old Guide/core/observation sources stay local and cannot leak through navigation projections',async()=>{
+ const state=fixture(50);state.lives.a.mode='seed';const hidden=collectMemoryEvents(state,'a').find(row=>row.personaId==='q');state.lives.a.memory={guides:{'persona:p':{scope:'persona:p',day:'2026-10-19',text:'FOREIGN_GUIDE_SECRET',eventIds:[hidden.id]}},core:{bad:{id:'bad',scope:'persona:p',day:'2026-10-19',kind:'experience',text:'FOREIGN_CORE_SECRET',perspective:'user-report',eventIds:[hidden.id]}}};state.lives.a.growth={observations:{bad:{scope:'persona:p',field:'tone',before:'温和',after:'FOREIGN_OBSERVATION_SECRET',sourceEventIds:[hidden.id],counterEvidenceIds:[]}}};
+ const {memory,store,calls}=setup(state);assert.equal((await memory.consolidate({characterId:'a',personaId:'p',day:DAY})).status,'committed');const wire=JSON.stringify(calls.map(call=>call.input));for(const word of ['FOREIGN_GUIDE_SECRET','FOREIGN_CORE_SECRET','FOREIGN_OBSERVATION_SECRET','OTHER_PERSONA_SECRET'])assert(!wire.includes(word),word);assert.equal(store.state.lives.a.memory.core.bad.text,'FOREIGN_CORE_SECRET');assert.equal(store.state.lives.a.growth.observations.bad.after,'FOREIGN_OBSERVATION_SECRET');
+});
+test('segmented final metadata never advertises an alias not associated with a delivered cited item',async()=>{
+ const state=fixture(500),events=collectMemoryEvents(state,'a').filter(row=>row.scope==='persona:p');state.lives.a.memory={core:{old:{id:'old',scope:'persona:p',day:DAY,kind:'experience',text:'既有核心',perspective:'user-report',eventIds:events.map(row=>row.id)}}};const {memory,calls}=setup(state);assert.equal((await memory.consolidate({characterId:'a',personaId:'p',day:DAY})).status,'committed');const final=calls.find(call=>call.request.purpose==='memory-daily').input,cited=new Set(final.rawGroundedSegments.flatMap(node=>node.items).flatMap(item=>item.eventIds));assert(final.core[0].eventIds.every(id=>cited.has(id)));assert.equal(final.core[0].sourceStatus,'navigation-only');assert.equal(final.core[0].eventIds.length<cited.size+1,true);
+});
+test('daily reasoning-inclusive output reserve is 4096 of an unknown 8192 window and honors declared output limit',()=>{
+ assert.equal(dailyMemoryOutputReserve({tokens:8192}),4096);assert.equal(dailyMemoryOutputReserve({tokens:8192},'segment'),4096);assert.equal(dailyMemoryOutputReserve({tokens:128000}),8192);assert.equal(dailyMemoryOutputReserve({tokens:8192,maxOutputTokens:3072}),3072);assert.equal(dailyMemoryOutputReserve({tokens:8192,reasoning:false}),4096,'unverified no-reasoning hint cannot silently reduce reserve');assert(dailyMemoryOutputReserve({tokens:8192,reasoning:false,reasoningVerified:true})<4096);
+});
+test('short daily final leaves room for reasoning plus JSON without forcing extra requests or overriding effort',async()=>{
+ const state=fixture(2),{memory,store,calls}=setup(state,{override:({request})=>{if(request.maxTokens<4096)throw Error('模型没有返回正文：output=reasoning=1311，推理耗尽配额');assert.equal(request.reasoningEffort,undefined);}});const result=await memory.consolidate({characterId:'a',personaId:'p',day:DAY});assert.equal(result.status,'committed',result.error);assert.equal(calls.length,1);assert.equal(calls[0].request.purpose,'memory-daily');assert.equal(calls[0].request.maxTokens,4096);assert.equal(store.state.lives.a.memory.jobs['persona:p|'+DAY].budget.outputReserveTokens,4096);assert.equal(store.state.lives.a.memory.summaries['persona:p|'+DAY].budget.outputReservePolicy,'reasoning-inclusive-half-window');
+});
+test('leaf, merge and final all survive a mock that consumes 1311 output tokens as reasoning before emitting JSON',async()=>{
+ const state=fixture(500),{memory,store,calls}=setup(state,{summaryCharacters:180,override:({request})=>{if(request.maxTokens<4096)throw Error('模型没有返回正文：全部输出额度用于reasoning');}});const result=await memory.consolidate({characterId:'a',personaId:'p',day:DAY});assert.equal(result.status,'committed',result.error);assertCoverage(store,state,'persona:p',500);for(const purpose of ['memory-daily-segment','memory-daily-merge','memory-daily'])assert(calls.some(call=>call.request.purpose===purpose),purpose);assert(calls.every(call=>call.request.maxTokens===4096));assert(calls.every(call=>memoryRequestTokens(call.request.system,call.input,call.request.maxTokens)<=8192));
+});
+test('verified non-reasoning routes keep compact reserves and do not pay unnecessary segmentation calls',async()=>{
+ const state=fixture(100),plain=setup(state,{capacityInfo:{reasoning:false,reasoningVerified:true}}),unknown=setup(state);assert.equal((await plain.memory.consolidate({characterId:'a',personaId:'p',day:DAY})).status,'committed');assert.equal((await unknown.memory.consolidate({characterId:'a',personaId:'p',day:DAY})).status,'committed');assert(plain.calls.length<unknown.calls.length);assert(plain.calls.every(call=>call.request.maxTokens<4096));assertCoverage(plain.store,state,'persona:p',100);assertCoverage(unknown.store,state,'persona:p',100);
+});

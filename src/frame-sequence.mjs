@@ -13,6 +13,7 @@ export function activatePetCharacter(id){
 
 export function validateFrameSequence(clip){
   if(!clip||!Number.isFinite(clip.cycleMs)||clip.cycleMs<=0||!Number.isInteger(clip.canvas?.width)||!Number.isInteger(clip.canvas?.height)||clip.canvas.width<=0||clip.canvas.height<=0||!Array.isArray(clip.frames)||!clip.frames.length)throw Error('Invalid full-frame sequence');
+  if(clip.presentationScale!==undefined&&(!Number.isFinite(clip.presentationScale)||clip.presentationScale<=0||clip.presentationScale>2))throw Error('Invalid fixed character presentation scale');
   let previous=-1;
   for(const [index,frame] of clip.frames.entries()){
     if((clip.backend!=='webm-alpha'&&typeof frame.src!=='string')||!Number.isFinite(frame.timestampMs)||frame.timestampMs<0||frame.timestampMs<=previous||frame.timestampMs>=clip.cycleMs||index===0&&frame.timestampMs!==0)throw Error('Invalid sequence frame timestamp');

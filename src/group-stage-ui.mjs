@@ -1,0 +1,58 @@
+import React,{useEffect,useRef,useState} from 'react';
+import {createPortal} from 'react-dom';
+import {stageCapacity,stageWindow,stableMembers} from './group-stage.mjs';
+import {t} from './i18n.mjs';
+import {isStoredImage} from './companion-image.mjs';
+import {plateVars} from './plate-colors.mjs';
+const h=React.createElement;
+const name=c=>c?.name||c?.id||'';
+const image=(c,resolve)=>Object.hasOwn(c?.effective||{},'sprite')?c.effective.sprite||null:resolve(c?.sprite)||null;
+const thumb=c=>isStoredImage(c?.avatar)?c.avatar:c?.builtin?`assets/group-thumbnails/${c.id}.png`:null;
+const button=(label,onClick,props={})=>h('button',{type:'button',className:'whg-btn',onClick,...props},t(label));
+export const GroupStageCSS=`
+.whg-stage.buddy-stage{display:block;inset:126px 20px 300px!important;pointer-events:none;overflow:visible;min-height:145px;container-type:inline-size}
+.galgame-page .whg-root-tab .whg-stage.buddy-stage{position:relative;inset:auto!important;display:block;width:100%;height:100%;padding:4px 16px;min-height:155px;overflow:visible;box-sizing:border-box;z-index:1}
+.buddy-stage-layout{display:grid;grid-template-columns:minmax(0,1fr) 164px;gap:18px;height:100%;width:100%}.buddy-stage-view{position:relative;min-width:0;height:100%;overflow:visible;border-radius:16px;isolation:isolate}
+.buddy-stage-cast{position:absolute;inset:10px 4% -68%;display:flex;align-items:flex-start;justify-content:center;gap:12px;z-index:2}
+.buddy-stage-person{position:relative;height:94%;min-width:0;flex:1 1 0;display:flex;align-items:flex-end;justify-content:center;transform-origin:50% 0%;transition:transform .2s,filter .2s;filter:brightness(.55)}
+.buddy-stage-person[data-speaker=true]{filter:brightness(1);z-index:3}.buddy-stage-person[data-focus=true]{transform:scale(1.12)}
+.buddy-stage-person img,.buddy-stage-person canvas{width:145%!important;max-width:none;flex-shrink:0;height:100%;object-fit:contain;object-position:top;display:block}.buddy-stage-person>span{display:none}
+.buddy-stage-names{position:absolute;z-index:5;left:4%;right:4%;bottom:10px;display:flex;gap:12px;justify-content:space-around}.buddy-stage-names span{flex:1;min-width:0;text-align:center;color:var(--buddy-text);font-size:12px;text-shadow:0 1px 5px #000;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The far rim is 24% down the transparent artwork. Anchor that rim to the
+   portrait stage so a wide, short window cannot push the table into faces. */
+.buddy-round-table{position:absolute;z-index:4;pointer-events:none;width:108%;max-width:none;height:auto;left:-4%;top:74%;bottom:auto;transform:translateY(-24%);filter:drop-shadow(0 -4px 6px #0005)}
+.buddy-stage-toolbar{position:absolute;z-index:6;left:0;right:0;top:0;display:flex;align-items:center;gap:8px;pointer-events:auto;flex-wrap:wrap;font-size:12px}.buddy-stage-toolbar button{font-size:12px!important;padding:5px 10px!important}.buddy-stage-toolbar .buddy-viewing{background:color-mix(in srgb,var(--buddy-surface2) 87%,transparent);color:var(--buddy-accent-text);padding:5px 10px;border-radius:10px}
+.buddy-roster{pointer-events:auto;display:flex;flex-direction:column;min-height:0;background:color-mix(in srgb,var(--buddy-side-bg) 81%,transparent);border:1px solid color-mix(in srgb,var(--buddy-muted) 33%,transparent);border-radius:14px;padding:10px;gap:8px}.buddy-roster>strong{font-size:14px}.buddy-roster input,.buddy-member-search{min-width:0;width:100%;box-sizing:border-box;background:var(--buddy-surface2);color:var(--buddy-text);border:1px solid color-mix(in srgb,var(--buddy-muted) 40%,transparent);border-radius:7px;padding:7px;font:inherit}.buddy-roster-list{overflow:auto;min-height:0;scrollbar-width:thin;overscroll-behavior:contain;display:flex;flex-direction:column;gap:5px}
+.buddy-roster-entry{display:flex;align-items:center;gap:7px;min-height:46px;padding:5px!important;text-align:left;color:var(--buddy-text);background:color-mix(in srgb,var(--buddy-surface2) 40%,transparent);border:1px solid transparent;border-radius:9px;font:inherit;cursor:pointer}.buddy-roster-entry img,.buddy-overview-card img{width:36px;height:42px;object-fit:contain;flex:none}.buddy-roster-entry span{min-width:0;overflow-wrap:anywhere;font-size:12px}.buddy-roster-entry small{display:block;color:var(--buddy-muted);font-size:10px}.buddy-roster-entry[data-speaking=true]{border-color:var(--buddy-accent-text);background:color-mix(in srgb,var(--buddy-accent) 40%,transparent)}.buddy-roster-entry[data-viewed=true]{outline:1px dashed var(--buddy-a2);outline-offset:-4px}
+
+.buddy-stage-placeholder{padding:16px;background:color-mix(in srgb,var(--buddy-surface2) 73%,transparent);color:var(--buddy-text);border:1px solid var(--buddy-muted);border-radius:16px;max-width:90%;overflow-wrap:anywhere}
+.buddy-group-panel .buddy-group-mentions{flex-wrap:nowrap;overflow-x:auto;max-width:100%;padding-bottom:4px}.buddy-group-mentions button{white-space:nowrap}.buddy-group-panel .whg-line-now{overflow:auto;min-height:48px;max-height:110px;white-space:pre-wrap;overflow-wrap:anywhere}.buddy-group-panel .whg-input{max-height:85px!important;min-height:40px!important}.buddy-group-panel .buddy-group-meta{margin-bottom:6px}.buddy-group-panel .whg-input-row{flex-shrink:0}
+.galgame-page .whg-root-tab .buddy-group-panel{padding-top:24px;gap:6px}.buddy-group-panel .whg-btn{padding:5px 9px!important;font-size:12px!important}.buddy-group-panel .buddy-group-mentions{margin-top:2px;scrollbar-width:thin}.buddy-group-panel textarea.whg-input{height:48px;resize:none}.buddy-group-panel .buddy-group-controls{font-size:12px}.buddy-group-panel .buddy-group-meta{margin-bottom:2px}
+@container(max-width:800px){.buddy-stage-layout{grid-template-columns:minmax(0,1fr)}.buddy-roster{display:none}}
+@media(prefers-reduced-motion:reduce){.buddy-stage-person{transition:none!important}.buddy-group-panel .whg-line-now{animation:none!important}}
+@media(max-width:1000px){.whg-stage.buddy-stage{inset:142px 12px 300px!important}.buddy-stage-toolbar{gap:4px}.buddy-stage-toolbar button{padding:4px 7px!important}.buddy-stage-person>span{font-size:11px}}
+`;
+export function CompanionGroupStage({state,request,resolveArt=()=>null,renderPortrait,browseRequest,toolbarTarget}){
+ const group=state.groups?.find(g=>g.id===state.activeGroupId),message=state.groupRuntime?.currentMessage,speaker=message?.characterId;
+ const viewport=useRef(null),presenting=useRef(null),previous=useRef([]),lastMessage=useRef(null);
+ const [width,setWidth]=useState(1000),[manual,setManual]=useState(null),[wide,setWide]=useState(false),[rosterSearch,setRosterSearch]=useState(''),[error,setError]=useState('');
+ useEffect(()=>{const node=viewport.current;if(!node)return;const measure=()=>setWidth(node.clientWidth);measure();const observer=new ResizeObserver(measure);observer.observe(node);return()=>observer.disconnect();},[group?.id]);
+ useEffect(()=>{setManual(null);previous.current=[];lastMessage.current=null;setWide(group?.cameraMode==='wide');},[group?.id]);
+ useEffect(()=>{if(message?.id&&lastMessage.current!==message.id){lastMessage.current=message.id;setManual(null);}},[message?.id]);
+ useEffect(()=>{if(browseRequest?.groupId!==group?.id)return;if(browseRequest.characterId==null)setManual(null);else if(group.memberIds.includes(browseRequest.characterId))setManual(browseRequest.characterId);},[browseRequest]);
+ const pending=state.groupRuntime?.pendingMessage;
+ useEffect(()=>{if(!pending||!request)return;let stopped=false;const ack=()=>{if(stopped||presenting.current===pending.id||document.hidden||document.querySelector('dialog[open]'))return;presenting.current=pending.id;request('companion-group-present',{id:group.id,requestId:pending.id}).catch(e=>{setError(e.message);}).finally(()=>{presenting.current=null;});};const timer=setInterval(ack,200);const frame=requestAnimationFrame(ack);return()=>{stopped=true;clearInterval(timer);cancelAnimationFrame(frame);};},[pending?.id,group?.id,request]);
+ useEffect(()=>{if(manual)return;viewport.current?.parentElement?.querySelector('[data-speaking=true]')?.scrollIntoView({block:'nearest'});},[speaker,manual]);
+ // Warm only the immediate next/previous neighbor, never every member/expression.
+ useEffect(()=>{if(!group)return;const order=stableMembers(group),visible=stageWindow(order,stageCapacity(width),manual||speaker,previous.current),first=order.indexOf(visible[0]),last=order.indexOf(visible.at(-1)),images=[];for(const id of [order[first-1],order[last+1]]){const card=state.characters?.find(c=>c.id===id);if(!card||card.hasCustomSprite)continue;const src=image(card,resolveArt);if(!src)continue;const img=new Image();img.decoding='async';img.src=src;images.push(img);}return()=>{for(const img of images)img.src='';};},[group?.id,group?.stageOrder?.join(','),group?.memberIds?.join(','),width,manual,speaker]);
+ if(!group)return null;
+ const order=stableMembers(group),capacity=stageCapacity(width),visible=stageWindow(order,capacity,manual||speaker,previous.current);previous.current=visible;
+ const characters=Object.fromEntries((state.characters||[]).map(c=>[c.id,c])),viewed=manual&&characters[manual];
+ const choose=id=>setManual(id);
+ const portrait=c=>{const src=thumb(c);return src?h('img',{src,alt:'',loading:'lazy',onError:e=>{e.currentTarget.style.display='none';}}):h('span',{'aria-hidden':true},name(c).slice(0,2));};
+ const status=id=>[(speaker===id?t('正在发言'):''),(manual===id?t('查看中'):''),group.mutedIds?.includes(id)?t('静音'):t('在场')].filter(Boolean).join(' · ');
+ const controls=manual&&h(React.Fragment,null,
+  h('span',{className:'buddy-viewing','data-viewing':manual},t('正在查看：')+name(viewed)),
+  button('回到发言者',()=>setManual(null)));
+ return h(React.Fragment,null,toolbarTarget&&createPortal(controls,toolbarTarget),h('div',{className:'whg-stage buddy-stage','data-companion-group-stage':group.id},h('div',{className:'buddy-stage-layout'},h('div',{className:'buddy-stage-view',ref:viewport,'data-capacity':capacity,'data-visible-members':visible.join(',')},h('div',{className:'buddy-stage-cast'},...visible.map(id=>{const c=characters[id],src=image(c,resolveArt);return h('div',{key:id,className:'buddy-stage-person','data-speaker':!speaker||id===speaker,'data-focus':!wide&&id===(manual||speaker),'data-character-id':id},src?(renderPortrait?renderPortrait(c,src,id===speaker?message?.emotion||'normal':'normal'):h('img',{src,alt:name(c),draggable:false})):h('div',{className:'buddy-stage-placeholder'},name(c)),h('span',null,name(c)));})),h('div',{className:'buddy-stage-names'},...visible.map(id=>h('span',{key:id,'data-speaker':id===speaker,style:id===speaker?plateVars({characterId:id,color:characters[id]?.color}):undefined},name(characters[id])))),group.sceneTemplate!=='plain'&&h('img',{className:'buddy-round-table',src:'assets/group-scene/discussion-table-v2.png',alt:'',draggable:false,'aria-hidden':true})),h('aside',{className:'buddy-roster','aria-label':t('群成员')},h('strong',null,t('成员'),' ',h('small',null,String(order.length))),order.length>6&&h('input',{type:'search',placeholder:t('搜索成员'),'aria-label':t('搜索成员'),value:rosterSearch,onChange:e=>setRosterSearch(e.target.value)}),h('div',{className:'buddy-roster-list'},...order.filter(id=>name(characters[id]).toLowerCase().includes(rosterSearch.toLowerCase())).map(id=>h('button',{key:id,type:'button',className:'buddy-roster-entry','data-speaking':speaker===id,'data-viewed':manual===id,onClick:()=>choose(id)},portrait(characters[id]),h('span',null,name(characters[id]),h('small',null,status(id))))))))),error&&h('span',{role:'alert'},error));
+}
