@@ -144,9 +144,9 @@ dialog.ws-mdl{margin:auto}
 .ws-mdl textarea{height:auto;min-height:72px;padding:8px 12px}
 .ws-mdl :is(input,select,textarea):focus-visible{outline:0;box-shadow:inset 0 0 0 1px var(--buddy-accent),0 0 0 3px color-mix(in srgb,var(--buddy-accent) 24%,transparent)}
 .ws-fgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
-.ws-fld{display:grid;align-content:start;gap:6px;min-width:0}
+.ws-fld{display:grid;grid-template-columns:minmax(0,1fr);align-content:start;gap:6px;min-width:0}
 .ws-fld>span{font-size:var(--buddy-fs-sm);font-weight:600;color:var(--buddy-text)}
-.ws-fld>small{font-size:var(--buddy-fs-cap);color:var(--buddy-muted)}
+.ws-fld>small{min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.5;font-size:var(--buddy-fs-cap);color:var(--buddy-muted)}
 .ws-span2{grid-column:1/-1}
 .ws-inp{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;border-radius:var(--buddy-r-btn-s);background:var(--buddy-surface2);box-shadow:inset 0 0 0 1px var(--buddy-border);color:var(--buddy-muted)}
 .ws-inp:focus-within{box-shadow:inset 0 0 0 1px var(--buddy-accent),0 0 0 3px color-mix(in srgb,var(--buddy-accent) 24%,transparent)}
@@ -285,6 +285,8 @@ dialog.ws-mdl{margin:auto}
 .ws-mdl-form>.stats-modal-body{display:flex;flex-direction:column;gap:16px;min-height:0;padding:20px 24px;overflow:auto}
 .ws-mdl-form>footer{display:flex;flex-shrink:0;align-items:center;gap:8px;padding:12px 24px;border-top:1px solid var(--buddy-border);background:color-mix(in srgb,var(--buddy-surface2) 55%,var(--buddy-surface))}
 .ws-mdl .ui-seg{display:flex;width:100%}
+.ws-mdl .ws-fld>.ui-seg{min-width:0;flex-wrap:wrap;box-sizing:border-box}
+.ws-mdl .ws-fld>.ui-seg>button{padding-inline:8px}
 .ws-mdl .ui-seg>button{flex:1;justify-content:center}
 .api-test-image{max-width:100%;border-radius:var(--buddy-r-btn-s)}
 /* tables on pages */

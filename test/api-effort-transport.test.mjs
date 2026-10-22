@@ -4,7 +4,7 @@ import {ApiTransport} from '../src/api-transport.mjs';
 
 const messages=[{role:'user',content:'你好'}];
 const usage={input_tokens:11,output_tokens:7,output_tokens_details:{reasoning_tokens:3},total_tokens:18};
-const profile={id:'fixture-connection',kind:'custom',baseUrl:'https://model.example.test/v1',model:'fixture',key:'fixture-key'};
+const profile={id:'fixture-connection',kind:'custom',baseUrl:'https://model.example.test/v1',model:'fixture',key:'fixture-key',models:[{id:'fixture',supportedReasoningEfforts:['none','minimal','low','medium','high','xhigh','max','ultra']}]};
 function reply(protocol){
   if(protocol==='responses')return {output:[{content:[{type:'output_text',text:'回复'}]}],usage};
   if(protocol==='anthropic')return {content:[{type:'text',text:'回复'}],usage};
@@ -39,9 +39,16 @@ for(const protocol of ['responses','chat-completions'])test(protocol+' sends the
   }
 });
 test('default and automatic effort preserve legacy OpenAI requests; call options cannot override the profile',async()=>{
-  for(const protocol of ['responses','chat-completions'])for(const effort of [undefined,null,'','default','auto','unsupported']){
+  for(const protocol of ['responses','chat-completions'])for(const effort of [undefined,null,'','default','auto']){
     assert.deepEqual((await capture(protocol,effort,{reasoningEffort:'high'})).body,baseline[protocol]);
   }
+});
+test('An unsupported or unverified effort fails before any API request',async()=>{
+  let calls=0;const transport=new ApiTransport({fetchImpl:async()=>{calls++;return Response.json({});}});
+  for(const p of [{...profile,reasoningEffort:'unsupported'},{...profile,models:[],reasoningEffort:'high'},{...profile,models:[{id:'fixture',supportedReasoningEfforts:['low']}],reasoningEffort:'high'}]){
+    await assert.rejects(async()=>{for await(const _ of transport.stream({...p,protocol:'responses'},{messages})){};},/推理强度/);
+  }
+  assert.equal(calls,0);
 });
 test('Anthropic and Gemini never receive OpenAI effort fields, even when a profile sets effort',async()=>{
   const anthropic=await capture('anthropic','high');
