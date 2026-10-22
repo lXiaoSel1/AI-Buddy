@@ -150,7 +150,7 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         if(!options.Launch)await AfterCommit("stop",()=>host.Stop(root,installed,progress,CancellationToken.None));
         if(options.Shortcuts)await AfterCommit("shortcuts",()=>host.CreateShortcuts(root,installed,CancellationToken.None));
         // Cleanup never fails a committed install; anything left is reported.
-        try{SafePaths.RemoveOwnedTree(stage,root);RemoveVersions(root,KeptVersions(root,journal),progress);if(!options.KeepCache)CleanCache(options.Cache,progress);}
+        try{var data=PersonalDataProtection.Read(root,journal,installed);data.RemoveTree(stage,root,progress);RemoveVersions(root,KeptVersions(root,journal),progress,data);if(!options.KeepCache)CleanCache(options.Cache,progress,data);}
         catch(Exception ex){progress?.Report(new("cleanup-pending",root,Detail:ex.Message));}
         if(warnings.Count>0){installed=installed with{Warnings=warnings.ToArray()};Json.Save(RecordPath(root),installed);}
         progress?.Report(new("complete",m.AppVersion));return installed;
@@ -178,24 +178,24 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
     }
     // Removes installer-created version trees except those kept, and abandoned staging.
     // Folders without a transaction id (portable packages, manual copies) are never touched.
-    static void RemoveVersions(string root,HashSet<string>? keep,IProgress<InstallProgress>? progress){
+    static void RemoveVersions(string root,HashSet<string>? keep,IProgress<InstallProgress>? progress,PersonalDataProtection data){
         if(keep is null){progress?.Report(new("cleanup-pending","versions",Detail:"A recovery receipt could not be read; older versions were kept"));return;}
         foreach(var (folder,pattern) in new[]{("builds",OwnedBuild),("runtime",OwnedRuntime),(".install-staging",OwnedStage)}){
             var parent=SafePaths.Under(root,folder);if(!Directory.Exists(parent))continue;
             foreach(var directory in Directory.EnumerateDirectories(parent)){
                 var relative=folder+"/"+Path.GetFileName(directory);if(!pattern.IsMatch(Path.GetFileName(directory))||keep.Contains(relative))continue;
-                try{SafePaths.RemoveOwnedTree(SafePaths.Under(root,relative),root);progress?.Report(new("pruned",relative));}
+                try{var path=SafePaths.Under(root,relative);if(!data.Allows(path,progress))continue;SafePaths.RemoveOwnedTree(path,root);progress?.Report(new("pruned",relative));}
                 catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){progress?.Report(new("cleanup-pending",relative,Detail:ex.Message));}
             }
         }
     }
     // Downloaded packages are only needed until the new version is in place. Only names this
     // installer writes (<sha256>.zip and its .partial, .partial.json and .lock files) are removed.
-    static void CleanCache(string cache,IProgress<InstallProgress>? progress){
+    static void CleanCache(string cache,IProgress<InstallProgress>? progress,PersonalDataProtection data){
         if(!Directory.Exists(cache))return;
         foreach(var file in Directory.EnumerateFiles(cache)){
             if(!CacheFile.IsMatch(Path.GetFileName(file)))continue;
-            try{SafePaths.NoLinks(file);File.Delete(file);}catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){progress?.Report(new("cleanup-pending",file,Detail:ex.Message));}
+            try{if(data.Allows(file,progress))File.Delete(file);}catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){progress?.Report(new("cleanup-pending",file,Detail:ex.Message));}
         }
     }
     // Why "roll back" cannot run now, or null when it can. Reads files only.
@@ -240,17 +240,18 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
     }
     async Task RollbackJournal(string root,InstallJournal journal,IProgress<InstallProgress>? progress,CancellationToken cancel) {
         ValidateJournal(journal);
+        var data=PersonalDataProtection.Read(root,journal);
         await host.Stop(root,Existing(root),progress,cancel);
         await GuardDowngrade(root,journal,cancel);
         var backup=SafePaths.Under(root,"local/installer/backups/"+journal.Id);
-        foreach(var f in journal.RootFiles){var target=SafePaths.Under(root,f);if(journal.PreviouslyExistingRootFiles.Contains(f)){Directory.CreateDirectory(Path.GetDirectoryName(target)!);ReplaceProgramFile(SafePaths.Under(backup,f),target);}else if(File.Exists(target))File.Delete(target);}
+        foreach(var f in journal.RootFiles){var target=SafePaths.Under(root,f);if(!data.Allows(target,progress))continue;if(journal.PreviouslyExistingRootFiles.Contains(f)){Directory.CreateDirectory(Path.GetDirectoryName(target)!);ReplaceProgramFile(SafePaths.Under(backup,f),target);}else if(File.Exists(target))File.Delete(target);}
         var selectedData=Existing(root)?.DataPath;var selectedPipe=Existing(root)?.Pipe;var initialized=Existing(root)?.DataInitialized;
         RestoreText(PointerPath(root),journal.PreviousPointer);RestoreText(RecordPath(root),journal.PreviousInstallation);
         // Program rollback must not undo a later, independently selected save.
         if(File.Exists(RecordPath(root))){var restored=Json.Read<Installation>(RecordPath(root));Json.Save(RecordPath(root),restored with{DataPath=selectedData,Pipe=selectedPipe,DataInitialized=initialized});}
         // These uniquely named directories belong only to this failed transaction.
         foreach(var path in new[]{journal.Build,journal.Runtime,".install-staging/"+journal.Id}) {
-            try{SafePaths.RemoveOwnedTree(SafePaths.Under(root,path),root);}catch(IOException ex){progress?.Report(new("cleanup-pending",path,Detail:ex.Message));}
+            try{data.RemoveTree(SafePaths.Under(root,path),root,progress);}catch(IOException ex){progress?.Report(new("cleanup-pending",path,Detail:ex.Message));}
         }
         progress?.Report(new("rolled-back",journal.Id,Detail:"Program restored; personal data was not replaced"));
     }
@@ -297,22 +298,23 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         if(deletePersonalData&&installed.DataPath is not null)throw new IOException("Custom personal-data path is retained; remove it manually if intended");
         var control=SafePaths.Under(root,"local/installer");
         await using var installationLock=new FileStream(Path.Combine(control,"install.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
+        var data=PersonalDataProtection.Read(root,installed:installed);
         await host.Stop(root,installed,progress,cancel);await host.RemoveShortcuts(root,cancel);
         // Only indexed program files from this installation are removed. Unknown files are retained.
         var selected=Manifests.Select(m,installed.Edition,installed.Characters,installed.InitialCharacter);
         foreach(var p in selected)foreach(var f in p.Files) {
             var prefix=p.Mount=="root"?"":p.Mount=="build"?installed.Build+"/":installed.Runtime+"/";
-            var path=SafePaths.Under(root,prefix+f.Path);if(await Hashing.Matches(path,f.Bytes,f.Sha256,cancel))File.Delete(path);
+            var path=SafePaths.Under(root,prefix+f.Path);if(data.Allows(path,progress)&&await Hashing.Matches(path,f.Bytes,f.Sha256,cancel))File.Delete(path);
         }
         // Older versions kept for rollback, abandoned staging and downloaded packages go too.
-        RemoveVersions(root,new HashSet<string>(),progress);
-        if(cache is not null)CleanCache(cache,progress);
+        RemoveVersions(root,new HashSet<string>(),progress,data);
+        if(cache is not null)CleanCache(cache,progress,data);
         if(deletePersonalData) {
             // Custom data directories are not recursively deleted by this maintenance tool.
             if(installed.DataPath is not null)throw new IOException("Custom personal-data path is retained; remove it manually if intended");
             SafePaths.RemoveOwnedTree(SafePaths.Under(root,"local/data-v003"),root);
         }
-        File.Delete(PointerPath(root));Json.Save(Path.Combine(control,"uninstalled.json"),installed);File.Delete(RecordPath(root));
+        if(data.Allows(PointerPath(root),progress))File.Delete(PointerPath(root));Json.Save(Path.Combine(control,"uninstalled.json"),installed);if(data.Allows(RecordPath(root),progress))File.Delete(RecordPath(root));
         progress?.Report(new("uninstalled",root,Detail:deletePersonalData?"Default personal data removed":"Personal data retained"));
     }
 }

@@ -36,6 +36,123 @@ static class ReviewFixTests {
    Assert(Directory.Exists(Path.Combine(target,InstallEngine.Existing(target)!.Build)),"current version kept");
    await engine.Rollback(target,null,default);Assert(InstallEngine.Existing(target)!.Edition=="30fps","the kept version still rolls back");
   });
+  foreach(var tree in new[]{"build","runtime"})await test("third repair preserves a registered custom save inside an older installer "+tree,async()=>{
+   var target=Path.Combine(root,"review-protect-old-save-"+tree);
+   var first=await engine.Install(options with{Root=target},null,default);
+   var owned=tree=="build"?first.Build:first.Runtime;
+   var custom=SafePaths.Under(target,owned+"/custom-save");Directory.CreateDirectory(custom);
+   var marker=Path.Combine(custom,"memory.json");File.WriteAllText(marker,"saved chat, relationships and memories");var before=await Hashing.FileHash(marker);
+   Json.Save(InstallEngine.RecordPath(target),first with{DataPath=custom,DataInitialized=true});
+   Assert(DataPaths.Registered(target,InstallEngine.Existing(target)!.DataPath)==custom,"nested absolute custom-data path is supported");
+   await engine.Install(options with{Root=target,Edition="60fps"},null,default);
+   await engine.Install(options with{Root=target},null,default);
+   Assert(File.Exists(marker)&&await Hashing.FileHash(marker)==before,"third repair must not delete or alter registered personal data in an older "+tree);
+   Assert(InstallEngine.Existing(target)!.DataPath==custom,"registered save selection retained");
+  });
+  foreach(var tree in new[]{"build","runtime"})await test("uninstall without deleting data preserves a custom save inside the installer "+tree,async()=>{
+   var target=Path.Combine(root,"review-uninstall-nested-save-"+tree);
+   var installed=await engine.Install(options with{Root=target},null,default);
+   var custom=SafePaths.Under(target,(tree=="build"?installed.Build:installed.Runtime)+"/custom-save");Directory.CreateDirectory(custom);
+   var marker=Path.Combine(custom,"life-archive.zip");File.WriteAllText(marker,"personal life archive fixture");var before=await Hashing.FileHash(marker);
+   Json.Save(InstallEngine.RecordPath(target),installed with{DataPath=custom,DataInitialized=true});
+   await engine.Uninstall(target,false,null,default);
+   Assert(File.Exists(marker)&&await Hashing.FileHash(marker)==before,"uninstall(false) must preserve the nested personal-data file");
+  });
+  foreach(var relative in new[]{false,true})await test("repair and uninstall retain "+(relative?"imported relative":"default")+" personal data",async()=>{
+   var target=Path.Combine(root,"review-personal-baseline-"+relative);
+   var installed=await engine.Install(options with{Root=target},null,default);
+   var selected=relative?"local/data-profiles/import-"+Guid.NewGuid().ToString():null;
+   var personal=selected is null?SafePaths.Under(target,"local/data-v003"):SafePaths.Under(target,selected);Directory.CreateDirectory(personal);
+   var marker=Path.Combine(personal,"complete-original.bin");File.WriteAllText(marker,"full original and archived provenance");var before=await Hashing.FileHash(marker);
+   Json.Save(InstallEngine.RecordPath(target),installed with{DataPath=selected,DataInitialized=true});
+   await engine.Install(options with{Root=target,Edition="60fps"},null,default);
+   await engine.Install(options with{Root=target},null,default);
+   await engine.Uninstall(target,false,null,default);
+   Assert(File.Exists(marker)&&await Hashing.FileHash(marker)==before,"default/imported data retained byte-for-byte");
+  });
+  await test("cleanup preserves an owned tree when the registered data root is its ancestor",async()=>{
+   var target=Path.Combine(root,"review-personal-ancestor");
+   var installed=await engine.Install(options with{Root=target},null,default);
+   var marker=SafePaths.Under(target,installed.Build+"/personal-original.txt");File.WriteAllText(marker,"save root includes this earlier program tree");var before=await Hashing.FileHash(marker);
+   Json.Save(InstallEngine.RecordPath(target),installed with{DataPath=target,DataInitialized=true});
+   await engine.Install(options with{Root=target,Edition="60fps"},null,default);
+   await engine.Install(options with{Root=target},null,default);
+   Assert(File.Exists(marker)&&await Hashing.FileHash(marker)==before,"registered ancestor roots protect their descendants");
+  });
+  foreach(var metadata in new[]{"recovery","recovery-path-list","backup","import-previous"})await test("cleanup preserves custom saves recorded in "+metadata+" metadata",async()=>{
+   var target=Path.Combine(root,"review-protect-recorded-"+metadata);
+   var installed=await engine.Install(options with{Root=target},null,default);
+   var orphan="builds/v1.9.0-30fps-"+Guid.NewGuid().ToString("N");
+   var custom=SafePaths.Under(target,orphan+"/old-personal-save");Directory.CreateDirectory(custom);
+   var marker=Path.Combine(custom,"original-chat.json");File.WriteAllText(marker,"previous independent personal profile");var before=await Hashing.FileHash(marker);
+   var previous=installed with{DataPath=custom,DataInitialized=true};
+   if(metadata is "recovery" or "recovery-path-list"){
+    var journal=Json.Read<InstallJournal>(Path.Combine(target,"local/installer/transaction.json"));
+    Json.Save(SafePaths.Under(target,"local/installer/recovery-required/retained.json"),new{journal=journal with{PreviousInstallation=JsonSerializer.Serialize(metadata=="recovery"?previous:installed,Json.Options)},previousDataPaths=metadata=="recovery-path-list"?new[]{custom}:Array.Empty<string>()});
+   }else if(metadata=="backup")Json.Save(SafePaths.Under(target,"local/installation-backups/previous-profile.json"),previous);
+   else {
+    var id=Guid.NewGuid().ToString();
+    var imported="local/data-profiles/import-"+id;Directory.CreateDirectory(SafePaths.Under(target,imported));
+    var plan=new DataImportPlan(1,id,target,await Hashing.FileHash(InstallEngine.RecordPath(target)),installed.Build,installed.Pipe??"review-only",imported,new string('d',64),Manifests.IndexHash([]),[],"ready");
+    Json.Save(SafePaths.Under(target,"local/installer/data-import-transaction.json"),new DataImportJournal(id,"complete",plan,previous,DateTimeOffset.UtcNow));
+   }
+   await engine.Install(options with{Root=target,Edition="60fps"},null,default);
+   await engine.Uninstall(target,false,null,default);
+   Assert(File.Exists(marker)&&await Hashing.FileHash(marker)==before,"recorded previous personal data survives repair and uninstall");
+  });
+  await test("a cache inside registered personal data is retained through install and uninstall",async()=>{
+   var target=Path.Combine(root,"review-personal-cache");var custom=Path.Combine(target,"local","custom-cache-save");Directory.CreateDirectory(custom);
+   var marker=Path.Combine(custom,new string('b',64)+".zip");File.WriteAllText(marker,"personal archived data, not a download");var before=await Hashing.FileHash(marker);
+   await engine.Install(options with{Root=target,Cache=custom,DataPath=custom},null,default);
+   await engine.Uninstall(target,false,null,default,custom);
+   Assert(File.Exists(marker)&&await Hashing.FileHash(marker)==before,"cache filename alone cannot authorize deletion of personal files");
+  });
+  await test("abandoned staging cleanup retains a registered personal profile",async()=>{
+   var target=Path.Combine(root,"review-personal-stage");var installed=await engine.Install(options with{Root=target},null,default);
+   var custom=SafePaths.Under(target,".install-staging/"+Guid.NewGuid().ToString("N")+"/personal-profile");Directory.CreateDirectory(custom);
+   var marker=Path.Combine(custom,"memories.txt");File.WriteAllText(marker,"personal data stored in a stale staging directory");var before=await Hashing.FileHash(marker);
+   Json.Save(InstallEngine.RecordPath(target),installed with{DataPath=custom,DataInitialized=true});
+   await engine.Install(options with{Root=target,Edition="60fps"},null,default);await engine.Uninstall(target,false,null,default);
+   Assert(File.Exists(marker)&&await Hashing.FileHash(marker)==before,"staging cleanup also observes registered data boundaries");
+  });
+  await test("custom data comparison ignores Windows path case",async()=>{
+   var target=Path.Combine(root,"review-personal-case");var installed=await engine.Install(options with{Root=target},null,default);
+   var custom=SafePaths.Under(target,installed.Runtime+"/Mixed-Case-Save");Directory.CreateDirectory(custom);
+   var marker=Path.Combine(custom,"original.txt");File.WriteAllText(marker,"case insensitive registered data");var before=await Hashing.FileHash(marker);
+   Json.Save(InstallEngine.RecordPath(target),installed with{DataPath=custom.ToUpperInvariant(),DataInitialized=true});
+   await engine.Install(options with{Root=target,Edition="60fps"},null,default);await engine.Install(options with{Root=target},null,default);
+   Assert(File.Exists(marker)&&await Hashing.FileHash(marker)==before,"Windows case variants refer to the same protected profile");
+  });
+  await test("similarly prefixed cache siblings remain eligible for normal cleanup",async()=>{
+   var target=Path.Combine(root,"review-personal-boundary");var custom=Path.Combine(target,"local","profile");var cache=custom+"-cache";Directory.CreateDirectory(custom);Directory.CreateDirectory(cache);
+   var personal=Path.Combine(custom,"original.txt");File.WriteAllText(personal,"retain personal data");var before=await Hashing.FileHash(personal);
+   var downloaded=Path.Combine(cache,new string('c',64)+".zip");File.WriteAllText(downloaded,"stale downloaded package");
+   await engine.Install(options with{Root=target,Cache=cache,DataPath=custom},null,default);
+   Assert(File.Exists(personal)&&await Hashing.FileHash(personal)==before&&!File.Exists(downloaded),"directory boundary protects the profile without protecting unrelated prefix siblings");
+  });
+  await test("malformed historical data metadata fails cleanup closed",async()=>{
+   var target=Path.Combine(root,"review-personal-bad-metadata");await engine.Install(options with{Root=target},null,default);
+   var orphan=SafePaths.Under(target,"builds/v1.9.0-30fps-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(orphan);
+   var marker=Path.Combine(orphan,"possibly-personal.txt");File.WriteAllText(marker,"cannot safely classify with damaged profile metadata");var before=await Hashing.FileHash(marker);
+   var backup=SafePaths.Under(target,"local/installation-backups/damaged.json");Directory.CreateDirectory(Path.GetDirectoryName(backup)!);File.WriteAllText(backup,"{}");
+   var events=new List<InstallProgress>();var progress=new ReviewProgress(events);
+   await engine.Install(options with{Root=target,Edition="60fps"},progress,default);await engine.Uninstall(target,false,progress,default);
+   Assert(File.Exists(marker)&&await Hashing.FileHash(marker)==before,"uncertain data locations must never permit recursive cleanup");
+   Assert(events.Any(p=>p.Phase=="cleanup-pending"),"cleanup uncertainty is reported");
+  });
+  await test("failed-install rollback preserves a newly selected save inside the failed version",async()=>{
+   var target=Path.Combine(root,"review-personal-failed-tree");var prior=await engine.Install(options with{Root=target},null,default);
+   string? custom=null,marker=null,expected=null;
+   var failing=new InstallEngine(m,bytes,hash,new Downloader(unusedHttp),new FakeHost(),Path.Combine(root,"root.zip"),checkpoint:phase=>{
+    if(phase!="launched")return;var changed=InstallEngine.Existing(target)!;
+    custom=SafePaths.Under(target,changed.Build+"/newly-selected-personal-profile");Directory.CreateDirectory(custom);
+    marker=Path.Combine(custom,"original.txt");File.WriteAllText(marker,"new data selected before installation finalization");expected=Hashing.FileHash(marker).GetAwaiter().GetResult();
+    Json.Save(InstallEngine.RecordPath(target),changed with{DataPath=custom,DataInitialized=true});throw new IOException("injected failure after profile selection");
+   });
+   try{await failing.Install(options with{Root=target,Edition="60fps"},null,default);throw new Exception("expected injected installation failure");}catch(IOException e){Assert(e.Message.Contains("injected failure"),"the intended failure was reached");}
+   Assert(marker is not null&&File.Exists(marker)&&await Hashing.FileHash(marker)==expected,"rollback must preserve new personal files in the failed program tree");
+   Assert(InstallEngine.Existing(target)!.Build==prior.Build&&InstallEngine.Existing(target)!.DataPath==custom,"program rollback retains current personal-data selection");
+  });
   await test("folders without a transaction id are never pruned",async()=>{
    var target=Path.Combine(root,"review-portable");string[] keep=["builds/v1.9.0-30fps/main.cjs","builds/my-copy/notes.txt","runtime/AI-Buddy-v1.9.0/x.dll"];
    foreach(var file in keep){var path=Path.Combine(target,file);Directory.CreateDirectory(Path.GetDirectoryName(path)!);File.WriteAllText(path,"keep");}
@@ -134,6 +251,7 @@ static class ReviewFixTests {
   }
  },cancel);
 }
+sealed class ReviewProgress(List<InstallProgress> events):IProgress<InstallProgress>{public void Report(InstallProgress value)=>events.Add(value);}
 // Fails the step after the new version has started and been verified.
 sealed class PostCommitFailHost(bool failShortcut,bool failStop):IAppHost {
  public int Starts,StopsAfterStart;
