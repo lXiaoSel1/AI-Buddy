@@ -11,14 +11,16 @@ public sealed record UpdateRelease(string Version,string Tag,string ReleaseUrl,s
 
 // Discovery selects an installer once, not a resource manifest. The selected installer
 // retains its own embedded manifest pin and all existing transactional install checks.
-// Signature trust is GitHub's HTTPS verification result, not a local public-key verifier.
-public sealed class UpdateDiscovery(HttpClient http,TimeSpan? idleTimeout=null) {
+// GitHub must report the tag signature as verified, and the signature must also verify
+// locally against the pinned release key: a key added to a compromised account is not enough.
+public sealed class UpdateDiscovery(HttpClient http,TimeSpan? idleTimeout=null,Func<string,string,bool>? verifySignature=null) {
     public const string Repository="lXiaoSel1/AI-Buddy";
     public const long InstallerLimit=256L*1024*1024;
     const int ApiLimit=4*1024*1024;
     const string Api="https://api.github.com/repos/"+Repository;
     const string Web="https://github.com/"+Repository;
     readonly TimeSpan idle=idleTimeout??TimeSpan.FromSeconds(60);
+    readonly Func<string,string,bool> verify=verifySignature??((payload,signature)=>SshSignature.Verify(payload,signature,ReleaseIdentity.SigningKey));
 
     public async Task<UpdateRelease?> Check(string currentVersion,CancellationToken cancel) {
         var current=VersionParts(currentVersion);
@@ -52,9 +54,11 @@ public sealed class UpdateDiscovery(HttpClient http,TimeSpan? idleTimeout=null) 
         var verification=Object(t,"verification");
         if(!Bool(verification,"verified")||String(verification,"reason")!="valid")throw Invalid("GitHub did not verify the release tag signature");
         var signature=String(verification,"signature");
-        if(!signature.StartsWith("-----BEGIN SSH SIGNATURE-----\n",StringComparison.Ordinal)&&
-            !signature.StartsWith("-----BEGIN PGP SIGNATURE-----\n",StringComparison.Ordinal))throw Invalid("Missing signed tag signature");
-        var payload=String(verification,"payload");var separator=payload.IndexOf("\n\n",StringComparison.Ordinal);
+        // Releases are signed with the SSH release key only.
+        if(!signature.StartsWith("-----BEGIN SSH SIGNATURE-----\n",StringComparison.Ordinal))throw Invalid("Missing SSH release tag signature");
+        var payload=String(verification,"payload");
+        if(!verify(payload,signature))throw Invalid("Release tag is not signed by the pinned AI Buddy release key");
+        var separator=payload.IndexOf("\n\n",StringComparison.Ordinal);
         if(separator<0)throw Invalid("Invalid signed tag payload");
         var headers=UniqueLines(payload[..separator]," ");
         if(!headers.TryGetValue("object",out var signedSource)||signedSource!=source||

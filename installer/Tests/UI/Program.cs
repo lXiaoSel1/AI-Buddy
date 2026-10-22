@@ -13,6 +13,8 @@ internal static class Program {
  static T Field<T>(SetupForm f,string name)=>(T)typeof(SetupForm).GetField(name,BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(f)!;
  static IEnumerable<Control> Controls(Control c)=>c.Controls.Cast<Control>().SelectMany(x=>new[]{x}.Concat(Controls(x)));
  static readonly List<object> results=[];
+ // The mock releases carry a placeholder signature; the pinned-key check is covered by the Core tests.
+ static bool FixtureSigned(string _,string signature)=>signature=="-----BEGIN SSH SIGNATURE-----\nfixture\n-----END SSH SIGNATURE-----\n";
  static void Assert(bool condition,string why){if(!condition)throw new Exception(why);}
  static void Check(string name,Action action){try{action();results.Add(new{name,passed=true});Console.WriteLine("PASS "+name);}catch(Exception ex){results.Add(new{name,passed=false,error=ex.ToString()});throw;}}
  static object? Invoke(SetupForm form,string name,params object[] values)=>typeof(SetupForm).GetMethod(name,BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(form,values);
@@ -36,7 +38,7 @@ internal static class Program {
   Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
   var output=Path.GetFullPath(args[1]);Directory.CreateDirectory(output);var profile=Path.Combine(output,"isolated nonexisting profile 中文");DefaultRoot=Path.Combine(profile,"install");Cache=Path.Combine(profile,"cache");var host=new NeverHost();
   try{
-   ManifestBytes=File.ReadAllBytes(args[0]);Manifest=Manifests.Parse(ManifestBytes,Hashing.Bytes(ManifestBytes));var calls=new List<string>();using var http=Mock("1.9.0",calls);Updates=new(http);Engine=new(Manifest,ManifestBytes,Hashing.Bytes(ManifestBytes),new Downloader(http),host,Environment.ProcessPath!);
+   ManifestBytes=File.ReadAllBytes(args[0]);Manifest=Manifests.Parse(ManifestBytes,Hashing.Bytes(ManifestBytes));var calls=new List<string>();using var http=Mock("1.9.0",calls);Updates=new(http,verifySignature:FixtureSigned);Engine=new(Manifest,ManifestBytes,Hashing.Bytes(ManifestBytes),new Downloader(http),host,Environment.ProcessPath!);
    using(var form=new SetupForm(["--skip-update-check"])){
     form.Show();Settled(form);var language=Field<ComboBox>(form,"language");var edition=Field<ComboBox>(form,"edition");var initial=Field<ComboBox>(form,"initial");var roles=Field<CheckedListBox>(form,"characters");
     Check("defaults 11 roles 30fps DeepSeek",()=>Assert(roles.CheckedItems.Count==11&&edition.SelectedItem?.ToString()=="30fps"&&initial.SelectedItem?.ToString()=="DeepSeek","Wrong defaults"));
@@ -58,11 +60,11 @@ internal static class Program {
    Check("unselected initial rejected",()=>Reject(()=>{using var f=new SetupForm(["--skip-update-check","--characters=deepseek","--initial=kimi"]);}));
    foreach(var bad in new[]{"--shortcuts=perhaps","--edition=24fps","--characters=unknown","--language=xx"})Check("reject "+bad,()=>Reject(()=>{using var f=new SetupForm(["--skip-update-check",bad]);}));
    var failedCalls=new List<string>();using(var failed=Mock("1.9.0",failedCalls,true)){
-    Updates=new(failed);using var form=new SetupForm(["--language=en"]);form.Show();Pump(()=>Field<Label>(form,"updateStatus").Text.StartsWith("Update check failed:")&&Field<CancellationTokenSource?>(form,"cancellation") is null,"auto check failure");Settled(form);
+    Updates=new(failed,verifySignature:FixtureSigned);using var form=new SetupForm(["--language=en"]);form.Show();Pump(()=>Field<Label>(form,"updateStatus").Text.StartsWith("Update check failed:")&&Field<CancellationTokenSource?>(form,"cancellation") is null,"auto check failure");Settled(form);
     // Roll back follows its own pre-check (nothing to roll back to in this fresh folder), not the update check.
     Check("failed update check retains maintenance UI",()=>Assert(Field<Button>(form,"install").Enabled&&Field<Button>(form,"rollback").Enabled==(Field<string?>(form,"rollbackBlocked") is null)&&Field<Button>(form,"uninstall").Enabled&&Field<Button>(form,"checkUpdate").Enabled&&!Field<Button>(form,"openUpdate").Visible&&failedCalls.Count==1,"Failure disabled maintenance"));Shot(form,Path.Combine(output,"installer-ui-check-failed.png"));form.Close();
    }
-   calls.Clear();Updates=new(http);using(var form=new SetupForm(["--skip-update-check","--language=zh-CN"])){
+   calls.Clear();Updates=new(http,verifySignature:FixtureSigned);using(var form=new SetupForm(["--skip-update-check","--language=zh-CN"])){
     form.Show();Settled(form);var task=(Task)Invoke(form,"CheckUpdate")!;Pump(()=>task.IsCompleted,"same version check");task.GetAwaiter().GetResult();Settled(form);
     Check("same version hides download",()=>Assert(Field<Label>(form,"updateStatus").Text=="当前没有更高的正式版本。"&&!Field<Button>(form,"openUpdate").Visible&&calls.Count==1,"Same version treated as update"));form.Close();
    }
@@ -70,7 +72,7 @@ internal static class Program {
     form.Show();Settled(form);Check("offline source suppresses automatic version checks",()=>Assert(calls.Count==0&&((InstallOptions)Invoke(form,"Options")!).OfflineDirectory==Path.Combine(profile,"offline source"),"Offline opening performed network discovery"));form.Close();
    }
    var newerCalls=new List<string>();using(var newer=Mock("1.9.1",newerCalls)){
-    Updates=new(newer);using var form=new SetupForm(["--language=en"]);form.Show();Pump(()=>Field<Button>(form,"openUpdate").Visible&&Field<CancellationTokenSource?>(form,"cancellation") is null,"signed newer release");Settled(form);
+    Updates=new(newer,verifySignature:FixtureSigned);using var form=new SetupForm(["--language=en"]);form.Show();Pump(()=>Field<Button>(form,"openUpdate").Visible&&Field<CancellationTokenSource?>(form,"cancellation") is null,"signed newer release");Settled(form);
     Check("signed newer release shows download button",()=>Assert(Field<Button>(form,"openUpdate").Enabled&&Field<Label>(form,"updateStatus").Text.Contains("1.9.1")&&newerCalls.Count==3,"New version state incorrect"));
     Check("version discovery never downloads or installs",()=>Assert(newerCalls.All(u=>u.StartsWith("https://api.github.com/",StringComparison.Ordinal))&&host.Calls==0&&!Directory.Exists(profile),"Automatic mutation"));Shot(form,Path.Combine(output,"installer-ui-update-available.png"));form.Close();
    }
