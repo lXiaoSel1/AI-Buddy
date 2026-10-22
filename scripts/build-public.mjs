@@ -35,6 +35,8 @@ if(existsSync(join(root,'assets/group-scene')))copyAssets(join(root,'assets/grou
 if(existsSync(join(root,'assets/pet-glove-v2')))copyAssets(join(root,'assets/pet-glove-v2'),join(out,'assets/pet-glove-v2'));
 // Theme backdrops, ornaments, heads and window/tray icons (UI polish 1.9.0): app chrome, shared by every edition.
 if(existsSync(join(root,'assets/theme')))copyAssets(join(root,'assets/theme'),join(out,'assets/theme'));
+// Glove cursors with the cuff in each theme's accent (design 5.4); pet-glove-v2 stays the untinted fallback.
+if(existsSync(join(root,'assets/pet-glove-tint')))copyAssets(join(root,'assets/pet-glove-tint'),join(out,'assets/pet-glove-tint'));
 const listFiles=(dir,prefix='')=>readdirSync(dir,{withFileTypes:true}).flatMap(entry=>entry.isDirectory()?listFiles(join(dir,entry.name),prefix+entry.name+'/'):entry.isFile()?[prefix+entry.name]:[]);
 for(const file of sampleFiles){mkdirSync(dirname(file.to),{recursive:true});if(existsSync(file.to)){if(createHash('sha256').update(readFileSync(file.to)).digest('hex')!==file.sha256)throw Error('Existing candidate sample differs; use a new candidate output');}else linkSync(file.from,file.to);}
 // These generated manifests belong to this candidate. Never overwrite an inherited hardlink.
@@ -46,6 +48,7 @@ installIndex.shared=installIndex.shared.map(file=>['assets/frame-sequence-manife
 for(const name of readdirSync(join(root,'assets/group-thumbnails'))){const path='assets/group-thumbnails/'+name;if(!installIndex.shared.some(file=>file.path===path))installIndex.shared.push(indexedFile(path));}
 for(const name of readdirSync(join(root,'assets/group-scene'))){const path='assets/group-scene/'+name;if(!installIndex.shared.some(file=>file.path===path))installIndex.shared.push(indexedFile(path));}
 if(existsSync(join(root,'assets/pet-glove-v2')))for(const name of readdirSync(join(root,'assets/pet-glove-v2'))){const path='assets/pet-glove-v2/'+name,entry=indexedFile(path),index=installIndex.shared.findIndex(file=>file.path===path);if(index<0)installIndex.shared.push(entry);else installIndex.shared[index]=entry;}
+for(const folder of ['assets/pet-glove-tint'])if(existsSync(join(root,folder)))for(const name of listFiles(join(root,folder))){const path=folder+'/'+name,entry=indexedFile(path),index=installIndex.shared.findIndex(file=>file.path===path);if(index<0)installIndex.shared.push(entry);else installIndex.shared[index]=entry;}
 if(existsSync(join(root,'assets/theme')))for(const name of listFiles(join(root,'assets/theme'))){const path='assets/theme/'+name,entry=indexedFile(path),index=installIndex.shared.findIndex(file=>file.path===path);if(index<0)installIndex.shared.push(entry);else installIndex.shared[index]=entry;}
 for(const file of sampleFiles){const path=file.to.slice(out.length+1).replaceAll('\\','/');if(!installIndex.characters[file.characterId].some(entry=>entry.path===path))installIndex.characters[file.characterId].push(indexedFile(path));}
 ownedJson('install-resource-index.json',installIndex);

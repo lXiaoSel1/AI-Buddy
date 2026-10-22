@@ -1,7 +1,8 @@
 import {createInstalledResources} from './installed-resources.mjs';
 import {spawn} from 'node:child_process';
 import {setLocale,t,localizedTitle} from './i18n.mjs';
-import {chromeColor,chromeSymbolColor,windowBackground,resolvedTheme} from './appearance.mjs';
+import {chromeColor,chromeSymbolColor,windowBackground,resolvedTheme,themeVariables} from './appearance.mjs';
+import {trayMenuTemplate,petContextTemplate} from './pet-menu.mjs';
 import {CgThemePlanner} from './cg-theme.mjs';
 import {createCharacterReferenceResolver} from './cg-reference-registry.mjs';
 import {monitorView} from './monitor-view.mjs';
@@ -83,8 +84,9 @@ let tokenSources=null,sourceRequest=0;const sourceRequests=new Map();
 function tokenAction(action,args={}){return new Promise((done,fail)=>{if(!worker)return fail(Error('监控正在启动'));const id=++sourceRequest,timer=setTimeout(()=>{sourceRequests.delete(id);fail(Error('检测尚未完成，请稍后查看'));},120000);sourceRequests.set(id,{done,fail,timer});worker.postMessage({type:'source-action',id,action,args});});}
 let petState={id:'idle',source:'monitor',manual:false,expiresAt:null},gameRequests=0;
 const activityClock=new PetActivityClock({requireReady:true});let petMotion=null,lastInteraction='',heldFollowCharacter=null,trajectoryWindow=null,trajectoryState=null;
-function petInteraction(){const motion=petMotion?.state()??{mode:'rest'},area=petMotion?.area(),body=motion.collisionBounds,grounded=!!(area&&body&&Math.abs(body.y+body.height-area.y-area.height)<2);return {characterId:petState.characterId??effectivePetCharacter(),gestureId:drag?.gestureId??null,...activityClock.tick({defer:!!drag||['flying','charging','landing'].includes(petMotion?.mode)||petState.manual}),motion:{...motion,grounded,elapsedMs:motion.since===undefined?0:performance.now()-motion.since,preview:petMotion?.preview()??[]},at:Date.now()};}
+function petInteraction(){const motion=petMotion?.state()??{mode:'rest'},area=petMotion?.area(),body=motion.collisionBounds,grounded=!!(area&&body&&Math.abs(body.y+body.height-area.y-area.height)<2);return {characterId:petState.characterId??effectivePetCharacter(),gestureId:drag?.gestureId??null,...activityClock.tick({defer:!!drag||['flying','charging','landing'].includes(petMotion?.mode)||petState.manual}),motion:{...motion,grounded,elapsedMs:motion.since===undefined?0:performance.now()-motion.since,preview:petMotion?.preview()??[],landing:petMotion?.landing?.()??null},at:Date.now()};}
 function publishInteraction(force=false){const value=petInteraction(),key=JSON.stringify([value.characterId,value.gestureId,value.phase,value.animationEpoch,value.animationWaiting,value.motion.animationEpoch,value.motion.animationWaiting,value.motion.mode,value.motion.button,value.motion.walkDirection,value.motion.pull,value.motion.anchor,value.motion.grounded]);if(force||key!==lastInteraction){lastInteraction=key;petEvent({kind:'interaction',value});updateTrajectory(value);}return value;}
+function trajectoryColors(){const v=themeVariables(resolvedTheme(settings.preferences,themeCharacter)),strength={gentle:'轻柔力度',standard:'标准力度',strong:'强力力度',exaggerated:'夸张力度'}[settings.preferences.throwStrength]??'标准力度';return {band:v['--buddy-a2'],path:v['--buddy-bar-end'],surface:v['--buddy-surface'],text:v['--buddy-text'],track:v['--buddy-border'],shadow:v['--buddy-shadow'],strengthLabel:t(strength,settings.preferences.language)};}
 function updateTrajectory(value){
   trajectoryState=value;
   if(value.motion.mode!=='charging'||!pet?.isVisible()){
@@ -97,7 +99,7 @@ function updateTrajectory(value){
     trajectoryWindow=overlay;overlay.setIgnoreMouseEvents(true,{forward:true});overlay.setAlwaysOnTop(true,'screen-saver');
     overlay.loadFile(join(build,'pet-trajectory.html')).then(()=>{if(trajectoryWindow!==overlay||overlay.isDestroyed())return;overlay.showInactive();updateTrajectory(trajectoryState);}).catch(error=>audit({type:'trajectory-error',message:error.message}));
   }
-  if(!trajectoryWindow.isDestroyed()&&!trajectoryWindow.webContents.isLoading())trajectoryWindow.webContents.send('pet:action',{kind:'trajectory',value,origin:trajectoryWindow.getBounds()});
+  if(!trajectoryWindow.isDestroyed()&&!trajectoryWindow.webContents.isLoading())trajectoryWindow.webContents.send('pet:action',{kind:'trajectory',value,origin:trajectoryWindow.getBounds(),colors:trajectoryColors()});
 }
 function cancelGesture(reason='cancel'){
   const id=drag?.gestureId??null;drag=null;buttonObserver?.stop();petMotion?.cancel();
@@ -106,7 +108,8 @@ function cancelGesture(reason='cancel'){
 }
 const gestureMatches=message=>!!drag&&(drag.gestureId===null?message?.gestureId==null:message?.gestureId===drag.gestureId);
 const touchExpressions=new PetTouchExpressions();
-function petContextMenu(){Menu.buildFromTemplate([{label:settings.preferences.language==='en'?'Open workspace':'打开工作空间',click:()=>openPanel('overview')}]).popup({window:pet});}
+const savePreference=patch=>{void setPreferences(patch).catch(e=>audit({type:'settings-error',message:e.message}));};
+function petContextMenu(){Menu.buildFromTemplate(petContextTemplate({language:settings.preferences.language,asleep:['sleep-enter','asleep'].includes(activityClock.phase),showStatusBadge:settings.preferences.showStatusBadge,open:page=>openPanel(page),sleep:()=>{if(activityClock.sleepNow())publishInteraction(true);},wake:()=>{activityClock.wake('menu');publishInteraction(true);},setStatusBadge:value=>savePreference({showStatusBadge:value}),hidePet:()=>savePreference({petVisible:false})})).popup({window:pet});}
 // Renderer coordinates are accepted only by explicitly isolated simulation runs.
 // Normal operation has one position writer: the main process OS DIP sampler.
 const gesturePoint=message=>arg('cursor')==='manual'&&Number.isFinite(message?.x)&&Number.isFinite(message?.y)?{x:message.x,y:message.y}:screen.getCursorScreenPoint();
@@ -164,7 +167,7 @@ function saveConnection(service,draft){
 function syncBrandIcons(){const id=effectivePetCharacter(),icons=brandIcons(build,id);if(panel&&!panel.isDestroyed())panel.setIcon(icons?.window??appIcon);if(tray&&!tray.isDestroyed()&&arg('rig')!=='working'){tray.setImage(icons?.tray??appIcon.resize({width:32,height:32}));tray.setToolTip(brandTooltip(id,settings.preferences?.language));}}
 function updateTray(){
   if(!tray)return;
-  tray.setContextMenu(Menu.buildFromTemplate([{label:t('工作概览'),click:()=>openPanel('overview')},{label:t('通用设置'),click:()=>openPanel('settings')},{label:t('动作展示'),click:()=>openPanel('actions')},{label:settings.preferences.language==='en'?'Open Galgame':'打开 Galgame',click:()=>openPanel('galgame')},{label:t('显示桌宠'),type:'checkbox',checked:settings.preferences.petVisible,click:item=>{void setPreferences({petVisible:item.checked}).catch(e=>audit({type:'settings-error',message:e.message}));}},{label:settings.preferences.language==='en'?'Drag mode (whole pet window)':'拖动模式（整个窗口可拖动）',type:'checkbox',checked:gestureMode,click:item=>{setGestureMode(item.checked);updateTray();}},{type:'separator'},{label:settings.preferences.language==='en'?'Quit':'退出',click:()=>{void shutdown();}}]));
+  tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate({language:settings.preferences.language,petVisible:settings.preferences.petVisible,gestureMode,open:page=>openPanel(page),setPetVisible:value=>savePreference({petVisible:value}),setGestureMode:value=>{setGestureMode(value);updateTray();},quit:()=>{void shutdown();}})));
 }
 function applyPetPreferences(resize=false){
   if(!pet||pet.isDestroyed())return;
@@ -395,7 +398,7 @@ const control=createLocalControlServer({
       }
       else if(request.command==='validation-feedback'&&arg('validation')==='1'){
         if(!['completed','failed'].includes(request.kind))throw Error('Invalid validation feedback');
-        const completed=request.kind==='completed';feedback({eventId:'validation:'+String(request.id??Date.now()),id:completed?'jump':'fail',source:request.kind,provider:'validation',text:completed?'本地验证：任务完成':'本地验证：任务失败',cycles:completed?2:1});result={ok:true};
+        const completed=request.kind==='completed';feedback({eventId:'validation:'+String(request.id??Date.now()),id:completed?'jump':'fail',source:request.kind,provider:'validation',text:TOOL_NAMES[request.tool]?TOOL_NAMES[request.tool]+(completed?'完成任务啦，辛苦了～':'日志记录了错误，点我查看。'):completed?'本地验证：任务完成':'本地验证：任务失败',cycles:completed?2:1});result={ok:true};
       }
       else if(request.command==='pet-play')result=playPet(request.action);
       else if(request.command==='pet-auto')result=petAuto();

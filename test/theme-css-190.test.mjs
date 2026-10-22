@@ -31,7 +31,7 @@ test('every var(--x) without a fallback is defined somewhere',()=>{
 // near-black in every theme on purpose, so the picture's own colours read true.
 const CEILINGS={
  'src/dashboard.css':1,'src/appearance.css':6,'src/workspace.css':27,'src/adapted/galgame-client.ts':24,'src/galgame-design.mjs':12,'src/companion-ui.mjs':3,'src/companion-life-ui.mjs':0,
- 'src/group-stage-ui.mjs':2,'src/group-header.mjs':0,'src/companion-design.mjs':0,'src/group-cg-ui.mjs':0,'src/cg-image-viewer.mjs':13,'src/pet.html':2,'src/pet-trajectory.mjs':2,
+ 'src/group-stage-ui.mjs':2,'src/group-header.mjs':0,'src/companion-design.mjs':0,'src/group-cg-ui.mjs':0,'src/cg-image-viewer.mjs':13,'src/pet.html':0,'src/pet-trajectory.mjs':0,
 };
 test('hard-coded colours stay under each file\'s ceiling',()=>{
  const literal=/#[0-9a-fA-F]{8}\b|#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3,4}\b|rgba?\(/g;

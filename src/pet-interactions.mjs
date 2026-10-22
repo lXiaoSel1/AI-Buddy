@@ -45,6 +45,8 @@ export class PetActivityClock{
     return {phase:this.phase,animationEpoch:this.animationEpoch,animationWaiting:this.animationWaiting,elapsedMs:now-this.since,animationElapsedMs:this.animationNow(now),snapshotSpeed:this.speed,activeRequests:this.busy.size,lastActivity:this.lastActivity,awakeUntil:this.awakeUntil,wakeReason:this.wakeReason};
   }
   resume(){const now=this.now();this.lastActivity=now;this.awakeUntil=now+this.delayMs;this.setPhase('awake',now);}
+  // "Let her nap" from the pet menu: only while she is awake and nothing is running.
+  sleepNow(){if(this.phase!=='awake'||!this.enabled||this.busy.size)return false;this.setPhase('sleep-enter');return true;}
 }
 
 export class PetMotion{
@@ -175,6 +177,16 @@ export class PetMotion{
     let time=0;const probe=new PetMotion({now:()=>time,bounds:this.bounds,collisionInsets:this.collisionInsets,displays:()=>this.areas()});
     probe.velocity=v;probe.setMode('flying');
     return Array.from({length:13},(_,i)=>{time=i*25;probe.tick();return {x:probe.bounds.x-this.bounds.x-this.pull.x,y:probe.bounds.y-this.bounds.y-this.pull.y};});
+  }
+  // Where the throw with the current pull settles (design 5.4 landing ring): the same flight as preview(), run until it lands.
+  landing(){
+    if(this.mode!=='charging')return null;
+    const v=this.limit({x:-this.pull.x*8*PET_STRENGTHS[this.strength],y:-this.pull.y*8*PET_STRENGTHS[this.strength]},4800*PET_STRENGTHS[this.strength]);
+    if(Math.hypot(v.x,v.y)<300)return null;
+    let time=0;const probe=new PetMotion({now:()=>time,bounds:this.bounds,collisionInsets:this.collisionInsets,displays:()=>this.areas()});
+    probe.velocity=v;probe.setMode('flying');
+    for(let i=1;i<=320&&probe.mode==='flying';i++){time=i*25;probe.tick();}
+    return probe.mode==='flying'?null:{x:probe.bounds.x-this.bounds.x-this.pull.x,y:probe.bounds.y-this.bounds.y-this.pull.y};
   }
   tick(){
     const now=this.now(),elapsed=now-this.lastTick;this.lastTick=now;

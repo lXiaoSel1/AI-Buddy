@@ -10,15 +10,18 @@ import {petPresentation,petActionPresentation} from './pet-presentation.mjs';
 import {APP_NAME} from './app-brand.mjs';
 import {applyAppearance} from './appearance.mjs';
 import {t} from './i18n.mjs';
+import {badgeText,bubbleView} from './pet-badge.mjs';
+import {iconElement} from './ui-icons.mjs';
 const sprite=document.querySelector('.sprite'),bubble=document.querySelector('.bubble'),badge=document.querySelector('.badge');
-const badgeLabel=badge.querySelector('.badge-label'),badgeClose=badge.querySelector('.badge-close');
+const badgeLabel=badge.querySelector('.badge-label'),badgeClose=badge.querySelector('.badge-close'),bubbleBox=bubble.querySelector('.bubble-box');
+badgeClose.append(iconElement('close',{size:12}));
 const surface=document.createElement('canvas');surface.width=FRAME_SIZE.width;surface.height=FRAME_SIZE.height;surface.setAttribute('aria-hidden','true');sprite.append(surface);
 const image=new Image();image.src=PET_ATLAS.src;
 sprite.style.backgroundImage=`url('${PET_ATLAS.src}')`;sprite.style.backgroundSize=PET_ATLAS.width+'px '+PET_ATLAS.height+'px';
 const controller=new PetActionController({ready:(id,elapsed)=>motionRenderer.isReadyFor?.(id,elapsed,{reducedMotion:reducedMotion.matches})??true});
 controller.holdFeedback=true;
 let presentedBubble=null;
-let pixels=null,mode='idle',row=0,col=0,down=false,lastOpaque=null,bodyOpaque=false,interaction=null,bubbleTimer,frameTimer=null,dialogActive=false,lastCursor=null,lastBackground='',lastState='',badgeText=APP_NAME+' · 离线陪伴';
+let pixels=null,mode='idle',row=0,col=0,down=false,lastOpaque=null,bodyOpaque=false,interaction=null,bubbleTimer,frameTimer=null,dialogActive=false,lastCursor=null,lastBackground='',lastState='',lastSnapshot={},badgeHeld=false,badgeKey='',bubbleOpen=null,notice=false;
 let gestureId=null,capturedPointer=null,readySent=null,ownerButton=null,releaseButton=null,chordRequest=null,suppressedButtons=0,observedButtons=0;
 let currentSample=actionSample('idle',0);
 let geometry=null;
@@ -33,7 +36,7 @@ let preferences={petScale:1.25,animationSpeed:.75,showStatusBadge:true,followCur
 let configuredCharacter=currentPetCharacter(),demoRequest=null,demoActive=false,settingsReady=false,characterError=null;
 let appliedPresentation=null;
 let badgeLayout=null;
-function placeStatusBadge(){const grounded=interaction?.motion?.grounded===true,hidden=!preferences.showStatusBadge||grounded&&!bubble.hidden,top=grounded?Math.max(4,(interaction.motion.collisionInsets?.top??0)/(preferences.petScale??1.25)-34)+'px':'';const key=hidden+'|'+top;if(key===badgeLayout)return;badgeLayout=key;badge.hidden=hidden;badge.style.top=top;badge.style.bottom=grounded?'auto':'';geometry=null;}
+function placeStatusBadge(){const grounded=interaction?.motion?.grounded===true,hidden=!preferences.showStatusBadge||badgeHeld||grounded&&!bubble.hidden,top=grounded?Math.max(4,(interaction.motion.collisionInsets?.top??0)/(preferences.petScale??1.25)-34)+'px':'';const key=hidden+'|'+top;if(key===badgeLayout)return;badgeLayout=key;badge.hidden=hidden;badge.style.top=top;badge.style.bottom=grounded?'auto':'';geometry=null;}
 function applyCharacterPresentation(id,actionId='idle'){const presentation=petActionPresentation(id,motionRenderer.sequences?.[actionId]);if(appliedPresentation?.transform===presentation.transform)return false;sprite.style.transformOrigin='0 0';sprite.style.transform=presentation.transform;appliedPresentation=presentation;geometry=null;motionRenderer.invalidate?.(surface);return true;}
 applyCharacterPresentation(currentPetCharacter());
 let initialCharacterReady=false,resolveInitialCharacter;
@@ -47,6 +50,7 @@ function applySettings(value){
   configuredCharacter=value.effectivePetCharacter??resolvePetCharacter(preferences,value.themeCharacter);
   if(!demoRequest&&!demoActive)requestCharacter(configuredCharacter);
   applyAppearance(preferences,value.themeCharacter);
+  tintGlove(document.documentElement.dataset.theme);
   controller.setSpeed(preferences.animationSpeed??.75);
   document.body.style.setProperty('--pet-scale',preferences.petScale);
   geometry=null;motionRenderer.invalidate?.(surface);
@@ -68,17 +72,17 @@ function updateSnapshot(snapshot){
   const active=snapshot.sessions || [];
   const running=active.filter(s=>s.displayStatus==='running').length,waiting=active.some(s=>s.displayStatus==='waiting');
   mode=motionRenderer.workingRigPilot?'working':waiting?'waiting':running?'working':'idle';controller.setBase(dialogActive?'working':mode);
-  badgeText=motionRenderer.workingRigPilot?'工作动作小样 · '+Math.round((preferences.animationSpeed??.75)*100)+'%':snapshot.indexing?'正在整理本地记录':running?'工作中 · '+running+' 个会话':waiting?'等待你的回应':APP_NAME+' · 离线陪伴';
+  lastSnapshot=snapshot;
   badge.title='今日 Claude '+compact(snapshot.todayUsage?.claude?.total || 0)+' / Codex '+compact(snapshot.todayUsage?.codex?.total || 0)+' token';
 }
 window.whale.onUpdate(updateSnapshot);
 function compact(n){return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'K':String(n);}
-window.whale.onBubble(text=>{if(!preferences.completionBubbles)return;bubble.textContent=text;bubble.hidden=false;clearTimeout(bubbleTimer);bubbleTimer=setTimeout(()=>bubble.hidden=true,6500);});
+window.whale.onBubble(text=>{if(!preferences.completionBubbles)return;fillBubble({text});bubble.hidden=false;clearTimeout(bubbleTimer);bubbleTimer=setTimeout(()=>bubble.hidden=true,6500);});
 function presentFeedback(value){
-  if(!preferences.completionBubbles){bubble.hidden=true;return;}
+  if(!preferences.completionBubbles){if(!notice)bubble.hidden=true;return;}
   if(value?.paused){if(presentedBubble&&!presentedBubble.paused){presentedBubble.remaining=Math.max(0,presentedBubble.until-Date.now());presentedBubble.paused=true;clearTimeout(bubbleTimer);}bubble.hidden=true;geometry=null;return;}
   if(!value?.text)return;
-  if(presentedBubble?.eventId!==value.eventId){presentedBubble={eventId:value.eventId,remaining:6500,paused:true};bubble.textContent=value.text;}
+  if(presentedBubble?.eventId!==value.eventId){presentedBubble={eventId:value.eventId,remaining:6500,paused:true};notice=false;fillBubble(value);}
   if(presentedBubble.paused){presentedBubble.paused=false;presentedBubble.until=Date.now()+presentedBubble.remaining;bubble.hidden=false;geometry=null;clearTimeout(bubbleTimer);bubbleTimer=setTimeout(()=>{bubble.hidden=true;geometry=null;},presentedBubble.remaining);}
 }
 window.whale.onCursor(point=>{
@@ -142,18 +146,49 @@ function render(){
   const registrationChanged=applyCharacterPresentation(currentPetCharacter(),currentSample.actionId);
   presentFeedback(state.feedback);
   if(characterError&&!state.feedback&&!controller.manual){
-    bubble.textContent=characterError;characterError=null;bubble.hidden=false;geometry=null;clearTimeout(bubbleTimer);
+    fillBubble({text:characterError});characterError=null;bubble.hidden=false;geometry=null;clearTimeout(bubbleTimer);
     bubbleTimer=setTimeout(()=>{bubble.hidden=true;geometry=null;},6500);
   }
   placeStatusBadge();
   if(lastCursor&&!characterChanged&&!registrationChanged)hitAt(lastCursor.x,lastCursor.y,rect,b);
   updateGlove();
-  const text=state.manual?'演示 · '+getPetAction(state.id).label:badgeText;if(badgeLabel.textContent!==text)badgeLabel.textContent=text;
+  renderBadge(badgeText({snapshot:lastSnapshot,interaction,demo:state.manual?getPetAction(state.id).label:'',rigPilot:motionRenderer.workingRigPilot?Math.round((preferences.animationSpeed??.75)*100):null,language:preferences.language}));
   const label=APP_NAME+' · '+getPetAction(state.id).label;if(sprite.getAttribute('aria-label')!==label)sprite.setAttribute('aria-label',label);
   window.petActionDiagnostic={...state,...pose,interaction,interactionView,characterId:currentPetCharacter(),targetCharacterId:characterSwitch.target,presentation:appliedPresentation??petPresentation(currentPetCharacter()),renderer:motionRenderer.backend,displayedActionId:currentSample.actionId,sequenceFrame:motionRenderer.sequences?.[state.id]?currentSample.displayedSequenceFrame??null:null,sourceFrameCount:motionRenderer.sequences?.[state.id]?.frames.length??getPetAction(state.id).frames,draws:motionRenderer.draws,rigDraws:motionRenderer.rigDraws??0,rigResizes:motionRenderer.rigResizes??0,canvasSize:[surface.width,surface.height],geometryReads:motionRenderer.geometryReads??0};
   const report={id:state.id,source:state.source,manual:state.manual,expiresAt:state.expiresAt,characterId:currentPetCharacter()},key=JSON.stringify(report);
   if(key!==lastState){lastState=key;window.whale.reportPetState(report);}
 }
+// Dot (or icon) + label + "· detail". Rebuilt only when the wording changes.
+function renderBadge(view){
+  const key=JSON.stringify(view);if(key===badgeKey)return;badgeKey=key;badgeHeld=!view;placeStatusBadge();if(!view)return;
+  badge.dataset.state=view.tone||'';
+  let lead;if(view.icon)lead=iconElement(view.icon,{size:13});else{lead=document.createElement('i');lead.className=view.tone==='busy'?'badge-spin':'badge-dot';}
+  lead.setAttribute('aria-hidden','true');badge.firstElementChild.replaceWith(lead);
+  const detail=view.detail?[Object.assign(document.createElement('small'),{textContent:'· '+view.detail})]:[];
+  badgeLabel.replaceChildren(view.label,...detail);geometry=null;
+}
+// Bold "who / what happened", then a second line; a check or warning icon; the original text stays in data-text.
+function fillBubble(value){
+  const view=bubbleView(value,{language:preferences.language}),text=document.createElement('div');text.className='bubble-text';
+  bubbleOpen=view.open??null;bubble.dataset.kind=view.kind;bubble.dataset.text=String(value.text??view.title);
+  if(view.open)bubble.dataset.open=view.open;else delete bubble.dataset.open;
+  if(view.name)text.append(Object.assign(document.createElement('span'),{className:'bubble-name',textContent:view.name}));
+  const title=document.createElement(['plain','say'].includes(view.kind)?'span':'b');title.textContent=view.title;
+  if(view.undo){const undo=Object.assign(document.createElement('button'),{type:'button',className:'bubble-undo',textContent:view.undo});undo.addEventListener('click',restoreBadge);title.append(undo);}
+  text.append(title);
+  if(view.detail)text.append(Object.assign(document.createElement('small'),{textContent:view.detail}));
+  if(view.link)text.append(Object.assign(document.createElement('span'),{className:'bubble-link',textContent:view.link}));
+  bubbleBox.replaceChildren(...(view.icon?[iconElement(view.icon,{size:16})]:[]),text);geometry=null;
+}
+// Shown once after the bar is closed, whether or not completion bubbles are on.
+function showNotice(value){notice=true;fillBubble(value);bubble.hidden=false;geometry=null;clearTimeout(bubbleTimer);bubbleTimer=setTimeout(()=>{notice=false;bubble.hidden=true;geometry=null;},6500);}
+async function restoreBadge(event){event.preventDefault();event.stopPropagation();try{applySettings(await window.whale.setSettings({showStatusBadge:true}));}catch{}notice=false;bubble.hidden=true;geometry=null;clearTimeout(bubbleTimer);}
+let gloveTheme=null;
+function tintGlove(theme){
+  if(!theme||theme===gloveTheme)return;gloveTheme=theme;const baseUrl='./assets/pet-glove-tint/'+theme,art=preloadGloveArtwork({baseUrl,highDpi:gloveState.cursorOptions.highDpi});
+  art.ready.then(state=>{if(gloveTheme!==theme||gloveDisposed||!state.artReady)return;gloveState.cursorOptions.baseUrl=baseUrl;tintedArtwork=art;lastGloveCss=null;updateGlove();});
+}
+let tintedArtwork=null;
 function hitAt(clientX,clientY,rect=petGeometry().sprite,b=petGeometry().badge){
   let hit=false;
   if(pixels && clientX>=rect.left && clientX<rect.right && clientY>=rect.top && clientY<rect.bottom){
@@ -169,9 +204,11 @@ function hitAt(clientX,clientY,rect=petGeometry().sprite,b=petGeometry().badge){
 // own button events before the document's drag, touch and chord handlers.
 for(const type of ['pointerdown','mousedown'])badge.addEventListener(type,event=>{event.stopPropagation();event.preventDefault();});
 for(const type of ['pointerdown','mousedown','pointerup','mouseup','dblclick','contextmenu'])badgeClose.addEventListener(type,event=>{event.stopPropagation();if(['pointerdown','mousedown','contextmenu'].includes(type))event.preventDefault();});
+badge.addEventListener('click',event=>{if(!event.target.closest('.badge-close'))window.whale.open('overview');});
+bubble.addEventListener('click',event=>{if(bubbleOpen&&!event.target.closest('button'))window.whale.open(bubbleOpen);});
 badgeClose.addEventListener('click',async event=>{
   event.preventDefault();event.stopPropagation();if(badgeClose.disabled)return;badgeClose.disabled=true;
-  try{applySettings(await window.whale.setSettings({showStatusBadge:false}));hitAt(event.clientX,event.clientY);}
+  try{applySettings(await window.whale.setSettings({showStatusBadge:false}));showNotice({kind:'badge-hidden'});hitAt(event.clientX,event.clientY);}
   catch{badgeClose.title=t('关闭失败，请重试',preferences.language);}
   finally{badgeClose.disabled=false;}
 });
