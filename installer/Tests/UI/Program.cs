@@ -59,7 +59,8 @@ internal static class Program {
    foreach(var bad in new[]{"--shortcuts=perhaps","--edition=24fps","--characters=unknown","--language=xx"})Check("reject "+bad,()=>Reject(()=>{using var f=new SetupForm(["--skip-update-check",bad]);}));
    var failedCalls=new List<string>();using(var failed=Mock("1.9.0",failedCalls,true)){
     Updates=new(failed);using var form=new SetupForm(["--language=en"]);form.Show();Pump(()=>Field<Label>(form,"updateStatus").Text.StartsWith("Update check failed:")&&Field<CancellationTokenSource?>(form,"cancellation") is null,"auto check failure");Settled(form);
-    Check("failed update check retains maintenance UI",()=>Assert(Field<Button>(form,"install").Enabled&&Field<Button>(form,"rollback").Enabled&&Field<Button>(form,"uninstall").Enabled&&Field<Button>(form,"checkUpdate").Enabled&&!Field<Button>(form,"openUpdate").Visible&&failedCalls.Count==1,"Failure disabled maintenance"));Shot(form,Path.Combine(output,"installer-ui-check-failed.png"));form.Close();
+    // Roll back follows its own pre-check (nothing to roll back to in this fresh folder), not the update check.
+    Check("failed update check retains maintenance UI",()=>Assert(Field<Button>(form,"install").Enabled&&Field<Button>(form,"rollback").Enabled==(Field<string?>(form,"rollbackBlocked") is null)&&Field<Button>(form,"uninstall").Enabled&&Field<Button>(form,"checkUpdate").Enabled&&!Field<Button>(form,"openUpdate").Visible&&failedCalls.Count==1,"Failure disabled maintenance"));Shot(form,Path.Combine(output,"installer-ui-check-failed.png"));form.Close();
    }
    calls.Clear();Updates=new(http);using(var form=new SetupForm(["--skip-update-check","--language=zh-CN"])){
     form.Show();Settled(form);var task=(Task)Invoke(form,"CheckUpdate")!;Pump(()=>task.IsCompleted,"same version check");task.GetAwaiter().GetResult();Settled(form);

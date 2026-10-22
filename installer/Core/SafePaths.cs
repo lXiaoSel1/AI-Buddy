@@ -21,7 +21,7 @@ public static class SafePaths {
     public static void NoLinks(string path) {
         var current=Path.GetFullPath(path);
         while(!string.IsNullOrEmpty(current)) {
-            if((File.Exists(current)||Directory.Exists(current))&&(File.GetAttributes(current)&FileAttributes.ReparsePoint)!=0)throw new IOException("Installation path contains a reparse point: "+current);
+            if((File.Exists(current)||Directory.Exists(current))&&(File.GetAttributes(current)&FileAttributes.ReparsePoint)!=0)throw new IOException("This path contains a link or a cloud-synced folder such as OneDrive; choose a regular local folder: "+current+" / 路径中有链接或 OneDrive 等云同步文件夹，请选择普通的本地文件夹。");
             current=Path.GetDirectoryName(current);
         }
     }

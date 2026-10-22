@@ -4,6 +4,8 @@ namespace AiBuddy.Install;
 // their own verified installer instead of feeding future manifests to this engine.
 public static class ReleaseIdentity {
     public const string Version="1.9.0";
+    // Public key that signs release tags (GitHub: "AI Buddy release signing").
+    public const string SigningKey="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFLmFoAgOaffTLAwNJ+U1v0MK4iaTHbMZ+BjaidVla05";
     public static string ManifestFileName=>"install-manifest-"+Version+".json";
     public static bool KnownTransactionVersion(string version,string currentVersion=Version) {
         static bool Stable(string value)=>System.Text.RegularExpressions.Regex.IsMatch(value,@"\A(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z");

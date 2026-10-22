@@ -241,6 +241,7 @@ sealed class Suite {
    var paths=Directory.GetFiles(state,"*",SearchOption.AllDirectories).ToDictionary(x=>x,x=>Hashing.FileHash(x).Result);await Reject(()=>engine.Rollback(target,null,default));Assert(File.ReadAllText(pp)==before&&paths.All(x=>Hashing.FileHash(x.Key).Result==x.Value),"refusal retains current program and all new data");
   });
   await Test("uninstall retains personal data and unknown files",async()=>{var unknown=Path.Combine(installRoot,"my-notes.txt");File.WriteAllText(unknown,"user");await engine.Uninstall(installRoot,false,null,default);Assert(File.Exists(data)&&File.Exists(unknown),"uninstall save retention");});
+  await ReviewFixTests.Run(Test,m,bytes,hash,options,root,unusedHttp);
   Console.WriteLine(JsonSerializer.Serialize(new{passed,root},Json.Options));
  }
  async Task ImportTests(){

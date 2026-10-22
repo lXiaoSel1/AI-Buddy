@@ -56,11 +56,11 @@ internal static class Program {
                 Json.Save(receipt,new{ok=true,command,result,installation=InstallEngine.Existing(root),events=log.ToArray(),at=DateTimeOffset.UtcNow});return 0;
             }
             if(command=="rollback")await Engine.Rollback(root,progress,default);
-            else if(command=="uninstall")await Engine.Uninstall(root,false,progress,default);
+            else if(command=="uninstall")await Engine.Uninstall(root,false,progress,default,Argument(args,"cache")??Cache);
             else if(command=="install") {
                 var defaults=InstallEngine.Defaults(root,Manifest);var ids=(Argument(args,"characters")??string.Join(',',defaults.Characters)).Split(',');
                 var initial=Argument(args,"initial")??(ids.Contains(defaults.InitialCharacter)?defaults.InitialCharacter:ids.Contains("deepseek")?"deepseek":ids[0]);
-                await Engine.Install(new(root,Argument(args,"cache")??Cache,Argument(args,"edition")??defaults.Edition,ids,initial,Argument(args,"offline"),args.Contains("--shortcuts"),!args.Contains("--no-launch"),Argument(args,"data"),Argument(args,"pipe")),progress,default);
+                await Engine.Install(new(root,Argument(args,"cache")??Cache,Argument(args,"edition")??defaults.Edition,ids,initial,Argument(args,"offline"),args.Contains("--shortcuts"),!args.Contains("--no-launch"),Argument(args,"data"),Argument(args,"pipe"),KeepCache:args.Contains("--keep-cache")),progress,default);
             }
             else throw new InvalidDataException("Unknown installer action: "+command);
             Json.Save(receipt,new{ok=true,version=Manifest.AppVersion,command,installation=InstallEngine.Existing(root),events=log.ToArray(),at=DateTimeOffset.UtcNow});return 0;

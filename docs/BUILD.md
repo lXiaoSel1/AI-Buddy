@@ -28,14 +28,24 @@ The checked-in installer remains the published 1.8.0 maintenance client and fixe
 
 All new releases require a signed tag created locally. The repository uses SSH signing (`gpg.format=ssh`, `tag.gpgSign=true`) with `~/.ssh/ai-buddy-signing`; the configured public-key path and allowed-signers file must match that identity. Never commit or distribute the private key.
 
-For 1.9.0, run the following only after release approval and the final build and validation checks:
+Run the following only after release approval and the final build and validation checks. The tag message binds the release to its source and files; the installer's update check reads exactly these lines, so write them into a message file (one line each, no other `Key: value` lines):
+
+```text
+AI Buddy X.Y.Z
+
+Source: <full 40-character commit SHA>
+Manifest SHA-256: <sha256 of install-manifest-X.Y.Z.json>
+Installer SHA-256: <sha256 of AI-Buddy-Setup-X.Y.Z-win-x64.exe>
+```
 
 ```sh
-git tag -s v1.9.0 -m "AI Buddy 1.9.0"
-git tag -v v1.9.0
-git push origin v1.9.0
-gh release create v1.9.0 --verify-tag --notes-file docs/VALIDATION-1.9.0.md <release-assets>
+git tag -s vX.Y.Z -F <message-file>
+git tag -v vX.Y.Z
+git push origin vX.Y.Z
+gh release create vX.Y.Z --verify-tag --target <full commit SHA> --notes-file docs/VALIDATION-X.Y.Z.md <release-assets>
 ```
+
+`--target` must be the full commit SHA: the update check rejects a release whose `target_commitish` is a branch name. The installer also verifies the tag signature locally against the pinned release key (`ReleaseIdentity.SigningKey`), so only `~/.ssh/ai-buddy-signing` can sign a release it accepts.
 
 Stop if verification fails; the verification output must report `Good signature` for the expected signing identity. Verify an existing tag instead of replacing it. Do not let `gh`, the GitHub website, or a legacy publication script create a tag on the server. `--verify-tag` requires the already-pushed tag; it does not replace the local signature check. Apply the same sequence with the approved version for future releases. These instructions do not authorize publishing a release.
 

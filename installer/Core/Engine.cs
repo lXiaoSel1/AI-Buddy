@@ -1,9 +1,9 @@
 using System.Text.Json;
 namespace AiBuddy.Install;
 
-public sealed record InstallOptions(string Root,string Cache,string Edition,string[] Characters,string InitialCharacter,string? OfflineDirectory=null,bool Shortcuts=true,bool Launch=true,string? DataPath=null,string? Pipe=null);
+public sealed record InstallOptions(string Root,string Cache,string Edition,string[] Characters,string InitialCharacter,string? OfflineDirectory=null,bool Shortcuts=true,bool Launch=true,string? DataPath=null,string? Pipe=null,bool KeepCache=false);
 public sealed record StartupStatus(bool SafeMode,JsonElement? StartupFailure,bool Onboarding=false);
-public sealed record Installation(int SchemaVersion,string Version,string ManifestSha256,string Edition,string[] Characters,string InitialCharacter,string Build,string Runtime,string Manager,string? DataPath,string? Pipe,DateTimeOffset InstalledAt,Dictionary<string,string> PackageHashes,StartupStatus? Startup=null,bool? DataInitialized=null);
+public sealed record Installation(int SchemaVersion,string Version,string ManifestSha256,string Edition,string[] Characters,string InitialCharacter,string Build,string Runtime,string Manager,string? DataPath,string? Pipe,DateTimeOffset InstalledAt,Dictionary<string,string> PackageHashes,StartupStatus? Startup=null,bool? DataInitialized=null,string[]? Warnings=null);
 public sealed record InstallDefaults(string Edition,string[] Characters,string InitialCharacter);
 public sealed record InstallJournal(string Id,string Phase,string ManifestHash,InstallOptions Options,string? PreviousPointer,string? PreviousInstallation,string Build,string Runtime,string[] RootFiles,string[] PreviouslyExistingRootFiles,string? AppVersion=null);
 public sealed record DiskEstimate(long DownloadBytes,long ExpandedBytes,long CacheAdditionalBytes,long InstallAdditionalBytes,long RetainedBytes);
@@ -126,14 +126,12 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
             if(confirmed.SchemaVersion!=installed.SchemaVersion||confirmed.Version!=installed.Version||confirmed.Build!=installed.Build||confirmed.ManifestSha256!=installed.ManifestSha256||confirmed.DataPath!=installed.DataPath||confirmed.Pipe!=installed.Pipe||confirmed.Runtime!=installed.Runtime||confirmed.Manager!=installed.Manager||confirmed.Edition!=installed.Edition||!confirmed.Characters.SequenceEqual(installed.Characters))throw new IOException("Installation identity changed during startup; the newer record will not be overwritten");
             // The app confirms real business initialization before reporting ready.
             // Keep that confirmation instead of restoring this older in-memory flag.
+            // Stopping a "don't launch" install happens after the commit below.
             installed=installed with {Startup=host.LastStartup,DataInitialized=confirmed.DataInitialized??installed.DataInitialized};Json.Save(RecordPath(root),installed);
-            if(!options.Launch)await host.Stop(root,installed,progress,cancel);
             checkpoint?.Invoke("launched");
-            if(options.Shortcuts)await host.CreateShortcuts(root,installed,cancel);
+            // The new version started and was verified: the transaction is committed here.
             journal=journal with {Phase="complete"};Json.Save(journalPath,journal);
             if(journal.PreviousPointer is not null)Json.Save(Path.Combine(control,"rollback.json"),journal);
-            try{SafePaths.RemoveOwnedTree(stage,root);}catch(IOException ex){progress?.Report(new("cleanup-pending",stage,Detail:ex.Message));}
-            progress?.Report(new("complete",m.AppVersion));return installed;
         } catch(Exception failure) {
             try {await RollbackJournal(root,journal,progress,CancellationToken.None);Json.Save(journalPath,journal with {Phase="rolled-back"});}
             catch(IncompatibleRollbackException compatibility) {
@@ -145,6 +143,71 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
             }
             throw;
         }
+        // After commit nothing is rolled back. A failed stop or shortcut is reported as a
+        // warning; it must not stop or replace a program that already started correctly.
+        var warnings=new List<string>();
+        async Task AfterCommit(string step,Func<Task> action){try{await action();}catch(Exception ex){warnings.Add(step+": "+ex.Message);progress?.Report(new("warning",step,Detail:ex.Message));}}
+        if(!options.Launch)await AfterCommit("stop",()=>host.Stop(root,installed,progress,CancellationToken.None));
+        if(options.Shortcuts)await AfterCommit("shortcuts",()=>host.CreateShortcuts(root,installed,CancellationToken.None));
+        // Cleanup never fails a committed install; anything left is reported.
+        try{SafePaths.RemoveOwnedTree(stage,root);RemoveVersions(root,KeptVersions(root,journal),progress);if(!options.KeepCache)CleanCache(options.Cache,progress);}
+        catch(Exception ex){progress?.Report(new("cleanup-pending",root,Detail:ex.Message));}
+        if(warnings.Count>0){installed=installed with{Warnings=warnings.ToArray()};Json.Save(RecordPath(root),installed);}
+        progress?.Report(new("complete",m.AppVersion));return installed;
+    }
+    // Version trees this installer created carry the transaction id in their name.
+    static readonly System.Text.RegularExpressions.Regex OwnedBuild=new(@"\Av(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-(?:30fps|60fps)-[a-f0-9]{32}\z"),
+        OwnedRuntime=new(@"\AAI-Buddy-v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-[a-f0-9]{32}\z"),
+        OwnedStage=new(@"\A[a-f0-9]{32}\z"),
+        CacheFile=new(@"\A[a-f0-9]{64}\.zip(?:\.partial(?:\.json)?|\.lock)?\z");
+    static string Relative(string path)=>path.Replace('\\','/').Trim('/');
+    // The current version, its rollback target, and every tree a recovery receipt names.
+    // Null means a receipt could not be read: then nothing is removed.
+    static HashSet<string>? KeptVersions(string root,InstallJournal journal){
+        var keep=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Pointer(string? text){if(text is null)return;using var d=JsonDocument.Parse(text);var r=d.RootElement;if(r.TryGetProperty("path",out var p)&&p.ValueKind==JsonValueKind.String)Add(p.GetString());if(r.TryGetProperty("runtime",out var rt)&&rt.ValueKind==JsonValueKind.Object&&rt.TryGetProperty("path",out var rp)&&rp.ValueKind==JsonValueKind.String)Add(rp.GetString());}
+        void Add(string? path){if(!string.IsNullOrWhiteSpace(path))keep.Add(Relative(path));}
+        void Record(string? text){if(text is null)return;var i=JsonSerializer.Deserialize<Installation>(text,Json.Options);Add(i?.Build);Add(i?.Runtime);}
+        void Journal(InstallJournal j){Add(j.Build);Add(j.Runtime);Pointer(j.PreviousPointer);Record(j.PreviousInstallation);}
+        try{
+            Journal(journal);
+            var receipts=SafePaths.Under(root,"local/installer/recovery-required");
+            if(Directory.Exists(receipts))foreach(var file in Directory.EnumerateFiles(receipts,"*.json")){using var d=JsonDocument.Parse(File.ReadAllBytes(file));if(d.RootElement.TryGetProperty("journal",out var j)&&j.Deserialize<InstallJournal>(Json.Options) is {} r)Journal(r);}
+        }catch(Exception){return null;}
+        return keep;
+    }
+    // Removes installer-created version trees except those kept, and abandoned staging.
+    // Folders without a transaction id (portable packages, manual copies) are never touched.
+    static void RemoveVersions(string root,HashSet<string>? keep,IProgress<InstallProgress>? progress){
+        if(keep is null){progress?.Report(new("cleanup-pending","versions",Detail:"A recovery receipt could not be read; older versions were kept"));return;}
+        foreach(var (folder,pattern) in new[]{("builds",OwnedBuild),("runtime",OwnedRuntime),(".install-staging",OwnedStage)}){
+            var parent=SafePaths.Under(root,folder);if(!Directory.Exists(parent))continue;
+            foreach(var directory in Directory.EnumerateDirectories(parent)){
+                var relative=folder+"/"+Path.GetFileName(directory);if(!pattern.IsMatch(Path.GetFileName(directory))||keep.Contains(relative))continue;
+                try{SafePaths.RemoveOwnedTree(SafePaths.Under(root,relative),root);progress?.Report(new("pruned",relative));}
+                catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){progress?.Report(new("cleanup-pending",relative,Detail:ex.Message));}
+            }
+        }
+    }
+    // Downloaded packages are only needed until the new version is in place. Only names this
+    // installer writes (<sha256>.zip and its .partial, .partial.json and .lock files) are removed.
+    static void CleanCache(string cache,IProgress<InstallProgress>? progress){
+        if(!Directory.Exists(cache))return;
+        foreach(var file in Directory.EnumerateFiles(cache)){
+            if(!CacheFile.IsMatch(Path.GetFileName(file)))continue;
+            try{SafePaths.NoLinks(file);File.Delete(file);}catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){progress?.Report(new("cleanup-pending",file,Detail:ex.Message));}
+        }
+    }
+    // Why "roll back" cannot run now, or null when it can. Reads files only.
+    public async Task<string?> RollbackBlocker(string root,CancellationToken cancel){
+        const string none="No previous version is available / 没有可回退的上一版";
+        try{
+            root=SafePaths.Full(root);var path=SafePaths.Under(root,"local/installer/rollback.json");if(!File.Exists(path))return none;
+            var journal=Json.Read<InstallJournal>(path);if(journal.PreviousPointer is null)return none;ValidateJournal(journal);
+            using(var pointer=JsonDocument.Parse(journal.PreviousPointer))if(!pointer.RootElement.TryGetProperty("path",out var p)||p.ValueKind!=JsonValueKind.String||!Directory.Exists(SafePaths.Under(root,p.GetString()!)))return "The previous program files are no longer present / 上一版程序文件已不存在";
+            await GuardDowngrade(root,journal,cancel);return null;
+        }catch(IncompatibleRollbackException ex){return ex.Message;}
+        catch(Exception ex) when(ex is IOException or InvalidDataException or JsonException or UnauthorizedAccessException){return ex.Message;}
     }
     static async Task RetryLocal(Action action,CancellationToken cancel){
         // Antivirus/indexer handles can briefly prevent a freshly extracted EXE directory rename.
@@ -207,7 +270,8 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         if(journal.PreviousPointer is null)return;
         using var previous=JsonDocument.Parse(journal.PreviousPointer);
         var p=previous.RootElement;var version=p.TryGetProperty("appVersion",out var av)?av.GetString():p.TryGetProperty("version",out var v)?v.GetString():null;
-        if(version is not "1.8.0" and not "1.7.10" and not "1.7.9")return;
+        // Only 1.9.0 and later read 1.9 media and life data; older or unknown versions are checked.
+        if(version is not null&&System.Text.RegularExpressions.Regex.IsMatch(version,@"\A(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z")&&System.Version.Parse(version)>=new System.Version(1,9,0))return;
         var data=DataPaths.Registered(root,Existing(root)?.DataPath??journal.Options.DataPath);SafePaths.NoLinks(data);
         var galgame=Path.Combine(data,"galgame");
         if(Directory.Exists(Path.Combine(galgame,"media"))&&Directory.EnumerateFiles(Path.Combine(galgame,"media")).Any() || Directory.Exists(Path.Combine(galgame,"life-archives"))&&Directory.EnumerateFiles(Path.Combine(galgame,"life-archives")).Any())throw new IncompatibleRollbackException("Rollback to this older program requires media/life compatibility review. Personal data was retained; no media-revert or maintenance apply was executed. / 旧版无法识别新媒体或人生数据；请先确认兼容与 media-revert planId，未修改个人数据。");
@@ -228,7 +292,7 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         if(journal.PreviousPointer is null)throw new IOException("No previous version is available");
         await RollbackJournal(root,journal,progress,cancel);Json.Save(Path.Combine(control,"transaction.json"),journal with{Phase="rolled-back"});
     }
-    public async Task Uninstall(string root,bool deletePersonalData,IProgress<InstallProgress>? progress,CancellationToken cancel) {
+    public async Task Uninstall(string root,bool deletePersonalData,IProgress<InstallProgress>? progress,CancellationToken cancel,string? cache=null) {
         root=SafePaths.Full(root);var installed=Existing(root)??throw new IOException("Installation record is missing");
         if(deletePersonalData&&installed.DataPath is not null)throw new IOException("Custom personal-data path is retained; remove it manually if intended");
         var control=SafePaths.Under(root,"local/installer");
@@ -240,6 +304,9 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
             var prefix=p.Mount=="root"?"":p.Mount=="build"?installed.Build+"/":installed.Runtime+"/";
             var path=SafePaths.Under(root,prefix+f.Path);if(await Hashing.Matches(path,f.Bytes,f.Sha256,cancel))File.Delete(path);
         }
+        // Older versions kept for rollback, abandoned staging and downloaded packages go too.
+        RemoveVersions(root,new HashSet<string>(),progress);
+        if(cache is not null)CleanCache(cache,progress);
         if(deletePersonalData) {
             // Custom data directories are not recursively deleted by this maintenance tool.
             if(installed.DataPath is not null)throw new IOException("Custom personal-data path is retained; remove it manually if intended");
