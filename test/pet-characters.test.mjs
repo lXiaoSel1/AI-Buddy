@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {PET_CHARACTERS,resolvePetCharacter,normalizePetCharacter} from '../src/pet-characters.mjs';
+import {PET_CHARACTERS,resolvePetCharacter,normalizePetCharacter,brandPetCharacter} from '../src/pet-characters.mjs';
 import {PetCharacterSwitch} from '../src/pet-character-switch.mjs';
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 
@@ -38,4 +38,15 @@ test('Returning to the original character cancels a pending load; failures keep 
  const s=new PetCharacterSwitch({prepare:()=>new Promise(resolve=>finish=resolve),commit:()=>assert.fail('No switch expected'),onError:e=>errors.push(e.message)});
  s.request('claude');await settle();s.request('deepseek');finish({dispose:()=>disposed.push(true)});await settle();assert.equal(s.loading,false);assert.deepEqual(disposed,[true]);
  s.prepare=async()=>{throw Error('Missing resource')};s.request('qwen');await settle();assert.equal(s.current,'deepseek');assert.equal(s.target,'deepseek');assert.equal(s.failed,true);assert.deepEqual(errors,['Missing resource']);
+});
+
+test('UI-190-01: brand icons show the pet on screen, not the settings target, and fall back while she is hidden',()=>{
+ // a demo: settings say DeepSeek, the visible pet draws Grok
+ assert.equal(brandPetCharacter({shown:true,reported:'grok',target:'deepseek'}),'grok');
+ // a switch waiting for a reaction to finish: settings already say Claude, she still draws DeepSeek
+ assert.equal(brandPetCharacter({shown:true,reported:'deepseek',target:'claude'}),'deepseek');
+ // hidden, or nothing drawn yet: the settings target
+ assert.equal(brandPetCharacter({shown:false,reported:'grok',target:'claude'}),'claude');
+ assert.equal(brandPetCharacter({shown:true,reported:undefined,target:'qwen'}),'qwen');
+ assert.equal(brandPetCharacter({shown:true,reported:'missing',target:'gpt'}),'chatgpt');
 });

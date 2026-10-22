@@ -32,7 +32,7 @@ import { DEFAULT_PREFERENCES,normalizePreferences,validatePreferencesPatch } fro
 import { PET_ACTIONS,PET_INTERACTION_ACTIONS,validatePetPlayback,getPetAction } from './pet-actions.mjs';
 import { EMOTIONS,validEmotion,shortReply } from './emotions.mjs';
 import { superviseWorker,pushBounded } from './worker-supervisor.mjs';
-import {validPetCharacter,resolvePetCharacter} from './pet-characters.mjs';
+import {validPetCharacter,resolvePetCharacter,brandPetCharacter} from './pet-characters.mjs';
 import {connectionView} from './connection-view.mjs';
 import {lockPageZoom} from './page-zoom.mjs';
 import {TOOL_NAMES} from './token-sources.mjs';
@@ -164,7 +164,7 @@ function saveConnection(service,draft){
   return service.save(draft);
 }
 // Panel, taskbar and tray wear the current pet's round head; the pet window keeps the app icon.
-function syncBrandIcons(){const id=effectivePetCharacter(),icons=brandIcons(build,id);if(panel&&!panel.isDestroyed())panel.setIcon(icons?.window??appIcon);if(tray&&!tray.isDestroyed()&&arg('rig')!=='working'){tray.setImage(icons?.tray??appIcon.resize({width:32,height:32}));tray.setToolTip(brandTooltip(id,settings.preferences?.language));}}
+function syncBrandIcons(){const id=brandPetCharacter({shown:!!pet&&!pet.isDestroyed()&&pet.isVisible(),reported:petState.characterId,target:effectivePetCharacter()}),icons=brandIcons(build,id);if(panel&&!panel.isDestroyed())panel.setIcon(icons?.window??appIcon);if(tray&&!tray.isDestroyed()&&arg('rig')!=='working'){tray.setImage(icons?.tray??appIcon.resize({width:32,height:32}));tray.setToolTip(brandTooltip(id,settings.preferences?.language));}}
 function updateTray(){
   if(!tray)return;
   tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate({language:settings.preferences.language,petVisible:settings.preferences.petVisible,gestureMode,open:page=>openPanel(page),setPetVisible:value=>savePreference({petVisible:value}),setGestureMode:value=>{setGestureMode(value);updateTray();},quit:()=>{void shutdown();}})));
@@ -487,6 +487,7 @@ app.whenReady().then(async()=>{
   brandWindow(pet);
   lockPageZoom(pet,error=>audit({type:'zoom-policy-error',message:error.message}));
   positionPet(pet,bounds,settings.preferences.petScale);pet.on('will-resize',event=>event.preventDefault());
+  for(const name of ['show','hide'])pet.on(name,()=>syncBrandIcons());
   petMotion=new PetMotion({bounds,requireReady:true,displays:()=>screen.getAllDisplays(),onPosition:value=>{if(pet&&!pet.isDestroyed())positionPet(pet,value,settings.preferences.petScale);},onState:()=>{publishInteraction(true);}});
   configurePetInteractions();activityClock.resume();
   pet.setAlwaysOnTop(settings.preferences.alwaysOnTop,'floating');setGestureMode(false);
