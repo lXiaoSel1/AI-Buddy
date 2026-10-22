@@ -14,6 +14,7 @@ import {TOOL_NAMES,PROVIDER_NAMES,providerLabel,providerFor} from './token-types
 import {ApiSettings} from './api-settings.mjs';
 import {AnalyticsPage} from './analytics-ui.mjs';
 import {APP_ICON_PNG} from './app-brand.mjs';
+import {DataImportPanel} from './data-import-ui.mjs';
 // Keep native caption controls and their safe area outside the scrolling app.
 const overlay=navigator.windowControlsOverlay;
 function syncWindowChrome(){document.documentElement.classList.toggle('desktop-titlebar',!!overlay?.visible);}
@@ -46,6 +47,7 @@ function App(){
  const pet=settings?.effectivePetCharacter||settings?.petCharacterId||'deepseek',head='./'+themeAsset(pet,'head.webp');
  let content;
  if(['overview','history','projects'].includes(page))content=h(AnalyticsPage,{page,settings,revision:data?.usageRevision,onManage:manage,onSaved:setSettings,monitor:data,onPage:setPage,onAttribution:id=>{setAttributionSource(id);setPage('tokens');}});
+ else if(page==='data-import')content=h(DataImportPanel,{onComplete:()=>location.reload(),onClose:()=>setPage('settings')});
  else if(page==='settings')content=settings?h(GeneralSettings,{view:settings,onSaved:setSettings,onPage:setPage,onManage:manage}):h('p',{className:'settings-error',role:'alert'},settingsError||t("正在读取设置…"));
  else if(page==='tokens')content=h(TokenSettings,{sourceId:attributionSource,timeZone:settings?.preferences.statisticsTimeZone});
  else if(page==='api')content=h(ApiSettings,{view:settings,tab:apiTab,onTab:setApiTab});
@@ -62,5 +64,8 @@ function App(){
        !hideDiagnostics&&data?.missingRequests>0&&h('p',{className:'settings-note'},data.missingRequests+t(" 条请求缺少完整用量，合计为已记录部分。")),!hideDiagnostics&&!data&&h('p',null,t("正在读取本地记录…")),content,
        !hideDiagnostics&&data?.errors?.length>0&&h('details',{className:'read-errors'},h('summary',null,data.errors.length+t(" 个日志读取问题")),...data.errors.slice(0,10).map(e=>h('p',{key:e.path},e.path+' · '+e.message)))))));
 }
-createRoot(document.getElementById('app')).render(h(App));
+// A first launch must not mount App's settings/game/monitor requests until the
+// user has selected a profile. The main process chooses this hash before load.
+function DataImportWelcome(){return h('main',{className:'data-import-welcome'},h(DataImportPanel,{onboarding:true,onComplete:()=>{location.hash='overview';location.reload();}}));}
+createRoot(document.getElementById('app')).render(h(location.hash.slice(1)==='data-import'?DataImportWelcome:App));
 

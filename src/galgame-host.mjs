@@ -10,7 +10,7 @@ import {writePortableImages} from './companion-media.mjs';
 import {createMediaStore} from './media-store.mjs';
 import {createDraftStore} from './draft-store.mjs';
 
-export async function createGalgame({dataRoot,provider,model,cg=null,resources=null,getLanguage=()=> 'zh-CN',onCharacter=()=>{},onPetVisibility=()=>{},onChatCommitted=()=>{},onCgUpdated=()=>{},onActivity=()=>{},audit=()=>{},imageConverter=null}) {
+export async function createGalgame({dataRoot,provider,model,cg=null,resources=null,getLanguage=()=> 'zh-CN',onCharacter=()=>{},onPetVisibility=()=>{},onChatCommitted=()=>{},onCgUpdated=()=>{},onActivity=()=>{},audit=()=>{},imageConverter=null,automaticWorkAllowed=()=>true}) {
   const media=createMediaStore(dataRoot),drafts=createDraftStore(dataRoot,{onError:error=>audit({type:'draft-store-error',message:String(error?.message??error)})});
   const companionStore=await openCompanionStore(dataRoot,{media});
   const languageContext=new AsyncLocalStorage();
@@ -37,7 +37,7 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
     const view=await engine.handleAction('view',{});
     await engine.handleAction('settings-set',{characterMode:'manual',characterId:resources?.fallback(resources.status().initialCharacter)??(provider.currentSelection?view.current||'deepseek':'deepseek'),sideStorySeedSource:'activity',...(!provider.currentSelection?{chatMode:'manual',chatProvider:'codex',chatModel:model}:{})});
   }
-  const companion=await createCompanionService({store:companionStore,engine,provider,dataRoot,imageCodec:cg?.imageCodec,imageConverter,media,drafts,resources,onCharacter,onChatCommitted,onActivity,getLanguage,audit});
+  const companion=await createCompanionService({store:companionStore,engine,provider,dataRoot,imageCodec:cg?.imageCodec,imageConverter,media,drafts,resources,onCharacter,onChatCommitted,onActivity,getLanguage,audit,automaticWorkAllowed});
   ctx.assertCompanionLife=(id,token)=>companion.assertLife(id,token);
   ctx.guardCompanionProfile=(action,args)=>companion.guardProfile(action,args);
   ctx.companionLifeIds=ids=>Object.fromEntries(ids.filter(id=>companionStore.state.lives?.[id]).map(id=>[id,companionStore.state.lives[id].id]));

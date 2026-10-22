@@ -7,6 +7,7 @@ import {ConnectionSelection} from './connection-selection.mjs';
 import {TokenDetectionControl} from './token-settings.mjs';
 import {PET_CHARACTERS,petCharacterName} from './pet-characters.mjs';
 import {frameSequence} from './frame-sequence.mjs';
+import {DataImportSetting,DataImportModal} from './data-import-ui.mjs';
 const h=React.createElement;
 const providerName=value=>value==='claude'?'Claude Code':value;
 // B2: maxOutputTokens is 'auto' or a whole number from 256 to 65536 (default 8192).
@@ -32,6 +33,7 @@ export function AboutCard(){
 }
 export function GeneralSettings({view,onSaved,onPage,onManage}){
   const [busy,setBusy]=useState(false),[status,setStatus]=useState(t("修改会立即生效并自动保存")),[error,setError]=useState('');
+  const [importOpen,setImportOpen]=useState(false);
   if(!view)return h('p',null,t("正在读取本地设置…"));
   const prefs=view.preferences,en=prefs.language==='en';
   const petId=view.effectivePetCharacter??view.petCharacterId??'deepseek',petPreview=frameSequence('idle',petId)?.staticFrames?.[0]?.src??'./assets/maid-left.webp';
@@ -96,7 +98,8 @@ export function GeneralSettings({view,onSaved,onPage,onManage}){
         h('section',{className:'ws-card ws-set settings-output'},h('h2',{className:'ws-sec'},t('模型输出')),h(OutputLimitSetting,{value:prefs.maxOutputTokens??OUTPUT_LIMIT.fallback,disabled:busy,onSave:patch=>void save(patch)}),h('p',{className:'settings-note ws-muted'},t('回复被截断时，可以在这里调高上限后重试。'))),
         h(TokenDetectionControl,{onManage:()=>onPage('tokens')}),
         h('section',{className:'ws-card ws-set settings-character'},h('h2',{className:'ws-sec'},t("角色与对话")),h('p',{className:'ws-meta'},t("角色、好感度、记忆、立绘和背景在 Galgame 中设置。联网聊天需手动开启，重启后默认关闭。")),h('div',{className:'ws-srow ws-end'},h('span',null),h('button',{className:'ui-btn sm',onClick:()=>onPage('galgame')},t("打开 Galgame →")))))),
+    h(DataImportSetting,{onOpen:()=>setImportOpen(true)}),
     h('details',{className:'ws-details settings-install'},h('summary',null,Icon('chevron',{size:16}),t("本地安装"),h('span',{className:'ws-muted'},' · '+t("AI 酱 ")+view.version)),h('dl',{className:'ws-dl settings-info'},h('dt',null,t("版本")),h('dd',null,view.version+' · '+view.build),h('dt',null,t("数据目录")),h('dd',null,view.dataRoot),h('dt',null,t("日志来源")),h('dd',null,...view.logRoots.map((r,i)=>h('div',{key:i},h('span',null,providerName(r.provider)+' '),h('code',null,r.path))))),h('p',{className:'settings-note ws-muted'},t("设置保存为版本快照；旧版本、用量与陪伴历史继续保留。"))),
     h(AboutCard),
-    h('div',{className:'ws-reset-row settings-footer'},h('div',null,h('b',null,t("恢复默认设置")),h('small',null,t("恢复默认仅调整这些选项，保留位置、用量和 Galgame 存档。"))),h('button',{className:'ui-btn danger','data-action':'defaults',disabled:busy,onClick:()=>{void action('defaults');}},t("恢复默认设置"))));
+    h('div',{className:'ws-reset-row settings-footer'},h('div',null,h('b',null,t("恢复默认设置")),h('small',null,t("恢复默认仅调整这些选项，保留位置、用量和 Galgame 存档。"))),h('button',{className:'ui-btn danger','data-action':'defaults',disabled:busy,onClick:()=>{void action('defaults');}},t("恢复默认设置"))),importOpen&&h(DataImportModal,{onClose:()=>setImportOpen(false),onComplete:()=>location.reload()}));
 }

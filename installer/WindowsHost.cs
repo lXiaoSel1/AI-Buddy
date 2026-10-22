@@ -56,18 +56,34 @@ public sealed class WindowsHost(string? rootsFile=null) : IAppHost {
             return;
         }
     }
-    public async Task StartAndVerify(string root,Installation installed,CancellationToken cancel) {
+    public Task StartAndVerify(string root,Installation installed,CancellationToken cancel)=>StartCore(root,installed,null,cancel);
+    public Task StartImportedAndVerify(string root,Installation installed,string importId,CancellationToken cancel)=>StartCore(root,installed,importId,cancel);
+    public static StartupStatus? MatchStartup(string root,Installation installed,JsonElement value,bool importVerification=false){
+        var build=SafePaths.Under(root,installed.Build);var data=DataPaths.Registered(root,installed.DataPath);
+        if(!value.TryGetProperty("version",out var version)||version.ValueKind!=JsonValueKind.String||version.GetString()!=installed.Version||!value.TryGetProperty("build",out var returned)||returned.ValueKind!=JsonValueKind.String||!string.Equals(SafePaths.Full(returned.GetString()!),build,StringComparison.OrdinalIgnoreCase)||!value.TryGetProperty("dataRoot",out var returnedData)||returnedData.ValueKind!=JsonValueKind.String||!string.Equals(SafePaths.Full(returnedData.GetString()!),data,StringComparison.OrdinalIgnoreCase))return null;
+        var ready=value.TryGetProperty("ready",out var r)&&r.ValueKind==JsonValueKind.True;
+        var onboarding=value.TryGetProperty("onboarding",out var o)&&o.ValueKind==JsonValueKind.True;
+        var safe=value.TryGetProperty("safeMode",out var s)&&s.ValueKind==JsonValueKind.True;
+        var failure=value.TryGetProperty("startupFailure",out var f)&&f.ValueKind!=JsonValueKind.Null?f.Clone():(JsonElement?)null;
+        if(importVerification&&(onboarding||ready&&(safe||failure is not null)))throw new IOException("Imported profile did not start normally (safe mode or empty welcome); the previous profile will be restored");
+        if(ready&&!onboarding)return new(safe,failure);
+        // Welcome is deliberately not game-ready: no business save is initialized
+        // until the user chooses create/import. It is nevertheless a healthy
+        // completed program launch for a genuinely fresh ordinary installation.
+        if(!importVerification&&installed.DataInitialized!=true&&onboarding&&!safe&&failure is null)return new(false,null,true);
+        return null;
+    }
+    async Task StartCore(string root,Installation installed,string? importId,CancellationToken cancel) {
         LastStartup=null;
         var executable=SafePaths.Under(root,"AI Buddy.exe");
         var start=new ProcessStartInfo(executable){WorkingDirectory=root,UseShellExecute=false,CreateNoWindow=true};
+        if(importId is not null)start.ArgumentList.Add("--data-import-verify="+importId);
         if(rootsFile is not null){var path=Path.GetFullPath(rootsFile);SafePaths.NoLinks(path);using var roots=JsonDocument.Parse(File.ReadAllBytes(path));if(roots.RootElement.ValueKind!=JsonValueKind.Array)throw new InvalidDataException("Validation roots must be a JSON array");start.ArgumentList.Add("--roots="+path);}
         using var child=Process.Start(start)??throw new IOException("Windows could not start AI Buddy");
-        var build=SafePaths.Under(root,installed.Build);var data=SafePaths.Full(installed.DataPath??Path.Combine(root,"local","data-v003"));var end=DateTime.UtcNow.AddSeconds(90);
+        var end=DateTime.UtcNow.AddSeconds(90);
         while(DateTime.UtcNow<end) {
             cancel.ThrowIfCancellationRequested();var status=await Request(PipeName(installed),new{command="installation-status"},1500,cancel);
-            if(status is {} s&&s.TryGetProperty("version",out var version)&&version.GetString()==installed.Version&&s.TryGetProperty("build",out var returned)&&string.Equals(SafePaths.Full(returned.GetString()!),build,StringComparison.OrdinalIgnoreCase)&&s.TryGetProperty("dataRoot",out var returnedData)&&returnedData.ValueKind==JsonValueKind.String&&string.Equals(SafePaths.Full(returnedData.GetString()!),data,StringComparison.OrdinalIgnoreCase)&&s.TryGetProperty("ready",out var ready)&&ready.GetBoolean()){
-                LastStartup=new(s.TryGetProperty("safeMode",out var safe)&&safe.ValueKind==JsonValueKind.True,s.TryGetProperty("startupFailure",out var failure)&&failure.ValueKind!=JsonValueKind.Null?failure.Clone():null);return;
-            }
+            if(status is {} s&&MatchStartup(root,installed,s,importId is not null) is {} startup){LastStartup=startup;return;}
             await Task.Delay(800,cancel);
         }
         throw new IOException("AI Buddy did not become ready within 90 seconds; installation recovery will retain personal data");

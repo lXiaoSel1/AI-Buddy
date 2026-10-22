@@ -18,7 +18,80 @@ sealed class Suite {
   var index=files.Select(f=>new InstallFile(f.Key,f.Value.Length,Hashing.Bytes(f.Value))).ToArray();return new(id,"test",mount,id+".zip",new FileInfo(path).Length,files.Values.Sum(b=>(long)b.Length),Hashing.FileHash(path).Result,[],index,Edition:edition,FilesSha256:Manifests.IndexHash(index));
  }
  InstallManifest Fixture(Package[] p)=>new(1,"1.9.0","v1.9.0","lXiaoSel1/AI-Buddy","win32","x64","1.9.0",1,"30fps","deepseek",["root","runtime"],new("AI Buddy.exe",p.Single(p=>p.Id=="runtime").Files[0].Sha256),[new("30fps","30fps","app30"),new("60fps","60fps","app60")],[new("deepseek","DeepSeek","character",new(){["30fps"]=["motion30"],["60fps"]=["motion60"]})],p);
+ async Task UpdateTests() {
+  const string api="https://api.github.com/repos/lXiaoSel1/AI-Buddy",web="https://github.com/lXiaoSel1/AI-Buddy";
+  var binary=Encoding.UTF8.GetBytes("fake installer; never executed");var sha=Hashing.Bytes(binary);var manifestSha=new string('a',64);var source=new string('b',40);var tagSha=new string('c',40);
+  System.Text.Json.Nodes.JsonObject Fixture(string version="1.9.1") {
+   string tag="v"+version;var signature="-----BEGIN SSH SIGNATURE-----\nfixture\n-----END SSH SIGNATURE-----\n";
+   string body=$"AI Buddy {version}\n\nSource: {source}\nManifest SHA-256: {manifestSha}\nInstaller SHA-256: {sha}\n";
+   object Asset(string name,long size,string hash)=>new{name,size,state="uploaded",digest="sha256:"+hash,browser_download_url=web+"/releases/download/"+tag+"/"+name};
+   return System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(new{
+    release=new{tag_name=tag,html_url=web+"/releases/tag/"+tag,target_commitish=source,draft=false,prerelease=false,assets=new[]{Asset("AI-Buddy-Setup-"+version+"-win-x64.exe",binary.Length,sha),Asset("install-manifest-"+version+".json",12,manifestSha)}},
+    reference=new{@ref="refs/tags/"+tag,@object=new{type="tag",sha=tagSha}},
+    tag=new{sha=tagSha,tag,@object=new{type="commit",sha=source},message=body+signature,verification=new{verified=true,reason="valid",signature,payload=$"object {source}\ntype commit\ntag {tag}\ntagger fixture <test@example.invalid> 0 +0000\n\n"+body}}
+   }))!.AsObject();
+  }
+  HttpResponseMessage Response(System.Text.Json.Nodes.JsonNode? body)=>new(HttpStatusCode.OK){Content=new StringContent(body!.ToJsonString(),Encoding.UTF8,"application/json")};
+  HttpClient Client(System.Text.Json.Nodes.JsonObject f,List<string> calls,Func<HttpRequestMessage,CancellationToken,Task<HttpResponseMessage>>? download=null)=>new(new Handler((req,ct)=>{
+   var url=req.RequestUri!.AbsoluteUri;calls.Add(url);Assert(req.Headers.Authorization is null,"discovery never adds credentials");Assert(req.Headers.UserAgent.Count>0,"anonymous GitHub User-Agent");
+   if(url==api+"/releases/latest")return Task.FromResult(Response(f["release"]));
+   if(url==api+"/git/ref/tags/"+(string)f["release"]!["tag_name"]!)return Task.FromResult(Response(f["reference"]));
+   if(url==api+"/git/tags/"+tagSha)return Task.FromResult(Response(f["tag"]));
+   Assert(url==web+"/releases/download/"+(string)f["release"]!["tag_name"]!+"/AI-Buddy-Setup-"+((string)f["release"]!["tag_name"]!)[1..]+"-win-x64.exe","fixed selected installer URL");
+   return download is null?Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK){Content=new ByteArrayContent(binary)}):download(req,ct);
+  }));
+  foreach(var version in new[]{"1.8.99","1.9.0"})await Test("updates do not downgrade or update same version "+version,async()=>{var calls=new List<string>();using var http=Client(Fixture(version),calls);Assert(await new UpdateDiscovery(http).Check("1.9.0",default) is null&&calls.Count==1,"latest fetched once, no installer request");});
+  await Test("signed stable update binds source installer and manifest without credentials",async()=>{var calls=new List<string>();using var http=Client(Fixture(),calls);var update=await new UpdateDiscovery(http).Check("1.9.0",default);Assert(update is{Version:"1.9.1"}&&update.InstallerSha256==sha&&update.ManifestSha256==manifestSha&&update.SourceCommit==source,"signed identities");Assert(calls.Count==3&&calls.Count(x=>x.EndsWith("/latest"))==1,"exactly one latest resolution");});
+  await Test("update versions compare numerically rather than lexically",async()=>{var calls=new List<string>();using var http=Client(Fixture("1.10.0"),calls);Assert((await new UpdateDiscovery(http).Check("1.9.99",default))?.Version=="1.10.0","numeric SemVer");});
+  foreach(var version in new[]{"1.09.1","1.9","1.9.1-beta","1.9.1+build","v1.9.1","-1.9.1","1.9.1\n"})await Test("reject invalid current update version "+version.Replace("\n","\\n"),async()=>{using var http=Client(Fixture(),[]);await Reject(()=>new UpdateDiscovery(http).Check(version,default));});
+  var mutations=new Dictionary<string,Action<System.Text.Json.Nodes.JsonObject>>{
+   ["draft"]=f=>f["release"]!["draft"]=true,
+   ["prerelease"]=f=>f["release"]!["prerelease"]=true,
+   ["nonstable tag"]=f=>f["release"]!["tag_name"]="v1.9.1-beta",
+   ["wrong repository"]=f=>f["release"]!["html_url"]="https://github.com/other/AI-Buddy/releases/tag/v1.9.1",
+   ["branch source"]=f=>f["release"]!["target_commitish"]="main",
+   ["missing installer"]=f=>f["release"]!["assets"]!.AsArray().RemoveAt(0),
+   ["duplicate installer"]=f=>f["release"]!["assets"]!.AsArray().Add(f["release"]!["assets"]![0]!.DeepClone()),
+   ["unfinished asset"]=f=>f["release"]!["assets"]![0]!["state"]="new",
+   ["oversize installer"]=f=>f["release"]!["assets"]![0]!["size"]=UpdateDiscovery.InstallerLimit+1,
+   ["zero size"]=f=>f["release"]!["assets"]![0]!["size"]=0,
+   ["untrusted download URL"]=f=>f["release"]!["assets"]![0]!["browser_download_url"]="https://evil.invalid/setup.exe",
+   ["missing installer digest"]=f=>f["release"]!["assets"]![0]!.AsObject().Remove("digest"),
+   ["wrong digest type"]=f=>f["release"]!["assets"]![0]!["digest"]="sha512:"+sha,
+   ["missing manifest digest"]=f=>f["release"]!["assets"]![1]!.AsObject().Remove("digest"),
+   ["lightweight tag"]=f=>f["reference"]!["object"]!["type"]="commit",
+   ["wrong ref"]=f=>f["reference"]!["ref"]="refs/tags/v1.9.2",
+   ["unverified signature"]=f=>f["tag"]!["verification"]!["verified"]=false,
+   ["invalid signature reason"]=f=>f["tag"]!["verification"]!["reason"]="unknown_key",
+   ["unsigned tag"]=f=>f["tag"]!["verification"]!["signature"]="",
+   ["different tag object"]=f=>f["tag"]!["sha"]=new string('d',40),
+   ["different source"]=f=>f["tag"]!["object"]!["sha"]=new string('d',40),
+   ["unsigned changed message"]=f=>f["tag"]!["message"]="Source: "+source,
+   ["signed payload commit mismatch"]=f=>f["tag"]!["verification"]!["payload"]=((string)f["tag"]!["verification"]!["payload"]!).Replace("object "+source,"object "+new string('d',40)),
+   ["signed installer mismatch"]=f=>{foreach(var key in new[]{"message"})f["tag"]![key]=((string)f["tag"]![key]!).Replace(sha,new string('e',64));f["tag"]!["verification"]!["payload"]=((string)f["tag"]!["verification"]!["payload"]!).Replace(sha,new string('e',64));},
+   ["duplicate signed hash"]=f=>{string extra="Installer SHA-256: "+sha+"\n";var signature=(string)f["tag"]!["verification"]!["signature"]!;f["tag"]!["message"]=((string)f["tag"]!["message"]!).Replace(signature,extra+signature);f["tag"]!["verification"]!["payload"]=(string)f["tag"]!["verification"]!["payload"]!+extra;}
+  };
+  foreach(var mutation in mutations)await Test("reject update "+mutation.Key,async()=>{var f=Fixture();mutation.Value(f);using var http=Client(f,[]);await Reject(()=>new UpdateDiscovery(http).Check("1.9.0",default));});
+  foreach(var code in new[]{HttpStatusCode.TooManyRequests,HttpStatusCode.Forbidden})await Test("update rate limit respects server waiting time "+(int)code,async()=>{int count=0;using var http=new HttpClient(new Handler((_,_)=>{count++;var response=new HttpResponseMessage(code);response.Headers.RetryAfter=new RetryConditionHeaderValue(TimeSpan.FromSeconds(60));return Task.FromResult(response);}));try{await new UpdateDiscovery(http).Check("1.9.0",default);throw new Exception("Expected rate limit");}catch(DownloadException e){Assert(e.Retryable&&e.Wait>=TimeSpan.FromSeconds(59)&&count==1,"no latest retry loop and Retry-After exposed");}});
+  await Test("update check cancellation does not retry latest",async()=>{int calls=0;using var http=new HttpClient(new Handler(async(_,ct)=>{calls++;await Task.Delay(Timeout.Infinite,ct);throw new Exception("Unreachable");}));using var cancellation=new CancellationTokenSource(25);try{await new UpdateDiscovery(http).Check("1.9.0",cancellation.Token);throw new Exception("Expected cancellation");}catch(OperationCanceledException){Assert(calls==1,"single cancelled request");}});
+  await Test("update API response size is bounded",async()=>{using var http=new HttpClient(new Handler((_,_)=>{var response=new HttpResponseMessage(HttpStatusCode.OK){Content=new ByteArrayContent([])};response.Content.Headers.ContentLength=4*1024*1024+1;return Task.FromResult(response);}));await Reject(()=>new UpdateDiscovery(http).Check("1.9.0",default));});
+  foreach(var mode in new[]{"valid","corrupt","truncated","overlong","wrong-header","cancel"})await Test("update installer streamed integrity "+mode,async()=>{
+   var calls=new List<string>();using var cancellation=new CancellationTokenSource();var cache=Path.Combine(root,"update-"+mode);
+   using var http=Client(Fixture(),calls,(_,_)=>{var payload=mode switch{"corrupt"=>binary.Select(x=>(byte)(x^1)).ToArray(),"truncated"=>binary[..^1],"overlong"=>binary.Concat(new byte[]{1}).ToArray(),_=>binary};var response=new HttpResponseMessage(HttpStatusCode.OK){Content=new UnknownLengthContent(payload)};if(mode=="wrong-header")response.Content.Headers.ContentLength=binary.Length+1;return Task.FromResult(response);});
+   var updater=new UpdateDiscovery(http);var update=(await updater.Check("1.9.0",default))!;IProgress<InstallProgress>? progress=mode=="cancel"?new ImmediateProgress(_=>cancellation.Cancel()):null;
+   if(mode=="valid"){var file=await updater.Download(update,cache,progress,default);Assert(await Hashing.FileHash(file)==sha&&File.ReadAllBytes(file).SequenceEqual(binary),"verified bytes only");}
+   else if(mode=="cancel"){try{await updater.Download(update,cache,progress,cancellation.Token);throw new Exception("Expected cancellation");}catch(OperationCanceledException){Assert(Directory.GetFiles(cache,"*.exe").Length==0&&Directory.GetFiles(cache,"*.partial").Length==1,"cancelled installer is never executable final file");}}
+   else {await Reject(()=>updater.Download(update,cache,progress,default));Assert(Directory.GetFiles(cache,"*.exe").Length==0,"invalid download never promoted");}
+   Assert(calls.Count(x=>x.EndsWith("/latest"))==1,"download retains fixed selected release");
+  });
+  await Test("cached update is rehashed and tamper is redownloaded",async()=>{var calls=new List<string>();using var http=Client(Fixture(),calls);var updater=new UpdateDiscovery(http);var update=(await updater.Check("1.9.0",default))!;var cache=Path.Combine(root,"update-cache");var file=await updater.Download(update,cache,null,default);int first=calls.Count;await updater.Download(update,cache,null,default);Assert(calls.Count==first,"verified cache avoids network");File.WriteAllBytes(file,binary.Select(x=>(byte)(x^1)).ToArray());await updater.Download(update,cache,null,default);Assert(calls.Count==first+1&&await Hashing.FileHash(file)==sha,"same-length cached tamper rejected");});
+  await Test("update selection cannot inject an arbitrary executable URL",async()=>{using var http=Client(Fixture(),[]);var updater=new UpdateDiscovery(http);var update=(await updater.Check("1.9.0",default))!;await Reject(()=>updater.Download(update with{InstallerUrl="https://evil.invalid/setup.exe"},Path.Combine(root,"injected-update"),null,default));});
+  await Test("restarting update replaces only the partial hardlink entry",async()=>{using var http=Client(Fixture(),[]);var updater=new UpdateDiscovery(http);var update=(await updater.Check("1.9.0",default))!;var cache=Path.Combine(root,"update-partial-hardlink");Directory.CreateDirectory(cache);var original=Path.Combine(root,"keep-original-update-partial.bin");File.WriteAllText(original,"important original");var partial=Path.Combine(cache,update.InstallerSha256+"-"+update.InstallerName+".partial");Assert(CreateHardLink(@"\\?\"+partial,@"\\?\"+original,IntPtr.Zero),"create partial fixture hardlink");await updater.Download(update,cache,null,default);Assert(File.ReadAllText(original)=="important original","old source inode not truncated");});
+  await Test("future compatible journal accepts previous stable installer versions only",()=>{Assert(ReleaseIdentity.KnownTransactionVersion("1.8.0","1.9.1")&&ReleaseIdentity.KnownTransactionVersion("1.9.0","1.9.1")&&ReleaseIdentity.KnownTransactionVersion("1.9.1","1.9.2"),"past contract-one journal accepted");foreach(var version in new[]{"1.9.2","1.7.10","latest","1.09.0","1.9.0-beta","1.9","2.0.0"})Assert(!ReleaseIdentity.KnownTransactionVersion(version,"1.9.1"),"unknown/future journal refused: "+version);return Task.CompletedTask;});
+ }
  public async Task Run() {
+  await ImportTests();
+  await UpdateTests();
   await Test("real Windows named pipe uses exactly one JSON line",async()=>{
    var name="ai-buddy-pipe-test-"+Guid.NewGuid().ToString("N");
    using var server=new System.IO.Pipes.NamedPipeServerStream(name,System.IO.Pipes.PipeDirection.InOut,1,System.IO.Pipes.PipeTransmissionMode.Byte,System.IO.Pipes.PipeOptions.Asynchronous);
@@ -128,6 +201,12 @@ sealed class Suite {
    var target=Path.Combine(root,"custom-install");var custom=Path.Combine(root,"custom data");Directory.CreateDirectory(custom);File.WriteAllText(Path.Combine(custom,"keep.txt"),"custom saved");
    var first=await engine.Install(options with{Root=target,DataPath=custom,Pipe="isolated-old-pipe"},null,default);var next=await engine.Install(options with{Root=target,Edition="60fps",DataPath="ignored",Pipe="ignored"},null,default);Assert(next.DataPath==custom&&next.Pipe=="isolated-old-pipe","recorded configuration kept");await engine.Rollback(target,null,default);Assert(File.ReadAllText(Path.Combine(custom,"keep.txt"))=="custom saved"&&InstallEngine.Existing(target)!.Pipe=="isolated-old-pipe","custom rollback retained");
   });
+  await Test("program rollback retains profile selected after upgrade",async()=>{
+   var target=Path.Combine(root,"rollback-after-import");await engine.Install(options with{Root=target},null,default);await engine.Install(options with{Root=target,Edition="60fps"},null,default);
+   var selected="local/data-profiles/import-"+Guid.NewGuid().ToString("D");Directory.CreateDirectory(SafePaths.Under(target,selected));File.WriteAllText(SafePaths.Under(target,selected+"/keep.txt"),"new life after upgrade");
+   Json.Save(InstallEngine.RecordPath(target),InstallEngine.Existing(target)! with{DataPath=selected,Pipe="new-profile-pipe"});await engine.Rollback(target,null,default);
+   Assert(InstallEngine.Existing(target)!.DataPath==selected&&InstallEngine.Existing(target)!.Pipe=="new-profile-pipe"&&File.ReadAllText(SafePaths.Under(target,selected+"/keep.txt"))=="new life after upgrade","program rollback does not roll back profile selection or new data");
+  });
   await Test("unrecorded portable discovers custom data on requested isolated pipe",async()=>{
    var target=Path.Combine(root,"portable-takeover");Json.Save(Path.Combine(target,"local/current-build.json"),new{version="1.8.0",path="builds/portable"});host.DiscoveredData=Path.Combine(root,"portable data");var installed=await engine.Install(options with{Root=target,Pipe="portable-test-pipe"},null,default);Assert(installed.DataPath==host.DiscoveredData&&installed.Pipe=="portable-test-pipe"&&host.DiscoveryPipe=="portable-test-pipe"&&host.LastStoppedPipe=="portable-test-pipe","portable takeover discovery and stop isolated");host.DiscoveredData=null;
   });
@@ -137,6 +216,7 @@ sealed class Suite {
   await Test("ready safe mode is recorded without treating it as complete feature startup",async()=>{
    host.Startup=new(true,JsonSerializer.SerializeToElement(new{scope="companion",message="fixture failure"}));var installed=await engine.Install(options with{Root=Path.Combine(root,"safe-mode")},null,default);Assert(installed.Startup?.SafeMode==true&&installed.Startup.StartupFailure?.GetProperty("scope").GetString()=="companion","safe mode receipt");host.Startup=null;
   });
+  await Test("installer keeps app-confirmed initialized data after readiness",async()=>{var target=Path.Combine(root,"app-confirmed-initialized");host.OnStart=(folder,value)=>Json.Save(InstallEngine.RecordPath(folder),value with{DataInitialized=true});try{await engine.Install(options with{Root=target},null,default);Assert(InstallEngine.Existing(target)!.DataInitialized==true,"late startup receipt did not erase app initialization");}finally{host.OnStart=null;}});
   await Test("legacy 1.8 transaction layout recovers without AppVersion",async()=>{
    var target=Path.Combine(root,"legacy-journal");var id=Guid.NewGuid().ToString("N");var oldOptions=options with{Root=target};var journal=new InstallJournal(id,"committing",new string('0',64),oldOptions,null,null,$"builds/v1.8.0-30fps-{id}",$"runtime/AI-Buddy-v1.8.0-{id}",["AI Buddy.exe"],[]);
    Directory.CreateDirectory(Path.Combine(target,journal.Build));Directory.CreateDirectory(Path.Combine(target,journal.Runtime));File.WriteAllText(Path.Combine(target,"AI Buddy.exe"),"interrupted");Json.Save(Path.Combine(target,"local/installer/transaction.json"),journal);await engine.Install(oldOptions,null,default);Assert(InstallEngine.Existing(target)!.Version=="1.9.0"&&!Directory.Exists(Path.Combine(target,journal.Build)),"legacy recovery and install");
@@ -163,15 +243,56 @@ sealed class Suite {
   await Test("uninstall retains personal data and unknown files",async()=>{var unknown=Path.Combine(installRoot,"my-notes.txt");File.WriteAllText(unknown,"user");await engine.Uninstall(installRoot,false,null,default);Assert(File.Exists(data)&&File.Exists(unknown),"uninstall save retention");});
   Console.WriteLine(JsonSerializer.Serialize(new{passed,root},Json.Options));
  }
+ async Task ImportTests(){
+  (string folder,string planPath,DataImportPlan plan,Installation previous,ImportHost host) Make(string name){
+   var folder=Path.Combine(root,"import-"+name);var id=Guid.NewGuid().ToString("D");var relative="local/data-profiles/import-"+id;var target=SafePaths.Under(folder,relative);Directory.CreateDirectory(target);File.WriteAllText(Path.Combine(target,"memory.json"),"{\"fullOriginal\":\"完整原文\"}");
+   var previous=new Installation(1,"1.9.0",new string('a',64),"60fps",["deepseek","kimi"],"kimi","builds/current","runtime/current","maintenance/1.9.0/AI Buddy Setup.exe",null,"import-test-pipe",DateTimeOffset.UtcNow,new());
+   Json.Save(InstallEngine.RecordPath(folder),previous);Json.Save(SafePaths.Under(folder,"local/current-build.json"),new{version="1.9.0",path=previous.Build});
+   var f=new InstallFile("memory.json",new FileInfo(Path.Combine(target,"memory.json")).Length,Hashing.FileHash(Path.Combine(target,"memory.json")).Result);var files=new[]{f};
+   var plan=new DataImportPlan(1,id,SafePaths.Full(folder),Hashing.FileHash(InstallEngine.RecordPath(folder)).Result,previous.Build,"import-test-pipe",relative,new string('b',64),Manifests.IndexHash(files),files,"ready");var path=SafePaths.Under(folder,"local/data-imports/"+id+"/commit-plan.json");Json.Save(path,plan);return(folder,path,plan,previous,new ImportHost());
+  }
+  await Test("import commits relative profile and exact verification child",async()=>{var x=Make("success");var result=await new DataImportManager(x.host).Commit(x.folder,x.planPath,null,default);Assert(result.Phase=="complete"&&InstallEngine.Existing(x.folder)!.DataPath==x.plan.TargetDataPath&&x.host.VerifyId==x.plan.Id&&x.host.Starts==1,"new profile selected with verification token");Assert(File.Exists(SafePaths.Under(x.folder,"local/installation-backups/import-"+x.plan.Id+".json")),"previous record backed up");});
+  await Test("import startup failure restores previous profile without deleting copy",async()=>{var x=Make("failed-start");x.host.FailImported=true;await Reject(()=>new DataImportManager(x.host).Commit(x.folder,x.planPath,null,default));Assert(InstallEngine.Existing(x.folder)!.DataPath is null&&Directory.Exists(SafePaths.Under(x.folder,x.plan.TargetDataPath))&&x.host.Starts==2,"old data restored; copy retained");});
+  await Test("import safe mode restores previous profile",async()=>{var x=Make("safe");x.host.SafeImported=true;await Reject(()=>new DataImportManager(x.host).Commit(x.folder,x.planPath,null,default));Assert(InstallEngine.Existing(x.folder)!.DataPath is null&&x.host.Starts==2,"safe-mode import rejected");});
+  await Test("import file tamper rejected before stopping app",async()=>{var x=Make("tamper");File.WriteAllText(SafePaths.Under(x.folder,x.plan.TargetDataPath+"/memory.json"),"tampered");await Reject(()=>new DataImportManager(x.host).Commit(x.folder,x.planPath,null,default));Assert(x.host.Stops==0&&InstallEngine.Existing(x.folder)!.DataPath is null,"source app retained");});
+  await Test("import undeclared file rejected",async()=>{var x=Make("extra");File.WriteAllText(SafePaths.Under(x.folder,x.plan.TargetDataPath+"/extra.bin"),"extra");await Reject(()=>new DataImportManager(x.host).Commit(x.folder,x.planPath,null,default));Assert(x.host.Stops==0,"file set exact");});
+  await Test("import stale record hash rejected",async()=>{var x=Make("stale");Json.Save(InstallEngine.RecordPath(x.folder),x.previous with{InitialCharacter="deepseek"});await Reject(()=>new DataImportManager(x.host).Commit(x.folder,x.planPath,null,default));Assert(x.host.Stops==0,"stale preview never stops app");});
+  await Test("import wrong plan location rejected",async()=>{var x=Make("wrong-path");var other=Path.Combine(x.folder,"other.json");File.Copy(x.planPath,other);await Reject(()=>new DataImportManager(x.host).Commit(x.folder,other,null,default));Assert(x.host.Stops==0,"root-bound control path");});
+  await Test("import cancellation while waiting retains old profile",async()=>{var x=Make("cancel");x.host.Wait=true;var manager=new DataImportManager(x.host);var task=manager.Commit(x.folder,x.planPath,null,default);await Task.Delay(30);File.WriteAllText(SafePaths.Under(x.folder,"local/data-imports/"+x.plan.Id+"/cancel.request"),"cancel");try{await task;throw new Exception("Expected cancel");}catch(OperationCanceledException){}Assert(InstallEngine.Existing(x.folder)!.DataPath is null&&x.host.Starts==0,"cancel never switches");});
+  foreach(var phase in new[]{"switching","switched"})await Test("interrupted import recovers old profile at "+phase,async()=>{var x=Make("interrupted-"+phase);Json.Save(InstallEngine.RecordPath(x.folder),x.previous with{DataPath=x.plan.TargetDataPath});Json.Save(SafePaths.Under(x.folder,"local/installer/data-import-transaction.json"),new DataImportJournal(x.plan.Id,phase,x.plan,x.previous,DateTimeOffset.UtcNow));var result=await new DataImportManager(x.host).Recover(x.folder,null,default);Assert(result?.RestoredPrevious==true&&InstallEngine.Existing(x.folder)!.DataPath is null&&Directory.Exists(SafePaths.Under(x.folder,x.plan.TargetDataPath)),"restored old path and retained copy");});
+  await Test("import shares installation exclusive lock",async()=>{var x=Make("locked");var control=SafePaths.Under(x.folder,"local/installer");Directory.CreateDirectory(control);using var held=new FileStream(Path.Combine(control,"install.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);await Reject(()=>new DataImportManager(x.host).Commit(x.folder,x.planPath,null,default));Assert(x.host.Stops==0,"other maintenance not disturbed");});
+  foreach(var phase in new[]{"prepared","complete","failed","cancelled","rolled-back"})await Test("moved portable ignores historical import journal "+phase,async()=>{var x=Make("moved-"+phase);var old=x.plan with{Root=x.folder+"-before-move"};Json.Save(SafePaths.Under(x.folder,"local/installer/data-import-transaction.json"),new DataImportJournal(old.Id,phase,old,x.previous,DateTimeOffset.UtcNow));await new DataImportManager(x.host).Commit(x.folder,x.planPath,null,default);Assert(InstallEngine.Existing(x.folder)!.DataPath==x.plan.TargetDataPath&&x.host.Starts==1,"terminal journal paths never interpreted; fresh import succeeds");});
+  await Test("registered import path resolves relative to moved app root",()=>{var x=Make("relative");Assert(DataPaths.Registered(x.folder,x.plan.TargetDataPath)==SafePaths.Under(x.folder,x.plan.TargetDataPath),"root-relative profile");foreach(var invalid in new[]{"../outside","data","local/data-profiles/import-invalid"}){try{DataPaths.Registered(x.folder,invalid,false);throw new Exception("Expected invalid relative");}catch(InvalidDataException){}}return Task.CompletedTask;});
+  foreach(var initialized in new bool?[]{null,false,true})await Test("fresh welcome readiness respects data initialization "+initialized,()=>{var x=Make("welcome-"+initialized);var current=x.previous with{DataInitialized=initialized};var status=JsonSerializer.SerializeToElement(new{version=current.Version,build=SafePaths.Under(x.folder,current.Build),dataRoot=SafePaths.Under(x.folder,"local/data-v003"),ready=false,onboarding=true,safeMode=false,startupFailure=(string?)null});var match=AiBuddy.Setup.WindowsHost.MatchStartup(x.folder,current,status);Assert(initialized==true?match is null:match is{Onboarding:true,SafeMode:false,StartupFailure:null},"only genuinely fresh ordinary install accepts healthy welcome");return Task.CompletedTask;});
+  await Test("import verification refuses empty welcome immediately",()=>Reject(()=>{var x=Make("verify-welcome");var status=JsonSerializer.SerializeToElement(new{version=x.previous.Version,build=SafePaths.Under(x.folder,x.previous.Build),dataRoot=SafePaths.Under(x.folder,"local/data-v003"),ready=false,onboarding=true,safeMode=false,startupFailure=(string?)null});AiBuddy.Setup.WindowsHost.MatchStartup(x.folder,x.previous,status,true);return Task.CompletedTask;}));
+  await Test("import verification refuses ready safe mode immediately",()=>Reject(()=>{var x=Make("verify-safe");var status=JsonSerializer.SerializeToElement(new{version=x.previous.Version,build=SafePaths.Under(x.folder,x.previous.Build),dataRoot=SafePaths.Under(x.folder,"local/data-v003"),ready=true,onboarding=false,safeMode=true,startupFailure=new{message="test startup failure"}});AiBuddy.Setup.WindowsHost.MatchStartup(x.folder,x.previous,status,true);return Task.CompletedTask;}));
+  await Test("ordinary ready safe mode still records startup failure",()=>{var x=Make("ordinary-safe");var status=JsonSerializer.SerializeToElement(new{version=x.previous.Version,build=SafePaths.Under(x.folder,x.previous.Build),dataRoot=SafePaths.Under(x.folder,"local/data-v003"),ready=true,onboarding=false,safeMode=true,startupFailure=new{message="test startup failure"}});var result=AiBuddy.Setup.WindowsHost.MatchStartup(x.folder,x.previous,status);Assert(result is{SafeMode:true,Onboarding:false}&&result.StartupFailure is not null,"R1 safe readiness contract retained");return Task.CompletedTask;});
+  await Test("welcome cannot acknowledge foreign data or program",()=>{var x=Make("foreign-welcome");foreach(var wrong in new[]{"build","data","version"}){var status=JsonSerializer.SerializeToElement(new{version=wrong=="version"?"1.8.0":x.previous.Version,build=SafePaths.Under(x.folder,wrong=="build"?"builds/foreign":x.previous.Build),dataRoot=SafePaths.Under(x.folder,wrong=="data"?"local/foreign":"local/data-v003"),ready=false,onboarding=true,safeMode=false,startupFailure=(string?)null});Assert(AiBuddy.Setup.WindowsHost.MatchStartup(x.folder,x.previous,status) is null,"foreign welcome rejected");}return Task.CompletedTask;});
+  await Test("welcome with startup error is not a healthy install",()=>{var x=Make("failed-welcome");var status=JsonSerializer.SerializeToElement(new{version=x.previous.Version,build=SafePaths.Under(x.folder,x.previous.Build),dataRoot=SafePaths.Under(x.folder,"local/data-v003"),ready=false,onboarding=true,safeMode=false,startupFailure=new{message="startup failure"}});Assert(AiBuddy.Setup.WindowsHost.MatchStartup(x.folder,x.previous,status) is null,"unhealthy welcome rejected");return Task.CompletedTask;});
+ }
 }
 sealed class Handler(Func<HttpRequestMessage,CancellationToken,Task<HttpResponseMessage>> action):HttpMessageHandler {protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancel)=>action(request,cancel);}
+sealed class ImmediateProgress(Action<InstallProgress> action):IProgress<InstallProgress>{public void Report(InstallProgress value)=>action(value);}
+sealed class UnknownLengthContent(byte[] bytes):HttpContent {
+ protected override bool TryComputeLength(out long length){length=0;return false;}
+ protected override Task SerializeToStreamAsync(Stream stream,TransportContext? context)=>stream.WriteAsync(bytes).AsTask();
+}
 sealed class FakeHost:IAppHost {
  public int Starts;public bool FailStart;
  public StartupStatus? Startup;public StartupStatus? LastStartup=>Startup;
  public string? DiscoveredData,DiscoveryPipe,LastStoppedPipe;
  public Task<string?> DiscoverDataPath(string root,string? pipe,CancellationToken cancel){DiscoveryPipe=pipe;return Task.FromResult(DiscoveredData);}
  public Task Stop(string root,Installation? previous,IProgress<InstallProgress>? progress,CancellationToken cancel){LastStoppedPipe=previous?.Pipe;return Task.CompletedTask;}
- public Task StartAndVerify(string root,Installation installed,CancellationToken cancel){Starts++;if(FailStart)throw new IOException("simulated start failure");return Task.CompletedTask;}
+ public Action<string,Installation>? OnStart;
+ public Task StartAndVerify(string root,Installation installed,CancellationToken cancel){Starts++;OnStart?.Invoke(root,installed);if(FailStart)throw new IOException("simulated start failure");return Task.CompletedTask;}
+ public Task CreateShortcuts(string root,Installation installed,CancellationToken cancel)=>Task.CompletedTask;
+ public Task RemoveShortcuts(string root,CancellationToken cancel)=>Task.CompletedTask;
+}
+sealed class ImportHost:IAppHost{
+ public int Starts,Stops;public bool FailImported,SafeImported,Wait;public string? VerifyId;public StartupStatus? LastStartup{get;private set;}
+ public async Task Stop(string root,Installation? previous,IProgress<InstallProgress>? progress,CancellationToken cancel){Stops++;if(Wait)await Task.Delay(Timeout.Infinite,cancel);}
+ public Task StartAndVerify(string root,Installation installed,CancellationToken cancel){Starts++;LastStartup=null;return Task.CompletedTask;}
+ public Task StartImportedAndVerify(string root,Installation installed,string importId,CancellationToken cancel){Starts++;VerifyId=importId;if(FailImported)throw new IOException("simulated imported startup failure");LastStartup=new(SafeImported,null);return Task.CompletedTask;}
  public Task CreateShortcuts(string root,Installation installed,CancellationToken cancel)=>Task.CompletedTask;
  public Task RemoveShortcuts(string root,CancellationToken cancel)=>Task.CompletedTask;
 }

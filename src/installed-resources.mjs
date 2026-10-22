@@ -1,9 +1,10 @@
 import {readFileSync,statSync,existsSync} from 'node:fs';
 import {resolve,join,sep} from 'node:path';
 import {PET_CHARACTERS} from './pet-characters.mjs';
-export function createInstalledResources({root,build}){
+import {resolveInstallation} from './installation-record.mjs';
+export function createInstalledResources({root,build,installation:effectiveInstallation}){
  const read=file=>{try{return JSON.parse(readFileSync(file,'utf8'));}catch{return null;}};
- const installation=read(join(root,'local/installation.json'));
+ const installation=effectiveInstallation===undefined?resolveInstallation({root,build}).installation:effectiveInstallation;
  const index=read(join(build,'assets/install-resource-index.json'));
  if(!index||index.version!==1)throw Error('安装资源索引缺失；请运行安装器修复 / Resource index missing; run installer repair');
  const under=(base,path)=>{if(typeof path!=='string'||path.includes('\\')||path.split('/').some(p=>!p||p==='.'||p==='..'))throw Error('Invalid resource path');const full=resolve(base,path);if(!full.startsWith(resolve(base)+sep))throw Error('Invalid resource path');return full;};

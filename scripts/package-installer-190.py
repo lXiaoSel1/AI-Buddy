@@ -261,12 +261,17 @@ def portable(candidate, out, installer, work):
         (tree / manager).parent.mkdir(parents=True)
         shutil.copy2(installer, tree / manager)
         selected = [p for p in manifest['packages'] if not p.get('edition') or p['edition'] == edition]
-        save(tree / 'local/installation.json', dict(schemaVersion=1, version=VERSION, manifestSha256=digest, edition=edition, characters=[c['id'] for c in manifest['characters']], initialCharacter='deepseek', build=build, runtime=runtime, manager=manager, dataPath=None, pipe=None, installedAt='2026-10-21T00:00:00Z', packageHashes={p['id']: p['sha256'] for p in selected}))
-        save(tree / 'local/current-build.json', dict(version=VERSION, appVersion=VERSION, path=build, runtime=dict(path=runtime, **manifest['runtime']), animationProfile=edition))
+        pointer = dict(version=VERSION, appVersion=VERSION, path=build, runtime=dict(path=runtime, **manifest['runtime']), animationProfile=edition, manifestSha256=digest)
+        installation = dict(schemaVersion=1, version=VERSION, manifestSha256=digest, edition=edition, characters=[c['id'] for c in manifest['characters']], initialCharacter='deepseek', build=build, runtime=runtime, manager=manager, dataPath=None, pipe=None, dataInitialized=False, installedAt='2026-10-21T00:00:00Z', packageHashes={p['id']: p['sha256'] for p in selected})
+        # A portable archive must never overwrite the user's selected data root.
+        # The application only applies these program defaults when their complete
+        # pointer binding matches the current build (not an online UUID build).
+        save(tree / 'local/portable-defaults.json', dict(schemaVersion=1, pointer=pointer, installation=installation))
+        save(tree / 'local/current-build.json', pointer)
         pin = 'local/install-manifests/' + digest + '.json'
         (tree / pin).parent.mkdir(parents=True)
         shutil.copy2(manifest_path, tree / pin)
-        expected = {manager, 'local/installation.json', 'local/current-build.json', pin}
+        expected = {manager, 'local/portable-defaults.json', 'local/current-build.json', pin}
         for item in selected:
             prefix = '' if item['mount'] == 'root' else (build if item['mount'] == 'build' else runtime) + '/'
             expected.update(prefix + f['path'] for f in item['files'])

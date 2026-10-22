@@ -1,6 +1,7 @@
 import { contextBridge,ipcRenderer } from 'electron';
 const modelRequest=(channel,...args)=>ipcRenderer.invoke(channel,...args).catch(error=>{throw new Error(error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/,''));});
 contextBridge.exposeInMainWorld('whale',{
+  dataImport:{state:()=>modelRequest('data-import:state'),choose:()=>modelRequest('data-import:choose'),preview:args=>modelRequest('data-import:preview',args),start:args=>modelRequest('data-import:start',args),cancel:args=>modelRequest('data-import:cancel',args),createNew:()=>modelRequest('data-import:create-new'),resumeWork:()=>modelRequest('data-import:resume-work')},
   resources:{status:()=>modelRequest('resources:status'),manage:id=>modelRequest('resources:manage',id)},
   statisticsExport:args=>modelRequest('statistics:export',args),
   quotas:{action:(action,args)=>modelRequest('quotas:action',action,args),onUpdate:callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on('quotas:update',listener);return()=>ipcRenderer.removeListener('quotas:update',listener);}},
@@ -20,7 +21,7 @@ contextBridge.exposeInMainWorld('whale',{
   chat:value=>modelRequest('chat:enabled',value),
   chatStatus:()=>ipcRenderer.invoke('chat:status'),
   models:{get:()=>modelRequest('models:get'),save:draft=>modelRequest('models:save',draft),remove:id=>modelRequest('models:delete',id),activate:id=>modelRequest('models:activate',id),list:draft=>modelRequest('models:list',draft),test:draft=>modelRequest('models:test',draft)},
-  cg:{get:()=>modelRequest('cg:get'),save:draft=>modelRequest('cg:save',draft),remove:id=>modelRequest('cg:delete',id),activate:id=>modelRequest('cg:activate',id),enabled:value=>modelRequest('cg:enabled',value),list:draft=>modelRequest('cg:list',draft),check:draft=>modelRequest('cg:check',draft),testImage:draft=>modelRequest('cg:test-image',draft),image:id=>modelRequest('cg:image',id)},
+  cg:{get:()=>modelRequest('cg:get'),save:draft=>modelRequest('cg:save',draft),remove:id=>modelRequest('cg:delete',id),activate:id=>modelRequest('cg:activate',id),enabled:value=>modelRequest('cg:enabled',value),list:draft=>modelRequest('cg:list',draft),check:draft=>modelRequest('cg:check',draft),testImage:draft=>modelRequest('cg:test-image',draft),image:id=>modelRequest('cg:image',id),resume:id=>modelRequest('cg:resume',id)},
   onCgUpdated:callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on('cg:updated',listener);return()=>ipcRenderer.removeListener('cg:updated',listener);},
   open:page=>ipcRenderer.send('panel:open',page),
   hit:opaque=>ipcRenderer.send('pet:hit',!!opaque),

@@ -1,5 +1,7 @@
 import {createInstalledResources} from './installed-resources.mjs';
-import {spawn} from 'node:child_process';
+import {spawn,spawnSync} from 'node:child_process';
+import {resolveInstallation,commitInstallation,markInstallationInitialized} from './installation-record.mjs';
+import {createDataImportService,hasBusinessData} from './data-import.mjs';
 import {setLocale,t,localizedTitle} from './i18n.mjs';
 import {chromeColor,chromeSymbolColor,windowBackground,resolvedTheme,themeVariables} from './appearance.mjs';
 import {trayMenuTemplate,petContextTemplate} from './pet-menu.mjs';
@@ -55,19 +57,35 @@ function brandWindow(window){
 const arg=name=>process.argv.find(x=>x.startsWith('--'+name+'='))?.slice(name.length+3);
 const workspaceTitle=()=>localizedTitle()+(arg('candidate')==='1'?(settings.preferences?.language==='en'?' · Feature Preview':' · 八项功能候选'):'');
 const previewQuery=arg('rig')==='working'?{query:{workingRig:'1'}}:arg('rig')==='all'?{query:{allActionRigs:'1'}}:arg('rig')==='source'?{query:{sourcePreview:'1'}}:{};
-const resources=createInstalledResources({root,build});
-const dataRoot=resolve(arg('data') || resources.installation?.dataPath || join(root,'local/data-v003'));
+let installationResolution,bootFailure=null,recoveryDispatched=false;
+try{installationResolution=resolveInstallation({root,build,explicitData:arg('data'),explicitPipe:arg('pipe'),verifyImportId:arg('data-import-verify')});}
+catch(error){
+ bootFailure=error;
+ if(error.code==='DATA_IMPORT_RECOVERY_REQUIRED'){
+  try{
+   const record=JSON.parse(readFileSync(join(root,'local/installation.json'),'utf8')),manager=resolve(root,record.manager);
+   if(!manager.startsWith(root+'\\')||!existsSync(manager))throw Error('导入恢复维护器缺失');
+   const result=spawnSync(manager,['--headless','--action=data-import-recover','--root='+root,'--receipt='+join(root,'local/installer/data-import-startup-recovery.json')],{windowsHide:true,encoding:'utf8',timeout:180000});
+   if(result.status!==0)throw Error('资料恢复失败，请查看 local/installer/data-import-startup-recovery.json');
+   recoveryDispatched=true;
+  }catch(failure){bootFailure=failure;}
+ }
+}
+const resources=createInstalledResources({root,build,installation:installationResolution?.installation??null});
+const dataRoot=installationResolution?.data??resolve(arg('data')||join(root,'local/data-v003'));
 // B4: companion pictures are served as buddy-media://<sha256>.<ext> (see media-store.mjs).
 protocol.registerSchemesAsPrivileged([{scheme:MEDIA_SCHEME,privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true}}]);
 if(!resources.fallback())throw Error('没有完整角色资源，请运行安装器修复 / No complete character resources; run installer repair');
-mkdirSync(dataRoot,{recursive:true});
-app.setPath('userData',join(dataRoot,'chromium'));
-app.setPath('crashDumps',join(dataRoot,'crash-reports'));
+if(!bootFailure)mkdirSync(dataRoot,{recursive:true});
+app.setPath('userData',bootFailure?join(app.getPath('temp'),'AI-Buddy-Recovery-'+process.pid):join(dataRoot,'chromium'));
+app.setPath('crashDumps',bootFailure?join(app.getPath('temp'),'AI-Buddy-Recovery-'+process.pid,'crashes'):join(dataRoot,'crash-reports'));
 if(!app.requestSingleInstanceLock())app.exit(0);
+if(!bootFailure)try{commitInstallation(installationResolution);}catch(error){bootFailure=error;}
 for(const flag of ['disable-background-networking','disable-component-update','disable-domain-reliability','disable-sync'])app.commandLine.appendSwitch(flag);
 const auditPath=join(dataRoot,'runtime-audit.jsonl');
 const audit=value=>appendFileSync(auditPath,JSON.stringify({timestamp:new Date().toISOString(),...value})+'\n');
-const pipe=arg('pipe') || (resources.installation?.pipe?'\\\\.\\pipe\\'+resources.installation.pipe:null) || '\\\\.\\pipe\\whale-companion-v001';
+const pipe=installationResolution?.pipe || '\\\\.\\pipe\\whale-companion-v001';
+let dataImport=null,importBarrier=false,onboarding=false;
 let buttonObserver=null,nativeButtons=0;
 let pet,panel,tray,worker,game,provider,snapshot={indexing:true,sessions:[],active:[],todayUsage:{codex:{total:0},claude:{total:0}},workTotal:0},settings={},drag=null,lastWork=null,quitting=false,gestureMode=false,lastPetHit=false,ignoringMouse=true,petAssetsReady=false;
 const settingsStore=createSnapshotStorage(join(dataRoot,'settings.json'));
@@ -223,7 +241,7 @@ function openPanel(page='overview',focus=true) {
     brandWindow(panel);applyChrome();
     lockPageZoom(panel,error=>audit({type:'zoom-policy-error',message:error.message}));
     panel.setMenuBarVisibility(false);syncBrandIcons();panel.loadFile(join(build,'index.html'),{hash:page,...previewQuery,query:{...previewQuery.query,theme:resolvedTheme(settings.preferences,themeCharacter),petCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter))}});
-    panel.on('close',event=>{if(!quitting){event.preventDefault();petAuto();panel.hide();}});
+    panel.on('close',event=>{if(!quitting){event.preventDefault();if(onboarding){void shutdown();return;}petAuto();panel.hide();}});
     // Lets the panel release heavy media (action gallery decoders, stills) while hidden.
     for(const [name,visible] of [['hide',false],['show',true]])panel.on(name,()=>{if(panel&&!panel.isDestroyed())panel.webContents.send('panel:visibility',{visible});});
     panel.once('ready-to-show',()=>focus?panel.show():panel.showInactive());
@@ -277,8 +295,16 @@ async function manageResources(characterId){
 }
 ipcMain.handle('resources:status',()=>resources.status(true));
 ipcMain.handle('resources:manage',(_,id)=>manageResources(id));
+ipcMain.handle('data-import:state',()=>dataImport?.state()??{onboarding,phase:'idle',canCancel:false});
+ipcMain.handle('data-import:choose',()=>dataImport.choose());
+ipcMain.handle('data-import:preview',(_,args)=>dataImport.preview(args));
+ipcMain.handle('data-import:start',(_,args)=>dataImport.start(args));
+ipcMain.handle('data-import:cancel',async(_,args)=>{const value=await dataImport.cancel(args);if(onboarding&&!value.cancelling)setTimeout(()=>{void shutdown();},100);return value;});
+ipcMain.handle('data-import:create-new',()=>dataImport.createNew());
+ipcMain.handle('data-import:resume-work',()=>dataImport.resumeWork());
+function assertImportIdle(){if(importBarrier)throw Error('正在导入资料，请先完成或取消导入');}
 ipcMain.handle('chat:status',()=>provider.status());
-ipcMain.handle('chat:enabled',(_,enabled)=>{provider.setEnabled(enabled);audit({type:'chat-enabled',enabled:provider.enabled});return provider.status();});
+ipcMain.handle('chat:enabled',(_,enabled)=>{assertImportIdle();provider.setEnabled(enabled);audit({type:'chat-enabled',enabled:provider.enabled});return provider.status();});
 ipcMain.handle('models:get',()=>connectionView(provider));
 ipcMain.handle('models:save',(_,draft)=>saveConnection(provider,draft));
 ipcMain.handle('models:delete',(_,id)=>provider.remove(id));
@@ -293,10 +319,12 @@ ipcMain.handle('cg:activate',(_,id)=>cg.activate(id));
 ipcMain.handle('cg:enabled',(_,enabled)=>cg.setEnabled(enabled===true));
 ipcMain.handle('cg:list',async(_,draft)=>{const models=await cg.fetchModels(draft);if(draft.id)await cg.saveModels(draft.id,models);return models;});
 ipcMain.handle('cg:check',(_,draft)=>cg.test(draft));
-ipcMain.handle('cg:test-image',(_,draft)=>cg.testImage(draft));
+ipcMain.handle('cg:test-image',(_,draft)=>{assertImportIdle();return cg.testImage(draft);});
+ipcMain.handle('cg:resume',async(_,id)=>{assertImportIdle();try{return {ok:true,job:await cg.resume(id)};}catch(error){return {ok:false,error:error.message};}});
 ipcMain.handle('cg:image',(_,id)=>{const job=cg.job(id);if(!job?.assetRef)throw Error('CG 尚未完成');return {dataUrl:cg.readAsset(job.assetRef)};});
 ipcMain.handle('game:action',async(_,action,args)=>{
   if(typeof action!=='string')throw new Error('Invalid action');
+  if(importBarrier&&!['view','settings-get','companion-state','companion-memory-view','companion-life-list','cg-gallery','cg-data','cg-thumbnail','sprite-data','bg-data'].includes(action))assertImportIdle();
   if(!game)return {ok:false,code:'COMPANION_SAFE_MODE',error:'陪伴功能启动失败，已进入安全模式：'+(startupFailure?.message??'尚未就绪')};
   const dialog=provider.enabled&&['chat','side-story','side-story-free-reply','companion-group-send','companion-group-continue'].includes(action);
   if(dialog){gameRequests++;petEvent({kind:'dialog',active:true});}
@@ -361,7 +389,8 @@ const control=createLocalControlServer({
   onRequest:async request=>{
       let result;
       if(request.command==='snapshot')result={processId:process.pid,singleInstance:app.hasSingleInstanceLock(),snapshot,settings:settingsView(),petAction:petState,chat:{enabled:provider?.enabled || false,model:provider?.defaultModel},petBounds:pet?.getBounds(),petContentBounds:pet?.getContentBounds(),petVisible:pet?.isVisible(),petAssetsReady,petAlwaysOnTop:pet?.isAlwaysOnTop(),petInteraction:{gestureMode,lastPetHit,ignoringMouse,dragging:!!drag,...petInteraction()},displays:screen.getAllDisplays().map(d=>({workArea:d.workArea,scaleFactor:d.scaleFactor})),build,dataRoot};
-      else if(request.command==='installation-status')result={version:appVersion,build,dataRoot,processId:process.pid,ready:(!!game||!!startupFailure)&&petAssetsReady,safeMode:!!startupFailure,startupFailure,busy:!!(gameRequests||provider?.status().busy||cg?.status().busy),resources:resources.status()};
+      else if(request.command==='installation-status')result={version:appVersion,build,dataRoot,processId:process.pid,ready:(!!game||!!startupFailure)&&petAssetsReady,onboarding,safeMode:!!startupFailure,startupFailure,busy:!!(gameRequests||provider?.status().busy||cg?.status().busy),resources:resources.status()};
+      else if(request.command==='data-import-state')result=dataImport?.state();
       else if(request.command==='installation-quit'){if(request.expectedBuild!==build)result={ok:false,error:'Different installation'};else if(gameRequests||provider?.status().busy||cg?.status().busy)result={ok:false,busy:true};else{result={ok:true};setTimeout(()=>{void shutdown();},100);}}
       else if(request.command==='resources-status')result=resources.status(true);
       // One-time repairs: plan is read-only; apply needs the planId the user confirmed.
@@ -437,13 +466,25 @@ control.on('error',error=>{
 });
 
 async function shutdown() {
-  if(quitting)return;quitting=true;buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();provider?.close();await cg?.close();await game?.flushWorkLedger?.().catch(()=>{});game?.close();
+  if(quitting)return;quitting=true;dataImport?.close();buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();provider?.close();await cg?.close();await game?.flushWorkLedger?.().catch(()=>{});game?.close();
   if(worker){worker.postMessage({type:'close'});await Promise.race([new Promise(r=>{worker.once('exit',r);worker.on('message',m=>{if(m.type==='closed')r();});}),new Promise(r=>setTimeout(r,5000))]);}
   control.close();app.exit(0);
 }
 app.on('before-quit',event=>{if(!quitting){event.preventDefault();void shutdown();}});
 app.on('window-all-closed',()=>{});
 app.whenReady().then(async()=>{
+  if(recoveryDispatched){app.exit(0);return;}
+  if(bootFailure){await dialog.showMessageBox({type:'error',title:'AI Buddy · 存档恢复',message:bootFailure.message,detail:'没有创建新的业务存档。请恢复原存档目录或核对 local/installation-backups 中的记录后重试。',buttons:['关闭']});app.exit(1);return;}
+  onboarding=arg('data')===undefined&&!await hasBusinessData(dataRoot);
+  dataImport=createDataImportService({root,dataRoot,build,pipe,manager:resources.manager(),onboarding,
+   chooseSource:async()=>{if(arg('validation')==='1'&&arg('validation-import-source'))return arg('validation-import-source');const result=await dialog.showOpenDialog(panel??undefined,{title:'选择旧程序或实际存档目录',properties:['openDirectory']});return result.canceled?null:result.filePaths[0];},
+   onBarrier:value=>{importBarrier=value;},
+   onCreateNew:async()=>{writeFileSync(join(dataRoot,'profile-initialized.json'),JSON.stringify({version:1,createdAt:new Date().toISOString()}),{flag:'wx'});setTimeout(()=>{app.relaunch({args:process.argv.slice(1).filter(a=>!a.startsWith('--data-import-verify='))});void shutdown();},150);},
+  });
+  if(onboarding){
+   settings.preferences=normalizePreferences({language:app.getLocale().startsWith('zh')?'zh-CN':'en'});setLocale(settings.preferences.language);
+   control.listen(pipe);openPanel('data-import',false);return;
+  }
   buttonObserver=createPetButtonObserver({path:join(build,'pet-buttons.exe'),enabled:process.platform==='win32'&&arg('cursor')!=='manual',onState:observePetButtons,onError:error=>{audit({type:'pet-input-helper-error',message:error.message});if(drag)cancelGesture('button-observer-error');}});
   settings=await readJson(settingsStore,{});
   const netSession=session.fromPartition('whale-memory');
@@ -464,13 +505,14 @@ app.whenReady().then(async()=>{
   await provider.ready;
   quotas=new QuotaService({dataRoot,home,crypto:safeStorage,binary,onChange:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('quotas:update',value);}});await quotas.ready;quotas.start();
   const cgUsage=usage=>{appendFileSync(join(dataRoot,'cg-usage.jsonl'),JSON.stringify({timestamp:new Date().toISOString(),...usage})+'\n');worker?.postMessage({type:'refresh'});};
-  cg=new CgService({resourceCheck:ids=>resources.require(ids.filter(validPetCharacter)),themePlanner:new CgThemePlanner(provider,()=>settings.preferences?.language|| (app.getLocale().startsWith('zh')?'zh-CN':'en')),codex:new CodexImageProvider({binary,defaultModel:model,dataRoot,onUsage:cgUsage,audit}),dataRoot,crypto:safeStorage,imageCodec:createCgCodec(nativeImage),onUsage:cgUsage,onActivity:internalActivity,onChange:()=>{broadcastSettings();if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',{});},audit,referenceResolver:createCharacterReferenceResolver(build,ref=>cg.readAsset(ref))});
+  cg=new CgService({automaticWorkAllowed:()=>!importBarrier&&dataImport.automaticWorkAllowed(),resourceCheck:ids=>resources.require(ids.filter(validPetCharacter)),themePlanner:new CgThemePlanner(provider,()=>settings.preferences?.language|| (app.getLocale().startsWith('zh')?'zh-CN':'en')),codex:new CodexImageProvider({binary,defaultModel:model,dataRoot,onUsage:cgUsage,audit}),dataRoot,crypto:safeStorage,imageCodec:createCgCodec(nativeImage),onUsage:cgUsage,onActivity:internalActivity,onChange:()=>{broadcastSettings();if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',{});},audit,referenceResolver:createCharacterReferenceResolver(build,ref=>cg.readAsset(ref))});
   await cg.ready;
   let legacyGameSettings={};
   try{
-  game=await createGalgame({dataRoot,provider,model,cg,resources,audit,imageConverter:rasterizeImage,onActivity:internalActivity,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value);}});
+  game=await createGalgame({dataRoot,provider,model,cg,resources,audit,imageConverter:rasterizeImage,onActivity:internalActivity,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,automaticWorkAllowed:()=>!importBarrier&&dataImport.automaticWorkAllowed(),getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value);}});
   cg.start();
   legacyGameSettings=await game.action('settings-get');
+  markInstallationInitialized(installationResolution,dataRoot);
   }catch(error){try{game?.close();}catch{}game=null;noteStartupFailure('companion',error);}
   const firstPreferences=!settings.preferences||!Object.keys(settings.preferences).length;
   settings.preferences=normalizePreferences(settings.preferences,legacyGameSettings.petEnabled!==false);
