@@ -1,6 +1,6 @@
 // Runs the actual app with an isolated save and synthetic events, no model calls.
 const {app,BrowserWindow}=require('electron'),fs=require('node:fs'),{join,resolve}=require('node:path'),{pathToFileURL}=require('node:url'),assert=require('node:assert/strict');
-const root=resolve(__dirname,'..'),pointer=JSON.parse(fs.readFileSync(join(root,'local/candidate-build.json'))),build=process.argv.find(x=>x.startsWith('--build='))?.slice(8)||pointer.path,partial=process.argv.includes('--partial'),dir=join(root,'local/buddy-180/native-'+Date.now()),pipe='\\\\.\\pipe\\buddy-pets-179-'+process.pid;
+const root=resolve(__dirname,'..'),build=resolve(process.argv.find(x=>x.startsWith('--build='))?.slice(8)||JSON.parse(fs.readFileSync(join(root,'local/candidate-build.json'),'utf8')).path),partial=process.argv.includes('--partial'),dir=join(root,'local/buddy-180/native-'+Date.now()),pipe='\\\\.\\pipe\\buddy-pets-179-'+process.pid;
 fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(join(dir,'roots.json'),'[]');process.argv.push('--data='+join(dir,'profile'),'--roots='+join(dir,'roots.json'),'--pipe='+pipe,'--cursor=manual');app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.on('browser-window-created',(_,w)=>{w.setOpacity(0);w.setSkipTaskbar(true);});
 const pause=ms=>new Promise(r=>setTimeout(r,ms));async function until(fn,label,timeout=45000){const end=Date.now()+timeout;while(Date.now()<end){const value=await fn();if(value)return value;await pause(70)}throw Error('Timed out: '+label)}
@@ -15,8 +15,10 @@ app.whenReady().then(async()=>{let q;const report={build,partial,modelCalls:0,ca
  await until(async()=>(await state())?.characterId==='claude','fixed Claude');
  await until(()=>ui('!!document.querySelector("[data-gallery-character]")'),'gallery');
  await ui(`(()=>{const s=document.querySelector('[data-gallery-character]');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,'claude');s.dispatchEvent(new Event('change',{bubbles:true}))})()`);
- await until(()=>ui('document.querySelectorAll("[data-action-card]").length===18'),'18 cards');
- await pause(1000);report.cases.push({name:'fixed and 18 gallery cards',state:await state()});
+ await until(()=>ui('document.querySelectorAll("[data-action-card]").length===24'),'24 daily and interaction cards');
+ const cards=await ui('[...document.querySelectorAll("[data-action-card]")].map(e=>e.dataset.actionCard)');
+ assert.equal(new Set(cards).size,24);for(const id of ['sleep-enter','sleep-loop','wake','throw-start','throw-loop','land-recover'])assert(cards.includes(id),'missing interaction card '+id);
+ await pause(1000);report.cases.push({name:'fixed and 24 distinct daily/interaction gallery cards',cards,state:await state()});
  for(const width of [900,1180,1600,1920]){panel.setContentSize(width,950);await pause(200);assert(await ui('document.documentElement.scrollWidth<=innerWidth+1'));const file=join(dir,'gallery-'+width+'.png');fs.writeFileSync(file,(await panel.webContents.capturePage()).toPNG());report.screenshots.push(file)}
  await q('pet-play',{action:{id:'wave',characterId:'deepseek',durationMs:700}});
  await until(async()=>{const s=await state();return s.characterId==='deepseek'&&s.manual},'temporary DeepSeek');
@@ -26,11 +28,22 @@ app.whenReady().then(async()=>{let q;const report={build,partial,modelCalls:0,ca
  await until(async()=>(await state()).feedback?.eventId==='178-finish','completion starts');const started=await state();
  await q('settings-set',{patch:{petFixedCharacter:'deepseek'}});await pause(600);assert.equal((await state()).characterId,'claude');assert.equal((await state()).feedback.text,'测试完成');
  assert.ok(Math.abs(started.feedback.duration-2*started.cycleMs)<1);await until(async()=>(await state()).characterId==='deepseek','completion then switch');report.cases.push({name:'two cycles and feedback-safe switch',duration:started.feedback.duration});
- // Drag blocks both a role switch and queued feedback; release runs the latest pet.
- pet.webContents.send('pet:action',{kind:'drag',active:true,direction:-1});await pause(100);
- await q('settings-set',{patch:{petFixedCharacter:'claude'}});pet.webContents.send('pet:action',{kind:'feedback',value:{id:'fail',eventId:'178-drag-fail',source:'failed',text:'测试错误',cycles:1}});await pause(500);assert.equal((await state()).characterId,'deepseek');
- pet.webContents.send('pet:action',{kind:'drag',active:false});await until(async()=>(await state()).characterId==='claude','switch after drag');await until(async()=>(await state()).feedback?.eventId==='178-drag-fail','queued error');report.cases.push({name:'drag retains pending feedback'});
+ // Enter the real main-process gesture handlers. A renderer-only drag event
+ // does not create the gesture which settings changes are required to cancel.
+ const beginDrag=async id=>{const s=await q('snapshot'),b=s.petContentBounds,x=b.x+b.width/2,y=b.y+b.height/2;await ev(`window.whale.dragStart(${JSON.stringify({gestureId:id,button:0,x,y})});true`);await until(async()=>(await q('snapshot')).petInteraction.gestureId===id,'main-process drag starts');await ev(`window.whale.dragMove(${JSON.stringify({gestureId:id,x:x-40,y})});true`);await until(async()=>{const s=await q('snapshot');return s.petInteraction.dragging&&s.petInteraction.motion.mode==='dragging'},'main-process drag moves');};
+ await beginDrag('display-feedback');
+ pet.webContents.send('pet:action',{kind:'feedback',value:{id:'fail',eventId:'178-drag-fail',source:'failed',text:'测试错误',cycles:1}});
+ await until(async()=>(await state()).queuedFeedback>0,'error queues during drag');
+ await q('settings-set',{patch:{animationSpeed:1}});await pause(500);assert.equal((await state()).characterId,'deepseek');assert.equal((await q('snapshot')).petInteraction.gestureId,'display-feedback');assert.equal((await state()).feedback,null);
+ await ev(`window.whale.dragEnd({gestureId:'display-feedback',button:0})`);await until(async()=>(await state()).feedback?.eventId==='178-drag-fail','queued error');report.cases.push({name:'real drag retains pending feedback; unrelated setting keeps gesture; release resumes error'});
  await until(async()=>(await state()).feedback?.eventId!=='178-drag-fail','error ends');
+ await beginDrag('display-character-change');
+ await q('settings-set',{patch:{petFixedCharacter:'claude'}});
+ await until(async()=>{const s=await q('snapshot');return !s.petInteraction.dragging&&s.petInteraction.gestureId===null&&s.petInteraction.motion.mode==='rest'},'character change cancels gesture');
+ await until(async()=>(await state()).characterId==='claude','latest character after gesture cancellation');
+ const cancelled=await q('snapshot');assert.deepEqual(cancelled.petInteraction.motion.velocity,{x:0,y:0});assert.equal(cancelled.petInteraction.motion.pull,null);
+ assert.equal((await ev(`window.whale.dragEnd({gestureId:'display-character-change',button:0})`)).ignored,true);
+ report.cases.push({name:'character change cancels real drag, clears motion, switches to Claude and ignores stale release'});
  await ui(`window.whale.storyFeedback({characterId:'qwen',emotion:'cheerful',messageId:'178-qwen',text:'这是原回复，没有角色前缀。'})`);
  await until(async()=>(await state()).feedback?.eventId==='story:178-qwen','cross-character emotion');const chat=await state();assert.equal(chat.characterId,'claude');assert.equal(chat.id,'emotion-cheerful');assert.equal(chat.feedback.text,'这是原回复，没有角色前缀。');report.cases.push({name:'fixed Claude responds to Qwen without name prefix'});
  await until(async()=>(await state()).feedback?.eventId!=='story:178-qwen','chat ends');
@@ -63,4 +76,4 @@ app.whenReady().then(async()=>{let q;const report={build,partial,modelCalls:0,ca
  await ui(`window.whale.game('settings-set',{characterMode:'manual',characterId:'qwen'})`);await pause(180);assert.equal((await state()).characterId,'claude');
  report.cases.push({name:'eleven immediate Galgame selections and four desktop scales',ok:true});
  report.rendererErrors=(await q('page-info')).rendererErrors;assert.deepEqual(report.rendererErrors,[]);report.final=await q('snapshot');report.ok=true;
- }catch(e){report.ok=false;report.error=e.stack;}finally{fs.writeFileSync(join(dir,'result.json'),JSON.stringify(report,null,2));fs.writeFileSync(join(root,'local/buddy-180/native-latest.json'),JSON.stringify({path:join(dir,'result.json')}));console.log(JSON.stringify({ok:report.ok,path:join(dir,'result.json'),error:report.error}));await q?.('quit').catch(()=>{});app.exit(report.ok?0:1)}});
+ }catch(e){report.ok=false;report.error=e.stack;}finally{fs.writeFileSync(join(dir,'result.json'),JSON.stringify(report,null,2));fs.writeFileSync(join(root,'local/buddy-180/native-latest.json'),JSON.stringify({path:join(dir,'result.json')}));try{report.shutdown=await q?.('installation-quit',{expectedBuild:build});}catch(e){report.ok=false;report.shutdownError=e.message;}fs.writeFileSync(join(dir,'result.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({ok:report.ok,path:join(dir,'result.json'),error:report.error,shutdown:report.shutdown,shutdownError:report.shutdownError}));}});
