@@ -6,7 +6,9 @@ export function interactionPresentation(value,{now=Date.now(),speed=.75,hasClip=
   let id=null,at=0,hold=false,staticFrame=null,playing=true;
   if(['pressed','dragging','flying','landing','charging'].includes(motion.mode)){
     hold=true;at=motionElapsed;
-    if(motion.mode==='flying'){id=at<cycle('throw-start')?'throw-start':'throw-loop';if(id==='throw-loop')at-=cycle('throw-start');}
+    // A thrown pet is already off the ground: the hold shows throw-loop frame 0, and the
+    // flight continues that loop from there. The standing throw-start would snap back to the floor.
+    if(motion.mode==='flying')id='throw-loop';
     else if(motion.button===0&&['pressed','dragging'].includes(motion.mode)){id=motion.mode==='pressed'?'idle':motion.walkDirection<0?'move-left':'move-right';}
     else if(['pressed','dragging','charging'].includes(motion.mode)){id='throw-loop';at=0;staticFrame=0;playing=false;}
     else if(motion.mode==='landing'){id='land-recover';at=Math.min(at,cycle(id)-.01);}
@@ -17,12 +19,11 @@ export function interactionPresentation(value,{now=Date.now(),speed=.75,hasClip=
   return {id:hasClip(id)?id:null,elapsed:at,hold,staticFrame,playing,readyScope:['flying','landing'].includes(motion.mode)?'motion':'sleep',animationEpoch:['flying','landing'].includes(motion.mode)?motion.animationEpoch:value.animationEpoch,animationWaiting:['flying','landing'].includes(motion.mode)?motion.animationWaiting:value.animationWaiting,missing:id&&!hasClip(id)?id:null,asleep:value.phase==='asleep',motion:motion.mode};
 }
 
-// Clips that can start next, so they are decoded before the switch: a right-button
-// hold may be released into a throw, and a throw ends in its flight loop and a landing.
+// Clips that can start next, so they are decoded before the switch: a flight ends in a
+// landing. (The hold before a throw already decodes throw-loop, which the flight continues.)
 // The same frozen list is returned for the same situation.
-const NO_PRELOADS=Object.freeze([]),HELD_PRELOADS=Object.freeze(['throw-start']),FLIGHT_PRELOADS=Object.freeze(['throw-loop','land-recover']);
+const NO_PRELOADS=Object.freeze([]),FLIGHT_PRELOADS=Object.freeze(['land-recover']);
 export function interactionPreloads(motion){
-  if(motion?.button===2&&['pressed','dragging','charging'].includes(motion.mode))return HELD_PRELOADS;
   return motion?.mode==='flying'?FLIGHT_PRELOADS:NO_PRELOADS;
 }
 

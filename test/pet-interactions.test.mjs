@@ -14,7 +14,7 @@ test('external index, deduplicated rescans, counter corrections and new-source b
 });
 test('interaction view follows physical phases, retains feedback and identifies missing media explicitly',()=>{
   const presentation=interactionPresentation({phase:'asleep',elapsedMs:100,at:100,motion:{mode:'rest'}},{now:200,hasClip:()=>false});assert.equal(presentation.missing,'sleep-loop');assert.equal(presentation.id,null);assert.equal(presentation.hold,true);
-  const flight=interactionPresentation({phase:'awake',elapsedMs:0,at:100,motion:{mode:'flying',elapsedMs:6000}},{now:100,speed:1,hasClip:()=>true,cycle:()=>4000});assert.equal(flight.id,'throw-loop');assert.equal(flight.elapsed,2000);
+  const flight=interactionPresentation({phase:'awake',elapsedMs:0,at:100,motion:{mode:'flying',elapsedMs:6000}},{now:100,speed:1,hasClip:()=>true,cycle:()=>4000});assert.equal(flight.id,'throw-loop');assert.equal(flight.elapsed,6000);
   assert.match(gloveCursor(),/data:image\/svg\+xml/);assert.notEqual(gloveCursor(),gloveCursor('closed'));
 });
 test('sleep boundary, real request lifecycle, independent wake grace and new-process baseline',()=>{
