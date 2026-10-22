@@ -14,6 +14,7 @@ import {TOOL_NAMES,PROVIDER_NAMES,providerLabel,providerFor} from './token-types
 import {ApiSettings} from './api-settings.mjs';
 import {AnalyticsPage} from './analytics-ui.mjs';
 import {APP_ICON_PNG} from './app-brand.mjs';
+import {DataImportPanel} from './data-import-ui.mjs';
 // Keep native caption controls and their safe area outside the scrolling app.
 const overlay=navigator.windowControlsOverlay;
 function syncWindowChrome(){document.documentElement.classList.toggle('desktop-titlebar',!!overlay?.visible);}
@@ -46,6 +47,7 @@ function App(){
  const pet=settings?.effectivePetCharacter||settings?.petCharacterId||'deepseek',head='./'+themeAsset(pet,'head.webp');
  let content;
  if(['overview','history','projects'].includes(page))content=h(AnalyticsPage,{page,settings,revision:data?.usageRevision,onManage:manage,onSaved:setSettings,monitor:data,onPage:setPage,onAttribution:id=>{setAttributionSource(id);setPage('tokens');}});
+ else if(page==='data-import')content=h(DataImportPanel,{onComplete:()=>location.reload(),onClose:()=>setPage('settings')});
  else if(page==='settings')content=settings?h(GeneralSettings,{view:settings,onSaved:setSettings,onPage:setPage,onManage:manage}):h('p',{className:'settings-error',role:'alert'},settingsError||t("正在读取设置…"));
  else if(page==='tokens')content=h(TokenSettings,{sourceId:attributionSource,timeZone:settings?.preferences.statisticsTimeZone});
  else if(page==='api')content=h(ApiSettings,{view:settings,tab:apiTab,onTab:setApiTab});
@@ -59,8 +61,11 @@ function App(){
      !actionsPage&&h('div',{className:'sidebar-bottom'},h('b',null,h('span',{className:'offline-dot'}),t("离线监控")),h('small',null,t("本机数据 · 零模型调用")))),
    h('main',null,!actionsPage&&h('header',null,h('span',null,t("你的本地工作空间")),h('div',null,h(StatusPill,{tone:data?.indexing?'busy':'ok','data-live-pill':true},data?.indexing?(data.indexPhase==='checking'?t("核对新增记录…"):t("整理历史记录…")):t("监控中")),h('span',{className:'header-date'},data?.today||''))),
      h('div',{className:'content'},settings?.safeMode&&!['safe-mode','galgame'].includes(page)&&h('div',{className:'index-banner safe-mode-banner',role:'status'},h('span',null,t("陪伴功能已停用（安全模式），桌宠和用量监控照常可用。")),h('button',{onClick:()=>setPage('safe-mode')},t("查看原因"))),!hideDiagnostics&&data?.indexing&&h('div',{className:'index-banner'},(data.indexPhase==='checking'?t("正在核对新增记录 · 已检查 "):t("正在建立本地历史索引 · 已读取 "))+(data.progress?.scanned||0)+' / '+(data.progress?.total||'—')+t(" 个文件。完成前用量为部分结果。")),
-       !hideDiagnostics&&data?.missingRequests>0&&h('p',{className:'settings-note'},data.missingRequests+t(" 条请求缺少完整用量，合计为已记录部分。")),!hideDiagnostics&&!data&&h('p',null,t("正在读取本地记录…")),content,
+       page==='tokens'&&data?.missingRequests>0&&h('p',{className:'settings-note'},data.missingRequests+t(" 条请求缺少完整用量，合计为已记录部分。")),!hideDiagnostics&&!data&&h('p',null,t("正在读取本地记录…")),content,
        !hideDiagnostics&&data?.errors?.length>0&&h('details',{className:'read-errors'},h('summary',null,data.errors.length+t(" 个日志读取问题")),...data.errors.slice(0,10).map(e=>h('p',{key:e.path},e.path+' · '+e.message)))))));
 }
-createRoot(document.getElementById('app')).render(h(App));
+// A first launch must not mount App's settings/game/monitor requests until the
+// user has selected a profile. The main process chooses this hash before load.
+function DataImportWelcome(){return h('main',{className:'data-import-welcome'},h(DataImportPanel,{onboarding:true,onComplete:()=>{location.hash='overview';location.reload();}}));}
+createRoot(document.getElementById('app')).render(h(location.hash.slice(1)==='data-import'?DataImportWelcome:App));
 

@@ -14,12 +14,12 @@
 
 [简体中文](README.md) · **English**
 
-<!-- ai-buddy-source-version: 1.9.0 -->
-**Current release: [v1.9.0](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.0)** · This release adds group chat, character cards and personas ("My personas"), a chat connection and effort for each character, plus long-term memory, personality growth and life archives. You can pat the desktop pet, walk her around or throw her, and she falls asleep when things are quiet. The whole interface was redesigned, and the 11 themes take their colors from the matching portraits. The 30fps and 60fps editions have the same features. See the [1.9.0 release notes](docs/RELEASE-1.9.0.md) and [validation record](docs/VALIDATION-1.9.0.md).
+<!-- ai-buddy-source-version: 1.9.1 -->
+**Current release: [v1.9.1](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.1)** · This release adds group chat, character cards and personas ("My personas"), a chat connection and effort for each character, plus long-term memory, personality growth and life archives. You can pat the desktop pet, walk her around or throw her, and she falls asleep when things are quiet. The whole interface was redesigned, and the 11 themes take their colors from the matching portraits. The 30fps and 60fps editions have the same features. See the [1.9.0 release notes](docs/RELEASE-1.9.0.md) and [validation record](docs/VALIDATION-1.9.0.md).
 
 ## Online installer (recommended)
 
-[Download the Windows x64 installer](https://github.com/lXiaoSel1/ai-buddy/releases/download/v1.9.0/AI-Buddy-Setup-1.9.0-win-x64.exe), choose 30fps / 60fps and characters, then it downloads, verifies and installs. It supports adding characters later and offline import. To upgrade from 1.8.0, use this installer and pick the same folder. [Installation guide](docs/INSTALLER.md).
+[Download the Windows x64 installer](https://github.com/lXiaoSel1/ai-buddy/releases/download/v1.9.1/AI-Buddy-Setup-1.9.1-win-x64.exe), choose 30fps / 60fps and characters, then it downloads, verifies and installs. It supports adding characters later and offline import. To upgrade from 1.8.0, use this installer and pick the same folder. [Installation guide](docs/INSTALLER.md).
 
 The installer is about 50 MiB. Downloading every character takes about **1.66 GiB** at 30fps or **2.33 GiB** at 60fps; picking fewer characters downloads less. The complete portable ZIP, split into parts, is the offline alternative; see [Install](#install).
 
@@ -206,27 +206,27 @@ Requires Windows 10/11 x64. Use the online installer (recommended) or download t
 
 ### Online installer (recommended)
 
-1. Download `AI-Buddy-Setup-1.9.0-win-x64.exe` (about 50 MiB) from the [v1.9.0 page](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.0). It includes its own .NET runtime.
+1. Download `AI-Buddy-Setup-1.9.1-win-x64.exe` (about 50 MiB) from the [v1.9.1 page](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.1). It includes its own .NET runtime.
 2. Choose the installation folder (default `%LOCALAPPDATA%\Programs\AI Buddy`), 30fps or 60fps, the characters to install and the initial character. The first-run defaults are 30fps, every character and DeepSeek.
-3. Click install. The installer downloads from the pinned v1.9.0 release and checks SHA-256 for every package and file; every character takes about 1.66 GiB at 30fps or 2.33 GiB at 60fps. If a download is interrupted, run the same installer again with the same folder to resume.
+3. Click install. The installer downloads from the pinned v1.9.1 release and checks SHA-256 for every package and file; every character takes about 1.66 GiB at 30fps or 2.33 GiB at 60fps. If a download is interrupted, run the same installer again with the same folder to resume.
 4. Desktop and Start menu shortcuts are created by default. The installer does not turn on online chat, automatic CG, startup registration or background updates.
 
-**Upgrading from 1.8.0**: the 1.8.0 installer is pinned to its own manifest and cannot find 1.9.0. Download the 1.9.0 installer and choose the existing installation folder. It takes over that folder and keeps your personal data, custom data folder, chat connections and character settings; a complete portable folder can be taken over the same way. Do not copy an old profile over the new folder.
+**Upgrading from 1.8.0**: the 1.8.0 installer is pinned to its own manifest and cannot find 1.9.1. Download the 1.9.1 installer and choose the existing installation folder. It takes over that folder and keeps your personal data, custom data folder, chat connections and character settings; a complete portable folder can be taken over the same way. Do not copy an old profile over the new folder.
 
 ### Portable split archive (offline)
 
 1. From the same page, download every part of your edition plus the merge tools into one folder:
-    - 30fps: `AI-Buddy-1.9.0-Windows-x64-30fps.zip.part01`, `.part02`, `AI-Buddy-1.9.0-Windows-x64-30fps.zip.parts.json`, `Combine-AI-Buddy-1.9.0.ps1` and `Combine-AI-Buddy-1.9.0-30fps.cmd`.
-    - 60fps: `AI-Buddy-1.9.0-Windows-x64-60fps.zip.part01` to `.part03`, the matching `.zip.parts.json`, `Combine-AI-Buddy-1.9.0.ps1` and `Combine-AI-Buddy-1.9.0-60fps.cmd`.
+    - 30fps: `AI-Buddy-1.9.1-Windows-x64-30fps.zip.part01`, `.part02`, `AI-Buddy-1.9.1-Windows-x64-30fps.zip.parts.json`, `Combine-AI-Buddy-1.9.1.ps1` and `Combine-AI-Buddy-1.9.1-30fps.cmd`.
+    - 60fps: `AI-Buddy-1.9.1-Windows-x64-60fps.zip.part01` to `.part03`, the matching `.zip.parts.json`, `Combine-AI-Buddy-1.9.1.ps1` and `Combine-AI-Buddy-1.9.1-60fps.cmd`.
 2. Double-click the matching `.cmd`. It verifies each part, combines them and verifies the complete ZIP, using only the built-in Windows PowerShell. Do not extract an individual part. The combined ZIP is about 1.70 GiB (30fps) or 2.37 GiB (60fps).
 3. Extract the combined ZIP to a writable location, open the `AI-Buddy` folder and double-click **AI Buddy.exe** in its root. `AI Buddy.vbs` and `AI Buddy.cmd` are compatibility launchers that start the same program.
 
-Another offline route: put `install-manifest-1.9.0.json` and the resource ZIPs you need in one folder and select it as the installer's "Offline resource folder"; the same checks apply. The 1.7.10 offline packages remain on their original release page.
+Another offline route: put `install-manifest-1.9.1.json` and the resource ZIPs you need in one folder and select it as the installer's "Offline resource folder"; the same checks apply. The 1.7.10 offline packages remain on their original release page.
 
 Notes:
 
 - Do not run it from inside the ZIP or copy only the executable; keep the folder structure.
-- Neither the installer nor the app is commercially code-signed, so Windows may report an unknown publisher. Check the files against `SHA256SUMS-1.9.0.txt` first if you like.
+- Neither the installer nor the app is commercially code-signed, so Windows may report an unknown publisher. Check the files against `SHA256SUMS-1.9.1.txt` first if you like.
 - On first launch it looks for common log folders under the current user. No AI tools installed? The companion features still work offline.
 - The automatic GitHub **Source code** archives are source-only and do not run.
 - This repository and official releases are public. Release packages exclude the developer's saves, connection secrets and local logs.
@@ -238,7 +238,7 @@ Folder layout after installation:
 ├─ AI Buddy.exe / AI Buddy.vbs / AI Buddy.cmd / Start-AI-Buddy.ps1   launchers
 ├─ builds/<version>/                       app code, motions and character resources
 ├─ runtime/AI-Buddy-<version>/             Electron runtime
-├─ maintenance/1.9.0/AI Buddy Setup.exe    maintenance tool
+├─ maintenance/1.9.1/AI Buddy Setup.exe    maintenance tool
 ├─ local/current-build.json                current version pointer
 ├─ local/installation.json                 installed edition and characters
 ├─ local/data-v003/                        your data, created on first run

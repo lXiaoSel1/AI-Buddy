@@ -4,7 +4,7 @@ import {motionRenderer,prepareCharacterRenderer,adoptCharacterRenderer} from './
 import {currentPetCharacter,CHARACTER_SEQUENCES} from './frame-sequence.mjs';
 import {resolvePetCharacter} from './pet-characters.mjs';
 import {PetCharacterSwitch} from './pet-character-switch.mjs';
-import {interactionPresentation} from './pet-interaction-view.mjs';
+import {interactionPresentation,interactionPreloads} from './pet-interaction-view.mjs';
 import {PetGloveController,gloveCursorV2,preloadGloveArtwork} from './pet-glove.mjs';
 import {petPresentation,petActionPresentation} from './pet-presentation.mjs';
 import {APP_NAME} from './app-brand.mjs';
@@ -23,6 +23,7 @@ controller.holdFeedback=true;
 let presentedBubble=null;
 let pixels=null,mode='idle',row=0,col=0,down=false,lastOpaque=null,bodyOpaque=false,interaction=null,bubbleTimer,frameTimer=null,dialogActive=false,lastCursor=null,lastBackground='',lastState='',lastSnapshot={},badgeHeld=false,badgeKey='',bubbleOpen=null,notice=false;
 let gestureId=null,capturedPointer=null,readySent=null,ownerButton=null,releaseButton=null,chordRequest=null,suppressedButtons=0,observedButtons=0;
+let preloadIds=null,preloadRenderer=null;
 let currentSample=actionSample('idle',0);
 let geometry=null;
 function petGeometry(){if(!geometry)geometry={sprite:sprite.getBoundingClientRect(),badge:badge.getBoundingClientRect()};return geometry;}
@@ -135,6 +136,9 @@ function render(){
   if(background!==lastBackground){sprite.style.backgroundPosition=background;lastBackground=background;}
   motionRenderer.draw(surface,pose);
   currentSample=motionRenderer.displayedSample?.(surface)??pose;
+  // After draw, so a clip that just started keeps the decoder it was preloaded into.
+  const preloads=interaction?.characterId===currentPetCharacter()&&!reducedMotion.matches?interactionPreloads(interaction.motion):interactionPreloads(null);
+  if(preloads!==preloadIds||motionRenderer!==preloadRenderer){preloadIds=preloads;preloadRenderer=motionRenderer;motionRenderer.preload?.(preloads.map(id=>motionRenderer.sequences?.[id]).filter(Boolean));}
   if(interactionView?.animationWaiting&&!state.manual&&interaction.characterId===currentPetCharacter()){
     const id=interactionView.id,key=[currentPetCharacter(),interactionView.readyScope,interactionView.animationEpoch,id].join(':');
     motionRenderer.isReadyFor?.(id,0); // Also enforces the bounded decoder timeout.

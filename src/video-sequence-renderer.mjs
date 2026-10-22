@@ -24,7 +24,7 @@ export function directionContentRect(clip,size,index){
 export class VideoSequenceRenderer{
  constructor(fallback,{sequences=FRAME_SEQUENCES,maxStaticFrames=64,staticConcurrency=2,directionPrefetch=12,directionLookahead=40,directionBudgetBytes=128*1024*1024,directionFallback=15,warmBatch=4}={}){
   this.fallback=fallback;this.sequences=sequences;this.fullFrameSequences=true;this.maxStaticFrames=maxStaticFrames;
-  this.targets=new Map();this.prepared=new Map();this.stills=new Map();this.pending=new Map();this.errors=new Map();this.serial=0;this.targetSerial=0;this.videoDraws=0;this.seekCount=0;
+  this.targets=new Map();this.prepared=new Map();this.preloads=new Set();this.stills=new Map();this.pending=new Map();this.errors=new Map();this.serial=0;this.targetSerial=0;this.videoDraws=0;this.seekCount=0;
   this.staticQueue=[];this.staticJobs=new Map();this.staticActive=0;this.staticEpoch=0;this.staticConcurrency=Math.max(1,staticConcurrency);this.directionPrefetch=Math.min(directionPrefetch,Math.floor((maxStaticFrames-1)/2));
   this.directionLookahead=Math.max(this.directionPrefetch,Math.min(directionLookahead,maxStaticFrames-warmBatch-8));this.directionBudgetBytes=directionBudgetBytes;this.directionFallback=directionFallback;this.warmBatch=warmBatch;
   this.directions=new Map();this.directionBytes=0;this.directionApprox=0;this.directionMisses=0;this.directionLoads=0;
@@ -155,7 +155,16 @@ export class VideoSequenceRenderer{
   video.src=clip.video.src;video.load();void this.still(clip,0).catch(()=>{});return s;
  }
  closeSlot(s){if(!s||s.closed)return;s.closed=true;if(s.callback!==null)s.video.cancelVideoFrameCallback?.(s.callback);s.video.pause();s.video.removeAttribute('src');s.video.load();}
- prepare(clip){const key=this.resource(clip);if(!this.prepared.has(key)){for(const [old,s] of this.prepared){this.closeSlot(s);this.prepared.delete(old);}this.prepared.set(key,this.createSlot(clip));}return this.prepared.get(key);}
+ prepare(clip){const key=this.resource(clip);if(!this.prepared.has(key)){for(const [old,s] of this.prepared)if(!this.preloads.has(old)){this.closeSlot(s);this.prepared.delete(old);}this.prepared.set(key,this.createSlot(clip));}return this.prepared.get(key);}
+ // Clips that may start next keep a loaded decoder beside the single prepare() slot, so
+ // the switch draws a decoded frame at once. Each call replaces the list; an empty list
+ // gives those decoders back. A clip already shown on a target is not loaded twice.
+ preload(clips){
+  const wanted=new Map(clips.map(c=>[this.resource(c),c])),shown=new Set([...this.targets.values()].map(s=>s.resource));
+  for(const [key,s] of this.prepared)if(this.preloads.has(key)&&!wanted.has(key)){this.closeSlot(s);this.prepared.delete(key);}
+  this.preloads=new Set(wanted.keys());
+  for(const [key,clip] of wanted)if(!this.prepared.has(key)&&!shown.has(key))this.prepared.set(key,this.createSlot(clip));
+ }
  isReadyFor(id,elapsed,{reducedMotion=false}={}){
   const c=this.sequences[id];if(!c)return true;
   if(reducedMotion){const index=c.emotionPeakFrame??0,key=this.resource(c)+'/'+index;void this.still(c,index).catch(()=>{});return this.stills.has(key);}
@@ -226,7 +235,7 @@ export class VideoSequenceRenderer{
  isAdvancing(target){const s=this.targets.get(target);return !!(s?.slot?.ready&&!s.slot.seekPending&&!s.slot.video.paused);}
  targetDraws(target){return this.targets.get(target)?.slot?.serial??0;}
  invalidate(target){const s=this.targets.get(target);if(s){s.drawKey=null;s.alpha=null;}this.fallback.invalidate(target);}
- release(target){const s=this.targets.get(target);if(s)this.closeSlot(s.slot);this.targets.delete(target);this.fallback.release(target);if(!this.targets.size){for(const s of this.prepared.values())this.closeSlot(s);this.prepared.clear();for(const e of this.stills.values())e.image.src='';this.stills.clear();for(const [k,e] of [...this.directions])this.dropDirection(k,e);this.directionBytes=0;this.staticEpoch++;for(const job of this.staticQueue){this.pending.delete(job.key);this.staticJobs.delete(job.key);job.done(null);}this.staticQueue=[];}this.pruneStaticQueue();this.trimStills();this.trimDirections();}
+ release(target){const s=this.targets.get(target);if(s)this.closeSlot(s.slot);this.targets.delete(target);this.fallback.release(target);if(!this.targets.size){for(const s of this.prepared.values())this.closeSlot(s);this.prepared.clear();this.preloads.clear();for(const e of this.stills.values())e.image.src='';this.stills.clear();for(const [k,e] of [...this.directions])this.dropDirection(k,e);this.directionBytes=0;this.staticEpoch++;for(const job of this.staticQueue){this.pending.delete(job.key);this.staticJobs.delete(job.key);job.done(null);}this.staticQueue=[];}this.pruneStaticQueue();this.trimStills();this.trimDirections();}
  dispose(){for(const target of [...this.targets.keys()])this.release(target);this.release(null);}
  inspect(){return {backend:this.backend,targets:this.targets.size,decoders:this.targets.size+this.prepared.size,playing:[...this.targets.values()].filter(s=>s.slot&&!s.slot.video.paused).length,frames:this.stills.size,maxFrames:this.maxStaticFrames,maxBytes:this.maxStaticFrames*576*624*4,maxPending:this.maxStaticFrames,bytes:[...this.stills.values()].reduce((n,s)=>n+s.image.naturalWidth*s.image.naturalHeight*4,0),pending:this.pending.size,directionFrames:this.directions.size,directionBytes:this.directionBytes,directionBudgetBytes:this.directionBudgetBytes,directionLoads:this.directionLoads,directionApprox:this.directionApprox,directionMisses:this.directionMisses,errors:[...this.errors],seeks:this.seekCount,physicalResources:new Set(Object.values(this.sequences).map(c=>this.resource(c))).size,videos:[...this.targets.values()].map(s=>{const q=s.slot.video.getVideoPlaybackQuality();return {resource:s.resource,ready:s.slot.ready,frame:s.shown?.displayedSequenceFrame,total:q.totalVideoFrames,dropped:q.droppedVideoFrames,duration:s.slot.video.duration};})};}
 }

@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 using AiBuddy.Install;
 namespace AiBuddy.Setup;
 
-public sealed class WindowsHost(string? rootsFile=null) : IAppHost {
+public sealed class WindowsHost(string? rootsFile=null,TimeSpan? exitTimeout=null,TimeSpan? busyLimit=null) : IAppHost {
     public StartupStatus? LastStartup {get;private set;}
     public static string PipeName(Installation? installed)=>installed?.Pipe??"whale-companion-v001";
     [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool WaitNamedPipe(string name,uint timeout);
@@ -36,7 +36,7 @@ public sealed class WindowsHost(string? rootsFile=null) : IAppHost {
         return null;
     }
     public async Task Stop(string root,Installation? previous,IProgress<InstallProgress>? progress,CancellationToken cancel) {
-        var pipe=PipeName(previous);
+        var pipe=PipeName(previous);var busySince=DateTime.UtcNow;var limit=busyLimit??TimeSpan.FromMinutes(10);var exitWait=exitTimeout??TimeSpan.FromSeconds(45);
         while(true) {
             cancel.ThrowIfCancellationRequested();var existed=PipeExists(pipe);var status=await Request(pipe,new{command="installation-status"},1800,cancel,true);
             if(status is null){if(existed||PipeExists(pipe))throw new IOException("An existing AI Buddy control pipe is not responding; finish its work or quit it from the tray, then retry. No program files were replaced. / 现有实例管道未响应，请完成任务或从托盘退出后重试，未替换程序文件。");return;}
@@ -47,27 +47,49 @@ public sealed class WindowsHost(string? rootsFile=null) : IAppHost {
             if(legacy) {
                 throw new IOException("This older app does not support verified installation-quit. Please finish chat/CG and quit it from its tray, then retry. / 此旧版不支持安装器核对身份后退出，请完成聊天绘图后从托盘退出再重试。");
             }
-            if(status.Value.TryGetProperty("busy",out var busy)&&busy.GetBoolean()) {progress?.Report(new("waiting",root,Detail:"Waiting for chat and CG to finish / 正在等待聊天与绘图收尾"));await Task.Delay(1500,cancel);continue;}
+            if(status.Value.TryGetProperty("busy",out var busy)&&busy.GetBoolean()) {
+                if(DateTime.UtcNow-busySince>limit)throw new IOException($"AI Buddy is still finishing chat or drawing after {limit.TotalMinutes:0.#} minutes; no program files were replaced. Let it finish or quit it from the tray, then retry. / AI 酱 {limit.TotalMinutes:0.#} 分钟后仍在完成聊天或绘图；未替换程序文件，请等它完成或从托盘退出后重试。");
+                progress?.Report(new("waiting",root,Detail:"Waiting for chat and CG to finish / 正在等待聊天与绘图收尾"));await Task.Delay(1500,cancel);continue;
+            }
             var answer=await Request(pipe,new{command="installation-quit",expectedBuild=status.Value.GetProperty("build").GetString()},4000,cancel);
             if(answer is null)throw new IOException("Application did not acknowledge safe exit");
             if(!answer.Value.TryGetProperty("ok",out var ok)||!ok.GetBoolean()){await Task.Delay(1000,cancel);continue;}
             int pid=status.Value.GetProperty("processId").GetInt32();
-            try {using var process=Process.GetProcessById(pid);using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancel);timeout.CancelAfter(TimeSpan.FromSeconds(45));await process.WaitForExitAsync(timeout.Token);}catch(ArgumentException){}
+            try {using var process=Process.GetProcessById(pid);using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancel);timeout.CancelAfter(exitWait);await process.WaitForExitAsync(timeout.Token);}
+            catch(ArgumentException){}
+            // Not exiting in time is not a user cancellation.
+            catch(OperationCanceledException) when(!cancel.IsCancellationRequested){throw new IOException($"AI Buddy acknowledged the exit request but was still running after {exitWait.TotalSeconds:0} seconds; no program files were replaced. Quit it from the tray and retry. / AI 酱已确认退出，但 {exitWait.TotalSeconds:0} 秒后仍在运行；未替换程序文件，请从托盘退出后重试。");}
             return;
         }
     }
-    public async Task StartAndVerify(string root,Installation installed,CancellationToken cancel) {
+    public Task StartAndVerify(string root,Installation installed,CancellationToken cancel)=>StartCore(root,installed,null,cancel);
+    public Task StartImportedAndVerify(string root,Installation installed,string importId,CancellationToken cancel)=>StartCore(root,installed,importId,cancel);
+    public static StartupStatus? MatchStartup(string root,Installation installed,JsonElement value,bool importVerification=false){
+        var build=SafePaths.Under(root,installed.Build);var data=DataPaths.Registered(root,installed.DataPath);
+        if(!value.TryGetProperty("version",out var version)||version.ValueKind!=JsonValueKind.String||version.GetString()!=installed.Version||!value.TryGetProperty("build",out var returned)||returned.ValueKind!=JsonValueKind.String||!string.Equals(SafePaths.Full(returned.GetString()!),build,StringComparison.OrdinalIgnoreCase)||!value.TryGetProperty("dataRoot",out var returnedData)||returnedData.ValueKind!=JsonValueKind.String||!string.Equals(SafePaths.Full(returnedData.GetString()!),data,StringComparison.OrdinalIgnoreCase))return null;
+        var ready=value.TryGetProperty("ready",out var r)&&r.ValueKind==JsonValueKind.True;
+        var onboarding=value.TryGetProperty("onboarding",out var o)&&o.ValueKind==JsonValueKind.True;
+        var safe=value.TryGetProperty("safeMode",out var s)&&s.ValueKind==JsonValueKind.True;
+        var failure=value.TryGetProperty("startupFailure",out var f)&&f.ValueKind!=JsonValueKind.Null?f.Clone():(JsonElement?)null;
+        if(importVerification&&(onboarding||ready&&(safe||failure is not null)))throw new IOException("Imported profile did not start normally (safe mode or empty welcome); the previous profile will be restored");
+        if(ready&&!onboarding)return new(safe,failure);
+        // Welcome is deliberately not game-ready: no business save is initialized
+        // until the user chooses create/import. It is nevertheless a healthy
+        // completed program launch for a genuinely fresh ordinary installation.
+        if(!importVerification&&installed.DataInitialized!=true&&onboarding&&!safe&&failure is null)return new(false,null,true);
+        return null;
+    }
+    async Task StartCore(string root,Installation installed,string? importId,CancellationToken cancel) {
         LastStartup=null;
         var executable=SafePaths.Under(root,"AI Buddy.exe");
         var start=new ProcessStartInfo(executable){WorkingDirectory=root,UseShellExecute=false,CreateNoWindow=true};
+        if(importId is not null)start.ArgumentList.Add("--data-import-verify="+importId);
         if(rootsFile is not null){var path=Path.GetFullPath(rootsFile);SafePaths.NoLinks(path);using var roots=JsonDocument.Parse(File.ReadAllBytes(path));if(roots.RootElement.ValueKind!=JsonValueKind.Array)throw new InvalidDataException("Validation roots must be a JSON array");start.ArgumentList.Add("--roots="+path);}
         using var child=Process.Start(start)??throw new IOException("Windows could not start AI Buddy");
-        var build=SafePaths.Under(root,installed.Build);var data=SafePaths.Full(installed.DataPath??Path.Combine(root,"local","data-v003"));var end=DateTime.UtcNow.AddSeconds(90);
+        var end=DateTime.UtcNow.AddSeconds(90);
         while(DateTime.UtcNow<end) {
             cancel.ThrowIfCancellationRequested();var status=await Request(PipeName(installed),new{command="installation-status"},1500,cancel);
-            if(status is {} s&&s.TryGetProperty("version",out var version)&&version.GetString()==installed.Version&&s.TryGetProperty("build",out var returned)&&string.Equals(SafePaths.Full(returned.GetString()!),build,StringComparison.OrdinalIgnoreCase)&&s.TryGetProperty("dataRoot",out var returnedData)&&returnedData.ValueKind==JsonValueKind.String&&string.Equals(SafePaths.Full(returnedData.GetString()!),data,StringComparison.OrdinalIgnoreCase)&&s.TryGetProperty("ready",out var ready)&&ready.GetBoolean()){
-                LastStartup=new(s.TryGetProperty("safeMode",out var safe)&&safe.ValueKind==JsonValueKind.True,s.TryGetProperty("startupFailure",out var failure)&&failure.ValueKind!=JsonValueKind.Null?failure.Clone():null);return;
-            }
+            if(status is {} s&&MatchStartup(root,installed,s,importId is not null) is {} startup){LastStartup=startup;return;}
             await Task.Delay(800,cancel);
         }
         throw new IOException("AI Buddy did not become ready within 90 seconds; installation recovery will retain personal data");

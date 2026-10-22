@@ -2,6 +2,7 @@ import {t} from '../i18n.mjs';
 import {GalgameTitle} from '../galgame-title.mjs';
 import {GroupHeader} from '../group-header.mjs';
 import {GroupCgCSS} from '../group-cg-ui.mjs';
+import {CgPausedNotice} from '../cg-paused-ui.mjs';
 import {GroupStageCSS} from '../group-stage-ui.mjs';
 import {CompanionDesignCSS} from '../companion-design.mjs';
 import {CgImageViewer,CgImageViewerCSS} from '../cg-image-viewer.mjs';
@@ -336,7 +337,7 @@ function CgThumbnail({ item, sessionId }: any): React.ReactElement {
     observer.observe(ref.current)
     return () => { alive = false; observer.disconnect() }
   }, [item.id, item.status, item.thumbnailRef, image, sessionId])
-  const label = item.status === 'planning' ? t("正在设计主题") : item.status === 'queued' ? t("排队中") : item.status === 'generating' ? t("绘制中") : item.status === 'failed' ? t("生成失败 · 点击重试") : item.status === 'cancelled' ? t("已取消 · 点击重试") : 'CG'
+  const label = item.status === 'planning' ? t("正在设计主题") : item.status === 'queued' ? t("排队中") : item.status === 'generating' ? t("绘制中") : item.status === 'failed' ? t("生成失败 · 点击重试") : item.status === 'cancelled' ? t("已取消 · 点击重试") : item.status === 'paused' ? t("已暂停 · 手动继续") : 'CG'
   if (image) return React.createElement('div', { ref, className: 'gx-cg-img' }, React.createElement('img', { src: image, alt: '', loading: 'lazy' }))
   const step = item.status === 'planning' ? 1 : item.status === 'queued' ? 2 : item.status === 'generating' ? 3 : 0
   const failed = item.status === 'failed' || item.status === 'cancelled'
@@ -1763,6 +1764,14 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     }).catch(error => setGalleryError(String(error.message || t("CG 生成暂时失败")))).finally(() => setBusy(false))
   }
 
+  async function resumeGalleryCg(item: any): Promise<void> {
+    const result = await (window as any).whale.cg.resume(item.id)
+    assertApiResult(result, t("CG 恢复失败"))
+    setS(await callApi('view'))
+    closeGalleryDetail()
+    loadGallery()
+  }
+
   function openGalleryDetail(item: any): void {
     const id = String(item && item.id ? item.id : '').trim()
     if (!id) return
@@ -2082,7 +2091,9 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
             ? React.createElement('div', { className: 'gx-big gx-big-wait err', role: 'alert' }, Icon('alert', { size: 22 }), t("CG 图片读取失败：") + galleryDetailError, React.createElement('button', { className: 'ui-btn sm', onClick: () => openGalleryDetail(item), type: 'button' }, t("重新读取")))
             : item.dataUrl
               ? React.createElement(CgImageViewer, { src: item.dataUrl, alt: nameOf(item) + t("的特殊CG"), title, subtitle: nameOf(item) + ' · Lv.' + (item.level || '?') + ' · ' + formatCgDate(item.at) })
-              : React.createElement('div', { className: 'gx-big gx-big-wait err', role: 'alert' }, t("这张 CG 暂时无法读取。")),
+              : item.status === 'paused'
+                ? React.createElement(CgPausedNotice, { key: item.id, item, onResume: () => resumeGalleryCg(item) })
+                : React.createElement('div', { className: 'gx-big gx-big-wait err', role: 'alert' }, t("这张 CG 暂时无法读取。")),
         React.createElement('div', { className: 'gx-meta' },
           React.createElement('b', null, 'Lv.' + (item.level || '?') + (item.theme?.title ? ' · ' + item.theme.title : '')),
           React.createElement('small', null, [nameOf(item), formatCgDate(item.at), item.theme ? (item.theme.source === 'model' ? t("主题由模型设计") : t("本地主题")) : ''].filter(Boolean).join(' · '))),
@@ -2090,7 +2101,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
           galleryTrash
             ? React.createElement('button', { className: 'ui-btn sm primary', disabled: busy, onClick: () => recycleCg(item.id, true), type: 'button' }, Icon('undo', { size: 14 }), t("恢复到图鉴"))
             : React.createElement(React.Fragment, null,
-              React.createElement('button', { className: 'ui-btn sm', disabled: busy || item.savedAsBg === true, onClick: () => saveGalleryBackground(item), type: 'button' }, Icon(item.savedAsBg ? 'check' : 'image', { size: 14 }), item.savedAsBg ? t("已是 Galgame 背景") : t("设为 Galgame 背景")),
+              React.createElement('button', { className: 'ui-btn sm', disabled: busy || item.status !== 'ready' || item.savedAsBg === true, onClick: () => saveGalleryBackground(item), type: 'button' }, Icon(item.savedAsBg ? 'check' : 'image', { size: 14 }), item.savedAsBg ? t("已是 Galgame 背景") : t("设为 Galgame 背景")),
               React.createElement('button', { className: 'ui-btn sm danger', disabled: busy, onClick: () => recycleCg(item.id), type: 'button' }, Icon('trash', { size: 14 }), t("移入回收站")))),
         notes.length ? React.createElement('details', { className: 'ws-details ws-plain' }, React.createElement('summary', null, Icon('chevron', { size: 16 }), t("画面描述（生成时用的提示词）")), ...notes.map((text: string, i: number) => React.createElement('p', { key: i, className: 'whg-gallery-prompt' }, text))) : null,
       )
@@ -2110,7 +2121,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
           onContextMenu: (event: any) => openCgMenu(event, item),
           onKeyDown: (event: any) => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) openCgMenu(event, item) },
           key: item.id || index,
-          onClick: () => busy ? undefined : galleryTrash ? item.status === 'ready' ? openGalleryDetail(item) : undefined : ['failed', 'cancelled'].includes(item.status) ? generateGalleryCg(item) : item.status === 'ready' ? openGalleryDetail(item) : undefined,
+          onClick: () => busy ? undefined : galleryTrash ? item.status === 'ready' ? openGalleryDetail(item) : undefined : ['failed', 'cancelled'].includes(item.status) ? generateGalleryCg(item) : item.status === 'paused' ? (setGallerySelected(item), setGalleryDetailError(null), setGalleryDetailLoading(false)) : item.status === 'ready' ? openGalleryDetail(item) : undefined,
           'aria-disabled': busy || waiting(item),
           type: 'button',
         },
@@ -2403,6 +2414,9 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   function cgModal(): React.ReactElement | null {
     if (!settled || !s || !s.cg) return null
     const who = s.cg.name || s.name
+    if (s.cg.status === 'paused') {
+      return React.createElement('div', { className: 'whg-toast gx-toast', role: 'status' }, React.createElement(CgPausedNotice, { key: s.cg.id, item: s.cg, compact: true, onResume: () => resumeGalleryCg(s.cg) }))
+    }
     // design → queue → draw, shown as three steps
     if (s.cg.status === 'planning' || s.cg.status === 'generating' || s.cg.status === 'queued') {
       const step = s.cg.status === 'planning' ? 1 : s.cg.status === 'queued' ? 2 : 3

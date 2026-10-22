@@ -46,7 +46,7 @@ function groupEmotionReply(raw,speakerName,characterId,memberIds){
  }catch{}
  return result;
 }
-export async function createCompanionService({store,engine,provider,dataRoot=null,imageCodec=null,imageConverter=null,media=null,drafts=null,resources=null,onCharacter=()=>{},onChatCommitted=()=>{},onActivity=()=>{},getLanguage=()=> 'zh-CN',random=Math.random,now=Date.now,audit=()=>{}}){
+export async function createCompanionService({store,engine,provider,dataRoot=null,imageCodec=null,imageConverter=null,media=null,drafts=null,resources=null,onCharacter=()=>{},onChatCommitted=()=>{},onActivity=()=>{},getLanguage=()=> 'zh-CN',random=Math.random,now=Date.now,audit=()=>{},automaticWorkAllowed=()=>true}){
  // Group turns in flight: SPEAKING_GROUP has a member producing a reply right now.
  // Drafts live in drafts.json (B4); the store value is the fallback from before.
  const draftOf=row=>(row&&drafts?.get(row.id))??row?.draft??'';
@@ -102,7 +102,7 @@ export async function createCompanionService({store,engine,provider,dataRoot=nul
   const token=lifeToken(store.state,id),card=copy(store.state.cards[id]);lives?.busy(id);
   return runModel(card,async()=>{assertLife(store.state,id,token);const selected=provider.currentSelection?.()??{};let output='';for await(const chunk of provider.stream({...options,provider:selected.provider,model:selected.model,messages:options.messages.map(row=>({...row,content:[{type:'text',text:row.text??row.content??''}]}))})){if(chunk.type==='text-delta')output+=chunk.text??'';if(chunk.type==='finish'&&['error','aborted'].includes(chunk.reason?.kind))throw Error(chunk.reason.failure?.message??'记忆模型请求失败');}assertLife(store.state,id,token);return output;},options.signal,{background:true});
  },onGrowth:(state,id,candidates,batch)=>{lives?.busy(id);return applyGrowthCandidates(state,id,candidates,batch,now());}});
- const memoryTimer=setInterval(()=>{const transaction=store.state.lifeTransaction;if(!closing&&provider.enabled&&(!transaction||transaction.replayFailed))void memory.tick({skip:transaction?.characterId}).then(async()=>{for(const card of Object.values(store.state.cards))if(syncedCardVersions.get(card.id)!==card.revision)await syncCard(card);}).catch(error=>audit({type:'memory-timer-error',message:String(error?.message??error).slice(0,500)}));},60000);memoryTimer.unref?.();
+ const memoryTimer=setInterval(()=>{const transaction=store.state.lifeTransaction;if(!closing&&provider.enabled&&automaticWorkAllowed()&&(!transaction||transaction.replayFailed))void memory.tick({skip:transaction?.characterId}).then(async()=>{for(const card of Object.values(store.state.cards))if(syncedCardVersions.get(card.id)!==card.revision)await syncCard(card);}).catch(error=>audit({type:'memory-timer-error',message:String(error?.message??error).slice(0,500)}));},60000);memoryTimer.unref?.();
  function context(){return {personaId:store.state.activePersonaId,characterId:store.state.activeCharacterId,conversationId:store.state.activeConversationId};}
  function followCharacter(){return store.state.groups[store.state.activeGroupId]?.entryCharacterId??store.state.activeCharacterId;}
  function resourceInstalled(card){return !card.builtin||!resources||resources.available(card.id)!==false;}

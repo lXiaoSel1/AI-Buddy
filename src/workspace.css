@@ -53,6 +53,8 @@ body{font-family:var(--buddy-f-ui);-webkit-font-smoothing:antialiased}
 .ws-unit{margin:0 1px;font-size:.62em;font-weight:500;letter-spacing:0}
 .ui-alert.settings-error{border:0;margin:0;color:var(--buddy-text);font-size:var(--buddy-fs-sm)}
 .ui-alert b{display:block}
+.ui-alert.usage-gap>div{flex:1}
+.ui-alert.usage-gap>.ui-icon-btn{flex:none;margin:-4px -6px -4px 0}
 .ws-details{border-radius:var(--buddy-r-btn-s);box-shadow:inset 0 0 0 1px var(--buddy-border);font-size:var(--buddy-fs-sm);margin:0}
 .ws-details>summary{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;color:var(--buddy-warn);font-weight:600}
 .ws-details>p{margin:0;padding:6px 12px 6px 36px;border-top:1px solid var(--buddy-border);color:var(--buddy-muted);font-family:ui-monospace,Consolas,monospace;font-size:var(--buddy-fs-cap);line-height:1.5;overflow-wrap:anywhere}

@@ -52,13 +52,8 @@ internal static class PortableLauncher {
                 if (!String.Equals(actual, (string)runtime["sha256"], StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Runtime integrity check failed. Please extract a fresh copy of the ZIP.");
             }
             var command = new StringBuilder(Quote(build)).Append(" --open=overview");
-            string installRecord = Path.Combine(root, "local", "installation.json");
-            if (File.Exists(installRecord)) {
-                var installation = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(installRecord, Encoding.UTF8));
-                object value;
-                if (installation.TryGetValue("dataPath", out value) && value is string && !String.IsNullOrWhiteSpace((string)value)) command.Append(' ').Append(Quote("--data=" + (string)value));
-                if (installation.TryGetValue("pipe", out value) && value is string && !String.IsNullOrWhiteSpace((string)value)) command.Append(' ').Append(Quote(@"--pipe=\\.\pipe\" + (string)value));
-            }
+            // Only forward explicit arguments. The application resolves registered
+            // data/pipe defaults so an old record cannot override a user's choice.
             foreach (string arg in args) command.Append(' ').Append(Quote(arg));
             var info = new ProcessStartInfo(exe, command.ToString()) { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true };
             using (var child = Process.Start(info)) {
