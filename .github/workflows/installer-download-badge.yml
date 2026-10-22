@@ -1,0 +1,61 @@
+# Counts downloads of every AI-Buddy-Setup-*-win-x64.exe across all releases and publishes the
+# total as a shields.io endpoint JSON on the `badges` branch, so main gets no automatic commits.
+# The README badge reads https://raw.githubusercontent.com/<repo>/badges/installer-downloads.json.
+name: Installer download badge
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: installer-download-badge
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Count installer downloads across all releases
+        run: |
+          set -euo pipefail
+          sel='select(.name | test("^AI-Buddy-Setup-.+-win-x64[.]exe$"))'
+          gh api --paginate "repos/$REPO/releases?per_page=100" \
+            --jq ".[] | {tag: .tag_name, installers: ([.assets[] | $sel] | length), downloads: ([.assets[] | $sel | .download_count] | add // 0)}" \
+            > releases.jsonl
+          installers=$(jq -s '[.[].installers] | add // 0' releases.jsonl)
+          total=$(jq -s '[.[].downloads] | add // 0' releases.jsonl)
+          # An empty or failed listing must not publish 0.
+          if [ "$installers" -lt 1 ]; then echo "No installer assets found" >&2; exit 1; fi
+          mkdir -p out
+          jq -n --arg message "$total" '{schemaVersion: 1, label: "installer downloads", message: $message, color: "4c1"}' \
+            > out/installer-downloads.json
+          jq -s '{total: ([.[].downloads] | add), releases: [.[] | select(.installers > 0) | {tag, downloads}]}' releases.jsonl \
+            > out/installer-downloads-detail.json
+          cat out/installer-downloads.json out/installer-downloads-detail.json
+
+      - name: Publish to the badges branch
+        working-directory: out
+        run: |
+          set -euo pipefail
+          git init -q -b badges
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          if git fetch -q --depth=1 origin badges; then git reset -q --soft FETCH_HEAD; fi
+          git add installer-downloads.json installer-downloads-detail.json
+          if git rev-parse -q --verify HEAD >/dev/null && git diff --cached --quiet HEAD; then
+            echo "Counts unchanged"
+            exit 0
+          fi
+          git commit -q -m "Update installer download count"
+          git push -q origin HEAD:badges
