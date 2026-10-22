@@ -14,12 +14,12 @@
 
 **简体中文** · [English](README.en.md)
 
-<!-- ai-buddy-source-version: 1.9.1 -->
-**当前版本：[v1.9.1](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.1)** · 这一版加入了群聊、角色卡和「我的身份」、每位角色单独的聊天连接与 effort，以及长期记忆、人格自成长和人生存档。桌宠能摸、会睡觉，还能拖着走、抛出去；整个界面也改了版，11 套主题按各自的立绘取色。30fps 和 60fps 两版功能相同。见 [1.9.0 更新说明](docs/RELEASE-1.9.0.md) 和 [验收记录](docs/VALIDATION-1.9.0.md)。
+<!-- ai-buddy-source-version: 1.9.2 -->
+**当前版本：[v1.9.2](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.2)** · 这一版加入了群聊、角色卡和「我的身份」、每位角色单独的聊天连接与 effort，以及长期记忆、人格自成长和人生存档。桌宠能摸、会睡觉，还能拖着走、抛出去；整个界面也改了版，11 套主题按各自的立绘取色。30fps 和 60fps 两版功能相同。见 [1.9.0 更新说明](docs/RELEASE-1.9.0.md) 和 [验收记录](docs/VALIDATION-1.9.0.md)。
 
 ## 在线安装（推荐）
 
-[下载 Windows x64 安装器](https://github.com/lXiaoSel1/ai-buddy/releases/download/v1.9.1/AI-Buddy-Setup-1.9.1-win-x64.exe) → 选择 30fps / 60fps 和角色 → 自动下载、校验、安装。支持补装和离线导入。从 1.8.0 升级也用这个安装器，选原来的安装位置就行。[安装与维护说明](docs/INSTALLER.md)。
+[下载 Windows x64 安装器](https://github.com/lXiaoSel1/ai-buddy/releases/download/v1.9.2/AI-Buddy-Setup-1.9.2-win-x64.exe) → 选择 30fps / 60fps 和角色 → 自动下载、校验、安装。支持补装和离线导入。从 1.8.0 升级也用这个安装器，选原来的安装位置就行。[安装与维护说明](docs/INSTALLER.md)。
 
 安装器约 50 MiB；全角色资源下载量约为 30fps **1.66 GiB**、60fps **2.33 GiB**，只选部分角色会更小。也可以下载完整便携 ZIP 的分卷离线安装，见下文[安装](#安装)。
 
@@ -206,9 +206,9 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
 
 ### 在线安装器（推荐）
 
-1. 到 [v1.9.1 下载页](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.1) 下载 `AI-Buddy-Setup-1.9.1-win-x64.exe`（约 50 MiB）。安装器自带 .NET 运行库。
+1. 到 [v1.9.2 下载页](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.2) 下载 `AI-Buddy-Setup-1.9.2-win-x64.exe`（约 50 MiB）。安装器自带 .NET 运行库。
 2. 选择安装位置（默认 `%LOCALAPPDATA%\Programs\AI Buddy`）、30fps 或 60fps、要装的角色和初始角色。首次安装默认选 30fps 和全部角色，初始角色为 DeepSeek。
-3. 点击安装。安装器从固定的 v1.9.1 Release 下载资源，逐包、逐文件核对 SHA-256；全角色下载量约为 30fps 1.66 GiB、60fps 2.33 GiB。下载中断时，重新运行同一个安装器、选相同位置就能接着下。
+3. 点击安装。安装器从固定的 v1.9.2 Release 下载资源，逐包、逐文件核对 SHA-256；全角色下载量约为 30fps 1.66 GiB、60fps 2.33 GiB。下载中断时，重新运行同一个安装器、选相同位置就能接着下。
 4. 默认会创建桌面和开始菜单入口。安装器不会开启联网聊天、自动 CG、开机启动或后台自动更新。
 
 **从 1.8.0 升级**：1.8.0 的安装器固定使用旧清单，发现不了 1.9.1。请下载 1.9.1 安装器，选原来的安装位置。它会接管原目录，保留个人存档、自定义数据目录、聊天连接和角色设置；完整的便携版目录也能这样接管。不要把旧存档复制进新目录覆盖。
@@ -216,17 +216,17 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
 ### 便携分卷（离线）
 
 1. 在同一个下载页，把所选帧率的全部分卷和合并工具下载到同一个文件夹：
-    - 30fps：`AI-Buddy-1.9.1-Windows-x64-30fps.zip.part01`、`.part02`、`AI-Buddy-1.9.1-Windows-x64-30fps.zip.parts.json`、`Combine-AI-Buddy-1.9.1.ps1` 和 `Combine-AI-Buddy-1.9.1-30fps.cmd`。
-    - 60fps：`AI-Buddy-1.9.1-Windows-x64-60fps.zip.part01` 到 `.part03`、对应的 `.zip.parts.json`、`Combine-AI-Buddy-1.9.1.ps1` 和 `Combine-AI-Buddy-1.9.1-60fps.cmd`。
+    - 30fps：`AI-Buddy-1.9.2-Windows-x64-30fps.zip.part01`、`.part02`、`AI-Buddy-1.9.2-Windows-x64-30fps.zip.parts.json`、`Combine-AI-Buddy-1.9.2.ps1` 和 `Combine-AI-Buddy-1.9.2-30fps.cmd`。
+    - 60fps：`AI-Buddy-1.9.2-Windows-x64-60fps.zip.part01` 到 `.part03`、对应的 `.zip.parts.json`、`Combine-AI-Buddy-1.9.2.ps1` 和 `Combine-AI-Buddy-1.9.2-60fps.cmd`。
 2. 双击对应的 `.cmd`。脚本先校验每一卷，合并后再校验完整的 ZIP，只用到 Windows 自带的 PowerShell。不要直接解压其中一卷。合并后的 ZIP 约 1.70 GiB（30fps）或 2.37 GiB（60fps）。
 3. 把合并出的 ZIP 完整解压到一个可写目录，进入 `AI-Buddy` 文件夹，双击根目录的 **AI Buddy.exe**。`AI Buddy.vbs` 和 `AI Buddy.cmd` 是兼容入口，启动的是同一个程序。
 
-另一种离线方式：把 `install-manifest-1.9.1.json` 和需要的资源 ZIP 放进同一个文件夹，在安装器里选择这个“离线资源目录”，同样会逐个校验。1.7.10 的旧离线包仍保留在它原来的 Release 页面。
+另一种离线方式：把 `install-manifest-1.9.2.json` 和需要的资源 ZIP 放进同一个文件夹，在安装器里选择这个“离线资源目录”，同样会逐个校验。1.7.10 的旧离线包仍保留在它原来的 Release 页面。
 
 几点注意：
 
 - 不要在 ZIP 里直接运行，也不要只复制 EXE，目录结构要保留。
-- 安装器和程序都没有商业代码签名，Windows 可能提示“未知发布者”，可以先用 `SHA256SUMS-1.9.1.txt` 核对文件。
+- 安装器和程序都没有商业代码签名，Windows 可能提示“未知发布者”，可以先用 `SHA256SUMS-1.9.2.txt` 核对文件。
 - 首次启动会自动查找当前用户的常见日志目录。没装任何 AI 工具也能用，陪伴功能可以离线运行。
 - GitHub 自动生成的 **Source code** 是源码包，不能直接运行。
 - 本仓库和正式发行包已公开。发行包不包含开发者存档、连接密钥或本机日志。

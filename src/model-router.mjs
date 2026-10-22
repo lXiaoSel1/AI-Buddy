@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {createSnapshotStorage,readJson} from './storage.mjs';
 import {MODEL_PRESETS,API_PROTOCOLS,presetFor,apiBaseUrl,localEndpoint} from './model-presets.mjs';
 import {ApiTransport} from './api-transport.mjs';
-import {REASONING_EFFORTS,profileEffort,modelEfforts,effortProtocol,cleanModelCatalog} from './reasoning-settings.mjs';
+import {profileEffort,validateProfileEffort,cleanModelCatalog} from './reasoning-settings.mjs';
 export class ModelRouter{
   constructor({codex,dataRoot,crypto,legacy=false,onChange=()=>{},onUsage=()=>{},onActivity=()=>{},audit=()=>{},fetchImpl,timeoutMs=110000,storeName='model-connections.json',presets=MODEL_PRESETS,protocols=API_PROTOCOLS,outputLimit=()=>8192}){
     Object.assign(this,{codex,dataRoot,crypto,onChange,onActivity,audit,timeoutMs,presets,protocols,outputLimit});this.store=createSnapshotStorage(join(dataRoot,storeName));this.enabled=false;this.activeTurns=0;this.controllers=new Set();this.context=new AsyncLocalStorage();this.tail=Promise.resolve();this.transport=new ApiTransport({fetchImpl,onUsage,audit});
@@ -37,9 +37,7 @@ export class ModelRouter{
       if(capacity!=null&&capacity!==''&&(!Number.isSafeInteger(Number(capacity))||Number(capacity)<2048||Number(capacity)>2000000))throw Error('上下文容量应为 2048–2000000 tokens，未知请留空');
       profile.contextTokens=capacity==null||capacity===''?null:Number(capacity);
       profile.reasoningEffort=profileEffort({...profile,...(Object.hasOwn(draft,'reasoningEffort')?{reasoningEffort:draft.reasoningEffort}:previous&&Object.hasOwn(previous,'reasoningEffort')?{reasoningEffort:previous.reasoningEffort}:{})});
-      const effort=profile.reasoningEffort,supported=modelEfforts(models.find(row=>row.id===model||row.model===model));
-      if(effort!==null&&(!REASONING_EFFORTS.includes(effort)||!effortProtocol(protocol)))throw Error('当前协议不支持该推理强度，请选择模型默认');
-      if(effort!==null&&supported&&!supported.includes(effort))throw Error('该模型不支持所选推理强度，请重新选择');
+      validateProfileEffort(profile);
     }
     return profile;
   }

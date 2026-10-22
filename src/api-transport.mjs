@@ -1,5 +1,6 @@
 import {connectionIdentity} from './service-identity.mjs';
 import {randomUUID} from 'node:crypto';
+import {cleanModelCatalog,effortSupport,validateProfileEffort,effortProtocol} from './reasoning-settings.mjs';
 const textOf=value=>typeof value==='string'?value:Array.isArray(value)?value.filter(part=>part.type==='text'||part.type==='input_text'||part.type==='output_text').map(part=>part.text??'').join('\n'):'';
 const messagesOf=options=>(options.messages??[]).map(message=>({role:message.role==='assistant'?'assistant':'user',content:textOf(message.content)}));
 const REASONING_EFFORTS=new Set(['none','minimal','low','medium','high','xhigh','max','ultra']);
@@ -57,6 +58,7 @@ function parsePayload(value,profile,state){
 export class ApiTransport{
   constructor({fetchImpl=globalThis.fetch,onUsage=()=>{},audit=()=>{}}={}){this.fetch=fetchImpl;this.onUsage=onUsage;this.audit=audit;}
   async *stream(profile,options){
+    if(effortProtocol(profile.protocol))validateProfileEffort(profile);
     const requestId=randomUUID(),started=Date.now(),state={usage:null};let finished=false,outputLength=0,status=null;
     const route=profile.protocol==='gemini'?'/models/'+encodeURIComponent(profile.model.replace(/^models\//,''))+':streamGenerateContent?alt=sse':profile.protocol==='anthropic'?'/messages':profile.protocol==='responses'?'/responses':'/chat/completions';
     try{
@@ -75,6 +77,9 @@ export class ApiTransport{
     if(!response.ok){await response.body?.cancel().catch(()=>{});throw apiError(response.status);}let data;try{data=await response.json();}catch{throw Error('模型列表格式不兼容，请手动填写模型 ID');}
     const rows=profile.protocol==='gemini'?data.models:data.data;
     if(!Array.isArray(rows))throw Error('模型列表格式不兼容，请手动填写模型 ID');
-    return rows.filter(row=>profile.protocol!=='gemini'||!row.supportedGenerationMethods||row.supportedGenerationMethods.includes('generateContent')).map(row=>({id:String(row.id??row.name??'').replace(/^models\//,''),name:String(row.displayName??row.id??row.name??'')})).filter(row=>row.id).slice(0,1000);
+    return cleanModelCatalog(rows.filter(row=>profile.protocol!=='gemini'||!row.supportedGenerationMethods||row.supportedGenerationMethods.includes('generateContent')).map(row=>{
+      const id=String(row.id??row.name??'').replace(/^models\//,''),support=effortSupport({...profile,model:id},[{...row,id}]);
+      return {...row,id,name:String(row.displayName??row.name??row.id??''),...(support.source==='catalog'||support.source==='documented'?{supportedReasoningEfforts:support.levels}:{})};
+    }));
   }
 }

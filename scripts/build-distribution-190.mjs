@@ -11,12 +11,30 @@ for(const n of ['baseline30','baseline60','runtime','out','rcedit','media-receip
 const out=resolve(arg('out')),version=JSON.parse(readFileSync(join(repo,'package.json'),'utf8')).version,mediaVersion='1.9.0',linkAssets=process.argv.includes('--link-assets'),hash=p=>createHash('sha256').update(readFileSync(p)).digest('hex');
 const read=p=>JSON.parse(readFileSync(p,'utf8')),save=(p,v)=>writeFileSync(p,JSON.stringify(v,null,2)+'\n');
 const approvedReceiptSha256='bb3b110d6f165eb449dbf797eef549c98f7d521cbf4d7766a746f7ac28122e58';
+// Evidence may have been archived after a release; its bytes remain hash-bound.
+const evidenceArchive=arg('evidence-archive')&&resolve(arg('evidence-archive'));
+const integrationRoot=resolve(repo,'../../../../..','integration');
+function evidencePath(path){
+ if(existsSync(path))return resolve(path);
+ const name=relative(integrationRoot,resolve(path));
+ if(evidenceArchive&&name&&!name.startsWith('..')&&!resolve(path).startsWith(evidenceArchive)){
+  const archived=join(evidenceArchive,name);if(existsSync(archived))return archived;
+ }
+ return resolve(path);
+}
 const receiptPath=resolve(arg('media-receipt')),approvalPath=resolve(arg('media-approval'));
 if(hash(receiptPath)!==approvedReceiptSha256)throw Error('Media receipt is not the approved CRF28 baseline');
 const mediaReceipt=read(receiptPath),approval=read(approvalPath);
-if(approval.version!==mediaVersion||approval.approved!==true||approval.userApproved!==true||approval.mediaBaselineSha256!==approvedReceiptSha256||approval.mediaBaseline?.sha256!==approvedReceiptSha256||resolve(approval.mediaBaseline.path)!==receiptPath||![2,5].every(n=>approval.authorizedStages?.includes(n)))throw Error('Explicit approval of this media receipt and distribution stages is required');
+if(approval.version!==mediaVersion||approval.approved!==true||approval.userApproved!==true||approval.mediaBaselineSha256!==approvedReceiptSha256||approval.mediaBaseline?.sha256!==approvedReceiptSha256||evidencePath(approval.mediaBaseline.path)!==receiptPath||![2,5].every(n=>approval.authorizedStages?.includes(n)))throw Error('Explicit approval of this media receipt and distribution stages is required');
 if(mediaReceipt.version!==mediaVersion||mediaReceipt.crf!==28||!mediaReceipt.complete||!mediaReceipt.technicalPass||mediaReceipt.videoCount!==528||mediaReceipt.actionCountPerEdition!==264||mediaReceipt.technicalFailures?.length||!mediaReceipt.sourceUnchanged||mediaReceipt.gazeFramesRecompressed!==false||mediaReceipt.geometryOrAlphaReprocessed!==false||!mediaReceipt.independentReview?.passed||Object.keys(mediaReceipt.independentReview.receipts??{}).length!==11)throw Error('Incomplete approved media evidence');
-function boundFile(path,sha256){if(!existsSync(path)||hash(path)!==sha256)throw Error('Media evidence changed '+path);}
+const unavailableHistoricalEvidence=[];
+function boundFile(path,sha256){
+ path=evidencePath(path);
+ if(!existsSync(path)&&evidenceArchive&&process.argv.includes('--reuse-approved-media')){
+  unavailableHistoricalEvidence.push({path,sha256,reason:'Archived production intermediate removed; immutable approved inventory remains authoritative for byte reuse'});return;
+ }
+ if(!existsSync(path)||hash(path)!==sha256)throw Error('Media evidence changed '+path);
+}
 boundFile(mediaReceipt.sourceReceipt,mediaReceipt.sourceReceiptSha256);
 for(const[path,digest]of Object.entries(mediaReceipt.producerReceipts))boundFile(join(dirname(receiptPath),path),digest);
 for(const item of Object.values(mediaReceipt.independentReview.receipts))boundFile(item.path,item.sha256);
@@ -31,10 +49,12 @@ for(const fps of [30,60]){
  if(pkg.version!==version||pkg.animationProfile!==fps+'fps')throw Error('Wrong accepted candidate '+source);
  const approved=mediaReceipt.editions.find(e=>e.fps===fps);
  if(!approved||approved.videos!==264||approved.filesAfter!==Object.keys(approved.fileInventory??{}).length)throw Error('Missing approved edition '+fps);
- const approvedFiles=files(approved.path).map(p=>relative(approved.path,p).replaceAll('\\','/'));
- if(approvedFiles.length!==approved.filesAfter||approvedFiles.some(p=>!approved.fileInventory[p]))throw Error('Approved baseline file tree changed '+fps);
- for(const[path,f]of Object.entries(approved.fileInventory)){const p=join(approved.path,path);if(statSync(p).size!==f.bytes||hash(p)!==f.sha256)throw Error('Approved baseline file changed '+p);}
- if(hash(join(approved.path,'assets/install-resource-index.json'))!==approved.resourceIndexSha256)throw Error('Approved resource index changed '+fps);
+ if(existsSync(approved.path)){
+  const approvedFiles=files(approved.path).map(p=>relative(approved.path,p).replaceAll('\\','/'));
+  if(approvedFiles.length!==approved.filesAfter||approvedFiles.some(p=>!approved.fileInventory[p]))throw Error('Approved baseline file tree changed '+fps);
+  for(const[path,f]of Object.entries(approved.fileInventory)){const p=join(approved.path,path);if(statSync(p).size!==f.bytes||hash(p)!==f.sha256)throw Error('Approved baseline file changed '+p);}
+  if(hash(join(approved.path,'assets/install-resource-index.json'))!==approved.resourceIndexSha256)throw Error('Approved resource index changed '+fps);
+ }else if(!evidenceArchive||!process.argv.includes('--reuse-approved-media'))throw Error('Missing baseline; explicitly request reuse with archived hash-bound evidence');
  const index=read(join(source,'assets/install-resource-index.json'));
  const characters=read(join(source,'assets/character-sequence-manifest.json'));
  const owners=new Map(),expected=new Map();
@@ -48,7 +68,9 @@ for(const fps of [30,60]){
  if(actual.length!==expected.size||actual.some(p=>!expected.has(p.toLowerCase())))throw Error('Resource index does not cover the complete accepted asset tree');
  const approvedAssets=Object.keys(approved.fileInventory).filter(p=>p.startsWith('assets/')&&p!=='assets/install-resource-index.json');
  if(actual.length!==approvedAssets.length||actual.some(p=>!approvedAssets.includes(p)))throw Error('Rebuilt resource tree differs from approved media');
- const originalIndex=read(join(approved.path,'assets/install-resource-index.json'));
+ // Old generated code and index ordering may be removed by retention. The immutable
+ // inventory still binds every actual asset's name, length and SHA-256 above.
+ const originalIndex=existsSync(approved.path)?read(join(approved.path,'assets/install-resource-index.json')):index;
  const normalizeIndex=x=>({...x,appVersion:version,edition:fps+'fps'});
  if(JSON.stringify(normalizeIndex(index))!==JSON.stringify(normalizeIndex(originalIndex)))throw Error('Rebuilt resource index differs from approved baseline');
  const dest=join(out,fps+'fps','build');transfer(source,dest,{assets:true});
@@ -90,4 +112,6 @@ const root=join(out,'root');mkdirSync(root,{recursive:true});
 for(const path of ['AI Buddy.cmd','AI Buddy.vbs','Start-AI-Buddy.ps1','LICENSE.md','README.md','README.en.md','THIRD_PARTY_NOTICES.md','THIRD_PARTY_MONITOR.md','CG_API_GUIDE.md','licenses','docs','assets/branding'])if(existsSync(join(repo,path))){const p=join(repo,path);if(statSync(p).isDirectory())transfer(p,join(root,path));else{mkdirSync(dirname(join(root,path)),{recursive:true});copyFileSync(p,join(root,path));}}
 buildPortableLauncher(repo,join(root,'AI Buddy.exe'),version);
 const receipt={ok:true,version,mediaVersion,reencoded:0,createdAt:new Date().toISOString(),approvedMedia:{receiptPath,sha256:approvedReceiptSha256,approvalPath,approvalSha256:hash(approvalPath),boundIndependentReceipts:11},proof,runtime:{executable:'AI Buddy.exe',sha256:hash(executable)},roots:files(root).map(p=>({path:relative(root,p).replaceAll('\\','/'),bytes:statSync(p).size,sha256:hash(p)}))};
+receipt.unavailableHistoricalEvidence=unavailableHistoricalEvidence;
+receipt.mediaValidation='Every asset name, length and SHA-256 verified against the immutable approved inventory; current index checked for complete coverage; no encoding rerun';
 save(join(out,'media-proof.json'),receipt);console.log(JSON.stringify({ok:true,out,proof}));

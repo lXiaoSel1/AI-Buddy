@@ -40,6 +40,7 @@ test('Effort validation and UI choices respect model metadata and protocol defau
  assert.deepEqual(effortChoices({kind:'claude',protocol:'anthropic',model:'x'}),[]);
  for(const reasoningEffort of ['invalid',{},1])await assert.rejects(router.save({kind:'codex',model:'fast-model',reasoningEffort}),/推理强度/);
  await assert.rejects(router.save({kind:'claude',model:'x',reasoningEffort:'low'}),/协议不支持/);
- const p=await router.save({kind:'openai',model:'manual',reasoningEffort:'low',key:'fixture'});assert.equal(p.reasoningEffort,'low');
+ await assert.rejects(router.save({kind:'openai',model:'manual',reasoningEffort:'low',key:'fixture'}),/不支持/);
+ const p=await router.save({kind:'openai',model:'manual',models:[{id:'manual',supportedReasoningEfforts:['low']}],reasoningEffort:'low',key:'fixture'});assert.equal(p.reasoningEffort,'low');
  await router.save({...p,reasoningEffort:null,key:''});assert.equal(router.view().profiles.find(row=>row.id===p.id).reasoningEffort,null);
 });

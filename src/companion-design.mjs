@@ -211,9 +211,9 @@ export const CompanionDesignCSS=`
 .buddy-roster .buddy-roster-entry[data-speaking=true]{background:color-mix(in srgb,var(--buddy-accent) 20%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--buddy-accent) 50%,transparent)}
 .buddy-roster-entry small{display:block;color:var(--buddy-dlg-muted);font-size:var(--buddy-fs-cap)}
 
-/* ---- group dialogue: corner actions, round progress ---- */
+/* ---- group dialogue: in-flow actions reserve space above the text ---- */
 .gx-dlg.buddy-group-panel{position:relative}
-.gx-dlg.buddy-group-panel .buddy-group-meta{position:absolute;top:10px;right:14px;display:flex;gap:6px;margin:0}
+.gx-dlg.buddy-group-panel .buddy-group-meta{position:static;display:flex;justify-content:flex-end;flex-wrap:wrap;flex:none;min-width:0;gap:6px;margin:0}
 .buddy-group-hint{margin:0;font-size:var(--buddy-fs-sm);color:var(--buddy-dlg-muted)}
 .buddy-round{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:7px 8px 7px 12px;border-radius:10px;background:color-mix(in srgb,var(--buddy-dlg-text) 6%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--buddy-dlg-text) 10%,transparent);font-size:var(--buddy-fs-sm);color:var(--buddy-dlg-text)}
 .buddy-round-k{font-size:var(--buddy-fs-cap);font-weight:700;letter-spacing:.04em;color:var(--buddy-dlg-muted)}
