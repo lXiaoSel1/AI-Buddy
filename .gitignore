@@ -15,3 +15,4 @@ installer/**/bin/
 installer/**/obj/
 installer/generated/
 installer/BuildIdentity.g.cs
+scripts/__pycache__/

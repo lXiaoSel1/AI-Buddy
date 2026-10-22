@@ -26,7 +26,9 @@ public static class Json {
         using(var stream=new FileStream(temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {
             JsonSerializer.Serialize(stream,value,Options);stream.Flush(true);
         }
-        File.Move(temporary,path,true);
+        // A scanner may briefly hold a just-written transaction/installation file.
+        // Keep atomic replacement and retry only transient Windows sharing/access errors.
+        for(int n=0;;n++)try{File.Move(temporary,path,true);break;}catch(Exception ex) when(n<20&&ex is IOException or UnauthorizedAccessException&&(ex.HResult&0xffff) is 5 or 32 or 33){Thread.Sleep(100);}
     }
 }
 
@@ -51,8 +53,8 @@ public static class Manifests {
         Validate(m);return m;
     }
     public static void Validate(InstallManifest m) {
-        if(m.SchemaVersion!=1 || m.ResourceContractVersion!=1 || m.AppVersion!="1.8.0" || m.ReleaseTag!="v"+m.AppVersion ||
-            m.Repository!="lXiaoSel1/AI-Buddy" || m.Platform!="win32" || m.Arch!="x64" || m.MinimumInstallerVersion!="1.8.0")throw new InvalidDataException("Unsupported manifest version or platform");
+        if(m.SchemaVersion!=1 || m.ResourceContractVersion!=1 || m.AppVersion!=ReleaseIdentity.Version || m.ReleaseTag!="v"+m.AppVersion ||
+            m.Repository!="lXiaoSel1/AI-Buddy" || m.Platform!="win32" || m.Arch!="x64" || m.MinimumInstallerVersion!=ReleaseIdentity.Version)throw new InvalidDataException("Unsupported manifest version or platform");
         static bool Digest(string s)=>s is not null && Regex.IsMatch(s,"^[a-f0-9]{64}$");
         if(m.Packages is null || m.Packages.Length is <1 or >900 || m.Characters is null || m.Characters.Length==0 || m.Editions is null)throw new InvalidDataException("Missing packages");
         if(!Digest(m.Runtime.Sha256)||m.Runtime.Executable!="AI Buddy.exe")throw new InvalidDataException("Invalid runtime identity");

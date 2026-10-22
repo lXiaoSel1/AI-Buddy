@@ -14,12 +14,12 @@ public sealed class SetupForm:Form {
     CancellationTokenSource? cancellation;bool initializing=true;bool english;readonly string[] args;
     string L(string zh,string en)=>english?en:zh;
     public SetupForm(string[] arguments) {
-        args=arguments;Text="AI Buddy 1.8.0";Icon=Icon.ExtractAssociatedIcon(Environment.ProcessPath!);ClientSize=new Size(780,850);MinimumSize=new Size(640,740);StartPosition=FormStartPosition.CenterScreen;AutoScaleMode=AutoScaleMode.Dpi;Font=new Font("Segoe UI",10);
+        args=arguments;Text="AI Buddy "+ReleaseIdentity.Version;Icon=Icon.ExtractAssociatedIcon(Environment.ProcessPath!);ClientSize=new Size(780,850);MinimumSize=new Size(640,740);StartPosition=FormStartPosition.CenterScreen;AutoScaleMode=AutoScaleMode.Dpi;Font=new Font("Segoe UI",10);
         language.Items.AddRange(["简体中文","English"]);language.SelectedIndex=System.Globalization.CultureInfo.CurrentUICulture.Name.StartsWith("zh")?0:1;english=language.SelectedIndex==1;
         folder.Text=Program.Argument(args,"root")??Program.DefaultRoot;edition.Items.AddRange(["30fps","60fps"]);edition.SelectedItem="30fps";
         foreach(var c in Program.Manifest.Characters){characters.Items.Add(new Role(c.Id,c.Name),true);initial.Items.Add(new Role(c.Id,c.Name));}initial.SelectedIndex=0;
         characters.Height=160;folder.Width=550;offline.Width=550;edition.Width=150;initial.Width=180;
-        var existing=InstallEngine.Existing(folder.Text);if(existing is not null){edition.SelectedItem=existing.Edition;for(int i=0;i<characters.Items.Count;i++)characters.SetItemChecked(i,existing.Characters.Contains(((Role)characters.Items[i]).Id));SelectInitial(existing.InitialCharacter);}
+        var existing=InstallEngine.Defaults(folder.Text,Program.Manifest);edition.SelectedItem=existing.Edition;for(int i=0;i<characters.Items.Count;i++)characters.SetItemChecked(i,existing.Characters.Contains(((Role)characters.Items[i]).Id));SelectInitial(existing.InitialCharacter);
         var requested=(Program.Argument(args,"characters-add")??Program.Argument(args,"character")??"").Split(',');for(int i=0;i<characters.Items.Count;i++)if(requested.Contains(((Role)characters.Items[i]).Id))characters.SetItemChecked(i,true);
         language.SelectedIndexChanged+=(_,_)=>{english=language.SelectedIndex==1;Render();};
         folder.Leave+=(_,_)=>ReadExisting();edition.SelectedIndexChanged+=(_,_)=>UpdateEstimate();
@@ -32,20 +32,20 @@ public sealed class SetupForm:Form {
     }
     sealed record Role(string Id,string Name){public override string ToString()=>Name;}
     void SelectInitial(string id){for(int i=0;i<initial.Items.Count;i++)if(((Role)initial.Items[i]!).Id==id){initial.SelectedIndex=i;return;}}
-    void ReadExisting(){try{var e=InstallEngine.Existing(folder.Text);if(e is null)return;initializing=true;edition.SelectedItem=e.Edition;for(int i=0;i<characters.Items.Count;i++)characters.SetItemChecked(i,e.Characters.Contains(((Role)characters.Items[i]).Id));initializing=false;UpdateInitial();SelectInitial(e.InitialCharacter);}catch(Exception ex){status.Text=ex.Message;}UpdateEstimate();}
+    void ReadExisting(){try{var e=InstallEngine.Defaults(folder.Text,Program.Manifest);initializing=true;edition.SelectedItem=e.Edition;for(int i=0;i<characters.Items.Count;i++)characters.SetItemChecked(i,e.Characters.Contains(((Role)characters.Items[i]).Id));UpdateInitial();SelectInitial(e.InitialCharacter);}catch(Exception ex){status.Text=ex.Message;}finally{initializing=false;}UpdateEstimate();}
     void UpdateInitial(){var id=(initial.SelectedItem as Role)?.Id;initial.Items.Clear();foreach(var role in characters.CheckedItems.Cast<Role>())initial.Items.Add(role);if(initial.Items.Count>0){initial.SelectedIndex=0;if(id is not null)SelectInitial(id);}UpdateEstimate();}
     void Add(Control c,int height=0){c.Dock=DockStyle.Top;layout.Controls.Add(c);if(height>0)layout.RowStyles.Add(new RowStyle(SizeType.Absolute,height));else layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));layout.RowCount++;}
     Label Heading(string text)=>new(){Text=text,AutoSize=true,Margin=new Padding(0,16,0,7)};
     FlowLayoutPanel Row(params Control[] controls){var row=new FlowLayoutPanel{AutoSize=true,WrapContents=true,Margin=new Padding(0,0,0,6)};row.Controls.AddRange(controls);return row;}
     Button Browse(TextBox target){var b=new Button{Text=L("浏览…","Browse…"),AutoSize=true};b.Click+=(_,_)=>{using var picker=new FolderBrowserDialog{UseDescriptionForTitle=true,Description=L("选择文件夹","Choose folder"),SelectedPath=target.Text};if(picker.ShowDialog(this)==DialogResult.OK){target.Text=picker.SelectedPath;if(target==folder)ReadExisting();UpdateEstimate();}};return b;}
     void Render(){layout.SuspendLayout();layout.Controls.Clear();layout.RowStyles.Clear();layout.RowCount=0;
-        Add(new Label{Text="AI Buddy 1.8.0",Font=new Font(Font.FontFamily,23,FontStyle.Bold),AutoSize=true});
+        Add(new Label{Text="AI Buddy "+ReleaseIdentity.Version,Font=new Font(Font.FontFamily,23,FontStyle.Bold),AutoSize=true});
         Add(Row(new Label{Text="Language",AutoSize=true,Padding=new Padding(0,7,10,0)},language));
         Add(Heading(L("安装位置","Installation folder")));Add(Row(folder,Browse(folder)));
         Add(Heading(L("动画版本与初始角色","Animation edition and initial character")));Add(Row(edition,initial));
         Add(Heading(L("角色资源 · 可在以后补装","Character resources · add more later")));Add(characters,170);
         Add(Heading(L("离线资源目录（留空则从 GitHub 下载）","Offline resource folder (leave empty for GitHub)")));Add(Row(offline,Browse(offline)));offline.TextChanged+=(_,_)=>UpdateEstimate();
-        shortcuts.Text=L("创建桌面和开始菜单入口","Create desktop and Start menu shortcuts");launch.Text=L("安装后启动并验证","Launch and verify after installation");Add(Row(shortcuts,launch));
+        shortcuts.Text=L("创建桌面和开始菜单入口","Create desktop and Start menu shortcuts");launch.Text=L("验证后保持 AI Buddy 运行","Keep AI Buddy running after verification");Add(Row(shortcuts,launch));
         Add(estimate);Add(bar,28);Add(status);
         install.Text=L("安装 / 补装 / 修复","Install / Add / Repair");cancel.Text=L("取消","Cancel");rollback.Text=L("回退上一版","Roll back");uninstall.Text=L("卸载…","Uninstall…");footer.Controls.Clear();footer.Controls.AddRange([install,cancel,rollback,uninstall]);
         Add(new Label{AutoSize=true,MaximumSize=new Size(720,0),Text=L("不会开启联网聊天、CG 或自动更新。升级和回退保留个人数据。下载中断后重新运行本安装器可继续。","Chat, CG and auto-update stay off. Updates and rollback retain personal data. Run this installer again to resume interrupted downloads."),ForeColor=Color.DimGray,Margin=new Padding(0,14,0,0)});
@@ -68,7 +68,7 @@ public sealed class SetupForm:Form {
             if(action=="rollback")await Program.Engine.Rollback(options.Root,progress,cancellation.Token);
             else if(action=="uninstall")await Program.Engine.Uninstall(options.Root,removeData,progress,cancellation.Token);
             else await Program.Engine.Install(options,progress,cancellation.Token);
-            status.Text=L("已完成。","Completed.");bar.Value=1000;
+            var startup=InstallEngine.Existing(options.Root)?.Startup;status.Text=startup?.SafeMode==true?L("程序已安装并进入安全模式：","Installed in safe mode: ")+startup.StartupFailure?.ToString():L("已完成。","Completed.");bar.Value=1000;
         }catch(OperationCanceledException){status.Text=L("已取消；保留已验证下载，下次可继续。","Cancelled; verified downloads are retained for resuming.");}
         catch(Exception ex){status.Text=L("未完成：","Not completed: ")+ex.Message;MessageBox.Show(this,status.Text,"AI Buddy",MessageBoxButtons.OK,MessageBoxIcon.Error);}
         finally{cancellation.Dispose();cancellation=null;install.Enabled=rollback.Enabled=uninstall.Enabled=folder.Enabled=edition.Enabled=characters.Enabled=initial.Enabled=language.Enabled=true;cancel.Enabled=false;UpdateEstimate();}
