@@ -2,14 +2,14 @@
 
 **简体中文** · [English](README.en.md)
 
-<!-- ai-buddy-source-version: 1.9.0 -->
-**正式代码版本：1.9.0** · 本版包含群聊分区舞台、角色独立 API 与 effort、桌宠互动，以及长期记忆、人格成长和完整人生存档。[1.9.0 更新与验收](docs/VALIDATION-1.9.0.md)。
+<!-- ai-buddy-source-version: 1.9.1 -->
+**正式代码版本：1.9.1** · 本版包含群聊分区舞台、角色独立 API 与 effort、桌宠互动，以及长期记忆、人格成长和完整人生存档。[1.9.0 更新与验收](docs/VALIDATION-1.9.0.md)。
 
-**当前已发布版本：[v1.9.0](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.0)** · 提供 30fps 轻量版和 60fps 版，两版功能相同，都包含 11 位角色、198 套独立动作和 80 张表情。桌宠默认大小为 125%，已保存的自定义大小不受影响。见 [使用说明](docs/CHARACTER-PETS.md) 与 [本次更新](docs/VALIDATION-1.9.0.md)。
+**当前已发布版本：[v1.9.1](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.1)** · 提供 30fps 轻量版和 60fps 版，两版功能相同，都包含 11 位角色、198 套独立动作和 80 张表情。桌宠默认大小为 125%，已保存的自定义大小不受影响。见 [使用说明](docs/CHARACTER-PETS.md) 与 [本次更新](docs/VALIDATION-1.9.0.md)。
 
 ## 在线安装（推荐）
 
-[下载 Windows x64 安装器](https://github.com/lXiaoSel1/AI-Buddy/releases/download/v1.9.0/AI-Buddy-Setup-1.9.0-win-x64.exe) → 选择 30fps / 60fps 和角色 → 自动下载、校验、安装。支持补装、离线导入，回退时保留存档。[安装与维护说明](docs/INSTALLER.md)。
+[下载 Windows x64 安装器](https://github.com/lXiaoSel1/AI-Buddy/releases/download/v1.9.1/AI-Buddy-Setup-1.9.1-win-x64.exe) → 选择 30fps / 60fps 和角色 → 自动下载、校验、安装。支持补装、离线导入，回退时保留存档。[安装与维护说明](docs/INSTALLER.md)。
 
 安装器约 50 MiB；全角色资源下载量约为 30fps **1.48 GiB**、60fps **2.01 GiB**，只选部分角色会更小。也可以下载完整便携 ZIP 的分卷离线安装，见下文[安装](#安装)。
 
@@ -186,25 +186,25 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
 
 ### 在线安装器（推荐）
 
-1. 到 [v1.9.0 下载页](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.0) 下载 `AI-Buddy-Setup-1.9.0-win-x64.exe`（约 50 MiB）。安装器自带 .NET 运行库。
+1. 到 [v1.9.1 下载页](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.1) 下载 `AI-Buddy-Setup-1.9.1-win-x64.exe`（约 50 MiB）。安装器自带 .NET 运行库。
 2. 选择安装位置（默认 `%LOCALAPPDATA%\Programs\AI Buddy`）、30fps 或 60fps、要装的角色和初始角色。首次安装默认选 30fps 和全部角色，初始角色为 DeepSeek。
-3. 点击安装。安装器从固定的 v1.9.0 Release 下载资源，逐包、逐文件核对 SHA-256；全角色下载量约为 30fps 1.48 GiB、60fps 2.01 GiB。下载中断时，重新运行同一个安装器、选相同位置就能接着下。
+3. 点击安装。安装器从固定的 v1.9.1 Release 下载资源，逐包、逐文件核对 SHA-256；全角色下载量约为 30fps 1.48 GiB、60fps 2.01 GiB。下载中断时，重新运行同一个安装器、选相同位置就能接着下。
 4. 默认会创建桌面和开始菜单入口。安装器不会开启联网聊天、自动 CG、开机启动或后台自动更新。
 
 ### 便携分卷（离线）
 
 1. 在同一个下载页，把所选帧率的全部分卷和合并工具下载到同一个文件夹：
-    - 30fps：`AI-Buddy-1.9.0-Windows-x64-30fps.zip.part01`、`.part02`、`AI-Buddy-1.9.0-Windows-x64-30fps.zip.parts.json`、`Combine-AI-Buddy-1.9.0.ps1` 和 `Combine-AI-Buddy-1.9.0-30fps.cmd`。
-    - 60fps：`AI-Buddy-1.9.0-Windows-x64-60fps.zip.part01` 到 `.part03`、对应的 `.zip.parts.json`、`Combine-AI-Buddy-1.9.0.ps1` 和 `Combine-AI-Buddy-1.9.0-60fps.cmd`。
+    - 30fps：`AI-Buddy-1.9.1-Windows-x64-30fps.zip.part01`、`.part02`、`AI-Buddy-1.9.1-Windows-x64-30fps.zip.parts.json`、`Combine-AI-Buddy-1.9.1.ps1` 和 `Combine-AI-Buddy-1.9.1-30fps.cmd`。
+    - 60fps：`AI-Buddy-1.9.1-Windows-x64-60fps.zip.part01` 到 `.part03`、对应的 `.zip.parts.json`、`Combine-AI-Buddy-1.9.1.ps1` 和 `Combine-AI-Buddy-1.9.1-60fps.cmd`。
 2. 双击对应的 `.cmd`。脚本先校验每一卷，合并后再校验完整的 ZIP，只用到 Windows 自带的 PowerShell。不要直接解压其中一卷。
 3. 把合并出的 ZIP 完整解压到一个可写目录，进入 `AI-Buddy` 文件夹，双击根目录的 **AI Buddy.exe**。`AI Buddy.vbs` 和 `AI Buddy.cmd` 是兼容入口，启动的是同一个程序。
 
-另一种离线方式：把 `install-manifest-1.9.0.json` 和需要的资源 ZIP 放进同一个文件夹，在安装器里选择这个“离线资源目录”，同样会逐个校验。1.7.10 的旧离线包仍保留在它原来的 Release 页面。
+另一种离线方式：把 `install-manifest-1.9.1.json` 和需要的资源 ZIP 放进同一个文件夹，在安装器里选择这个“离线资源目录”，同样会逐个校验。1.7.10 的旧离线包仍保留在它原来的 Release 页面。
 
 几点注意：
 
 - 不要在 ZIP 里直接运行，也不要只复制 EXE，目录结构要保留。
-- 安装器和程序都没有商业代码签名，Windows 可能提示“未知发布者”，可以先用 `SHA256SUMS-1.9.0.txt` 核对文件。
+- 安装器和程序都没有商业代码签名，Windows 可能提示“未知发布者”，可以先用 `SHA256SUMS-1.9.1.txt` 核对文件。
 - 首次启动会自动查找当前用户的常见日志目录。没装任何 AI 工具也能用，陪伴功能可以离线运行。
 - GitHub 自动生成的 **Source code** 是源码包，不能直接运行。
 - 本仓库和正式发行包已公开。发行包不包含开发者存档、连接密钥或本机日志。
@@ -216,7 +216,7 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
 ├─ AI Buddy.exe / AI Buddy.vbs / AI Buddy.cmd / Start-AI-Buddy.ps1   启动入口
 ├─ builds/<版本>/                         应用代码、动作和角色资源
 ├─ runtime/AI-Buddy-<版本>/               Electron 运行时
-├─ maintenance/1.9.0/AI Buddy Setup.exe   维护工具（在线安装才有）
+├─ maintenance/1.9.1/AI Buddy Setup.exe   维护工具（在线安装才有）
 ├─ local/current-build.json               当前版本指针
 ├─ local/installation.json                已装的帧率和角色（在线安装才有）
 ├─ local/data-v003/                       首次运行后生成的个人存档

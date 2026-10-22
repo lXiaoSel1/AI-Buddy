@@ -1,13 +1,15 @@
-"""Deterministic independent ZIPs for the accepted 1.9.0 trees; never encode media."""
+"""Deterministic independent ZIPs for release trees with approved 1.9.0 media; never encode media."""
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import zipfile
 
-VERSION = '1.9.0'
+VERSION = json.loads((Path(__file__).resolve().parents[1] / 'package.json').read_text(encoding='utf-8'))['version']
+MEDIA_VERSION = '1.9.0'
 LIMIT = 1024 ** 3
 CHUNK_LIMIT = 950 * 1024 ** 2
 NAMES = {'deepseek': 'DeepSeek', 'claude': 'Claude', 'grok': 'Grok', 'seed': 'Seed', 'kimi': 'Kimi', 'qwen': 'Qwen', 'minimax': 'MiniMax', 'chatgpt': 'GPT', 'gemini': 'Gemini', 'glm': 'GLM', 'hunyuan': '混元'}
@@ -59,6 +61,8 @@ def group_trees(candidate):
     if proof.get('ok') is not True or proof.get('version') != VERSION or proof.get('reencoded') != 0 or approval.get('sha256') != APPROVED_MEDIA or sha(receipt_path) != APPROVED_MEDIA or sha(approval_path) != approval.get('approvalSha256'):
         raise ValueError('Candidate lacks the fixed approved media proof')
     media_receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
+    if media_receipt['version'] != MEDIA_VERSION or proof.get('mediaVersion') != MEDIA_VERSION:
+        raise ValueError('Unapproved media source version')
     trees = {edition: scan(candidate / edition / 'build') for edition in ('30fps', '60fps')}
     if set(trees['30fps']) != set(trees['60fps']):
         raise ValueError('Edition file sets differ')
@@ -244,7 +248,7 @@ def portable(candidate, out, installer, work):
     result = subprocess.run([str(installer), '--headless', '--action=inspect', '--root=' + str(work / 'identity-probe'), '--receipt=' + str(identity)], check=True, capture_output=True, text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     (work / 'installer-identity.log').write_text(result.stdout + result.stderr, encoding='utf-8')
     if json.loads(identity.read_text(encoding='utf-8-sig'))['manifestSha256'] != digest:
-        raise ValueError('Installer is not pinned to the fixed 1.9.0 manifest')
+        raise ValueError('Installer is not pinned to the fixed ' + VERSION + ' manifest')
     installer_asset = out / ('AI-Buddy-Setup-' + VERSION + '-win-x64.exe')
     if installer_asset.exists() and sha(installer_asset) != sha(installer):
         raise ValueError('Existing installer asset differs')
@@ -257,7 +261,7 @@ def portable(candidate, out, installer, work):
         runtime = 'runtime/AI-Buddy-v' + VERSION
         manager = 'maintenance/' + VERSION + '/AI Buddy Setup.exe'
         for source, dest in ((candidate / 'root', tree), (candidate / edition / 'build', tree / build), (candidate / 'runtime', tree / runtime)):
-            shutil.copytree(source, dest)
+            shutil.copytree(source, dest, copy_function=os.link)
         (tree / manager).parent.mkdir(parents=True)
         shutil.copy2(installer, tree / manager)
         selected = [p for p in manifest['packages'] if not p.get('edition') or p['edition'] == edition]
@@ -328,7 +332,7 @@ def portable(candidate, out, installer, work):
     merge = '''param([ValidateSet('30fps','60fps')][string]$Edition='30fps')
 $ErrorActionPreference='Stop'
 $folder=[IO.Path]::GetFullPath($PSScriptRoot)
-$name='AI-Buddy-1.9.0-Windows-x64-'+$Edition+'.zip'
+$name='AI-Buddy-@VERSION@-Windows-x64-'+$Edition+'.zip'
 $receipt=Get-Content -LiteralPath (Join-Path $folder ($name+'.parts.json')) -Raw | ConvertFrom-Json
 if($receipt.file -cne $name){throw 'Unexpected output name'}
 $target=Join-Path $folder $name
@@ -347,7 +351,7 @@ Move-Item -LiteralPath $temporary -Destination $target
 Write-Host ('Verified: '+$target)
 Write-Host 'Extract the complete ZIP and run AI Buddy.exe inside AI-Buddy.'
 '''
-    (out / ('Combine-AI-Buddy-' + VERSION + '.ps1')).write_text(merge, encoding='utf-8-sig')
+    (out / ('Combine-AI-Buddy-' + VERSION + '.ps1')).write_text(merge.replace('@VERSION@', VERSION), encoding='utf-8-sig')
     for edition in ('30fps', '60fps'):
         (out / ('Combine-AI-Buddy-' + VERSION + '-' + edition + '.cmd')).write_bytes(('@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Combine-AI-Buddy-' + VERSION + '.ps1" -Edition ' + edition + '\r\npause\r\n').encode('ascii'))
     result = dict(ok=True, version=VERSION, manifestSha256=digest, installerSha256=sha(installer), mediaReencoded=0, everyVolumeAtMostOneGiB=all(p['bytes'] <= LIMIT for e in receipts for p in e['parts']), editions=receipts)

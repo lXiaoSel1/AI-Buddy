@@ -38,7 +38,7 @@ internal static class Program {
   Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
   var output=Path.GetFullPath(args[1]);Directory.CreateDirectory(output);var profile=Path.Combine(output,"isolated nonexisting profile 中文");DefaultRoot=Path.Combine(profile,"install");Cache=Path.Combine(profile,"cache");var host=new NeverHost();
   try{
-   ManifestBytes=File.ReadAllBytes(args[0]);Manifest=Manifests.Parse(ManifestBytes,Hashing.Bytes(ManifestBytes));var calls=new List<string>();using var http=Mock("1.9.0",calls);Updates=new(http,verifySignature:FixtureSigned);Engine=new(Manifest,ManifestBytes,Hashing.Bytes(ManifestBytes),new Downloader(http),host,Environment.ProcessPath!);
+   ManifestBytes=File.ReadAllBytes(args[0]);Manifest=Manifests.Parse(ManifestBytes,Hashing.Bytes(ManifestBytes));var calls=new List<string>();using var http=Mock(ReleaseIdentity.Version,calls);Updates=new(http,verifySignature:FixtureSigned);Engine=new(Manifest,ManifestBytes,Hashing.Bytes(ManifestBytes),new Downloader(http),host,Environment.ProcessPath!);
    using(var form=new SetupForm(["--skip-update-check"])){
     form.Show();Settled(form);var language=Field<ComboBox>(form,"language");var edition=Field<ComboBox>(form,"edition");var initial=Field<ComboBox>(form,"initial");var roles=Field<CheckedListBox>(form,"characters");
     Check("defaults 11 roles 30fps DeepSeek",()=>Assert(roles.CheckedItems.Count==11&&edition.SelectedItem?.ToString()=="30fps"&&initial.SelectedItem?.ToString()=="DeepSeek","Wrong defaults"));
@@ -71,9 +71,10 @@ internal static class Program {
    calls.Clear();using(var form=new SetupForm(["--offline="+Path.Combine(profile,"offline source"),"--language=en"])){
     form.Show();Settled(form);Check("offline source suppresses automatic version checks",()=>Assert(calls.Count==0&&((InstallOptions)Invoke(form,"Options")!).OfflineDirectory==Path.Combine(profile,"offline source"),"Offline opening performed network discovery"));form.Close();
    }
-   var newerCalls=new List<string>();using(var newer=Mock("1.9.1",newerCalls)){
+   var current=Version.Parse(ReleaseIdentity.Version);var nextVersion=new Version(current.Major,current.Minor,current.Build+1).ToString(3);
+   var newerCalls=new List<string>();using(var newer=Mock(nextVersion,newerCalls)){
     Updates=new(newer,verifySignature:FixtureSigned);using var form=new SetupForm(["--language=en"]);form.Show();Pump(()=>Field<Button>(form,"openUpdate").Visible&&Field<CancellationTokenSource?>(form,"cancellation") is null,"signed newer release");Settled(form);
-    Check("signed newer release shows download button",()=>Assert(Field<Button>(form,"openUpdate").Enabled&&Field<Label>(form,"updateStatus").Text.Contains("1.9.1")&&newerCalls.Count==3,"New version state incorrect"));
+    Check("signed newer release shows download button",()=>Assert(Field<Button>(form,"openUpdate").Enabled&&Field<Label>(form,"updateStatus").Text.Contains(nextVersion)&&newerCalls.Count==3,"New version state incorrect"));
     Check("version discovery never downloads or installs",()=>Assert(newerCalls.All(u=>u.StartsWith("https://api.github.com/",StringComparison.Ordinal))&&host.Calls==0&&!Directory.Exists(profile),"Automatic mutation"));Shot(form,Path.Combine(output,"installer-ui-update-available.png"));form.Close();
    }
    var legacy=Path.Combine(output,"legacy portable pointer fixture");Directory.CreateDirectory(Path.Combine(legacy,"builds","previous"));Json.Save(Path.Combine(legacy,"local","current-build.json"),new{path="builds/previous",animationProfile="60fps"});

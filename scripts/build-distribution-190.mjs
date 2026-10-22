@@ -1,5 +1,5 @@
-// Assemble the accepted 1.9.0 builds without rebuilding or re-encoding their media.
-import {copyFileSync,existsSync,lstatSync,mkdirSync,readFileSync,readdirSync,statSync,unlinkSync,writeFileSync} from 'node:fs';
+// Assemble release builds while preserving the separately approved 1.9.0 media.
+import {copyFileSync,existsSync,linkSync,lstatSync,mkdirSync,readFileSync,readdirSync,statSync,unlinkSync,writeFileSync} from 'node:fs';
 import {resolve,join,relative,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
@@ -8,23 +8,23 @@ import {buildPortableLauncher} from './build-portable-launcher.mjs';
 const repo=resolve(import.meta.dirname,'..');
 const arg=n=>process.argv.find(a=>a.startsWith('--'+n+'='))?.slice(n.length+3);
 for(const n of ['baseline30','baseline60','runtime','out','rcedit','media-receipt','media-approval'])if(!arg(n))throw Error('Supply --'+n);
-const out=resolve(arg('out')),version='1.9.0',hash=p=>createHash('sha256').update(readFileSync(p)).digest('hex');
+const out=resolve(arg('out')),version=JSON.parse(readFileSync(join(repo,'package.json'),'utf8')).version,mediaVersion='1.9.0',linkAssets=process.argv.includes('--link-assets'),hash=p=>createHash('sha256').update(readFileSync(p)).digest('hex');
 const read=p=>JSON.parse(readFileSync(p,'utf8')),save=(p,v)=>writeFileSync(p,JSON.stringify(v,null,2)+'\n');
 const approvedReceiptSha256='bb3b110d6f165eb449dbf797eef549c98f7d521cbf4d7766a746f7ac28122e58';
 const receiptPath=resolve(arg('media-receipt')),approvalPath=resolve(arg('media-approval'));
 if(hash(receiptPath)!==approvedReceiptSha256)throw Error('Media receipt is not the approved CRF28 baseline');
 const mediaReceipt=read(receiptPath),approval=read(approvalPath);
-if(approval.version!==version||approval.approved!==true||approval.userApproved!==true||approval.mediaBaselineSha256!==approvedReceiptSha256||approval.mediaBaseline?.sha256!==approvedReceiptSha256||resolve(approval.mediaBaseline.path)!==receiptPath||![2,5].every(n=>approval.authorizedStages?.includes(n)))throw Error('Explicit approval of this media receipt and distribution stages is required');
-if(mediaReceipt.version!==version||mediaReceipt.crf!==28||!mediaReceipt.complete||!mediaReceipt.technicalPass||mediaReceipt.videoCount!==528||mediaReceipt.actionCountPerEdition!==264||mediaReceipt.technicalFailures?.length||!mediaReceipt.sourceUnchanged||mediaReceipt.gazeFramesRecompressed!==false||mediaReceipt.geometryOrAlphaReprocessed!==false||!mediaReceipt.independentReview?.passed||Object.keys(mediaReceipt.independentReview.receipts??{}).length!==11)throw Error('Incomplete approved media evidence');
+if(approval.version!==mediaVersion||approval.approved!==true||approval.userApproved!==true||approval.mediaBaselineSha256!==approvedReceiptSha256||approval.mediaBaseline?.sha256!==approvedReceiptSha256||resolve(approval.mediaBaseline.path)!==receiptPath||![2,5].every(n=>approval.authorizedStages?.includes(n)))throw Error('Explicit approval of this media receipt and distribution stages is required');
+if(mediaReceipt.version!==mediaVersion||mediaReceipt.crf!==28||!mediaReceipt.complete||!mediaReceipt.technicalPass||mediaReceipt.videoCount!==528||mediaReceipt.actionCountPerEdition!==264||mediaReceipt.technicalFailures?.length||!mediaReceipt.sourceUnchanged||mediaReceipt.gazeFramesRecompressed!==false||mediaReceipt.geometryOrAlphaReprocessed!==false||!mediaReceipt.independentReview?.passed||Object.keys(mediaReceipt.independentReview.receipts??{}).length!==11)throw Error('Incomplete approved media evidence');
 function boundFile(path,sha256){if(!existsSync(path)||hash(path)!==sha256)throw Error('Media evidence changed '+path);}
 boundFile(mediaReceipt.sourceReceipt,mediaReceipt.sourceReceiptSha256);
 for(const[path,digest]of Object.entries(mediaReceipt.producerReceipts))boundFile(join(dirname(receiptPath),path),digest);
 for(const item of Object.values(mediaReceipt.independentReview.receipts))boundFile(item.path,item.sha256);
 boundFile(mediaReceipt.builder.path,mediaReceipt.builder.sha256);
-if(read(join(repo,'package.json')).version!==version)throw Error('Source must be 1.9.0');
+if(!/^\d+\.\d+\.\d+$/.test(version))throw Error('Invalid release version');
 if(existsSync(out))throw Error('Output must be a new directory; existing distributions are immutable');
 function files(dir){return readdirSync(dir,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name,'en')).flatMap(e=>{const p=join(dir,e.name);if(lstatSync(p).isSymbolicLink())throw Error('Symlink in distribution '+p);return e.isDirectory()?files(p):[p];});}
-function transfer(source,target){for(const p of files(source)){const dest=join(target,relative(source,p));mkdirSync(dirname(dest),{recursive:true});copyFileSync(p,dest);}}
+function transfer(source,target,{assets=false}={}){for(const p of files(source)){const name=relative(source,p),dest=join(target,name);mkdirSync(dirname(dest),{recursive:true});if(assets&&linkAssets&&name.replaceAll('\\','/').startsWith('assets/'))linkSync(p,dest);else copyFileSync(p,dest);}}
 const proof=[];mkdirSync(out,{recursive:true});
 for(const fps of [30,60]){
  const source=resolve(arg('baseline'+fps)),pkg=read(join(source,'package.json'));
@@ -51,7 +51,7 @@ for(const fps of [30,60]){
  const originalIndex=read(join(approved.path,'assets/install-resource-index.json'));
  const normalizeIndex=x=>({...x,appVersion:version,edition:fps+'fps'});
  if(JSON.stringify(normalizeIndex(index))!==JSON.stringify(normalizeIndex(originalIndex)))throw Error('Rebuilt resource index differs from approved baseline');
- const dest=join(out,fps+'fps','build');transfer(source,dest);
+ const dest=join(out,fps+'fps','build');transfer(source,dest,{assets:true});
  // Keep this generated index on a new inode even if the input build shared assets.
  const targetIndex=join(dest,'assets/install-resource-index.json');
  // Remove the copied file before writing the release-specific version metadata.
@@ -89,5 +89,5 @@ save(join(runtime,'runtime-manifest.json'),{version,upstream:'Electron 44.6.0',b
 const root=join(out,'root');mkdirSync(root,{recursive:true});
 for(const path of ['AI Buddy.cmd','AI Buddy.vbs','Start-AI-Buddy.ps1','LICENSE.md','README.md','README.en.md','THIRD_PARTY_NOTICES.md','THIRD_PARTY_MONITOR.md','CG_API_GUIDE.md','licenses','docs','assets/branding'])if(existsSync(join(repo,path))){const p=join(repo,path);if(statSync(p).isDirectory())transfer(p,join(root,path));else{mkdirSync(dirname(join(root,path)),{recursive:true});copyFileSync(p,join(root,path));}}
 buildPortableLauncher(repo,join(root,'AI Buddy.exe'),version);
-const receipt={ok:true,version,reencoded:0,createdAt:new Date().toISOString(),approvedMedia:{receiptPath,sha256:approvedReceiptSha256,approvalPath,approvalSha256:hash(approvalPath),boundIndependentReceipts:11},proof,runtime:{executable:'AI Buddy.exe',sha256:hash(executable)},roots:files(root).map(p=>({path:relative(root,p).replaceAll('\\','/'),bytes:statSync(p).size,sha256:hash(p)}))};
+const receipt={ok:true,version,mediaVersion,reencoded:0,createdAt:new Date().toISOString(),approvedMedia:{receiptPath,sha256:approvedReceiptSha256,approvalPath,approvalSha256:hash(approvalPath),boundIndependentReceipts:11},proof,runtime:{executable:'AI Buddy.exe',sha256:hash(executable)},roots:files(root).map(p=>({path:relative(root,p).replaceAll('\\','/'),bytes:statSync(p).size,sha256:hash(p)}))};
 save(join(out,'media-proof.json'),receipt);console.log(JSON.stringify({ok:true,out,proof}));
