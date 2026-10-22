@@ -21,7 +21,9 @@ DeepSeek uses the confirmed character reference, original expression/background 
 
 The ten new portraits/backgrounds (Grok, Seed, Kimi, Qwen, MiniMax, GPT, Gemini, Claude, GLM, Hunyuan) were generated using the built-in image tool with selected gallery character designs as references. The generated pixels are not the original gallery files. The underlying character design authors remain credited; a general redistribution license for all ten references has not been verified. Keep this distinction when reviewing a public release or commercial use. Asset hashes and reference-gallery metadata are included in the release resource manifest.
 
-README screenshots are captures of the actual application with an independent test profile. CG examples are saved development validation images. They are not screenshots of the developer's personal conversations or monitored work.
+The interface art added in 1.9.0 contains no characters and is not taken from any gallery. The 11 theme backdrops and portrait-accessory ornaments (`assets/theme/<id>/bg.webp` and `orn.webp`, 22 files), the white-glove pet cursor (`assets/pet-glove-v2/`) and the group-chat round table (`assets/group-scene/discussion-table-v2.png`) were generated for this project with Codex's built-in image tool. The glove only follows the interaction idea of QQ Pet's cursor switch; no Tencent cursor files were used. The briefs for six of the theme images are in `docs/design/ui-polish-190/ai-theme/gen/brief.md`; the prompts for the other generated images are not kept in this repository. The per-theme cuffs in `assets/pet-glove-tint/` are the v2 glove with only the cuff recoloured by `docs/design/ui-polish-190/tools/make_glove_tints.py`. The theme heads, window and tray icons and overview portraits (`head.webp`, `icon-256.png`, `tray-*.png`, `portrait.webp`, built by `docs/design/ui-polish-190/tools/make_theme_assets.py`) and the group member thumbnails in `assets/group-thumbnails/` are crops or resized copies of the existing portraits and pet stills, and keep those images' terms.
+
+README screenshots are captures of the actual application with an independent test profile: usage figures are synthetic and chat replies come from a local test service. The CGs shown in them were generated in that test profile through the app's own "Codex built-in image" connection with the developer's local Codex. They are not screenshots of the developer's personal conversations or monitored work.
 
 ## Monitoring and prices
 
@@ -36,5 +38,5 @@ README screenshots are captures of the actual application with an independent te
 AI Buddy is not an official product of the named AI providers or character artists. Service and model names identify compatibility and appearance choices.
 
 ## .NET installer runtime
-The 1.8.0 self-contained installer includes Microsoft .NET and Windows Forms (MIT). See [license](licenses/DOTNET-LICENSE.txt), [third-party notices](licenses/DOTNET-THIRD-PARTY-NOTICES.txt), and [dotnet/runtime](https://github.com/dotnet/runtime). Build SDK: 10.0.402; runtime: 10.0.13.
+The self-contained online installer includes Microsoft .NET and Windows Forms (MIT). See [license](licenses/DOTNET-LICENSE.txt), [third-party notices](licenses/DOTNET-THIRD-PARTY-NOTICES.txt), and [dotnet/runtime](https://github.com/dotnet/runtime). Build SDK: 10.0.402; runtime: 10.0.13.
 

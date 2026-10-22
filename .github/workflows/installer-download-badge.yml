@@ -1,0 +1,80 @@
+# Counts downloads of every AI-Buddy-Setup-*-win-x64.exe across all releases and publishes the
+# total as a shields.io endpoint JSON on the `badges` branch, so main gets no automatic commits.
+# The README badge reads https://raw.githubusercontent.com/<repo>/badges/installer-downloads.json.
+name: Installer download badge
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: installer-download-badge
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Count installer downloads across all releases
+        run: |
+          set -euo pipefail
+          re='^AI-Buddy-Setup-.+-win-x64[.]exe$'
+          # The releases list sometimes comes back empty or partial, and gh --jq can print nothing
+          # on a full page. Fetch raw JSON several times and keep the largest total: counts only grow.
+          best=-1
+          for attempt in 1 2 3 4 5 6; do
+            if gh api --paginate "repos/$REPO/releases?per_page=100" > pages.json; then
+              jq -s --arg re "$re" 'add // [] | map({tag: .tag_name, assets: [.assets[] | select(.name | test($re))]})
+                | map({tag, installers: (.assets | length), downloads: ([.assets[].download_count] | add // 0)})' \
+                pages.json > attempt.json
+              installers=$(jq '[.[].installers] | add // 0' attempt.json)
+              total=$(jq '[.[].downloads] | add // 0' attempt.json)
+              echo "attempt $attempt: releases=$(jq length attempt.json) installers=$installers total=$total"
+              if [ "$installers" -ge 1 ] && [ "$total" -gt "$best" ]; then best=$total; cp attempt.json releases.json; fi
+            fi
+            sleep 5
+          done
+          # A failed or empty listing must not publish 0.
+          if [ "$best" -lt 0 ]; then echo "No installer assets found" >&2; exit 1; fi
+          mkdir -p out
+          jq -n --arg message "$best" '{schemaVersion: 1, label: "installer downloads", message: $message, color: "4c1"}' \
+            > out/installer-downloads.json
+          jq '{total: ([.[].downloads] | add), releases: [.[] | select(.installers > 0) | {tag, downloads}]}' releases.json \
+            > out/installer-downloads-detail.json
+          cat out/installer-downloads.json out/installer-downloads-detail.json
+
+      - name: Publish to the badges branch
+        working-directory: out
+        run: |
+          set -euo pipefail
+          git init -q -b badges
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          if git fetch -q --depth=1 origin badges 2>/dev/null; then
+            git reset -q --soft FETCH_HEAD
+            # Downloads never go down; a lower total means the listing was incomplete again.
+            previous=$(git show FETCH_HEAD:installer-downloads.json | jq -r '.message')
+            current=$(jq -r '.message' installer-downloads.json)
+            if [ "$current" -lt "$previous" ]; then
+              echo "New total $current is below the published $previous; keeping the published value" >&2
+              exit 1
+            fi
+          fi
+          git add installer-downloads.json installer-downloads-detail.json
+          if git rev-parse -q --verify HEAD >/dev/null && git diff --cached --quiet HEAD; then
+            echo "Counts unchanged"
+            exit 0
+          fi
+          git commit -q -m "Update installer download count"
+          git push -q origin HEAD:badges
