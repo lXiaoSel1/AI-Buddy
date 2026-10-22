@@ -17,6 +17,15 @@ export function interactionPresentation(value,{now=Date.now(),speed=.75,hasClip=
   return {id:hasClip(id)?id:null,elapsed:at,hold,staticFrame,playing,readyScope:['flying','landing'].includes(motion.mode)?'motion':'sleep',animationEpoch:['flying','landing'].includes(motion.mode)?motion.animationEpoch:value.animationEpoch,animationWaiting:['flying','landing'].includes(motion.mode)?motion.animationWaiting:value.animationWaiting,missing:id&&!hasClip(id)?id:null,asleep:value.phase==='asleep',motion:motion.mode};
 }
 
+// Clips that can start next, so they are decoded before the switch: a right-button
+// hold may be released into a throw, and a throw ends in its flight loop and a landing.
+// The same frozen list is returned for the same situation.
+const NO_PRELOADS=Object.freeze([]),HELD_PRELOADS=Object.freeze(['throw-start']),FLIGHT_PRELOADS=Object.freeze(['throw-loop','land-recover']);
+export function interactionPreloads(motion){
+  if(motion?.button===2&&['pressed','dragging','charging'].includes(motion.mode))return HELD_PRELOADS;
+  return motion?.mode==='flying'?FLIGHT_PRELOADS:NO_PRELOADS;
+}
+
 // Original vector artwork, independent from Tencent/QQPet cursor assets.
 export function gloveCursor(state='open'){
   const paths=state==='open'?'<path d="M12 17V6q0-3 3-3t3 3v9h1V4q0-3 3-2t2 3v11h1V7q0-3 3-2t2 3v12q0-1 2-1 4 0 1 6l-4 7q-1 2-3 2H14q-3 0-5-3l-5-7q-2-4 1-5 2-1 4 2l3 3z"/>':state==='grab'?'<path d="M9 18v-7q0-4 4-3l1 7V9q0-4 4-3l2 8V9q1-4 5-2l1 9 2-3q3-3 5 1l-4 12-3 7H13l-2-7-6-3q-4-3-1-6 2-2 5 1z"/><path fill="none" d="M13 17l6 2 6-1"/>':'<path d="M9 16v-3q0-4 4-3 0-5 5-3 2-4 6-1 5-1 6 4l1 9q0 2-2 5l-2 7H13l-2-5-5-5q-3-4 0-6 2-1 3 1z"/>';
