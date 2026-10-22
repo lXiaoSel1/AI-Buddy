@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://github.com/lXiaoSel1/ai-buddy/releases"><img src="https://img.shields.io/github/v/release/lXiaoSel1/ai-buddy?label=release" alt="Release"></a>
-  <a href="https://github.com/lXiaoSel1/ai-buddy/releases"><img src="https://img.shields.io/github/downloads/lXiaoSel1/ai-buddy/total?label=downloads&color=4c1" alt="Downloads"></a>
+  <a href="https://github.com/lXiaoSel1/ai-buddy/releases"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FlXiaoSel1%2Fai-buddy%2Fbadges%2Finstaller-downloads.json" alt="Installer downloads, all versions"></a>
   <a href="https://github.com/lXiaoSel1/ai-buddy"><img src="https://img.shields.io/github/stars/lXiaoSel1/ai-buddy?style=social" alt="Stars"></a>
   <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-Apache--2.0%20%2B%20Commons%20Clause-e05d44" alt="License: Apache-2.0 + Commons Clause"></a>
   <img src="https://img.shields.io/github/repo-size/lXiaoSel1/ai-buddy?label=repo%20size" alt="Repository size">
@@ -473,6 +473,8 @@ npm start
 ~~~
 
 Development needs Windows x64 and Node.js 24, with Electron 44.6.0, React 19.3.0 and esbuild 0.28.2. `npm test` covers pure logic with temporary data and mock services; it needs no paid requests and does not certify native integration or visual acceptance. `npm run check:version` checks that `package.json`, `package-lock.json`, the download names and current-release links in both READMEs, and the build guide agree; the source build runs the same check first. Build output goes to `builds/development`.
+
+The "installer downloads" badge under the title is updated every 6 hours by [`.github/workflows/installer-download-badge.yml`](.github/workflows/installer-download-badge.yml). It counts only downloads of each version's `AI-Buddy-Setup-*-win-x64.exe`, summed over all versions, and writes the result to the `badges` branch rather than committing to `main`. GitHub does not tell downloaders apart, so test downloads during development count too.
 
 Do not commit `local/`, generated `builds/`, keys, personal CGs or logs. Release version steps are in [BUILD.md](docs/BUILD.md). Validation records: [1.9.0](docs/VALIDATION-1.9.0.md) (group chat, character cards and personas, long-term memory and life archives, pet interactions, interface redesign; see also the [release notes](docs/RELEASE-1.9.0.md)), [1.8.0](docs/VALIDATION-1.8.0.md) (online installer and per-character packages), [1.7.10](docs/VALIDATION-1.7.10.md) (30fps / 60fps editions, request history in SQLite), [1.7.9](docs/VALIDATION-1.7.9.md) (consistent character size, action switching and hit-test fixes), [1.7.8](docs/VALIDATION-1.7.8.md) (separate desktop pets and expressions for all 11 characters), [1.7.7](docs/VALIDATION-1.7.7.md) (stutter and backward gaze when circling the pet), [1.7.6](docs/VALIDATION-1.7.6.md) (pointer sampling and direction-frame prefetch), [1.7.5](docs/VALIDATION-1.7.5.md) (Volcengine Ark drawing and Galgame portrait references), [1.7.3](docs/VALIDATION-1.7.3.md) (portable startup and local Codex discovery; covers simulated desktop-only installations and real local desktop/Store sign-in and image-capability checks, with no remote test on the user's laptop and no new CG generated), [1.7.2](docs/VALIDATION-1.7.2.md) (close portraits and release checks), [1.7.1](docs/VALIDATION-1.7.1.md) (WebM animations and themes), [1.7.0](docs/VALIDATION-1.7.0.md).
 

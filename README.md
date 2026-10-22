@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://github.com/lXiaoSel1/ai-buddy/releases"><img src="https://img.shields.io/github/v/release/lXiaoSel1/ai-buddy?label=%E7%89%88%E6%9C%AC" alt="版本"></a>
-  <a href="https://github.com/lXiaoSel1/ai-buddy/releases"><img src="https://img.shields.io/github/downloads/lXiaoSel1/ai-buddy/total?label=%E6%80%BB%E4%B8%8B%E8%BD%BD&color=4c1" alt="总下载"></a>
+  <a href="https://github.com/lXiaoSel1/ai-buddy/releases"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FlXiaoSel1%2Fai-buddy%2Fbadges%2Finstaller-downloads.json&label=%E5%AE%89%E8%A3%85%E5%99%A8%E4%B8%8B%E8%BD%BD" alt="安装器下载（所有版本累计）"></a>
   <a href="https://github.com/lXiaoSel1/ai-buddy"><img src="https://img.shields.io/github/stars/lXiaoSel1/ai-buddy?style=social" alt="Stars"></a>
   <a href="LICENSE.md"><img src="https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF-Apache--2.0%20%2B%20Commons%20Clause-e05d44" alt="许可：Apache-2.0 + Commons Clause"></a>
   <img src="https://img.shields.io/github/repo-size/lXiaoSel1/ai-buddy?label=%E4%BB%93%E5%BA%93%E5%A4%A7%E5%B0%8F" alt="仓库大小">
@@ -473,6 +473,8 @@ npm start
 ~~~
 
 开发需要 Windows x64 和 Node.js 24，依赖 Electron 44.6.0、React 19.3.0 和 esbuild 0.28.2。`npm test` 只覆盖纯逻辑，使用临时数据和模拟服务，不需要付费请求，也不代表原生集成或视觉验收。`npm run check:version` 检查 `package.json`、`package-lock.json`、两份 README 里的下载文件名和当前版本链接，以及构建说明的版本是否一致，源码构建会先跑这项检查。构建产物在 `builds/development`。
+
+标题下的「安装器下载」徽章由 [`.github/workflows/installer-download-badge.yml`](.github/workflows/installer-download-badge.yml) 每 6 小时统计一次，只计各版本 `AI-Buddy-Setup-*-win-x64.exe` 的下载次数，累计所有版本；结果写在 `badges` 分支，不会往 `main` 提交。GitHub 不区分下载者，开发测试的下载也算在内。
 
 不要提交 `local/`、生成的 `builds/`、密钥、个人 CG 或日志。发布前的版本同步步骤见 [构建说明](docs/BUILD.md)。验收记录：[1.9.0](docs/VALIDATION-1.9.0.md)（群聊、角色卡与身份、长期记忆与人生存档、桌宠互动、界面改版，另见 [更新说明](docs/RELEASE-1.9.0.md)）、[1.8.0](docs/VALIDATION-1.8.0.md)（在线安装器与按角色选装）、[1.7.10](docs/VALIDATION-1.7.10.md)（30fps / 60fps 双版本，请求历史改存 SQLite）、[1.7.9](docs/VALIDATION-1.7.9.md)（统一各角色显示大小，修复动作切换和点击检测）、[1.7.8](docs/VALIDATION-1.7.8.md)（11 位角色的独立桌宠和表情）、[1.7.7](docs/VALIDATION-1.7.7.md)（鼠标绕桌宠转圈的卡顿与视线反转）、[1.7.6](docs/VALIDATION-1.7.6.md)（鼠标位置采样与方向帧预取）、[1.7.5](docs/VALIDATION-1.7.5.md)（火山方舟绘图与 Galgame 立绘参考）、[1.7.3](docs/VALIDATION-1.7.3.md)（便携启动与本机 Codex 检测；包括模拟桌面端独立安装、真实本机桌面端 / Store 程序的登录和图像能力读取，未在用户笔记本上远程验证，也未重新生成 CG）、[1.7.2](docs/VALIDATION-1.7.2.md)（近景立绘与发布检查）、[1.7.1](docs/VALIDATION-1.7.1.md)（WebM 动画与主题）、[1.7.0](docs/VALIDATION-1.7.0.md)。
 
