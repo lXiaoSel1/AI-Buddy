@@ -14,14 +14,16 @@
 
 **简体中文** · [English](README.en.md)
 
-<!-- ai-buddy-source-version: 1.9.1 -->
-**当前版本：[v1.9.1](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.1)** · 这一版主要改进升级和维护：便携版覆盖升级会沿用原来的存档，新目录首次启动可以[导入旧存档](#导入旧存档)；安装器会清理用不到的旧版本和下载缓存，清理时不碰个人存档，检查新版本时还会在本机验证发布签名。桌宠被抛出去后会立刻手忙脚乱地挥手；工作概览里“用量不完整”的提示可以关掉了。动作素材与 1.9.0 相同。见 [1.9.1 更新说明](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.1)。
+<!-- ai-buddy-source-version: 1.9.2 -->
+**当前版本：[v1.9.2](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.2)** · 这是一个修复版。聊天连接的推理强度（effort）只列出当前模型确实支持的档位，换模型时跟着更新，查不到能力信息时只提供“模型默认”，详见[聊天与 CG 接入](#聊天与-cg-接入)；群聊台词右上角的 **合影 CG** 和 **结束本次聊天** 按钮不再挡住正文；API 配置里 effort 档位较多时会换行，不再和上下文容量的说明叠在一起。动作素材与 1.9.0 相同。见 [1.9.2 更新说明](docs/RELEASE-1.9.2.md)。
+
+1.9.1 主要改进升级和维护：便携版覆盖升级会沿用原来的存档，新目录首次启动可以[导入旧存档](#导入旧存档)；安装器会清理用不到的旧版本和下载缓存，清理时不碰个人存档，检查新版本时还会在本机验证发布签名。桌宠被抛出去后会立刻手忙脚乱地挥手；工作概览里“用量不完整”的提示可以关掉了。见 [1.9.1 更新说明](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.1)。
 
 1.9.0 加入了群聊、角色卡和「我的身份」、每位角色单独的聊天连接与 effort，以及长期记忆、人格自成长和人生存档；桌宠能摸、会睡觉，还能拖着走、抛出去；整个界面也改了版，11 套主题按各自的立绘取色。30fps 和 60fps 两版功能相同。见 [1.9.0 更新说明](docs/RELEASE-1.9.0.md) 和 [验收记录](docs/VALIDATION-1.9.0.md)。
 
 ## 在线安装（推荐）
 
-[下载 Windows x64 安装器](https://github.com/lXiaoSel1/ai-buddy/releases/download/v1.9.1/AI-Buddy-Setup-1.9.1-win-x64.exe) → 选择 30fps / 60fps 和角色 → 自动下载、校验、安装。支持补装和离线导入。从 1.9.0 或 1.8.0 升级也用这个安装器，选原来的安装位置就行；旧版的安装器不会自动发现新版本，需要手动下载。[安装与维护说明](docs/INSTALLER.md)。
+[下载 Windows x64 安装器](https://github.com/lXiaoSel1/ai-buddy/releases/download/v1.9.2/AI-Buddy-Setup-1.9.2-win-x64.exe) → 选择 30fps / 60fps 和角色 → 自动下载、校验、安装。支持补装和离线导入。已经装了 1.9.1 的，打开 1.9.1 的安装器或维护工具会自动检查新版本，点 **下载并打开新版**，再在打开的 1.9.2 安装器里点 **安装 / 补装 / 修复**；从 1.9.0 或 1.8.0 升级也用这个安装器，选原来的安装位置就行，旧版的安装器不会发现新版本，需要手动下载。[安装与维护说明](docs/INSTALLER.md)。
 
 安装器约 50 MiB；全角色资源下载量约为 30fps **1.66 GiB**、60fps **2.33 GiB**，只选部分角色会更小。也可以下载完整便携 ZIP 的分卷离线安装，见下文[安装](#安装)。
 
@@ -208,29 +210,29 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
 
 ### 在线安装器（推荐）
 
-1. 到 [v1.9.1 下载页](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.1) 下载 `AI-Buddy-Setup-1.9.1-win-x64.exe`（约 50 MiB）。安装器自带 .NET 运行库。
+1. 到 [v1.9.2 下载页](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.2) 下载 `AI-Buddy-Setup-1.9.2-win-x64.exe`（约 50 MiB）。安装器自带 .NET 运行库。
 2. 选择安装位置（默认 `%LOCALAPPDATA%\Programs\AI Buddy`）、30fps 或 60fps、要装的角色和初始角色。首次安装默认选 30fps 和全部角色，初始角色为 DeepSeek。
-3. 点击安装。安装器从固定的 v1.9.1 Release 下载资源，逐包、逐文件核对 SHA-256；全角色下载量约为 30fps 1.66 GiB、60fps 2.33 GiB。下载中断时，重新运行同一个安装器、选相同位置就能接着下。装好并确认新版正常启动后，这次下载的安装包会自动删除。
+3. 点击安装。安装器从固定的 v1.9.2 Release 下载资源，逐包、逐文件核对 SHA-256；全角色下载量约为 30fps 1.66 GiB、60fps 2.33 GiB。下载中断时，重新运行同一个安装器、选相同位置就能接着下。装好并确认新版正常启动后，这次下载的安装包会自动删除。
 4. 默认会创建桌面和开始菜单入口。安装器不会开启联网聊天、自动 CG、开机启动或后台自动更新。
 
-1.9.1 的安装器打开时会检查有没有更新的正式版本。有新版本时，点 **下载并打开新版**：安装器先确认发布标签的签名（除了看 GitHub 的验证结果，还会在本机用固定的发布公钥再验一次），下载后核对哈希，然后打开新版安装器。下载和安装都要你点击确认；检查失败不影响离线安装、修复和回退。
+1.9.1 起，安装器打开时会检查有没有更新的正式版本，也可以点 **检查新版本** 再查一次。有新版本时，点 **下载并打开新版**：安装器先确认发布标签的签名（除了看 GitHub 的验证结果，还会在本机用固定的发布公钥再验一次），下载后核对哈希，然后打开新版安装器，沿用原来的安装位置和已登记的存档位置。下载和安装都要你点击确认；检查失败不影响离线安装、修复和回退。这样下载的新版安装器 EXE 会留在下载缓存里，安装后不会自动删除，见[数据与隐私](#数据与隐私)。
 
-**从 1.9.0 或 1.8.0 升级**：旧版的安装器固定使用旧清单，也不会检查新版本。请下载 1.9.1 安装器，选原来的安装位置。它会接管原目录，保留个人存档、自定义数据目录、聊天连接和角色设置；完整的便携版目录也能这样接管。不要把旧存档复制进新目录覆盖；想在新目录里接着用旧存档，请用下文的[导入旧存档](#导入旧存档)。
+**从 1.9.0 或 1.8.0 升级**：旧版的安装器固定使用旧清单，也不会检查新版本。请下载 1.9.2 安装器，选原来的安装位置。它会接管原目录，保留个人存档、自定义数据目录、聊天连接和角色设置；完整的便携版目录也能这样接管。不要把旧存档复制进新目录覆盖；想在新目录里接着用旧存档，请用下文的[导入旧存档](#导入旧存档)。
 
 ### 便携分卷（离线）
 
 1. 在同一个下载页，把所选帧率的全部分卷和合并工具下载到同一个文件夹：
-    - 30fps：`AI-Buddy-1.9.1-Windows-x64-30fps.zip.part01`、`.part02`、`AI-Buddy-1.9.1-Windows-x64-30fps.zip.parts.json`、`Combine-AI-Buddy-1.9.1.ps1` 和 `Combine-AI-Buddy-1.9.1-30fps.cmd`。
-    - 60fps：`AI-Buddy-1.9.1-Windows-x64-60fps.zip.part01` 到 `.part03`、对应的 `.zip.parts.json`、`Combine-AI-Buddy-1.9.1.ps1` 和 `Combine-AI-Buddy-1.9.1-60fps.cmd`。
+    - 30fps：`AI-Buddy-1.9.2-Windows-x64-30fps.zip.part01`、`.part02`、`AI-Buddy-1.9.2-Windows-x64-30fps.zip.parts.json`、`Combine-AI-Buddy-1.9.2.ps1` 和 `Combine-AI-Buddy-1.9.2-30fps.cmd`。
+    - 60fps：`AI-Buddy-1.9.2-Windows-x64-60fps.zip.part01` 到 `.part03`、对应的 `.zip.parts.json`、`Combine-AI-Buddy-1.9.2.ps1` 和 `Combine-AI-Buddy-1.9.2-60fps.cmd`。
 2. 双击对应的 `.cmd`。脚本先校验每一卷，合并后再校验完整的 ZIP，只用到 Windows 自带的 PowerShell。不要直接解压其中一卷。合并后的 ZIP 约 1.70 GiB（30fps）或 2.37 GiB（60fps）。
 3. 把合并出的 ZIP 完整解压到一个可写目录，进入 `AI-Buddy` 文件夹，双击根目录的 **AI Buddy.exe**。`AI Buddy.vbs` 和 `AI Buddy.cmd` 是兼容入口，启动的是同一个程序。
 
-另一种离线方式：把 `install-manifest-1.9.1.json` 和需要的资源 ZIP 放进同一个文件夹，在安装器里选择这个“离线资源目录”，同样会逐个校验。1.7.10 的旧离线包仍保留在它原来的 Release 页面。
+另一种离线方式：把 `install-manifest-1.9.2.json` 和需要的资源 ZIP 放进同一个文件夹，在安装器里选择这个“离线资源目录”，同样会逐个校验。1.7.10 的旧离线包仍保留在它原来的 Release 页面。
 
 几点注意：
 
 - 不要在 ZIP 里直接运行，也不要只复制 EXE，目录结构要保留。
-- 安装器和程序都没有商业代码签名，Windows 可能提示“未知发布者”，可以先用 `SHA256SUMS-1.9.1.txt` 核对文件。
+- 安装器和程序都没有商业代码签名，Windows 可能提示“未知发布者”，可以先用 `SHA256SUMS-1.9.2.txt` 核对文件。
 - 首次启动会自动查找当前用户的常见日志目录。没装任何 AI 工具也能用，陪伴功能可以离线运行。
 - GitHub 自动生成的 **Source code** 是源码包，不能直接运行。
 - 本仓库和正式发行包已公开。发行包不包含开发者存档、连接密钥或本机日志。
@@ -242,7 +244,7 @@ AI 酱运行期间，新监控到的工作 Token（AI 酱自己发起的聊天�
 ├─ AI Buddy.exe / AI Buddy.vbs / AI Buddy.cmd / Start-AI-Buddy.ps1   启动入口
 ├─ builds/<版本>/                         应用代码、动作和角色资源
 ├─ runtime/AI-Buddy-<版本>/               Electron 运行时
-├─ maintenance/1.9.1/AI Buddy Setup.exe   维护工具
+├─ maintenance/1.9.2/AI Buddy Setup.exe   维护工具
 ├─ local/current-build.json               当前版本指针
 ├─ local/installation.json                安装记录：帧率、角色和存档位置
 ├─ local/portable-defaults.json           便携版自带的程序信息（只有便携版有）
@@ -425,7 +427,9 @@ Galgame 顶栏的 **角色来源** 决定谁出场，可以跟随工作区，也
 | CG | Gemini Interactions | 16:9，默认 1K |
 | CG | 通义万相 | 生成与编辑默认 `wan2.6-image`、1280×720；异步文生图默认 1696×960 |
 
-聊天连接可以设推理强度（effort），对本机 Codex、OpenAI Responses 和 Chat Completions 生效；本机 Codex 没设时用 low，Gemini 原生和 Anthropic Messages 用模型默认。连接还可以填上下文容量；没填、模型目录里也查不到时，按 272,000 tokens 规划。外部 API 连接的回复被输出上限截断时，会把上限加倍自动重试一次（本机 Codex 不重试）；仍被截断时，会提示你调高通用设置里的输出上限。
+聊天连接可以设推理强度（effort），对本机 Codex、OpenAI Responses 和 Chat Completions 生效；本机 Codex 没设时用 low，Gemini 原生和 Anthropic Messages 用模型默认。1.9.2 起，可选的档位按这个连接当前的模型来定：点 **获取模型列表** 后，列表里写明了支持哪些档位就用列表的；DeepSeek 和 xAI 官方服务地址上的几款模型（`deepseek-flash`、`deepseek-v4-pro`、`grok-4.5`、`grok-4.6`、`grok-4.7`）按官方文档内置了档位，换成代理地址就不算；其余情况只提供“模型默认”，选它时不发送 effort 参数。所以 OpenAI、Kimi、Qwen、MiniMax 和自定义连接，如果服务的模型列表没写明档位，现在只有“模型默认”可选（1.9.1 会列出除 ultra 外的全部档位）。换模型时，如果新模型不支持原来的档位，会改回模型默认，保存后生效；改服务地址或接口协议会清空模型列表和档位。本机 Codex 连接的模型列表里如果没有档位信息（例如 1.8.0 及更早版本只存了模型名），打开编辑时会自动重新读取一次，保存后生效。
+
+旧版里给外部 API 连接选过、现在不支持或核实不了的档位，升级后这个连接的聊天、连接测试和后台任务都会报错“该模型不支持所选推理强度”，请求在发出前就被拦下，不会产生费用。打开这个连接编辑时会自动改成“模型默认”并提示，点保存即可；如果服务的模型列表写明了档位，也可以先点 **获取模型列表** 再选。连接还可以填上下文容量；没填、模型目录里也查不到时，按 272,000 tokens 规划。外部 API 连接的回复被输出上限截断时，会把上限加倍自动重试一次（本机 Codex 不重试）；仍被截断时，会提示你调高通用设置里的输出上限。
 
 可以选预设，也可以填写自定义的兼容服务地址和模型 ID；兼容程度、模型权限和参考图限制由服务端决定。外部密钥用 Electron safeStorage 加密后保存在本机。不要把真实密钥写进仓库文件，也不要提交到 Git。
 
@@ -468,7 +472,7 @@ AI 酱能找到桌面端运行缓存、Microsoft Store 安装、常见独立安�
 - `cg-assets/`：生成的 CG 及缩略图。
 - `chromium/`、`crash-reports/`：界面缓存和崩溃报告。
 
-`settings.json`、`model-connections.json`、`cg-connections.json`、`companion.json` 和 Galgame 存档实际都是同名的 `.snapshots/` 文件夹，存着最近的若干版本：1.9.0 起保留最近 50 次修改，再加 90 天内每天一份。在线安装的下载缓存放在 `%LOCALAPPDATA%\AI Buddy\InstallerCache`，里面只有安装包，不含个人数据；安装成功后会自动删除，卸载时也会清理。
+`settings.json`、`model-connections.json`、`cg-connections.json`、`companion.json` 和 Galgame 存档实际都是同名的 `.snapshots/` 文件夹，存着最近的若干版本：1.9.0 起保留最近 50 次修改，再加 90 天内每天一份。在线安装的下载缓存放在 `%LOCALAPPDATA%\AI Buddy\InstallerCache`，里面只有安装包，不含个人数据；资源包在安装成功后会自动删除，卸载时也会清理。用 **下载并打开新版** 下载的新版安装器（文件名形如 `<SHA-256>-AI-Buddy-Setup-1.9.2-win-x64.exe`，旁边还有一个同名的 `.lock` 文件）目前不在清理范围内，安装和卸载后都会留下，不需要的话可以手动删除。
 
 会发到外部的内容：
 
@@ -498,7 +502,7 @@ npm start
 
 标题下的「安装器下载」徽章由 [`.github/workflows/installer-download-badge.yml`](.github/workflows/installer-download-badge.yml) 每 6 小时统计一次，只计各版本 `AI-Buddy-Setup-*-win-x64.exe` 的下载次数，累计所有版本；结果写在 `badges` 分支，不会往 `main` 提交。GitHub 不区分下载者，开发测试的下载也算在内。
 
-不要提交 `local/`、生成的 `builds/`、密钥、个人 CG 或日志。发布前的版本同步步骤见 [构建说明](docs/BUILD.md)。验收记录：[1.9.1](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.1)（安装器清理与签名校验、存档继承与导入、桌宠抛掷、用量提示；见 Release 附件 `VALIDATION-1.9.1.md`）、[1.9.0](docs/VALIDATION-1.9.0.md)（群聊、角色卡与身份、长期记忆与人生存档、桌宠互动、界面改版，另见 [更新说明](docs/RELEASE-1.9.0.md)）、[1.8.0](docs/VALIDATION-1.8.0.md)（在线安装器与按角色选装）、[1.7.10](docs/VALIDATION-1.7.10.md)（30fps / 60fps 双版本，请求历史改存 SQLite）、[1.7.9](docs/VALIDATION-1.7.9.md)（统一各角色显示大小，修复动作切换和点击检测）、[1.7.8](docs/VALIDATION-1.7.8.md)（11 位角色的独立桌宠和表情）、[1.7.7](docs/VALIDATION-1.7.7.md)（鼠标绕桌宠转圈的卡顿与视线反转）、[1.7.6](docs/VALIDATION-1.7.6.md)（鼠标位置采样与方向帧预取）、[1.7.5](docs/VALIDATION-1.7.5.md)（火山方舟绘图与 Galgame 立绘参考）、[1.7.3](docs/VALIDATION-1.7.3.md)（便携启动与本机 Codex 检测；包括模拟桌面端独立安装、真实本机桌面端 / Store 程序的登录和图像能力读取，未在用户笔记本上远程验证，也未重新生成 CG）、[1.7.2](docs/VALIDATION-1.7.2.md)（近景立绘与发布检查）、[1.7.1](docs/VALIDATION-1.7.1.md)（WebM 动画与主题）、[1.7.0](docs/VALIDATION-1.7.0.md)。
+不要提交 `local/`、生成的 `builds/`、密钥、个人 CG 或日志。发布前的版本同步步骤见 [构建说明](docs/BUILD.md)。验收记录：[1.9.2](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.2)（按模型提供推理强度档位的界面实测、安装器隔离复测、便携覆盖升级与导入复测、媒体哈希核对；见 Release 附件 `VALIDATION-1.9.2.md`）、[1.9.1](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.1)（安装器清理与签名校验、存档继承与导入、桌宠抛掷、用量提示；见 Release 附件 `VALIDATION-1.9.1.md`）、[1.9.0](docs/VALIDATION-1.9.0.md)（群聊、角色卡与身份、长期记忆与人生存档、桌宠互动、界面改版，另见 [更新说明](docs/RELEASE-1.9.0.md)）、[1.8.0](docs/VALIDATION-1.8.0.md)（在线安装器与按角色选装）、[1.7.10](docs/VALIDATION-1.7.10.md)（30fps / 60fps 双版本，请求历史改存 SQLite）、[1.7.9](docs/VALIDATION-1.7.9.md)（统一各角色显示大小，修复动作切换和点击检测）、[1.7.8](docs/VALIDATION-1.7.8.md)（11 位角色的独立桌宠和表情）、[1.7.7](docs/VALIDATION-1.7.7.md)（鼠标绕桌宠转圈的卡顿与视线反转）、[1.7.6](docs/VALIDATION-1.7.6.md)（鼠标位置采样与方向帧预取）、[1.7.5](docs/VALIDATION-1.7.5.md)（火山方舟绘图与 Galgame 立绘参考）、[1.7.3](docs/VALIDATION-1.7.3.md)（便携启动与本机 Codex 检测；包括模拟桌面端独立安装、真实本机桌面端 / Store 程序的登录和图像能力读取，未在用户笔记本上远程验证，也未重新生成 CG）、[1.7.2](docs/VALIDATION-1.7.2.md)（近景立绘与发布检查）、[1.7.1](docs/VALIDATION-1.7.1.md)（WebM 动画与主题）、[1.7.0](docs/VALIDATION-1.7.0.md)。
 
 ## 许可与致谢
 
