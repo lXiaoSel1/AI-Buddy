@@ -15,11 +15,15 @@
 [简体中文](README.md) · **English**
 
 <!-- ai-buddy-source-version: 1.9.2 -->
-**Current release: [v1.9.2](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.2)** · This release adds group chat, character cards and personas ("My personas"), a chat connection and effort for each character, plus long-term memory, personality growth and life archives. You can pat the desktop pet, walk her around or throw her, and she falls asleep when things are quiet. The whole interface was redesigned, and the 11 themes take their colors from the matching portraits. The 30fps and 60fps editions have the same features. See the [1.9.0 release notes](docs/RELEASE-1.9.0.md) and [validation record](docs/VALIDATION-1.9.0.md).
+**Current release: [v1.9.2](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.2)** · This is a bug-fix release. A chat connection's reasoning effort now lists only the levels the current model actually supports, follows model changes, and offers only "Model default" when the model's capabilities are unknown (see [Chat and CG connections](#chat-and-cg-connections)). The **Group CG** and **End this session** buttons in the top-right corner of a group-chat line no longer cover the text. In the API connection editor, many effort levels now wrap instead of overlapping the context window note. The motion assets are the same as in 1.9.0. See the [1.9.2 release notes](docs/RELEASE-1.9.2.md) (in Chinese).
+
+1.9.1 improved upgrades and maintenance. Extracting the portable version over an old one keeps your saves, and a new folder can [import an old save](#import-an-old-save) on first launch. The installer removes old versions and download caches it no longer needs, never touches personal saves while doing so, and verifies the release signature on your own machine when it checks for updates. A thrown pet flails her arms the whole way, and the "incomplete usage" note in Overview can be dismissed. See the [1.9.1 release notes](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.1).
+
+1.9.0 added group chat, character cards and personas ("My personas"), a chat connection and effort for each character, plus long-term memory, personality growth and life archives. You can pat the desktop pet, walk her around or throw her, and she falls asleep when things are quiet. The whole interface was redesigned, and the 11 themes take their colors from the matching portraits. The 30fps and 60fps editions have the same features. See the [1.9.0 release notes](docs/RELEASE-1.9.0.md) and [validation record](docs/VALIDATION-1.9.0.md).
 
 ## Online installer (recommended)
 
-[Download the Windows x64 installer](https://github.com/lXiaoSel1/ai-buddy/releases/download/v1.9.2/AI-Buddy-Setup-1.9.2-win-x64.exe), choose 30fps / 60fps and characters, then it downloads, verifies and installs. It supports adding characters later and offline import. To upgrade from 1.8.0, use this installer and pick the same folder. [Installation guide](docs/INSTALLER.md).
+[Download the Windows x64 installer](https://github.com/lXiaoSel1/ai-buddy/releases/download/v1.9.2/AI-Buddy-Setup-1.9.2-win-x64.exe), choose 30fps / 60fps and characters, then it downloads, verifies and installs. It supports adding characters later and offline import. If you have 1.9.1, opening its installer or maintenance tool checks for updates automatically; click **Download and open update**, then **Install / Add / Repair** in the 1.9.2 installer that opens. To upgrade from 1.9.0 or 1.8.0, use this installer and pick the same folder; those older installers do not find new versions by themselves, so download it manually. [Installation guide](docs/INSTALLER.md).
 
 The installer is about 50 MiB. Downloading every character takes about **1.66 GiB** at 30fps or **2.33 GiB** at 60fps; picking fewer characters downloads less. The complete portable ZIP, split into parts, is the offline alternative; see [Install](#install).
 
@@ -208,10 +212,12 @@ Requires Windows 10/11 x64. Use the online installer (recommended) or download t
 
 1. Download `AI-Buddy-Setup-1.9.2-win-x64.exe` (about 50 MiB) from the [v1.9.2 page](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.2). It includes its own .NET runtime.
 2. Choose the installation folder (default `%LOCALAPPDATA%\Programs\AI Buddy`), 30fps or 60fps, the characters to install and the initial character. The first-run defaults are 30fps, every character and DeepSeek.
-3. Click install. The installer downloads from the pinned v1.9.2 release and checks SHA-256 for every package and file; every character takes about 1.66 GiB at 30fps or 2.33 GiB at 60fps. If a download is interrupted, run the same installer again with the same folder to resume.
+3. Click install. The installer downloads from the pinned v1.9.2 release and checks SHA-256 for every package and file; every character takes about 1.66 GiB at 30fps or 2.33 GiB at 60fps. If a download is interrupted, run the same installer again with the same folder to resume. Once the new version is installed and has started correctly, the downloaded packages are deleted.
 4. Desktop and Start menu shortcuts are created by default. The installer does not turn on online chat, automatic CG, startup registration or background updates.
 
-**Upgrading from 1.8.0**: the 1.8.0 installer is pinned to its own manifest and cannot find 1.9.1. Download the 1.9.1 installer and choose the existing installation folder. It takes over that folder and keeps your personal data, custom data folder, chat connections and character settings; a complete portable folder can be taken over the same way. Do not copy an old profile over the new folder.
+From 1.9.1, the installer checks for a newer stable release when it opens, and **Check for updates** checks again. If there is one, click **Download and open update**: the installer first checks the release tag's signature (GitHub's verification result, and again on your machine against the pinned release key), verifies the hash of the download, then opens the newer installer with the same installation folder and registered save location. Downloading and installing always wait for your click, and a failed check does not stop offline install, repair or roll back. The newer installer EXE downloaded this way stays in the download cache after installing; see [Data and privacy](#data-and-privacy).
+
+**Upgrading from 1.9.0 or 1.8.0**: older installers are pinned to their own manifest and do not check for updates. Download the 1.9.2 installer and choose the existing installation folder. It takes over that folder and keeps your personal data, custom data folder, chat connections and character settings; a complete portable folder can be taken over the same way. Do not copy an old profile over the new folder; to keep using an old save in a new folder, [import it](#import-an-old-save) instead.
 
 ### Portable split archive (offline)
 
@@ -238,10 +244,12 @@ Folder layout after installation:
 ├─ AI Buddy.exe / AI Buddy.vbs / AI Buddy.cmd / Start-AI-Buddy.ps1   launchers
 ├─ builds/<version>/                       app code, motions and character resources
 ├─ runtime/AI-Buddy-<version>/             Electron runtime
-├─ maintenance/1.9.1/AI Buddy Setup.exe    maintenance tool
+├─ maintenance/1.9.2/AI Buddy Setup.exe    maintenance tool
 ├─ local/current-build.json                current version pointer
-├─ local/installation.json                 installed edition and characters
+├─ local/installation.json                 installation record: edition, characters and data location
+├─ local/portable-defaults.json            program details shipped with the portable version (portable only)
 ├─ local/data-v003/                        your data, created on first run
+├─ local/data-profiles/                    imported old saves, one independent copy per import
 ├─ assets/  docs/  licenses/
 └─ README.md  LICENSE.md  THIRD_PARTY_NOTICES.md
 ~~~
@@ -251,14 +259,28 @@ Folder layout after installation:
 Online install:
 
 - Add characters, repair files or switch frame rate: click **Manage character resources** in General settings to open the maintenance tool, or run the same-version installer again. Characters that are not installed show as "Not installed" and open the installer only after you confirm; nothing downloads automatically.
-- Upgrade: run the newer installer. It waits for chat and CG to finish, closes AI Buddy normally, and keeps the previous program version and your personal data.
-- Roll back: click **Roll back** in the installer. It restores the program and launch pointer only and never overwrites newer progress with old saves. 1.9.0 writes new-format images and life / memory data; when you go back to 1.8.0, 1.7.10 or 1.7.9 and your data already contains them, the maintenance tool refuses the automatic downgrade and does not convert or delete that data.
-- Remove: click **Uninstall…** in the installer. Personal data is kept by default; you can also tick deleting the default personal data (irreversible). A custom data folder is never deleted. The download cache `%LOCALAPPDATA%\AI Buddy\InstallerCache` stays for resuming and repair; delete it manually if you no longer need it.
+- Upgrade: run the newer installer. It waits for chat and CG to finish and closes AI Buddy normally. Once the new version has started correctly, it keeps the current and the previous program version and removes older ones; personal data is never touched, even a data folder placed inside an old program folder. If creating shortcuts fails after that, you get a note, and the new version stays installed.
+- Roll back: click **Roll back** in the installer. It restores the program and launch pointer only and never overwrites newer progress with old saves. From 1.9.0 the app writes new-format images and life / memory data; when you go back to a version before 1.9.0 and your data already contains them, the maintenance tool refuses the automatic downgrade and does not convert or delete that data. When a roll back is not possible (no previous version, or data the older version cannot read), the button is greyed out and the reason is shown below it.
+- Remove: click **Uninstall…** in the installer. Personal data is kept by default; you can also tick deleting the default personal data (irreversible). A custom data folder and imported saves are never deleted automatically; if one of them is in use, ticking that option stops the uninstall, so remove them yourself if you want to. Retained older program versions and the download cache are removed too.
 
 Portable:
 
-- Update: choose **Quit** from the tray menu, extract the new version over the same location and start it as usual. Your data lives in `local/data-v003`; the release package does not contain that folder, so extracting over it leaves it alone. Back it up before updating if you like.
-- Remove: quit and delete the whole folder; AI Buddy adds no startup entry. Back up `local/data-v003` first if you want to keep chats and CGs.
+- Update: once chat and image generation have finished, choose **Quit** from the tray menu, extract the new version over the same location (the new and old `AI Buddy.exe` should end up in the same folder, not inside an extra `AI-Buddy` folder) and start it as usual. Your data lives in `local/data-v003`; the release package does not contain that folder, so extracting over it leaves it alone. From 1.9.1 the package no longer contains an installation record either, so a custom data location and the initial character you registered carry over. You can switch between 30fps and 60fps the same way; the other edition's program folder stays in `builds/`, and you can delete it by hand. Back up your data before updating if you like.
+- Remove: quit and delete the whole folder; AI Buddy adds no startup entry. Back up `local/data-v003` first if you want to keep chats and CGs, plus `local/data-profiles` if you imported a save.
+
+### Import an old save
+
+To keep using an older version's chats and memories in a new folder, import the old save. AI Buddy copies all of the save's data (interface caches, crash reports and temporary files excepted) and then switches to that copy; it never merges two sets of chats, affection or usage, and both the source and the current save are kept. Importing does not call any chat or image model.
+
+1. Quit the older AI Buddy first.
+2. On the first launch of the new folder a welcome page appears; choose **Import an old save**. In 1.9.2 this first-launch page is still shown in Chinese only (see the screenshot below): the option is 导入旧存档, and the buttons in the next steps are 选择目录, 核对并预览 and 导入副本并切换. If you are already using AI Buddy, open **Saves and migration** in General settings and click **Choose an old save**; that window follows your language.
+3. Click **Choose folder** and pick the old program folder or the actual data folder (with the program folder, AI Buddy follows the data location it had registered). Tick "I have quit the source AI Buddy…", then click **Check and preview**.
+4. Check the preview: the actual source folder, copy location, file count and size, and the numbers of characters, personas, sessions, group chats, memories, life archives, CGs and so on. If it looks right, click **Import a copy and switch**. After copying, every file's length and SHA-256 is checked, and AI Buddy switches to the copy and restarts only when all of them match. If the source changes during copying, the disk is full or a check fails, nothing is switched.
+5. The copy is stored in `local/data-profiles/` and registered by a relative path, so you can later move the whole folder and it still finds the save.
+
+![The first-launch page, in Chinese: 导入旧存档 (Import an old save) is selected](docs/screenshots/import-welcome-zh-CN.png)
+
+To avoid unexpected costs after an import: online chat stays off (it is off after every restart anyway); messages and group-chat rounds that were still in progress in the old save are interrupted; automatic memory processing is paused until you click **Resume automatic memory processing** under **Saves and migration** in General settings; and unfinished CGs are paused too: open each one in the CG gallery (group photos are in the group's CG gallery) and click **Resume this CG**. If AI Buddy cannot confirm whether the old request was already submitted, that button is disabled so you are not charged twice.
 
 ### Run from source
 
@@ -294,6 +316,8 @@ On first launch AI Buddy looks in these places under the current Windows user:
 
 Portable editors, WSL or other users' folders must be added manually: in **Token detection**, click **Add source**, choose a tool template and the actual folder, run **Local parsing preview**, then **Save and enable**. Custom sources accept JSONL, Zstd-compressed JSONL, JSON, CSV and SQLite, support field mapping, and templates can be imported and exported. Removing a source never deletes the original logs or the usage already recorded.
 
+When some requests in the logs lack complete usage, Overview, Projects and History show "N requests have incomplete usage; totals include known values only." at the top. Click the × on the right to dismiss it; after that the note appears only on the Token detection page. Restore default settings brings it back.
+
 ### General settings defaults
 
 | Setting | Default |
@@ -314,7 +338,7 @@ Portable editors, WSL or other users' folders must be added manually: in **Token
 | Statistics time zone | System local time |
 | Update prices daily | Off |
 
-Two switches live outside this table: **Online chat** is off after every restart and must be turned on manually, and **Generate CG automatically** is off on a fresh install. **Restore default settings** resets every option above: the language goes back to Simplified Chinese and a hidden pet is shown again. The chat and image connection choices and Token detection sources are not affected, and the pet position, usage and Galgame data are kept.
+Two switches live outside this table: **Online chat** is off after every restart and must be turned on manually, and **Generate CG automatically** is off on a fresh install. **Restore default settings** resets every option above: the language goes back to Simplified Chinese, a hidden pet is shown again, and a dismissed "incomplete usage" note comes back. The chat and image connection choices and Token detection sources are not affected, and the pet position, usage and Galgame data are kept.
 
 ### Character and chat model
 
@@ -376,7 +400,7 @@ Each of the 11 characters has her own pet. **Companion character** in General se
 - **Pat**: over her, the pointer turns into a white glove. Left-click and she makes a face while the glove gives a little poke.
 - **Sleep**: after 5 quiet minutes (no new work tokens, interaction, task feedback or chat) she falls asleep and the status bar reads "Asleep · click to wake"; she stays awake while real chat and image requests are running. You can also let her nap from the right-click menu.
 - **Walk her**: hold the left button and drag; she walks along with the pointer and stays where you let go.
-- **Throw her**: hold the right button, drag a little and let go quickly, and she flies off, bounces off the screen edges and lands on her feet. While right-dragging, hold the left button to charge like a slingshot and release it to launch; the predicted path, landing point and strength are drawn on screen. Esc cancels. Adjust the throw strength in General settings; turning off "Physical interactions" stops throwing and charging, while walking her still works.
+- **Throw her**: hold the right button, drag a little and let go quickly, and she flies off flailing her arms, bounces off the screen edges and lands on her feet. While right-dragging, hold the left button to charge like a slingshot and release it to launch; the predicted path, landing point and strength are drawn on screen. Esc cancels. Adjust the throw strength in General settings; turning off "Physical interactions" stops throwing and charging, while walking her still works.
 - **The status bar** shows her state, such as "AI Buddy · here with you", "Working · 2 sessions" or "Waiting for you · Codex". Hover it for a ×; after closing it you get an undo notice, and you can bring it back later from the right-click menu or General settings.
 - The glove's cuff, the bubbles and the status bar follow the current theme; the taskbar and tray icons show the head of the pet currently on the desktop.
 
@@ -403,7 +427,9 @@ Chat and CG image generation use two separate sets of connections, both managed 
 | CG | Gemini Interactions | 16:9, 1K by default |
 | CG | Wan (Tongyi Wanxiang) | Generation/editing defaults to `wan2.6-image` at 1280×720; asynchronous text-to-image defaults to 1696×960 |
 
-A chat connection can set a reasoning effort, which applies to local Codex, OpenAI Responses and Chat Completions; local Codex uses low when none is set, and native Gemini and Anthropic Messages use the model default. A connection can also state its context window; if it does not and the model catalog has no figure, 272,000 tokens are assumed. If a reply from an external API connection is cut off by the output limit, it is retried once with double the limit (local Codex does not retry); if it is still cut off, the message suggests raising the output limit in General settings.
+A chat connection can set a reasoning effort, which applies to local Codex, OpenAI Responses and Chat Completions; local Codex uses low when none is set, and native Gemini and Anthropic Messages use the model default. From 1.9.2, the levels offered follow the connection's current model: after **Load model list**, the levels the list declares for that model are used; a few models on the official DeepSeek and xAI endpoints (`deepseek-flash`, `deepseek-v4-pro`, `grok-4.5`, `grok-4.6` and `grok-4.7`) have built-in levels from the official documentation, which do not apply through a proxy address; otherwise only "Model default" is offered, which sends no effort parameter. So OpenAI, Kimi, Qwen, MiniMax and custom connections now offer only Model default unless the service's model list declares levels (1.9.1 listed every level except ultra). When you switch models and the new one does not support the chosen level, it goes back to Model default, effective when saved; changing the service address or API protocol clears the model list and the effort. If a local Codex connection's saved model list has no effort information (for example, 1.8.0 and earlier stored only model names), opening it for editing reads the list again; save to keep it.
+
+If an older version saved an effort on an external API connection that is now unsupported or cannot be verified, chat, Test connection and background work through that connection stop with an error saying the model does not support the selected effort (in the English UI this message currently appears in Chinese). The request is blocked before it is sent, so nothing is charged. Opening the connection switches it to Model default with a note; just save. If the service's model list declares levels, you can click **Load model list** first and pick one. A connection can also state its context window; if it does not and the model catalog has no figure, 272,000 tokens are assumed. If a reply from an external API connection is cut off by the output limit, it is retried once with double the limit (local Codex does not retry); if it is still cut off, the message suggests raising the output limit in General settings.
 
 Choose a preset or enter a custom compatible endpoint and model ID; compatibility, model permissions and reference-image limits depend on the service. External keys are encrypted with Electron safeStorage and stored locally. Never put a real key in repository files or commit it to Git.
 
@@ -431,7 +457,7 @@ Quota connections are independent of chat and image connections. Each service re
 
 ## Data and privacy
 
-All runtime data lives under `local/data-v003` in the app folder. Treat it as private:
+Runtime data lives under `local/data-v003` in the app folder by default (after importing an old save, the copy in `local/data-profiles/` is used instead). Treat it as private:
 
 - `settings.json`: preferences and the pet position.
 - `model-connections.json`, `cg-connections.json`, `quota-connections-v1.json`: saved connections, with keys encrypted by safeStorage.
@@ -446,7 +472,7 @@ All runtime data lives under `local/data-v003` in the app folder. Treat it as pr
 - `cg-assets/`: generated CGs and thumbnails.
 - `chromium/`, `crash-reports/`: interface cache and crash reports.
 
-`settings.json`, `model-connections.json`, `cg-connections.json`, `companion.json` and the Galgame save are actually `.snapshots/` folders of the same name that hold recent versions: from 1.9.0, the latest 50 changes plus one per day for 90 days. The online installer's download cache is `%LOCALAPPDATA%\AI Buddy\InstallerCache`; it holds only install packages, no personal data.
+`settings.json`, `model-connections.json`, `cg-connections.json`, `companion.json` and the Galgame save are actually `.snapshots/` folders of the same name that hold recent versions: from 1.9.0, the latest 50 changes plus one per day for 90 days. The online installer's download cache is `%LOCALAPPDATA%\AI Buddy\InstallerCache`; it holds only install packages, no personal data, and the resource packages are deleted after a successful install and on uninstall. A newer installer downloaded with **Download and open update** (named like `<SHA-256>-AI-Buddy-Setup-1.9.2-win-x64.exe`, next to a `.lock` file of the same name) is not cleaned up yet and stays after installing and uninstalling; delete it by hand if you do not need it.
 
 What leaves your machine:
 
@@ -476,7 +502,7 @@ Development needs Windows x64 and Node.js 24, with Electron 44.6.0, React 19.3.0
 
 The "installer downloads" badge under the title is updated every 6 hours by [`.github/workflows/installer-download-badge.yml`](.github/workflows/installer-download-badge.yml). It counts only downloads of each version's `AI-Buddy-Setup-*-win-x64.exe`, summed over all versions, and writes the result to the `badges` branch rather than committing to `main`. GitHub does not tell downloaders apart, so test downloads during development count too.
 
-Do not commit `local/`, generated `builds/`, keys, personal CGs or logs. Release version steps are in [BUILD.md](docs/BUILD.md). Validation records: [1.9.0](docs/VALIDATION-1.9.0.md) (group chat, character cards and personas, long-term memory and life archives, pet interactions, interface redesign; see also the [release notes](docs/RELEASE-1.9.0.md)), [1.8.0](docs/VALIDATION-1.8.0.md) (online installer and per-character packages), [1.7.10](docs/VALIDATION-1.7.10.md) (30fps / 60fps editions, request history in SQLite), [1.7.9](docs/VALIDATION-1.7.9.md) (consistent character size, action switching and hit-test fixes), [1.7.8](docs/VALIDATION-1.7.8.md) (separate desktop pets and expressions for all 11 characters), [1.7.7](docs/VALIDATION-1.7.7.md) (stutter and backward gaze when circling the pet), [1.7.6](docs/VALIDATION-1.7.6.md) (pointer sampling and direction-frame prefetch), [1.7.5](docs/VALIDATION-1.7.5.md) (Volcengine Ark drawing and Galgame portrait references), [1.7.3](docs/VALIDATION-1.7.3.md) (portable startup and local Codex discovery; covers simulated desktop-only installations and real local desktop/Store sign-in and image-capability checks, with no remote test on the user's laptop and no new CG generated), [1.7.2](docs/VALIDATION-1.7.2.md) (close portraits and release checks), [1.7.1](docs/VALIDATION-1.7.1.md) (WebM animations and themes), [1.7.0](docs/VALIDATION-1.7.0.md).
+Do not commit `local/`, generated `builds/`, keys, personal CGs or logs. Release version steps are in [BUILD.md](docs/BUILD.md). Validation records: [1.9.2](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.2) (per-model effort UI checks, isolated installer retests, portable overlay upgrade and import retests, media hash checks; see the release asset `VALIDATION-1.9.2.md`), [1.9.1](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v1.9.1) (installer cleanup and signature checks, save carry-over and import, pet throws, usage note; see the release asset `VALIDATION-1.9.1.md`), [1.9.0](docs/VALIDATION-1.9.0.md) (group chat, character cards and personas, long-term memory and life archives, pet interactions, interface redesign; see also the [release notes](docs/RELEASE-1.9.0.md)), [1.8.0](docs/VALIDATION-1.8.0.md) (online installer and per-character packages), [1.7.10](docs/VALIDATION-1.7.10.md) (30fps / 60fps editions, request history in SQLite), [1.7.9](docs/VALIDATION-1.7.9.md) (consistent character size, action switching and hit-test fixes), [1.7.8](docs/VALIDATION-1.7.8.md) (separate desktop pets and expressions for all 11 characters), [1.7.7](docs/VALIDATION-1.7.7.md) (stutter and backward gaze when circling the pet), [1.7.6](docs/VALIDATION-1.7.6.md) (pointer sampling and direction-frame prefetch), [1.7.5](docs/VALIDATION-1.7.5.md) (Volcengine Ark drawing and Galgame portrait references), [1.7.3](docs/VALIDATION-1.7.3.md) (portable startup and local Codex discovery; covers simulated desktop-only installations and real local desktop/Store sign-in and image-capability checks, with no remote test on the user's laptop and no new CG generated), [1.7.2](docs/VALIDATION-1.7.2.md) (close portraits and release checks), [1.7.1](docs/VALIDATION-1.7.1.md) (WebM animations and themes), [1.7.0](docs/VALIDATION-1.7.0.md).
 
 ## License and credits
 
