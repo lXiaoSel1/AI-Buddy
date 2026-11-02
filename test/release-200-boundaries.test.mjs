@@ -4,9 +4,9 @@ import {readFileSync} from 'node:fs';
 import {checkReleaseVersion} from '../scripts/check-release-version.mjs';
 import {pluginCompatibility,satisfiesVersionRange} from '../src/plugin-manifest.mjs';
 const root=new URL('../',import.meta.url);
-test('public 2.0.2 source aligns installer/download identities and retains approved media base',()=>{
+test('public 2.0.3 source aligns installer/download identities and retains compatible resource release',()=>{
  const state=checkReleaseVersion(root.pathname.replace(/^\/([A-Za-z]:)/,'$1'));
- assert.equal(state.version,'2.0.2');assert.equal(state.stage,'published');assert.equal(state.publishedVersion,'2.0.2');assert.equal(state.resourceBaseVersion,'1.9.2');assert.equal(state.installerVersion,'2.0.2');
+ assert.equal(state.version,'2.0.3');assert.equal(state.stage,'published');assert.equal(state.publishedVersion,'2.0.3');assert.equal(state.resourceBaseVersion,'2.0.2');assert.equal(state.installerVersion,'2.0.3');
 });
 test('explicit cross-version plugin range allows only tested hosts and does not widen bridge version',()=>{
  for(const version of ['1.9.2','2.0.0'])assert(satisfiesVersionRange(version,'1.9.2 || 2.0.0'));

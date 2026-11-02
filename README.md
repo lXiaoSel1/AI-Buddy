@@ -1,12 +1,12 @@
 # AI 酱 · AI Buddy
 
-<!-- ai-buddy-source-version: 2.0.2 -->
+<!-- ai-buddy-source-version: 2.0.3 -->
 **简体中文** · [English](README.en.md)
 
 Windows 10/11 x64 的本地 AI 用量监控、桌宠和多角色陪伴应用。
 
-当前发行版：[v2.0.2](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.2)。
-[下载 Windows 安装器](https://github.com/lXiaoSel1/ai-buddy/releases/download/v2.0.2/AI-Buddy-Setup-2.0.2-win-x64.exe)，选择 30fps 或 60fps 及角色。安装器按清单下载并校验资源；每个下载文件都绑定哈希。
+当前发行版：[v2.0.3](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.3)。
+[下载 Windows 安装器](https://github.com/lXiaoSel1/ai-buddy/releases/download/v2.0.3/AI-Buddy-Setup-2.0.3-win-x64.exe)，选择 30fps 或 60fps 及角色。安装器按清单下载并校验资源；每个下载文件都绑定哈希。
 
 - 读取本地工具日志，按工具、模型、项目和日期整理真实记录的 Token 与参考费用；缺失字段保持未知。
 - 11位内置角色、透明桌宠、独立聊天连接、角色卡与身份、群聊、长期记忆、人格成长和人生存档。
@@ -30,7 +30,7 @@ B站观看必须先连接B站账号。画面理解来自明确采样的原视频
 
 账号凭据交系统加密存储；不放入插件页面、模型提示或发布包。存档、聊天、CG和任务保存在用户本机，勿上传local目录。回退只切程序，不用旧备份覆盖新数据；不支持新数据的旧程序会拒绝写入。
 
-应用本身免费，模型供应商和平台可能有自己的计费及使用要求。模型、联网、图片能力取决于连接。真实外部平台收发、模型表现与工程合成测试分别记录，见[发行说明](docs/RELEASE-2.0.2.md)与[验收边界](docs/VALIDATION-2.0.2.md)。
+应用本身免费，模型供应商和平台可能有自己的计费及使用要求。模型、联网、图片能力取决于连接。真实外部平台收发、模型表现与工程合成测试分别记录，见[发行说明](docs/RELEASE-2.0.3.md)与[验收边界](docs/VALIDATION-2.0.2.md)。
 
 ## 开发与许可
 

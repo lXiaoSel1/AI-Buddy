@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 
-export const APPLICATION_VERSION='2.0.2',MEDIA_BASE_VERSION='1.9.2';
+export const APPLICATION_VERSION='2.0.3',MEDIA_BASE_VERSION='1.9.2';
 export const APPROVED_BASELINE_SHA256='12ac599d424e678acb1c7f964c65551fdc48dc40ac31ea47facb253256a7b871';
 export const APPROVED_APPROVAL_SHA256='30f610d52dc03aee82baaddd31e1f081abd2be22758c3e66e7a74235e30428fb';
-export const PUBLIC_ASSET_INVENTORY_SHA256='d09ae853bb5e04358d16ff4955ffe08f5260f942bd62ae29df6653e6360cc7c2';
+export const PUBLIC_ASSET_INVENTORY_SHA256='37cf3c62ea5dfa62a64817b3551d7ef6960f8c2a3f56110596702b4917815816';
 export const CHARACTER_IDS=Object.freeze(['deepseek','claude','grok','seed','kimi','qwen','minimax','chatgpt','gemini','glm','hunyuan']);
 export const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
 const fail=message=>{throw Error('Distribution validation: '+message);};
@@ -44,7 +44,7 @@ export function validatePublicAssetInventory(value){
  return value;
 }
 export function loadPublicAssetInventory(repo){
- const file=path.join(repo,'scripts/media-baselines/public-202-assets.json');assertNoLinkedAncestors(file);const raw=fs.readFileSync(file);if(sha256(raw)!==PUBLIC_ASSET_INVENTORY_SHA256)fail('bundled approved asset inventory changed');return validatePublicAssetInventory(JSON.parse(raw));
+ const file=path.join(repo,'scripts/media-baselines/public-203-assets.json');assertNoLinkedAncestors(file);const raw=fs.readFileSync(file);if(sha256(raw)!==PUBLIC_ASSET_INVENTORY_SHA256)fail('bundled approved asset inventory changed');return validatePublicAssetInventory(JSON.parse(raw));
 }
 export function assertSourceAssetBindings(repo,inventory){
  for(const row of inventory.sourceAssets){const file=path.join(repo,row.path);assertNoLinkedAncestors(file);const bytes=fs.readFileSync(file);if(bytes.length!==row.bytes||sha256(bytes)!==row.sha256)fail('source UI resource changed: '+row.path);}

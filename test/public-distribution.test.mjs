@@ -14,11 +14,11 @@ test('private, deferred and aliased paths cannot enter a public application pack
 const repo=fileURLToPath(new URL('..',import.meta.url));
 function mediaCheck(f,options={}){return validateMediaBuild({resources:f.roots[30],legacyLockPath:f.legacyLockPath,baselinePath:f.baselinePath,approvalPath:f.approvalPath,...options});}
 const versions={applicationVersion:APPLICATION_VERSION,mediaBaseVersion:MEDIA_BASE_VERSION};
-test('real package/index manifest inputs separate application2.0.2 from media1.9.2; legacy defaults still reject the mismatch',t=>{
- const f=mediaFixture(t);assert.equal(read(path.join(f.roots[30],'package.json')).version,'2.0.2');assert.equal(read(path.join(f.roots[30],'assets/install-resource-index.json')).appVersion,'1.9.2');
- assert.throws(()=>mediaCheck(f),/application version differs/);const result=mediaCheck(f,versions);assert.equal(result.version,'2.0.2');assert.equal(result.mediaBaseVersion,'1.9.2');assert.equal(result.videos,1);
- assert.throws(()=>mediaCheck(f,{applicationVersion:'2.0.2'}),/supplied together/);assert.throws(()=>mediaCheck(f,{...versions,mediaBaseVersion:'2.0.2'}),/media base version differs/);assert.throws(()=>mediaCheck(f,{...versions,applicationVersion:'2.0.3'}),/application version differs/);
- const indexPath=path.join(f.roots[30],'assets/install-resource-index.json'),index=read(indexPath);save(indexPath,{...index,appVersion:'2.0.2'});assert.equal(mediaCheck(f,versions).version,'2.0.2');save(indexPath,{...index,appVersion:'9.9.9'});assert.throws(()=>mediaCheck(f,versions),/resource index header changed/);save(indexPath,index);
+test('real package/index manifest inputs separate application2.0.3 from media1.9.2; legacy defaults still reject the mismatch',t=>{
+ const f=mediaFixture(t);assert.equal(read(path.join(f.roots[30],'package.json')).version,'2.0.3');assert.equal(read(path.join(f.roots[30],'assets/install-resource-index.json')).appVersion,'1.9.2');
+ assert.throws(()=>mediaCheck(f),/application version differs/);const result=mediaCheck(f,versions);assert.equal(result.version,'2.0.3');assert.equal(result.mediaBaseVersion,'1.9.2');assert.equal(result.videos,1);
+ assert.throws(()=>mediaCheck(f,{applicationVersion:'2.0.3'}),/supplied together/);assert.throws(()=>mediaCheck(f,{...versions,mediaBaseVersion:'2.0.3'}),/media base version differs/);assert.throws(()=>mediaCheck(f,{...versions,applicationVersion:'9.9.9'}),/application version differs/);
+ const indexPath=path.join(f.roots[30],'assets/install-resource-index.json'),index=read(indexPath);save(indexPath,{...index,appVersion:'2.0.3'});assert.equal(mediaCheck(f,versions).version,'2.0.3');save(indexPath,{...index,appVersion:'9.9.9'});assert.throws(()=>mediaCheck(f,versions),/resource index header changed/);save(indexPath,index);
  save(path.join(f.roots[30],'package.json'),{version:'1.9.2',animationProfile:'30fps'});assert.equal(mediaCheck(f).version,'1.9.2');
 });
 test('public source-build evidence is explicit and cannot mix a private or supplied approval object',t=>{
@@ -119,7 +119,7 @@ test('Python output target checks keep reads and copies inside the chosen output
 });
 for(const fps of[30,60])test('release gate: actual accepted '+fps+'fps package/index inputs pass explicit version split', {skip:!process.env['AI_BUDDY_DISTRIBUTION_MEDIA'+fps]},()=>{
  const resources=process.env['AI_BUDDY_DISTRIBUTION_MEDIA'+fps],inventory=loadPublicAssetInventory(repo),assets=inventory.editions.find(e=>e.fps===fps),legacyLockPath=path.join(repo,'scripts/media-baselines/r192-r5.json');
- assert.equal(read(path.join(resources,'package.json')).version,'2.0.2');assert.equal(read(path.join(resources,'assets/install-resource-index.json')).appVersion,'1.9.2');
+ assert.equal(read(path.join(resources,'package.json')).version,'2.0.3');assert.equal(read(path.join(resources,'assets/install-resource-index.json')).appVersion,'2.0.3');
  assert.throws(()=>validateMediaBuild({resources,legacyLockPath}),/application version differs/);
  const proof=validateMediaBuild({resources,legacyLockPath,...versions,approvedMedia:inventory,assetInventory:assets.assets,sourceAssets:inventory.sourceAssets});assert.equal(proof.videos,264);assert.equal(proof.resources,4543);assert.equal(proof.mode,'optimized-public');
 });

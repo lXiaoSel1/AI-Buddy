@@ -8,11 +8,11 @@ import stat
 import shutil
 from uuid import uuid4
 
-APPLICATION_VERSION = '2.0.2'
+APPLICATION_VERSION = '2.0.3'
 MEDIA_BASE_VERSION = '1.9.2'
 BASELINE_SHA256 = '12ac599d424e678acb1c7f964c65551fdc48dc40ac31ea47facb253256a7b871'
 APPROVAL_SHA256 = '30f610d52dc03aee82baaddd31e1f081abd2be22758c3e66e7a74235e30428fb'
-INVENTORY_SHA256 = 'd09ae853bb5e04358d16ff4955ffe08f5260f942bd62ae29df6653e6360cc7c2'
+INVENTORY_SHA256 = '37cf3c62ea5dfa62a64817b3551d7ef6960f8c2a3f56110596702b4917815816'
 CHARACTERS = ('deepseek', 'claude', 'grok', 'seed', 'kimi', 'qwen', 'minimax', 'chatgpt', 'gemini', 'glm', 'hunyuan')
 
 
@@ -184,7 +184,7 @@ def read_json(path):
 
 def load_inventory(inventory_path=None, inventory_sha256=None):
     require((inventory_path is None) == (inventory_sha256 is None), 'Inventory path and trusted digest must be supplied together')
-    path = inventory_path or Path(__file__).parent / 'media-baselines/public-202-assets.json'
+    path = inventory_path or Path(__file__).parent / 'media-baselines/public-203-assets.json'
     expected = inventory_sha256 or INVENTORY_SHA256
     no_links(path)
     require(digest(path) == expected, 'Approved asset inventory changed')

@@ -1,12 +1,12 @@
 # AI Buddy · AI 酱
 
-<!-- ai-buddy-source-version: 2.0.2 -->
+<!-- ai-buddy-source-version: 2.0.3 -->
 [简体中文](README.md) · **English**
 
 A local AI usage monitor, desktop pet and multi-character companion for Windows 10/11 x64.
 
-Current release: [v2.0.2](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.2).
-[Download the Windows installer](https://github.com/lXiaoSel1/ai-buddy/releases/download/v2.0.2/AI-Buddy-Setup-2.0.2-win-x64.exe), then choose 30fps or 60fps and characters. Downloaded resources are checked against a hash manifest.
+Current release: [v2.0.3](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.3).
+[Download the Windows installer](https://github.com/lXiaoSel1/ai-buddy/releases/download/v2.0.3/AI-Buddy-Setup-2.0.3-win-x64.exe), then choose 30fps or 60fps and characters. Downloaded resources are checked against a hash manifest.
 
 - Local usage ledgers grouped by tool, model, project and date. Missing usage stays unknown; estimated API cost is not a subscription invoice.
 - Eleven built-in characters, desktop pets, separate model connections, character cards and personas, group chat, long-term memory, personality growth and life archives.
@@ -28,7 +28,7 @@ The Work and Collaboration plugin remains under development and its source/packa
 
 Account secrets use the system-protected store and are not included in plugin pages, prompts or releases. Chats, saves, CGs and tasks remain local; never upload local/. Rollback changes program files only and must not replace new data with an old backup. An incompatible older writer refuses new data.
 
-AI Buddy is free; model providers and platforms may have their own fees and terms. Model, search and image capabilities depend on the selected connection. Engineering fixtures, native-window tests and live external-platform behavior are reported separately in the [release notes](docs/RELEASE-2.0.2.md) and [validation scope](docs/VALIDATION-2.0.2.md).
+AI Buddy is free; model providers and platforms may have their own fees and terms. Model, search and image capabilities depend on the selected connection. Engineering fixtures, native-window tests and live external-platform behavior are reported separately in the [release notes](docs/RELEASE-2.0.3.md) and [validation scope](docs/VALIDATION-2.0.2.md).
 
 ## Development and licensing
 
