@@ -1,0 +1,19 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createWorkResumeConfirmation} from '../src/work-resume-confirmation.mjs';
+const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
+function fixture(){
+ class BrowserWindow{shown=true;focused=true;dead=false;minimized=false;isVisible(){return this.shown;}isFocused(){return this.focused;}isDestroyed(){return this.dead;}isMinimized(){return this.minimized;}}
+ const parent=new BrowserWindow(),other=new BrowserWindow(),state={owner:parent,focused:true,shown:true,dead:false,focusCalls:0,response:0,lang:'zh',onDialog:()=>{}};
+ const surface={webContents:{},getParentWindow:()=>state.owner,isVisible:()=>state.shown,isMinimized:()=>parent.minimized,isDestroyed:()=>state.dead,isFocused:()=>state.focused,focus:()=>{state.focusCalls++;state.focused=true;}};
+ const calls=[],dialog={async showMessageBox(windowOrOptions,maybeOptions){const valid=windowOrOptions instanceof BrowserWindow,options=valid?maybeOptions:windowOrOptions;calls.push({parent:valid?windowOrOptions:null,options});await state.onDialog();return {response:options.buttons?state.response:0};}};
+ const confirm=createWorkResumeConfirmation({dialog,BrowserWindow,language:()=>state.lang}),request={window:surface,title:'original task',revision:1,paths:['SESSION_LOG.md'],project:'E:/isolated/project'};
+ return {parent,other,state,surface,calls,confirm,request};
+}
+test('embedded resume passes a real parent and complete explicit approval options',async()=>{const f=fixture();assert.equal(await f.confirm(f.request),true);assert.equal(f.calls[0].parent,f.parent);assert.equal(f.calls[0].options.message,'AI 酱已更新。是否在当前版本上重新批准原计划？');assert.deepEqual(f.calls[0].options.buttons,['确认并继续','取消']);assert.equal(f.calls[0].options.cancelId,1);assert.equal(f.calls[0].options.defaultId,1);});
+test('native modal focus returns to the same embedded page before accepting',async()=>{const f=fixture();f.state.onDialog=()=>{f.state.focused=false;};assert.equal(await f.confirm(f.request),true);assert.equal(f.state.focused,true);assert.equal(f.state.focusCalls,1);});
+for(const how of ['cancel','window-close','escape'])test(how+' cannot authorize a resumed task',async()=>{const f=fixture();f.state.response=1;assert.equal(await f.confirm(f.request),false);assert.equal(f.state.focusCalls,0);});
+for(const how of ['changed-parent','page-hidden','page-destroyed','owner-unfocused','owner-destroyed'])test('confirmation invalidated by '+how+' cannot authorize or steal focus',async()=>{const f=fixture();f.state.onDialog=()=>{if(how==='changed-parent')f.state.owner=f.other;if(how==='page-hidden')f.state.shown=false;if(how==='page-destroyed')f.state.dead=true;if(how==='owner-unfocused')f.parent.focused=false;if(how==='owner-destroyed')f.parent.dead=true;f.state.focused=false;};assert.equal(await f.confirm(f.request),false);assert.equal(f.state.focusCalls,0);});
+test('no real parent means no default or empty native dialog',async()=>{const f=fixture();f.state.owner={};await assert.rejects(f.confirm(f.request),{code:'WORK_USER_APPROVAL_REQUIRED'});assert.equal(f.calls.length,0);});
+test('only one pending approval is allowed for the same parent',async()=>{const f=fixture(),wait=deferred();f.state.onDialog=()=>wait.promise;const first=f.confirm(f.request),second=f.confirm(f.request).then(()=>null,e=>e.code);await Promise.resolve();wait.resolve();assert.equal(await first,true);assert.equal(await second,'WORK_APPROVAL_PENDING');assert.equal(f.calls.length,1);});
+test('standalone work window and English labels use the same approval contract',async()=>{const f=fixture();f.state.lang='en';assert.equal(await f.confirm({...f.request,window:f.parent}),true);assert.equal(f.calls[0].parent,f.parent);assert.deepEqual(f.calls[0].options.buttons,['Confirm and continue','Cancel']);});

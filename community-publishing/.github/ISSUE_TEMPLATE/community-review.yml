@@ -1,0 +1,32 @@
+name: Community plugin review
+description: Submit a 1–5 star rating and written review with your GitHub identity.
+title: "[Review] "
+labels: [community-review]
+body:
+  - type: input
+    id: work-id
+    attributes:
+      label: Work ID
+      description: Exact work ID from the signed community catalog.
+    validations:
+      required: true
+  - type: input
+    id: work-version
+    attributes:
+      label: Work version
+    validations:
+      required: true
+  - type: dropdown
+    id: stars
+    attributes:
+      label: Stars
+      options: ["1", "2", "3", "4", "5"]
+    validations:
+      required: true
+  - type: textarea
+    id: review-text
+    attributes:
+      label: Review
+      description: Describe what you tested and your experience. Do not include credentials or private chat records.
+    validations:
+      required: true

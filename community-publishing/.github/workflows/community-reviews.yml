@@ -1,0 +1,82 @@
+name: Build signed community reviews
+on:
+  issues:
+    types: [opened, edited, deleted, labeled, unlabeled, closed, reopened]
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: community-reviews-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  index:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.issue.labels.*.name, 'community-review') || github.event.action == 'deleted' || github.event.action == 'unlabeled'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0, verified read-only from upstream tag
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0, verified read-only from upstream tag
+        with:
+          node-version: 24.21.0
+      - name: Read issues as data and build a signed index
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          COMMUNITY_SIGNING_KEY_PEM: ${{ secrets.COMMUNITY_SIGNING_KEY_PEM }}
+          INDEX_REPOSITORY: ${{ github.repository }}
+          INDEX_KEY_ID: ${{ vars.COMMUNITY_KEY_ID }}
+        run: >-
+          node scripts/community/build-review-index.mjs
+          --catalog=community/catalog-v1.json
+          --repository="$INDEX_REPOSITORY"
+          --previous=community/reviews-v1.json
+          --out=out/community/reviews-v1.json
+          --receipt=out/community/review-index-receipt.json
+          --key-id="$INDEX_KEY_ID"
+          --require-signature
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: signed-community-reviews
+          path: out/community/
+          if-no-files-found: error
+  publish:
+    # Remains disabled until the repository owner explicitly configures publishing.
+    if: vars.COMMUNITY_PUBLISH_ENABLED == 'true'
+    needs: index
+    environment: community-publication
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: signed-community-reviews
+          path: signed-index
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.21.0
+      - name: Verify the signed data against the current trusted catalog
+        run: >-
+          node scripts/community/verify-review-index.mjs
+          --source=source.json
+          --catalog=community/catalog-v1.json
+          --index=signed-index/reviews-v1.json
+      - name: Publish only the produced signed data
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          mkdir -p community
+          cp signed-index/reviews-v1.json community/reviews-v1.json
+          cp signed-index/review-index-receipt.json community/review-index-receipt.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- community/reviews-v1.json community/review-index-receipt.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Update signed community review index'
+          git push origin "HEAD:$DEFAULT_BRANCH"
+      # No PR checkout, issue body execution, or provider credential is used here.

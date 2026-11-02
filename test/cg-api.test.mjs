@@ -74,19 +74,19 @@ test('Manual CG works with chat off; gallery, background, restart, and old inlin
  const request=await game.action('cg-generate',{characterId:'deepseek'});assert.equal(request.ok,true);await wait(()=>cg.job(request.cgId)?.status==='ready');await wait(()=>JSON.stringify(cg.view()).includes('ready'));await new Promise(resolve=>setTimeout(resolve,60));
  const gallery=await game.action('cg-gallery');assert.equal(gallery.items[0].status,'ready');assert.ok(!JSON.stringify(gallery).includes('base64'));assert.equal((await game.action('cg-data',{id:request.cgId})).dataUrl,'data:image/png;base64,'+png.toString('base64'));
  await game.action('cg-save-bg',{id:request.cgId});assert.equal((await game.action('bg-data')).dataUrl,'data:image/png;base64,'+png.toString('base64'));
- assert.equal((await game.action('view')).level,before.level);assert.equal((await game.action('cg-generate')).cgId,request.cgId);game.close();await cg.close();
- const reopened=await service({dataRoot:root});game=await createGalgame({dataRoot:root,provider,model:'offline',cg:reopened});reopened.start();assert.equal((await game.action('cg-gallery')).items[0].status,'ready');assert.ok((await game.action('bg-data')).dataUrl);assert.equal(reopened.jobs.length,1);game.close();await reopened.close();
+ assert.equal((await game.action('view')).level,before.level);assert.equal((await game.action('cg-generate')).cgId,request.cgId);await game.close();await cg.close();
+ const reopened=await service({dataRoot:root});game=await createGalgame({dataRoot:root,provider,model:'offline',cg:reopened});reopened.start();assert.equal((await game.action('cg-gallery')).items[0].status,'ready');assert.ok((await game.action('bg-data')).dataUrl);assert.equal(reopened.jobs.length,1);await game.close();await reopened.close();
 });
 
 test('Fresh level-up creates one CG; opening history and restarting never repeats it; legacy inline CG remains readable',async()=>{
  const root=temp(),cg=await service({dataRoot:root});await configure(cg);await cg.setEnabled(true);
  const provider={enabled:false,listProviders:()=>[],listModels:()=>[],async *stream(){throw Error('No chat');}};
- let game=await createGalgame({dataRoot:root,provider,model:'offline',cg});await game.action('view');game.close();
+ let game=await createGalgame({dataRoot:root,provider,model:'offline',cg});await game.action('view');await game.close();
  const storage=createSnapshotStorage(join(root,'galgame/storages/dsh-whale-galgame/global.json')),state=await readJson(storage,null);
  state.characters.deepseek.affection=30;state.characters.deepseek.level=1;state.characters.deepseek.cgs.push({id:'legacy',status:'ready',dataUrl:'data:image/png;base64,'+png.toString('base64'),level:1,at:1,seen:true});await storage.writeText(JSON.stringify(state));
  game=await createGalgame({dataRoot:root,provider,model:'offline',cg});cg.start();await game.action('view');await new Promise(r=>setTimeout(r,30));assert.equal(cg.jobs.length,0,'Reading historical affection must not generate a gift');game.workTokens(5000);await new Promise(r=>setTimeout(r,30));await game.action('view');await wait(()=>cg.jobs.some(job=>job.status==='ready'));assert.equal((await game.action('view')).level,2);
  for(let i=0;i<8;i++){await game.action('view');await game.action('cg-gallery');}assert.equal(cg.jobs.length,1);assert.equal(cg.jobs[0].automatic,true);assert.ok((await game.action('cg-data',{id:'legacy'})).dataUrl);
- game.close();await cg.close();const restarted=await service({dataRoot:root});game=await createGalgame({dataRoot:root,provider,model:'offline',cg:restarted});restarted.start();await game.action('view');assert.equal(restarted.jobs.length,1);assert.ok((await game.action('cg-data',{id:'legacy'})).dataUrl);game.close();await restarted.close();
+ await game.close();await cg.close();const restarted=await service({dataRoot:root});game=await createGalgame({dataRoot:root,provider,model:'offline',cg:restarted});restarted.start();await game.action('view');assert.equal(restarted.jobs.length,1);assert.ok((await game.action('cg-data',{id:'legacy'})).dataUrl);await game.close();await restarted.close();
 });
 
 test('Multi-role skit upgrades queue three gifts; only reaching the final beat queues one photo; early close makes no photo',async()=>{
@@ -97,7 +97,7 @@ test('Multi-role skit upgrades queue three gifts; only reaching the final beat q
   const choices=[0,1,2].map(index=>({text:['一起喝茶','看看海','继续聊聊'][index],effects:Object.fromEntries(cast.map(id=>[id,1])),reply:[{speaker:cast[0],text:'一起吧。',emotion:'cheerful'}]}));
   yield {type:'text-delta',text:JSON.stringify({acts:[{beats,choices},{beats,choices},{beats}]})};yield {type:'finish',reason:{kind:'stop'}};
  }};
- let game=await createGalgame({dataRoot:root,provider,model:'fixture',cg});await game.action('view');game.close();
+ let game=await createGalgame({dataRoot:root,provider,model:'fixture',cg});await game.action('view');await game.close();
  const storage=createSnapshotStorage(join(root,'galgame/storages/dsh-whale-galgame/global.json')),state=await readJson(storage,null);for(const character of Object.values(state.characters)){character.affection=29;character.level=1;}await storage.writeText(JSON.stringify(state));
  game=await createGalgame({dataRoot:root,provider,model:'fixture',cg});cg.start();let view=await game.action('side-story',{op:'start',force:true,topic:'大家一起喝茶'});assert.ok(view.sideStory.scene,JSON.stringify(view));
  while(!view.sideStory.scene.choices.length)view=await game.action('side-story',{op:'advance'});
@@ -106,7 +106,7 @@ test('Multi-role skit upgrades queue three gifts; only reaching the final beat q
  view=await game.action('side-story',{op:'choose',choiceId:view.sideStory.scene.choices[0].id});assert.equal(view.sideStory.scene.settled,true);assert.equal(cg.jobs.filter(job=>job.kind==='skit').length,0);
  while(view.sideStory.scene.cursor<view.sideStory.scene.beats.length-1)view=await game.action('side-story',{op:'advance'});
  await wait(()=>cg.jobs.filter(job=>job.kind==='skit').length===1);await game.action('side-story',{op:'advance'});await game.action('side-story-log');assert.equal(cg.jobs.length,4);
- await game.action('side-story',{op:'close'});await game.action('side-story',{op:'start',force:true,topic:'新的茶会'});await game.action('side-story',{op:'close'});assert.equal(cg.jobs.length,4);await wait(()=>cg.jobs.every(job=>job.status==='ready'));game.close();await cg.close();
+ await game.action('side-story',{op:'close'});await game.action('side-story',{op:'start',force:true,topic:'新的茶会'});await game.action('side-story',{op:'close'});assert.equal(cg.jobs.length,4);await wait(()=>cg.jobs.every(job=>job.status==='ready'));await game.close();await cg.close();
 });
 
 test('Restart resumes a known async task by querying only and never repeats an uncertain submission',async()=>{

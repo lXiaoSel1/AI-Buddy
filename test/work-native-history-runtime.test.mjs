@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,mkdir,writeFile,readFile,realpath,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createHash} from 'node:crypto';
+import {createWorkRuntimeBroker} from '../src/work-runtime-broker.mjs';
+const sha=b=>createHash('sha256').update(b).digest('hex');
+test('DSH broker returns only its Core claim directory and exact inventoried sandbox service without launching a runtime',async t=>{
+ const root=await realpath(await mkdtemp(join(tmpdir(),'history-runtime-'))),component=join(root,'component'),sdkEntry=join(component,'installation/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js'),sandboxPolicyEntry=join(component,'installation/node_modules/@deepseek-ai/dsh-sandbox-policy/lib/index.js'),lockPath=join(component,'runtime-lock.json');await mkdir(join(component,'installation/node_modules/@deepseek-ai/dsh-sdk-client/lib'),{recursive:true});await mkdir(join(component,'installation/node_modules/@deepseek-ai/dsh-sandbox-policy/lib'),{recursive:true});await writeFile(sdkEntry,'controlled SDK metadata, never imported');await writeFile(sandboxPolicyEntry,'controlled policy metadata, never imported');const raw=await readFile(sandboxPolicyEntry);await writeFile(lockPath,JSON.stringify({files:[{path:'installation/node_modules/@deepseek-ai/dsh-sandbox-policy/lib/index.js',bytes:raw.length,sha256:sha(raw)}]}));
+ const context={pluginId:'dsh.'+'b'.repeat(32),jobId:'job'},runId='run',home=join(root,'work-host/runtime-profiles',sha(JSON.stringify([context.pluginId,context.jobId,runId,'dsh'])).slice(0,40));let calls=0,wrongHome=false;
+ const broker=createWorkRuntimeBroker({dataRoot:root,getPlatform:()=>({runtimeDescriptor:async()=>({nodePath:process.execPath,sdkEntry,cliEntry:sdkEntry,lockPath,version:'controlled-component'})}),validateJob:async()=>{},resolveNativeHistory:async()=>{calls++;return {claimId:'native-claim:test',sourceId:'native-history:test',jobConfigHome:wrongHome?join(root,'unowned'):home,sessionPersistenceRoot:join(root,'original-sessions')};}});t.after(async()=>{await broker.close();await rm(root,{recursive:true,force:true});});
+ const value=await broker.runtimeResolve({engine:'dsh',binding:{engine:'dsh'},prepare:true,runId},context);assert.equal(value.runtimeHome,home);assert.equal(value.nativeHistory.claimId,'native-claim:test');assert.equal(value.sandboxPolicyEntry,sandboxPolicyEntry);assert.equal(value.sandboxPolicySha256,sha(raw));assert.equal(calls,1);wrongHome=true;await assert.rejects(broker.runtimeResolve({engine:'dsh',binding:{engine:'dsh'},prepare:true,runId},context),{code:'WORK_NATIVE_HISTORY_SCOPE'});wrongHome=false;await writeFile(sandboxPolicyEntry,'tampered');await assert.rejects(broker.runtimeResolve({engine:'dsh',binding:{engine:'dsh'},prepare:true,runId},context),{code:'WORK_RUNTIME_CHANGED'});
+});

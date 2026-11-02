@@ -17,18 +17,18 @@ test('Role backgrounds, gallery, trash and sprite preference persist independent
  const dataRoot=temp();let game=await createGalgame({dataRoot,provider,model:'fixture'});
  await game.action('bg-upload',{dataUrl:url,fileName:'DeepSeek-room.png'});await game.action('sprite-visibility',{mode:'hide'});
  await game.action('settings-set',{characterMode:'manual',characterId:'claude'});assert.notEqual((await game.action('view')).bg,'custom');assert.equal((await game.action('view')).spriteVisibility,'auto');
- await game.action('bg-upload',{dataUrl:url,fileName:'Claude-room.png'});game.close();
+ await game.action('bg-upload',{dataUrl:url,fileName:'Claude-room.png'});await game.close();
  const store=createSnapshotStorage(join(dataRoot,'galgame/storages/dsh-whale-galgame/global.json')),s=await readJson(store);
  for(const id of ['deepseek','claude'])s.characters[id].cgs=[{id:id+'-cg',status:'ready',at:1,level:3,dataUrl:url}];await store.writeText(JSON.stringify(s));
  game=await createGalgame({dataRoot,provider,model:'fixture'});assert.equal((await game.action('cg-gallery')).items[0].id,'claude-cg');
  await game.action('cg-save-bg',{id:'claude-cg'});assert.equal((await game.action('view')).bg,'cg');await game.action('cg-trash',{id:'claude-cg'});assert.notEqual((await game.action('view')).bg,'cg');
- await game.action('settings-set',{characterMode:'manual',characterId:'deepseek'});const v=await game.action('view');assert.equal(v.bg,'custom');assert.equal(v.spriteVisibility,'hide');assert.equal((await game.action('cg-gallery')).items[0].id,'deepseek-cg');assert.equal((await game.action('bg-data')).fileName,'DeepSeek-room.png');game.close();
+ await game.action('settings-set',{characterMode:'manual',characterId:'deepseek'});const v=await game.action('view');assert.equal(v.bg,'custom');assert.equal(v.spriteVisibility,'hide');assert.equal((await game.action('cg-gallery')).items[0].id,'deepseek-cg');assert.equal((await game.action('bg-data')).fileName,'DeepSeek-room.png');await game.close();
 });
 test('English defaults apply to new conversations without rewriting existing dialogue',async()=>{
  const dataRoot=temp();let lang='en';const game=await createGalgame({dataRoot,provider,model:'fixture',getLanguage:()=>lang});
  let p=await game.action('profile-get');assert.match(p.effective.greeting,/Welcome/);const before=(await game.action('view')).history;assert.ok(before.length);assert.match(before.at(-1).text,/Welcome/);
  lang='zh-CN';p=await game.action('profile-get');assert.match(p.effective.greeting,/[\u3400-\u9fff]/);assert.deepEqual((await game.action('view')).history,before);
- await game.action('profile-set',{characterId:'deepseek',overrides:{greeting:'用户自己写的'}});lang='en';assert.equal((await game.action('profile-get')).effective.greeting,'用户自己写的');game.close();
+ await game.action('profile-set',{characterId:'deepseek',overrides:{greeting:'用户自己写的'}});lang='en';assert.equal((await game.action('profile-get')).effective.greeting,'用户自己写的');await game.close();
 });
 test('Eleven validated palettes resolve fixed and character-following themes',()=>{
  assert.equal(Object.keys(THEMES).length,11);for(const id of Object.keys(THEMES)){assert.match(chromeColor(id),/^#[a-f0-9]{6}$/i);assert.ok(Object.keys(themeVariables(id)).length>5);assert.equal(resolvedTheme({themeMode:'character',theme:'deepseek'},id),id);assert.equal(resolvedTheme({themeMode:'fixed',theme:'deepseek'},id),'deepseek');}
@@ -43,8 +43,8 @@ test('Price browser exposes the same effective override and context tiers as est
 });
 test('A chat captures its language before asynchronous model work',async()=>{
  let language='en',release;const waiting=new Promise(r=>release=r),calls=[];
- const online={...provider,enabled:true,currentSelection:()=>({provider:'test',model:'fixture'}),async *stream(o){calls.push(o);if(o.maxTokens===1200){await waiting;yield{type:'text-delta',text:'I am glad you are here.'}}else yield{type:'text-delta',text:o.purpose==='emotion'?'normal':'{"positive":"Stay a little longer","neutral":"Tell me more","negative":"I need a break"}'};yield{type:'finish',reason:{kind:'stop'}};}};
+ const online={...provider,enabled:true,currentSelection:()=>({provider:'test',model:'fixture'}),async *stream(o){calls.push(o);if(o.maxTokens===1200){await waiting;yield{type:'text-delta',text:'I am glad you are here.'}}else yield{type:'text-delta',text:o.purpose==='mood'?'{"changed":false}':o.purpose==='emotion'?'normal':'{"positive":"Stay a little longer","neutral":"Tell me more","negative":"I need a break"}'};yield{type:'finish',reason:{kind:'stop'}};}};
  const game=await createGalgame({dataRoot:temp(),provider:online,model:'fixture',getLanguage:()=>language});const task=game.action('chat',{text:'Hi'});while(!calls.some(c=>c.maxTokens===1200))await new Promise(r=>setTimeout(r,10));language='zh-CN';release();await task;
- for(const call of calls.filter(c=>c.purpose!=='emotion'))assert.match(call.system,/Respond in natural English/);game.close();
+ for(const call of calls.filter(c=>c.purpose!=='emotion'&&c.purpose!=='mood'))assert.match(call.system,/Respond in natural English/);for(let n=0;n<100&&!calls.some(c=>c.purpose==='mood');n++)await new Promise(resolve=>setTimeout(resolve,5));const moodCalls=calls.filter(c=>c.purpose==='mood');assert.equal(moodCalls.length,1,'a later mood request has its own captured language');for(const call of moodCalls)assert.doesNotMatch(call.system,/Respond in (?:natural )?English/);await game.close();
 });
 

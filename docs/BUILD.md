@@ -1,54 +1,36 @@
-# Build AI Buddy from source
+# Build AI Buddy 2.0.2
 
-Development requires Windows x64 and Node.js 24. The portable app does not.
+This guide describes the formal 2.0.2 binary. Development requires Windows x64 and Node.js24. The distributed application does not require a user-installed Node. Use the exact package-lock.json dependency versions.
 
-1. Run `npm ci`.
-2. Download and extract the matching portable release ZIP from this repository.
-3. Run `node scripts/build-public.mjs --resources="C:/path/to/AI-Buddy/builds/<version>"`. The resource directory is the folder containing `assets/frame-sequence-manifest.json` inside the portable release. This reuses the approved artwork and animation bytes without regeneration.
-4. Run `npm start` to launch the compiled app through the development Electron runtime.
-5. Run `npm test` for portable pure-logic tests. Native release acceptance scripts and local asset-production evidence are maintained separately; they are not implied by this command.
+## Application
 
-Do not publish `local/`, generated `builds/`, credentials, user CGs or logs. The resource ZIP is a release asset rather than Git history to keep generated media outside Git history. Upstream/runtime licensing remains in the distributed files.
+1. Run npm ci in this repository. Electron44.6.0 and esbuild0.28.2 are pinned.
+2. Extract the approved release resources for the desired 30fps/60fps edition. The resource root contains assets/frame-sequence-manifest.json and package.json. Reuse their bytes; do not regenerate animation.
+3. Run node scripts/build-public.mjs --resources=<absolute resource root> --out=development --link-assets --public-evidence --bili-ffmpeg-upstream using the published full-index resources. Local production evidence and user data are never published.
+4. npm start opens the compiled development app. npm test runs the source test selection. TEST-SCOPE.json records any private Work-plugin or sibling-social integration tests excluded from the public source; their exclusion is not a pass.
 
-Source-build output is under `builds/development`. Tests use temporary data and mock services; no paid model request is needed. Version 1.9.1 has been published. Preparing a formal 1.9.2 binary uses the final 1.9.2 source, installer and fixed distribution manifest. Source tests do not certify native integration or visual acceptance; publication remains gated by the isolated acceptance report and signed tag.
+Assets are immutable when hard-linked. Never edit a linked output in place. Use a fresh output directory for every candidate; preserve failed evidence. The DSH and FFmpeg component workers are separate ESM entries included in the application inventory. Public candidates must use --bili-ffmpeg-upstream; it cannot be combined with private bundled-media flags. This mode includes only the fixed descriptor, text notices and worker, never a FFmpeg executable or download archive. The public assembler and installer validator reject bundled media binaries. Bilibili plugin installation prepares missing dependencies automatically; no user-installed Node or terminal is required.
 
-Keep package.json, both package-lock version fields, release.json and the source-version marker in both READMEs aligned. An approved but unpublished source version retains the actual published download links; do not invent a future installer or ZIP URL. At publication, update the distribution manifest, installer version, release.json publishedVersion/stage and the public download links together. Run `npm run check:version`; the source build runs this same consistency check. Historical validation documents and Git commit messages retain their original versions.
+## Public distribution
 
-Portable builds compile `scripts/portable-launcher.cs` with the Windows .NET Framework C# compiler using `scripts/build-portable-launcher.mjs`; the file version follows package.json. Only the launcher build needs the compiler, not app users.
+The complete approved inventory is scripts/media-baselines/public-202-assets.json. It pins every distributed resource, its edition/owner, the original media/approval hashes and generated manifest bytes; it contains no private chat or machine path. Application2.0.2 and media base1.9.2 are separate identities. Original approval files are not rewritten.
 
-The 1.7.5 source build verifies the DeepSeek Galgame WebP and its lossless PNG CG reference against `assets/cg-references/maid-left.source.json`. Use the matching release resources; an older package with the desktop-pet reference is rejected.
+After both candidates are built, run scripts/build-distribution-202.mjs with --baseline30=<absolute30fpscandidate> --baseline60=<absolute60fpscandidate> --runtime=<absoluteElectronruntime> --out=<freshdisjointoutput> --rcedit=<pinnedrcedit> --public-evidence --link-assets. The runtime is copied before version stamping. Public evidence and private --media-baseline/--media-approval modes cannot be mixed.
 
-## Approved 1.9.0 resource baseline
+scripts/package-installer-202.py consumes the resulting v2 media proof and approved inventory. Its --help documents packaging inputs. It verifies exact files/hashes/owners and splits the resources into the installer's existing package layout. Each release asset must remain below GitHub's2GiB per-file limit. Work plugin packages, local/, credentials, chats, CGs and private test receipts must never enter output.
 
-`release.json` records the explicit 1.9.0 CRF28 media baseline reused by 1.9.2. A source build may use its own version or that declared baseline, while the portrait, expression and file hash checks remain mandatory. Use the approved full 30fps/60fps resource tree for all 264 actions; the public 1.8.0 package alone contains the earlier 198 actions. Do not regenerate media to change the source version. The approved 1.9.0 receipt and user approval remain byte-for-byte unchanged; distribution output records release version 1.9.2 separately from media version 1.9.0.
+The installer uses .NET SDK10.0.402 with runtime10.0.13 and installer/AI.Buddy.Setup.csproj. Prepare generated/install-manifest.json only from the final package manifest, then publish the self-contained win-x64 installer. Do not report a source-only test as native installer acceptance.
 
-The checked-in installer is the 1.9.2 maintenance client. Build its embedded manifest hash only after generating the final 1.9.2 package manifest. Every portable package must include that same installer at `maintenance/1.9.2/AI Buddy Setup.exe`. Existing 1.9.0 installers and historical signed payloads retain their original identities. Generated output is excluded from Git.
+## Version and signing
 
-For local packaging, use `--link-assets` with `scripts/build-public.mjs` and `scripts/build-distribution-190.mjs`. The latter keeps historical media verification separate from the release version. `scripts/package-installer-190.py` takes the release version from package.json and builds portable staging trees with hard links; never mutate a linked file in place. The runtime executable is copied before stamping its version. Keep reports and final archives; remove only the current run's disposable staging copies after checks pass.
+Keep package.json, both root lockfile versions, release.json, installer version/name and README source markers aligned. npm run check:version verifies source/download metadata. Local release metadata is staged before uploading; only actual remote checks establish a published release.
 
-## Signed release tags
+All release tags are SSH-signed locally after explicit per-use approval. Never read, copy, commit or upload the private key. Ordinary source commits do not use the release key. Use only the approved local signer/path. The signed annotated tag binds three exact lines:
 
-All new releases require a signed tag created locally. The repository uses SSH signing (`gpg.format=ssh`, `tag.gpgSign=true`) with `~/.ssh/ai-buddy-signing`; the configured public-key path and allowed-signers file must match that identity. Never commit or distribute the private key.
+Source: <full40charactercommitSHA>
+Manifest SHA-256: <manifesthash>
+Installer SHA-256: <installerhash>
 
-Run the following only after release approval and the final build and validation checks. The tag message binds the release to its source and files; the installer's update check reads exactly these lines, so write them into a message file (one line each, no other `Key: value` lines):
+Push the already verified tag; create a release with --verify-tag and full40character --target. The installer requires verified tag identity and artifact hashes. Verify a non-Latest release before promoting it to Latest. A tag or asset failure stops promotion; never overwrite released bytes under the same version.
 
-```text
-AI Buddy X.Y.Z
-
-Source: <full 40-character commit SHA>
-Manifest SHA-256: <sha256 of install-manifest-X.Y.Z.json>
-Installer SHA-256: <sha256 of AI-Buddy-Setup-X.Y.Z-win-x64.exe>
-```
-
-```sh
-git tag -s vX.Y.Z -F <message-file>
-git tag -v vX.Y.Z
-git push origin vX.Y.Z
-gh release create vX.Y.Z --verify-tag --target <full commit SHA> --notes-file docs/VALIDATION-X.Y.Z.md <release-assets>
-```
-
-`--target` must be the full commit SHA: the update check rejects a release whose `target_commitish` is a branch name. The installer also verifies the tag signature locally against the pinned release key (`ReleaseIdentity.SigningKey`), so only `~/.ssh/ai-buddy-signing` can sign a release it accepts.
-
-Stop if verification fails; the verification output must report `Good signature` for the expected signing identity. Verify an existing tag instead of replacing it. Do not let `gh`, the GitHub website, or a legacy publication script create a tag on the server. `--verify-tag` requires the already-pushed tag; it does not replace the local signature check. Apply the same sequence with the approved version for future releases. These instructions do not authorize publishing a release.
-
-Keep the filename `LICENSE.md`: the distribution builder and installer root-file allowlist package that exact name. Do not rename it or add another root license file. Changes to the contents of `LICENSE.md`, `CONTRIBUTING.md`, or `.github/pull_request_template.md` require explicit user approval; the 1.9.0 license merge imports their exact approved contents from `d8cf74e`.
+LICENSE.md, CONTRIBUTING.md and .github/pull_request_template.md retain their exact approved bytes. Their contents require explicit approval to change. Keep the root license filename LICENSE.md. Third-party runtime/component licenses and existing artwork qualifications remain in the distribution.

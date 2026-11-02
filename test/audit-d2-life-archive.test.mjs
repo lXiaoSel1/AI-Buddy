@@ -84,14 +84,15 @@ test('D2-9: zlib CRC equals the old table CRC; the worker and the inline fallbac
 });
 
 test('D2-3 end to end: save answers with the missing list; cleanup drops only records whose files are gone',async t=>{
- const dataRoot=tmpDir('d2-e2e',{t}),provider={enabled:false,listProviders:()=>[],listModels:()=>[],async *stream(){throw Error('No network in tests');}};
- const cg=new CgService({dataRoot,crypto:{isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()},codex:{defaultModel:'fixture',close(){}},imageCodec:b=>({png:b,thumbnail:b,width:1,height:1}),referenceResolver:async()=>[],fetchImpl:async()=>{throw Error('No network in tests');}});
- await cg.ready;let game=await createGalgame({dataRoot,provider,model:'fixture',cg});game.close();
+ let cg,game,open=false;
+ const dataRoot=tmpDir('d2-e2e',{t,beforeRemove:async()=>{if(open)await game.close();await cg?.close();}}),provider={enabled:false,listProviders:()=>[],listModels:()=>[],async *stream(){throw Error('No network in tests');}};
+ cg=new CgService({dataRoot,crypto:{isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()},codex:{defaultModel:'fixture',close(){}},imageCodec:b=>({png:b,thumbnail:b,width:1,height:1}),referenceResolver:async()=>[],fetchImpl:async()=>{throw Error('No network in tests');}});
+ await cg.ready;game=await createGalgame({dataRoot,provider,model:'fixture',cg});await game.close();
  const global=createSnapshotStorage(join(dataRoot,'galgame/storages/dsh-whale-galgame/global.json')),state=await readJson(global);
  mkdirSync(join(dataRoot,'cg-assets','kept'),{recursive:true});writeFileSync(join(dataRoot,'cg-assets','kept','image.png'),PNG);
  state.characters.claude.cgs=[{id:'gone',status:'ready',at:5,level:2,label:'丢失的图',assetRef:'cg-assets/gone/image.png'},{id:'kept',status:'ready',at:6,level:2,assetRef:'cg-assets/kept/image.png',thumbnailRef:'cg-assets/kept/thumbnail.png'}];
  await global.writeText(JSON.stringify(state));
- game=await createGalgame({dataRoot,provider,model:'fixture',cg});let open=true;t.after(async()=>{if(open)game.close();await cg.close();});
+ game=await createGalgame({dataRoot,provider,model:'fixture',cg});open=true;
  const failed=await game.action('companion-life-save',{characterId:'claude'});
  assert.equal(failed.ok,false);assert.equal(failed.code,'LIFE_ARCHIVE_MISSING_CG');assert.deepEqual(failed.missing.map(row=>[row.cgId,row.label]),[['gone','丢失的图']]);
  const cleaned=await game.action('companion-life-clean-missing-cg',{characterId:'claude',cgIds:['gone','kept']});
@@ -99,7 +100,7 @@ test('D2-3 end to end: save answers with the missing list; cleanup drops only re
  const saved=await game.action('companion-life-save',{characterId:'claude'});
  assert.equal(saved.ok,true);assert.ok(saved.archive.id);
  assert.deepEqual((await game.action('companion-life-list',{characterId:'claude'})).archives.find(row=>row.id===saved.archive.id).unlocks.map(row=>row.id),['kept']);
- game.close();open=false;
+ await game.close();open=false;
  assert.deepEqual((await readJson(createSnapshotStorage(join(dataRoot,'galgame/storages/dsh-whale-galgame/global.json')))).characters.claude.cgs.map(cg=>cg.id),['kept']);
 });
 

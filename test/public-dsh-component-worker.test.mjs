@@ -1,0 +1,38 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {EventEmitter} from 'node:events';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {createManagedDshComponentManager} from '../src/dsh-platform/component-task-manager.mjs';
+import {DSH_PUBLIC_COMPONENT} from '../src/dsh-platform/component-download.mjs';
+async function root(t){const path=await mkdtemp(join(tmpdir(),'dsh-worker-'));t.after(()=>rm(path,{recursive:true,force:true}));return path;}
+function workers({holdStatus=false}={}){const entries=[];return {entries,factory:(path,{workerData})=>{const worker=new EventEmitter(),entry={worker,path,workerData,closed:false,posted:[]};entries.push(entry);worker.postMessage=row=>{entry.posted.push(row);if(row.type==='cancel')queueMicrotask(()=>entry.finish({code:'ABORT_ERR',message:'Component installation cancelled'}));else if(row.type==='busy-result')entry.busy=row.busy;};entry.finish=(error,value)=>{if(entry.closed)return;entry.closed=true;worker.emit('message',error?{type:'error',error}:{type:'result',value:value??{state:'ready',runtimeLockPath:'/fixture/runtime-lock.json'}});worker.emit('exit',0);};queueMicrotask(()=>{if(workerData.kind==='status'){if(!holdStatus)entry.finish(null,{state:'missing'});}else{worker.emit('message',{type:'progress',value:{phase:'downloading',receivedBytes:10,totalBytes:198580207}});worker.emit('message',{type:'busy',id:1});}});return worker;}};}
+test('status starts one real owned verification worker and later polling uses its snapshot',async t=>{
+  const destinationRoot=await root(t),manager=createManagedDshComponentManager({destinationRoot});t.after(()=>manager.close());const [first,second]=await Promise.all([manager.status(),manager.status()]);assert.equal(first.state,'missing');assert.deepEqual(second,first);assert.deepEqual(await manager.status(),first);assert.deepEqual(await manager.close(),{closed:true});
+});
+test('install has one independent task; status polling never starts downloads or extra workers',async t=>{
+  const pool=workers(),manager=createManagedDshComponentManager({destinationRoot:await root(t),workerFactory:pool.factory});t.after(()=>manager.close());const plan=await manager.plan(DSH_PUBLIC_COMPONENT),install=manager.install(plan);await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(pool.entries.length,1);assert.equal((await manager.status()).installation.phase,'downloading');await assert.rejects(manager.install(plan),{code:'DSH_COMPONENT_BUSY'});assert.equal(pool.entries.length,1);pool.entries[0].finish();assert.equal((await install).state,'ready');assert.equal((await manager.status()).state,'ready');assert.equal(pool.entries.length,1);
+});
+test('cancel and close target only this worker and wait for its exit receipt',async t=>{
+  const pool=workers(),manager=createManagedDshComponentManager({destinationRoot:await root(t),workerFactory:pool.factory}),plan=await manager.plan(DSH_PUBLIC_COMPONENT),install=manager.install(plan),rejected=assert.rejects(install,{code:'ABORT_ERR'});await new Promise(resolve=>setImmediate(resolve));const entry=pool.entries[0];assert.equal(manager.cancel().cancelled,true);assert.equal(Atomics.load(new Int32Array(entry.workerData.abortBuffer),0),1);await rejected;assert.equal(entry.closed,true);assert.equal(manager.cancel().cancelled,false);assert.deepEqual(await manager.close(),{closed:true});assert.equal(pool.entries.length,1);
+  const next=createManagedDshComponentManager({destinationRoot:await root(t),workerFactory:pool.factory}),pending=next.install(await next.plan(DSH_PUBLIC_COMPONENT)),closedRejection=assert.rejects(pending,{code:'ABORT_ERR'});await new Promise(resolve=>setImmediate(resolve));const closing=next.close();assert.equal(await closing.then(row=>row.closed),true);await closedRejection;assert.equal(pool.entries[1].closed,true);await assert.rejects(next.plan(DSH_PUBLIC_COMPONENT),{code:'PLUGIN_CLOSED'});
+});
+
+// RED regression window: the status worker is deliberately held while the
+// logical install is cancelled. No installation worker/download may be admitted.
+test('cancel covers install waiting for shared initial status without cancelling that status worker',async t=>{
+  const pool=workers({holdStatus:true}),manager=createManagedDshComponentManager({destinationRoot:await root(t),workerFactory:pool.factory});t.after(()=>manager.close());const status=manager.status(),plan=await manager.plan(DSH_PUBLIC_COMPONENT),install=manager.install(plan),rejected=assert.rejects(install,{code:'ABORT_ERR'});
+  assert.equal(manager.installing(),true);assert.equal(manager.cancel().cancelled,true);await rejected;assert.equal(pool.entries.length,1);assert.equal(pool.entries[0].workerData.kind,'status');assert.equal(pool.entries[0].posted.some(row=>row.type==='cancel'),false);
+  pool.entries[0].finish(null,{state:'ready',runtimeLockPath:'/fixture/prior-runtime-lock.json'});assert.equal((await status).state,'ready');await new Promise(resolve=>setImmediate(resolve));assert.equal(pool.entries.filter(row=>row.workerData.kind==='install').length,0);assert.equal(manager.installing(),false);assert.equal((await manager.status()).runtimeLockPath,'/fixture/prior-runtime-lock.json');assert.equal((await manager.status()).installation.phase,'cancelled');
+});
+test('external abort cancels only the pending logical install and cannot be revived by late status',async t=>{
+  const pool=workers({holdStatus:true}),manager=createManagedDshComponentManager({destinationRoot:await root(t),workerFactory:pool.factory});t.after(()=>manager.close());const status=manager.status(),controller=new AbortController(),install=manager.install({...await manager.plan(DSH_PUBLIC_COMPONENT),signal:controller.signal}),rejected=assert.rejects(install,{code:'ABORT_ERR'});controller.abort();await rejected;pool.entries[0].finish(null,{state:'missing'});await status;await new Promise(resolve=>setImmediate(resolve));assert.equal(pool.entries.length,1);
+});
+test('close while install waits for status cancels logical ownership and awaits only its status worker exit',async t=>{
+  const pool=workers({holdStatus:true}),manager=createManagedDshComponentManager({destinationRoot:await root(t),workerFactory:pool.factory}),status=manager.status(),statusRejected=assert.rejects(status,{code:'ABORT_ERR'}),install=manager.install(await manager.plan(DSH_PUBLIC_COMPONENT)),rejected=assert.rejects(install,{code:'ABORT_ERR'}),closing=manager.close();assert.deepEqual(await closing,{closed:true});await Promise.all([rejected,statusRejected]);assert.equal(pool.entries.length,1);assert.equal(pool.entries[0].closed,true);assert.equal(pool.entries[0].posted.filter(row=>row.type==='cancel').length,1);assert.equal(manager.installing(),false);
+});
+test('uncancelled install waits for shared status and then admits exactly one installation worker',async t=>{
+  const pool=workers({holdStatus:true}),manager=createManagedDshComponentManager({destinationRoot:await root(t),workerFactory:pool.factory});t.after(()=>manager.close());const status=manager.status(),plan=await manager.plan(DSH_PUBLIC_COMPONENT),install=manager.install(plan);await assert.rejects(manager.install(plan),{code:'DSH_COMPONENT_BUSY'});assert.equal(pool.entries.length,1);pool.entries[0].finish(null,{state:'missing'});await status;await new Promise(resolve=>setImmediate(resolve));assert.equal(pool.entries.length,2);assert.equal(pool.entries[1].workerData.kind,'install');pool.entries[1].finish();assert.equal((await install).state,'ready');assert.equal(manager.installing(),false);
+});

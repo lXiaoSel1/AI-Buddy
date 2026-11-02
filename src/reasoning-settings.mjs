@@ -53,6 +53,9 @@ export function cleanModelCatalog(rows){
   ...(modelEfforts(row)!==null?{supportedReasoningEfforts:modelEfforts(row).map(value=>({reasoningEffort:value,description:String(row.supportedReasoningEfforts?.find?.(item=>item?.reasoningEffort===value)?.description??'').slice(0,500)}))}:{}),
   ...(REASONING_EFFORTS.includes(row.defaultReasoningEffort??row.default_reasoning_effort??row.effort?.default_level??row.capabilities?.default_reasoning_effort)?{defaultReasoningEffort:row.defaultReasoningEffort??row.default_reasoning_effort??row.effort?.default_level??row.capabilities?.default_reasoning_effort}:{}),
   ...(typeof row.isDefault==='boolean'?{isDefault:row.isDefault}:{})
+  ,...(Array.isArray(row.inputModalities??row.input_modalities)&&(row.inputModalities??row.input_modalities).every(v=>['text','image','audio','video'].includes(v))?{inputModalities:[...new Set(row.inputModalities??row.input_modalities)]}:{})
+  ,...Object.fromEntries(['supportsTools','supports_tools'].filter(key=>typeof row[key]==='boolean').map(key=>[key,row[key]]))
+  ,...(row.capabilities&&(['tools','tool_use'].some(key=>typeof row.capabilities[key]==='boolean')||typeof row.capabilities.server_tools?.web_search?.supported==='boolean')?{capabilities:{...Object.fromEntries(['tools','tool_use'].filter(key=>typeof row.capabilities[key]==='boolean').map(key=>[key,row.capabilities[key]])),...(typeof row.capabilities.server_tools?.web_search?.supported==='boolean'?{server_tools:{web_search:{supported:row.capabilities.server_tools.web_search.supported}}}:{})}}:{})
   ,...Object.fromEntries(['contextWindow','context_window','contextLength','inputTokenLimit','max_input_tokens'].filter(key=>Number.isSafeInteger(row[key])&&row[key]>=2048&&row[key]<=2000000).map(key=>[key,row[key]]))
   ,...Object.fromEntries(['maxOutputTokens','max_output_tokens','outputTokenLimit'].filter(key=>Number.isSafeInteger(row[key])&&row[key]>=256&&row[key]<=2000000).map(key=>[key,row[key]]))
  }));

@@ -1,7 +1,7 @@
 import {UsageRepository} from './usage-repository.mjs';
 import {migrateLegacy} from './usage-migrate.mjs';
 import { readdir, stat, open, mkdir } from 'node:fs/promises';
-import { join, basename, resolve, sep } from 'node:path';
+import { join, basename, dirname, resolve, sep } from 'node:path';
 import { watch,createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { createHash, randomUUID } from 'node:crypto';
@@ -11,8 +11,8 @@ import { MONITOR_INTERVALS } from './preferences.mjs';
 import { replayMonitorDelta, orphanMonitorDeltas } from './monitor-cache.mjs';
 
 export class LocalMonitor {
-  constructor({roots,dataRoot,onUpdate=()=>{},onAudit=()=>{},refreshIntervalMs=1000,persistentHistory=false}) {
-    this.roots=roots; this.dataRoot=dataRoot; this.onUpdate=onUpdate; this.onAudit=onAudit;
+  constructor({roots,dataRoot,onUpdate=()=>{},onAudit=()=>{},refreshIntervalMs=1000,persistentHistory=false,projectAttribution=null}) {
+    this.roots=roots; this.dataRoot=dataRoot; this.onUpdate=onUpdate; this.onAudit=onAudit;this.projectAttribution=projectAttribution;
     this.repository=persistentHistory?new UsageRepository(join(dataRoot,"usage-ledger-v2","legacy.sqlite")):null;
     this.files=new Map(); this.ledger=new UsageLedger({},this.repository); this.errors=new Map(); this.watchers=[]; this.closed=false; this.busy=false; this.indexing=true;
     this.startedAt=Date.now();this.ledger.workStartedAt=this.startedAt;
@@ -67,13 +67,40 @@ export class LocalMonitor {
     this.startup.restoreMs=performance.now()-started;
     this.emit();
     if(this.closed)return this;
-    for(const root of this.roots) {
-      try { this.watchers.push(watch(root.path,{recursive:true},(_,name)=>{if(String(name).endsWith('.jsonl')) {this.pendingPaths.set(join(root.path,String(name)),root.provider);this.schedule();}})); }
-      catch(e) { if(e.code!=='ENOENT') this.errors.set(root.path,e.message); }
-    }
+    await this.syncRootWatchers();
     this.timer=setInterval(()=>this.schedule(),this.refreshIntervalMs);
     this.persistTimer=setInterval(()=>{void this.persist().catch(e=>this.errors.set('index-cache',e.message));},15000);
     const scanStart=performance.now();await this.scan(true);this.startup.scanMs=performance.now()-scanStart;this.startup.totalMs=performance.now()-started; this.indexing=false; this.emit(); return this;
+  }
+  async syncRootWatchers(){
+    const keys=new Set(this.roots.map(root=>root.provider+':'+resolve(root.path).toLowerCase()));
+    this.watchers=this.watchers.filter(w=>{if(keys.has(w.rootKey))return true;w.close();return false;});
+    for(const root of this.roots) {
+      const key=root.provider+":"+resolve(root.path).toLowerCase();if(this.watchers.some(w=>w.rootKey===key))continue;
+      try {
+        const info=await stat(root.path).catch(error=>{if(error.code!=='ENOENT')throw error;return null;}),fileRoot=info?.isFile()||!info&&root.path.endsWith('.jsonl');
+        // Watching a file's parent survives a rename/replacement. Only the exact
+        // registered basename is admitted; sibling logs are never discovered.
+        const watcher=watch(fileRoot?dirname(root.path):root.path,{recursive:!fileRoot},(event,name)=>{
+          if(fileRoot){
+            const same=process.platform==='win32'?String(name).toLowerCase()===basename(root.path).toLowerCase():String(name)===basename(root.path);
+            if(name!=null&&!same)return;
+            if(event==='rename')this.files.delete(root.path);
+            this.lastDiscovery=0;this.pendingPaths.set(root.path,root.provider);this.schedule();
+          }else if(String(name).endsWith('.jsonl')){this.pendingPaths.set(join(root.path,String(name)),root.provider);this.schedule();}
+        });
+        watcher.on('error',error=>{this.errors.set(root.path,error.message);this.lastDiscovery=0;this.schedule();});watcher.rootKey=key;this.watchers.push(watcher);
+      }
+      catch(e) { if(e.code!=='ENOENT') this.errors.set(root.path,e.message); }
+    }
+  }
+  async updateRoots(roots,projectAttribution=this.projectAttribution){
+    if(this.closed)throw new Error('Monitor is closed');
+    while(this.busy&&!this.closed)await new Promise(r=>setTimeout(r,10));
+    if(this.closed)throw new Error('Monitor is closed');
+    this.roots=roots;this.projectAttribution=projectAttribution;
+    for(const [file,provider]of this.pendingPaths)if(!this.watches(file,provider))this.pendingPaths.delete(file);
+    await this.syncRootWatchers();this.lastDiscovery=0;await this.scan(true);
   }
   schedule() { if(this.closed) return; clearTimeout(this.debounce); this.debounce=setTimeout(()=>{void this.scan(false);},120); }
   setRefreshInterval(ms){
@@ -83,12 +110,15 @@ export class LocalMonitor {
   }
   async discover(root,folder=root.path,found=[]) {
     try {
+      const info=await stat(folder);
+      if(info.isFile()){if(folder.endsWith('.jsonl'))found.push({path:folder,provider:root.provider});this.errors.delete(folder);return found;}
+      this.errors.delete(folder);
       for(const entry of await readdir(folder,{withFileTypes:true})) {
         const path=join(folder,entry.name);
         if(entry.isDirectory()) await this.discover(root,path,found);
         else if(entry.isFile() && entry.name.endsWith('.jsonl')) found.push({path,provider:root.provider});
       }
-    } catch(e) { if(e.code!=='ENOENT') this.errors.set(folder,e.message); }
+    } catch(e) { if(e.code!=='ENOENT'||folder===root.path&&root.path.endsWith('.jsonl'))this.errors.set(folder,e.message); }
     return found;
   }
   watches(path,provider){
@@ -172,8 +202,8 @@ export class LocalMonitor {
     } finally {await handle.close();}
     this.dirtyFiles.add(path);
   }
-  snapshot() { return {...this.ledger.snapshot(),indexing:this.indexing,indexPhase:this.indexing?(this.startup.mode==='cold'||this.startup.mode==='migration'?'building':'checking'):'ready',startup:{...this.startup},progress:this.progress,files:this.files.size,errors:[...this.errors].map(([path,message])=>({path,message}))}; }
-  ingestCompanion(row){this.ledger.session('codex',row.sessionId,{purpose:row.purpose,connectionIdentity:row.connectionIdentity,workspace:row.purpose==='cg-theme'?'AI娘 CG 主题设计':'鲸鱼娘陪伴聊天',model:row.model,companion:true,createdAt:row.timestamp});this.ledger.ingestCodex({type:'event_msg',timestamp:row.timestamp,payload:{type:'token_count',info:{total_token_usage:row.usage}}},row.sessionId,'companion');}
+  snapshot() { return {...this.ledger.snapshot(Date.now(),this.projectAttribution),indexing:this.indexing,indexPhase:this.indexing?(this.startup.mode==='cold'||this.startup.mode==='migration'?'building':'checking'):'ready',startup:{...this.startup},progress:this.progress,files:this.files.size,errors:[...this.errors].map(([path,message])=>({path,message}))}; }
+  ingestCompanion(row){const work=row.purpose==='work';this.ledger.session('codex',row.sessionId,{purpose:row.purpose,connectionIdentity:row.connectionIdentity,workspace:work?row.workspace:row.purpose==='cg-theme'?'AI娘 CG 主题设计':'鲸鱼娘陪伴聊天',model:row.model,companion:!work,createdAt:row.timestamp});this.ledger.ingestCodex({type:'event_msg',timestamp:row.timestamp,payload:{type:'token_count',info:{total_token_usage:row.usage},rewardMetadata:{nativeRequestId:row.requestId,activityOriginId:row.activityOriginId,scope:row.scope}}},row.sessionId,'companion');}
   emit() { this.onUpdate(this.snapshot()); }
   async persist() {
     if(this.repository){

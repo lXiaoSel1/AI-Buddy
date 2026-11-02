@@ -1,0 +1,26 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync,existsSync,writeFileSync,appendFileSync,mkdirSync,cpSync,readFileSync} from 'node:fs';
+import {join,dirname} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {tmpdir} from 'node:os';
+import {runR95CompatibilityAudit} from '../tools/r95-compatibility-audit.mjs';
+import {createIsolatedProfile,profileManifest,backupIsolatedProfile,verifyIsolatedBackup,restoreIsolatedBackup,createIsolatedProgram,switchIsolatedProgram,loadFrozenLegacyReaders} from '../tools/r95-profile-compatibility.mjs';
+const legacySourceRoot=fileURLToPath(new URL('./fixtures/r95-legacy-reader',import.meta.url)),inventoryPath=join(legacySourceRoot,'INVENTORY.json');
+function fixture(t){const root=mkdtempSync(join(tmpdir(),'r95-migration-'));t.after(()=>rmSync(root,{recursive:true,force:true}));return root;}
+
+test('portable pinned old profile migrates, baselines rewards, and program-only rollback preserves every new byte',async t=>{
+ const root=fixture(t),outRoot=join(root,'audit'),report=await runR95CompatibilityAudit({outRoot,legacySourceRoot,inventoryPath});assert.equal(report.pass,9);assert.equal(report.fail,0);assert.equal(report.productionTouched,false);assert.equal(report.processesLaunched,0);assert.equal(report.paidRequests,0);assert.equal(report.pointerRollback,'simulation-only');assert.deepEqual(report.sourceAfter,report.sourceBefore);const backup=report.steps.find(row=>row.name==='backup-before-any-migration').evidence;assert.equal(verifyIsolatedBackup({backupRoot:backup.backupRoot,expectedReceiptSha256:backup.externalReceiptSha256}).verified,true);assert.equal(report.steps.find(row=>row.name==='migrate-usage-2-to-3-and-baseline-old-counts').evidence.historicalWallet.balance,0);const persisted=report.steps.find(row=>row.name==='persist-new-r95-data-after-backup').evidence;assert.equal(persisted.cumulativeActualTokens,30000);assert.equal(persisted.inventoryRice,1);assert.equal(persisted.walletAfterPurchase,0);assert.ok(existsSync(join(outRoot,'profile','social-core','owner.sqlite')));assert.ok(existsSync(join(outRoot,'profile','companion-economy-v1','economy.sqlite')));
+});
+test('isolated program pointer cannot redirect data or select an arbitrary path',t=>{
+ const root=fixture(t),profile=createIsolatedProfile(join(root,'profile')),programRoot=join(root,'program'),pointer=createIsolatedProgram(programRoot,{ownerId:profile.ownerId,profileRoot:profile.root});writeFileSync(join(profile.root,'new.bin'),Buffer.from([0,255,8]));const before=profileManifest(profile.root);assert.throws(()=>switchIsolatedProgram({programRoot,profileRoot:profile.root,ownerId:profile.ownerId,buildPath:'builds/../../outside'}),/known audit/);const receipt=switchIsolatedProgram({programRoot,profileRoot:profile.root,ownerId:profile.ownerId});assert.equal(receipt.pointer.dataRoot,pointer.dataRoot);assert.equal(receipt.pointer.selectedProfile,pointer.selectedProfile);assert.equal(receipt.launched,false);assert.deepEqual(profileManifest(profile.root),before);const modified={...receipt.pointer,dataRoot:join(root,'another-profile')};writeFileSync(join(programRoot,'current-build.json'),JSON.stringify(modified));assert.throws(()=>switchIsolatedProgram({programRoot,profileRoot:profile.root,ownerId:profile.ownerId}),/Selected data profile changed/);assert.deepEqual(profileManifest(profile.root),before);
+});
+test('backup receipt hash is externally pinned, and verification failure creates no restore copy',t=>{
+ const root=fixture(t),profile=createIsolatedProfile(join(root,'profile')),backup=backupIsolatedProfile({profileRoot:profile.root,ownerId:profile.ownerId,backupRoot:join(root,'backup')});const receiptPath=join(backup.backupRoot,'RECEIPT.json'),value=JSON.parse(readFileSync(receiptPath,'utf8'));value.ownerId='substituted';writeFileSync(receiptPath,JSON.stringify(value));const targetRoot=join(root,'restored');assert.throws(()=>restoreIsolatedBackup({backupRoot:backup.backupRoot,expectedReceiptSha256:backup.receiptSha256,targetRoot,ownerId:profile.ownerId}),/receipt hash mismatch/);assert.equal(existsSync(targetRoot),false);assert.throws(()=>verifyIsolatedBackup({backupRoot:backup.backupRoot}),/external backup receipt hash/);
+});
+test('a changed legacy source fails before copying or importing any unpinned module',async t=>{
+ const root=fixture(t),changed=join(root,'changed-source'),targetRoot=join(root,'copied-reader');cpSync(legacySourceRoot,changed,{recursive:true});appendFileSync(join(changed,'src/usage-repository.mjs'),'\n// unapproved source change\n');const before=profileManifest(changed);await assert.rejects(()=>loadFrozenLegacyReaders({sourceRoot:changed,inventoryPath:join(changed,'INVENTORY.json'),targetRoot}),error=>error.code==='R95_AUDIT_LEGACY_SOURCE_CHANGED');assert.equal(existsSync(targetRoot),false);assert.deepEqual(profileManifest(changed),before);
+});
+test('an existing audit output is preserved rather than reset or reused silently',async t=>{
+ const root=fixture(t),outRoot=join(root,'existing');mkdirSync(outRoot);writeFileSync(join(outRoot,'old-evidence.json'),'preserve');const before=profileManifest(outRoot);await assert.rejects(()=>runR95CompatibilityAudit({outRoot,legacySourceRoot,inventoryPath}),/new directory/);assert.deepEqual(profileManifest(outRoot),before);
+});

@@ -25,15 +25,16 @@ export class UsageLedger {
     this.codex=repository?repository.map("codex"):new Map(serialized.codex || []);
     this.claude=repository?repository.map("claude"):new Map(serialized.claude || []);
     this.revision=0; this.aggregationRevision=0; this.aggregateBuilds=0; this.cached=null; this.dirtySessions=new Set();this.dirtyCodex=new Set();this.dirtyClaude=new Set();
+    this.snapshotPartitions=new Map();this.snapshotDirty=new Set();
     this.requestGroups=new Map();this.dirtyRequestSessions=new Set();this.timeZone=TIME_ZONE;
     this.rebuildRequestIndex();
   }
   rebuildRequestIndex(){if(this.repository){const repo=this.repository;this.requestGroups={keys:()=>repo.groups(["codex","claude"]),clear(){},get(key){const kind=key.startsWith("codex:")?"codex":"claude";return {entries:function*(){for(const[k,v]of repo.entries(kind,{group:key,ordered:true}))yield [kind+":"+k,v];},delete(){}};}};return;}this.requestGroups.clear();this.codex=new Map([...this.codex].map(([k,v])=>[v.session+':'+hash([v.timestamp,v.usage.input,v.usage.output,v.usage.cacheRead,v.usage.reasoning]),v]));for(const [k,v]of this.codex)this.indexRequest('codex',k,v);for(const[k,v]of this.claude)this.indexRequest('claude',k,v);}
-  indexRequest(kind,key,value){if(this.repository){this.dirtyRequestSessions.add(value.session);return;}if(!this.requestGroups.has(value.session))this.requestGroups.set(value.session,new Map());this.requestGroups.get(value.session).set(kind+':'+key,value);this.dirtyRequestSessions.add(value.session);}
+  indexRequest(kind,key,value){this.snapshotDirty.add(value.session);if(this.repository){this.dirtyRequestSessions.add(value.session);return;}if(!this.requestGroups.has(value.session))this.requestGroups.set(value.session,new Map());this.requestGroups.get(value.session).set(kind+':'+key,value);this.dirtyRequestSessions.add(value.session);}
   requestRows(key){return [...this.iterateRequestRows(key)];}
   *iterateRequestRows(key){const session=this.sessions.get(key);if(!session)return;const input=this.requestGroups.get(key)?.entries()||[];const samples=this.repository?input:[...input].sort((a,b)=>Date.parse(a[1].timestamp)-Date.parse(b[1].timestamp));let previous=emptyUsage();
     for(const[id,sample]of samples){let usage=sample.usage;if(session.provider==='codex'){if(usage.total<previous.total){if(sample.startsCounter)previous=emptyUsage();else continue;}const next={...usage,...Object.fromEntries(fields.map(k=>[k,Math.max(0,usage[k]-previous[k])])),requests:1};previous=maxUsage(previous,usage);usage=next;if(!usage.total)continue;}
-      yield {requestId:id,sessionId:session.id,tool:session.provider,sourceId:'legacy-'+session.provider,workspace:session.workspace,model:sample.model||'',actualProvider:sample.actualProvider||'unknown',connectionIdentity:sample.connectionIdentity,timestamp:sample.timestamp,usage,knownFields:sample.knownFields||["input","output","total"],totalQuality:sample.totalQuality||'calculated',cacheIncluded:session.provider==='codex',cacheWriteIncluded:false,reasoningIncluded:true,cacheWrite1h:sample.cacheWrite1h,purpose:session.purpose|| (session.companion?(/_cg/.test(session.origin||'')?'cg':'galgame'):'work'),location:{file:session.path}};
+      yield {requestId:id,nativeRequestId:sample.nativeRequestId,activityOriginId:sample.activityOriginId,scope:sample.scope,sessionId:session.id,tool:session.provider,sourceId:'legacy-'+session.provider,workspace:session.workspace,model:sample.model||'',actualProvider:sample.actualProvider||'unknown',connectionIdentity:sample.connectionIdentity,timestamp:sample.timestamp,usage,knownFields:sample.knownFields||["input","output","total"],totalQuality:sample.totalQuality||'calculated',cacheIncluded:session.provider==='codex',cacheWriteIncluded:false,reasoningIncluded:true,cacheWrite1h:sample.cacheWrite1h,purpose:session.purpose|| (session.companion?(/_cg/.test(session.origin||'')?'cg':'galgame'):'work'),location:{file:session.path}};
     }
   }
   session(provider,id,meta={}) {
@@ -86,7 +87,7 @@ export class UsageLedger {
       const old=this.codex.get(key);
       // Never merge unrelated sessions on coincident timestamps and counters.
       const raw=p.info.total_token_usage,knownFields=[...(raw.input_tokens!==undefined?['input']:[]),...(raw.output_tokens!==undefined?['output']:[]),...(raw.total_tokens!==undefined||raw.input_tokens!==undefined&&raw.output_tokens!==undefined?['total']:[]),...(raw.cached_input_tokens!==undefined?['cacheRead']:[]),...(raw.cache_write_input_tokens!==undefined?['cacheWrite']:[]),...(raw.reasoning_output_tokens!==undefined?['reasoning']:[])];
-      const value={session:s.key,timestamp:time,usage,startsCounter,connectionIdentity:s.connectionIdentity,model:s.model,actualProvider:s.actualProvider,knownFields,totalQuality:raw.total_tokens!==undefined?'reported':'calculated'};
+      const value={...(record.rewardMetadata??{}),session:s.key,timestamp:time,usage,startsCounter,connectionIdentity:s.connectionIdentity,model:s.model,actualProvider:s.actualProvider,knownFields,totalQuality:raw.total_tokens!==undefined?'reported':'calculated'};
       if(raw.total_tokens!==undefined)value.usage.total=num(raw.total_tokens);
       this.aggregationRevision++;this.codex.set(key,value);this.indexRequest('codex',key,value);this.dirtyCodex.add(key);
       s.lastActivity = !s.lastActivity || Date.parse(time)>Date.parse(s.lastActivity) ? time:s.lastActivity;
@@ -113,7 +114,7 @@ export class UsageLedger {
         const merged=maxUsage(old?.usage,usage);merged.total=merged.input+merged.output+merged.cacheRead+merged.cacheWrite;
         const owner=old && Date.parse(this.sessions.get(old.session)?.createdAt || old.timestamp)<=Date.parse(s.createdAt || time) ? old.session:s.key;
         const raw=message.usage,value={session:owner,timestamp:old?.timestamp || time,usage:merged,model:message.model||old?.model,actualProvider:record.provider||message.provider||old?.actualProvider,knownFields:['total',...Object.entries({input:'input_tokens',output:'output_tokens',cacheRead:'cache_read_input_tokens',cacheWrite:'cache_creation_input_tokens'}).filter(([,k])=>raw[k]!==undefined).map(([k])=>k)],cacheWrite1h:raw.cache_creation?.ephemeral_1h_input_tokens};
-        if(old&&old.session!==owner){this.requestGroups.get(old.session)?.delete('claude:'+key);this.dirtyRequestSessions.add(old.session);}this.aggregationRevision++;this.claude.set(key,value);this.indexRequest('claude',key,value);this.dirtyClaude.add(key); this.revision++;
+        if(old&&old.session!==owner){this.requestGroups.get(old.session)?.delete('claude:'+key);this.dirtyRequestSessions.add(old.session);this.snapshotDirty.add(old.session);}this.aggregationRevision++;this.claude.set(key,value);this.indexRequest('claude',key,value);this.dirtyClaude.add(key); this.revision++;
       }
       if(record.isApiErrorMessage || record.isApiError || record.error) this.lifecycle(s,'failed',time);
       else if(message.stop_reason==='end_turn') this.lifecycle(s,'completed',time);
@@ -126,14 +127,15 @@ export class UsageLedger {
   serialize() { return {version:1,sessions:[...this.sessions],codex:[...this.codex],claude:[...this.claude]}; }
   delta(){return {sessions:[...this.dirtySessions].map(k=>[k,this.sessions.get(k)]),codex:[...this.dirtyCodex].map(k=>[k,this.codex.get(k)]),claude:[...this.dirtyClaude].map(k=>[k,this.claude.get(k)])};}
   clearDirty(){this.dirtySessions.clear();this.dirtyCodex.clear();this.dirtyClaude.clear();}
-  snapshot(now=Date.now()) {
+  snapshot(now=Date.now(),projectAttribution=null) {
     const dayOf=time=>dateInZone(time,this.timeZone);
-    if(this.cached?.revision===this.aggregationRevision&&this.cached.zone===this.timeZone) {
-      const value=this.cached.value,today=dayOf(now),sessions=value.sessions.map(old=>{const s={...old,...this.sessions.get(old.key)};return {...s,displayStatus:s.status==='running' && now-(Date.parse(s.lastActivity)||0)>120000?'unknown':s.status};});
+    const attributionKey=projectAttribution?.key??null,projectSession=value=>projectAttribution?.projectSession?projectAttribution.projectSession(value):value;
+    if(this.cached?.revision===this.aggregationRevision&&this.cached.zone===this.timeZone&&this.cached.attributionKey===attributionKey&&this.cached.startedAt===this.workStartedAt) {
+      const value=this.cached.value,today=dayOf(now),sessions=value.sessions.map(old=>{const s={...old,...projectSession(this.sessions.get(old.key))};return {...s,displayStatus:s.status==='running' && now-(Date.parse(s.lastActivity)||0)>120000?'unknown':s.status};});
       return {...value,timestamp:new Date(now).toISOString(),today,todayUsage:value.daily.find(d=>d.date===today)||{date:today,codex:emptyUsage(),claude:emptyUsage()},sessions,active:sessions.filter(s=>['running','waiting','failed'].includes(s.displayStatus)&&now-(Date.parse(s.lastActivity)||0)<86400000).map(s=>s.key)};
     }
     this.aggregateBuilds++;
-    const sessions=new Map([...this.sessions].map(([key,s])=>[key,{...s,usage:emptyUsage(),displayStatus:s.status==='running' && now-(Date.parse(s.lastActivity)||0)>120000 ? 'unknown':s.status}]));
+    const sessions=new Map([...this.sessions].map(([key,s])=>[key,{...projectSession(s),usage:emptyUsage(),displayStatus:s.status==='running' && now-(Date.parse(s.lastActivity)||0)>120000 ? 'unknown':s.status}]));
     const daily=new Map(), projects=new Map(), cube=new Map(),totals={codex:emptyUsage(),claude:emptyUsage()};
     const startedAt=this.workStartedAt || Infinity;let workSinceStart=0;
     function add(sample,usage) {
@@ -149,6 +151,32 @@ export class UsageLedger {
       if(!projects.has(projectKey)) projects.set(projectKey,{workspace:projectKey,codex:emptyUsage(),claude:emptyUsage(),sessions:0});
       plus(projects.get(projectKey)[s.provider],usage);
     }
+    if(this.repository){
+      const signature=JSON.stringify([this.timeZone,this.workStartedAt]);
+      if(this.snapshotPartitionSignature!==signature){this.snapshotPartitions.clear();this.snapshotPartitionSignature=signature;}
+      for(const [key,session]of sessions){
+        let part=this.snapshotPartitions.get(key);
+        if(!part||this.snapshotDirty.has(key)){
+          const buckets=new Map();let previous=emptyUsage(),counterRestarts=0,counterRegressions=0;
+          for(const[,sample]of this.repository.entries(session.provider,{group:key,ordered:true})){
+            let usage=sample.usage;
+            if(session.provider==='codex'){
+              if(usage.total<previous.total){if(sample.startsCounter){previous=emptyUsage();counterRestarts++;}else{counterRegressions++;continue;}}
+              const delta=Object.fromEntries(fields.map(k=>[k,Math.max(0,usage[k]-previous[k])]));delta.total=delta.input+delta.output;delta.requests=delta.total>0?1:0;previous=maxUsage(previous,usage);usage=delta;
+            }
+            if(!(usage.total>0))continue;
+            const bucket=JSON.stringify([dayOf(sample.timestamp),sample.model||'',Date.parse(sample.timestamp)>=startedAt]);
+            if(!buckets.has(bucket))buckets.set(bucket,{sample:{session:key,timestamp:sample.timestamp,model:sample.model},usage:emptyUsage()});
+            plus(buckets.get(bucket).usage,usage);
+          }
+          part={buckets:[...buckets.values()],counterRestarts,counterRegressions};this.snapshotPartitions.set(key,part);this.snapshotDirty.delete(key);
+        }
+        if(part.counterRestarts)session.counterRestarts=part.counterRestarts;
+        if(part.counterRegressions)session.counterRegressions=part.counterRegressions;
+        for(const row of part.buckets)add(row.sample,row.usage);
+      }
+      for(const key of this.snapshotPartitions.keys())if(!sessions.has(key))this.snapshotPartitions.delete(key);
+    }else{
     const groups=this.repository?this.repository.groups(['codex']):new Set([...this.codex.values()].map(v=>v.session));
     for(const key of groups) {
       const samples=this.repository?(function*(repo){for(const[,v]of repo.entries('codex',{group:key,ordered:true}))yield v;})(this.repository):[...this.codex.values()].filter(v=>v.session===key).sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
@@ -165,11 +193,12 @@ export class UsageLedger {
       }
     }
     for(const sample of this.claude.values()) if(sample.usage.total>0) add(sample,sample.usage);
+    }
     for(const s of sessions.values()) if(projects.has(s.workspace || '未记录项目')) projects.get(s.workspace || '未记录项目').sessions++;
     const today=dayOf(now), todayRow=daily.get(today) || {date:today,codex:emptyUsage(),claude:emptyUsage()};
     const active=[...sessions.values()].filter(s=>['running','waiting','failed'].includes(s.displayStatus) && now-(Date.parse(s.lastActivity)||0)<86400000);
     const workTotal=[...sessions.values()].filter(s=>!s.companion).reduce((n,s)=>n+s.usage.total,0);
     const value={timestamp:new Date(now).toISOString(),timeZone:TIME_ZONE,today,todayUsage:todayRow,totals,cube:[...cube.values()],workTotal,workSinceStart,sessions:[...sessions.values()].sort((a,b)=>Date.parse(b.lastActivity||0)-Date.parse(a.lastActivity||0)),daily:[...daily.values()].sort((a,b)=>b.date.localeCompare(a.date)),projects:[...projects.values()].sort((a,b)=>(b.codex.total+b.claude.total)-(a.codex.total+a.claude.total)),active:active.map(s=>s.key)};
-    value.timeZone=this.timeZone;this.cached={revision:this.aggregationRevision,zone:this.timeZone,bucket:Math.floor(now/1000),value}; return value;
+    value.timeZone=this.timeZone;this.cached={startedAt:this.workStartedAt,revision:this.aggregationRevision,zone:this.timeZone,attributionKey,bucket:Math.floor(now/1000),value}; return value;
   }
 }

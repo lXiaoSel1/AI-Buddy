@@ -1,5 +1,2 @@
-* text=auto
-*.png binary
-*.webp binary
-*.ico binary
-*.webm binary
+# Preserve exact exported LF/CRLF source and legal bytes.
+* -text

@@ -1,17 +1,22 @@
+import {affectionText,dialogueLineRoom} from '../companion-display.mjs'
 import {t} from '../i18n.mjs';
+import {visibleCompanionText,visibleInterruptedText} from '../companion-presentation.mjs';
 import {GalgameTitle} from '../galgame-title.mjs';
 import {GroupHeader} from '../group-header.mjs';
 import {GroupCgCSS} from '../group-cg-ui.mjs';
 import {CgPausedNotice} from '../cg-paused-ui.mjs';
 import {GroupStageCSS} from '../group-stage-ui.mjs';
+import {R95NetButton,createR95ActionClient} from '../r95-core-page.mjs';
+import {ChatR95CSS,MoodChip,MoreMenu,MessageSources,ChatSpeechLines,useToolbarCollapse,unreadLines,notePetLine,sourceView,fill} from '../chat-r95-ui.mjs';
 import {CompanionDesignCSS} from '../companion-design.mjs';
 import {CgImageViewer,CgImageViewerCSS} from '../cg-image-viewer.mjs';
+import {FullMessageButton,needsFullView,paragraphCount} from '../full-message-viewer.mjs';
 import {isSpriteVisible} from '../character-display.mjs';
 import {messageEmotion,validEmotion} from '../emotions.mjs'
 /**
  * dsh-whale-galgame — browser client half.
  * Q版桌宠 is the default form on the main UI; clicking it opens the
- * fullscreen one-line-per-screen visual novel. The heroine follows the
+ * fullscreen visual novel with scrollable messages. The heroine follows the
  * main UI's current model; three dialogue options are generated after
  * every reply; level-up CG rewards pop as modals and may be saved inside
  * the galgame scene without changing the workspace background.
@@ -289,7 +294,20 @@ const CSS = [
   GroupCgCSS,
   GalgameDesignCSS,
   CompanionDesignCSS,
+  ChatR95CSS,
 ].join('\n')
+
+// 回她 on the pet opens the window on 'galgame-reply' (an alias of galgame): the reply box gets the cursor (approved design C8).
+let replyFocusAt = 0
+if (typeof window !== 'undefined') {
+  if (globalThis.location?.hash === '#galgame-reply') replyFocusAt = Date.now()
+  ;(window as any).whale?.onPage?.((page: any) => { if (page === 'galgame-reply') { replyFocusAt = Date.now(); window.dispatchEvent(new Event('ai-buddy:galgame-reply')) } })
+}
+export function focusGalgameReply(): boolean {
+  const box = document.querySelector<HTMLTextAreaElement>('#whg-panel textarea:not(:disabled)')
+  if (!box) return false
+  box.focus({ preventScroll: true }); return true
+}
 
 function art(key: any): string | undefined {
   if (!key) return undefined
@@ -767,6 +785,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   const [groupPanelRequest,setGroupPanelRequest] = useState<any>(null)
   const [groupToolbarTarget,setGroupToolbarTarget] = useState<HTMLElement|null>(null)
   const [busy, setBusy] = useState(false)
+  const [streamReply,setStreamReply]=useState<any>(null)
   const [text, setText] = useState('')
   const [skitText, setSkitText] = useState('')
   const [armReset, setArmReset] = useState(false)
@@ -857,9 +876,16 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     if (result?.ok === false) throw Object.assign(new Error(result.error || result.message || t('操作失败')), { code: result.code, missing: result.missing })
     if (epoch !== companionRequestEpoch.current) return result
     if (result?.view) setS(result.view)
-    else if (result?.companion) setS((previous: any) => ({ ...previous, companion: result.companion }))
+    else if (result?.companion) setS((previous: any) => ({ ...previous, companion: action==='companion-r95'?{...previous.companion,...result.companion}:result.companion }))
     return result
   }
+  const r95RequestRef=useRef(companionRequest);r95RequestRef.current=companionRequest
+  const r95ClientRef=useRef<any>(null);if(!r95ClientRef.current)r95ClientRef.current=createR95ActionClient((...args:any[])=>r95RequestRef.current(args[0],args[1]))
+  const r95InputActive=useRef(false),r95InputScope=useRef(s?.companion?.r95?.scope);r95InputScope.current=s?.companion?.r95?.scope
+  const r95Input=(active:boolean)=>{if(!r95InputScope.current||r95InputActive.current===active)return;r95InputActive.current=active;void r95ClientRef.current('input',{active,scope:r95InputScope.current}).catch((e:any)=>setApiError(e.message))}
+  // the mood card and the Auto popover link to where these are turned on (approved design C6)
+  const openSocial=()=>(window as any).whale?.open?.('social')
+  useEffect(()=>{const expected=s?.companion?.r95?.scope;return()=>{if(r95InputActive.current){r95InputActive.current=false;void r95ClientRef.current('input',{active:false,scope:expected}).catch(()=>{})}}},[JSON.stringify(s?.companion?.r95?.scope)])
   function openCompanion(panel: string): void {
     closePicker(false)
     setArchivePanel(null)
@@ -897,6 +923,27 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   }, [cgMenu])
   const [undoLeft, setUndoLeft] = useState(8)
   useEffect(() => {if (!cgUndo) return;setUndoLeft(8);const started=Date.now(),tick=setInterval(()=>setUndoLeft(Math.max(1,8-Math.floor((Date.now()-started)/1000))),250),timer=setTimeout(()=>setCgUndo(null),8000);return()=>{clearTimeout(timer);clearInterval(tick)}},[cgUndo])
+  useEffect(()=>{
+    setStreamReply(s?.companion?.streaming??null);let timer:any=null,latest:any=null,painted='';
+    const off=(window as any).whale?.onOutput((event:any)=>{
+      // a proactive line arrived or was read somewhere: show it now instead of at the next 6 s poll (approved design C8)
+      if(event?.type==='social.updated'){if(event.petMessageId)notePetLine(event.petMessageId);callApi('view').then((v:any)=>{if(v&&typeof v==='object')setS(v)}).catch(()=>{});return}
+      if(event.groupId){if(event.groupId!==s?.companion?.activeGroupId)return;if(event.type==='group.text')setS((old:any)=>({...old,companion:{...old.companion,groupRuntime:{...old.companion.groupRuntime,streaming:event.payload}}}));return}
+      if(event.conversationId!==s?.companion?.activeConversationId||event.personaId!==s?.companion?.activePersonaId||event.characterId!==s?.current)return;
+      if(event.type==='text.delta'){const previous=latest?.requestId===event.requestId?latest:s?.companion?.streaming?.requestId===event.requestId?s.companion.streaming:null;latest={...previous,...event,text:(previous?.text??'')+(event.payload.text??'')};if(!timer)timer=setTimeout(()=>{timer=null;setStreamReply({...latest});if(painted!==latest.requestId){painted=latest.requestId;requestAnimationFrame(()=>void callApi('companion-stream-presented',{requestId:latest.requestId}).catch(()=>{}));}},50)}
+      if(event.type==='request.phase'&&event.payload.phase==='failed'){clearTimeout(timer);timer=null;setStreamReply({...latest,status:'incomplete',error:event.payload.message})}
+      if(event.type==='choices.ready'||event.type==='choices.failed'||event.type==='request.phase'&&event.payload.phase==='committed'){clearTimeout(timer);timer=null;latest=null;callApi('view').then((v:any)=>{setS(v);setStreamReply(null)}).catch(()=>{})}
+    });return()=>{off?.();clearTimeout(timer)};
+  },[s?.current,s?.companion?.activePersonaId,s?.companion?.activeConversationId,s?.companion?.activeGroupId])
+  useEffect(()=>{const focus=()=>{if(!replyFocusAt||Date.now()-replyFocusAt>15000)return;requestAnimationFrame(()=>{if(focusGalgameReply())replyFocusAt=0})};focus();window.addEventListener('ai-buddy:galgame-reply',focus);return()=>window.removeEventListener('ai-buddy:galgame-reply',focus)},[!!s,group?.id])
+  // Measured for the stylesheet: stage height and the rest of the dialogue box (one 40% rule, approved design C9),
+  // and the room between the toolbar and the box, so toolbar popovers stop above the name plate (C6).
+  // English labels are longer: when the private toolbar no longer fits on one line, History / CG / Pet go into More (C6).
+  const toolsRef=useRef<any>(null),toolsCollapsed=useToolbarCollapse(toolsRef,[t('对话历史'),s?.companion?.personas?.find((row:any)=>row.id===s?.companion?.activePersonaId)?.name,s?.galleryCount>0,s?.spriteVisibility!=='auto',group?.id,!!s].join('|'))
+  const speechOptionsRef=useRef<any>(null),shownSpeech=useRef<any>(null)
+  const layoutObserver=useRef<any>(null),observed=useRef<any>({})
+  useEffect(()=>{if(typeof ResizeObserver!=='function')return;let frame=0;const measure=()=>{frame=0;const root=document.getElementById('whg-tab-root');if(!root)return;const panel=root.querySelector<HTMLElement>('#whg-panel'),top=root.querySelector<HTMLElement>('.gx-top'),line=panel?(panel.querySelector<HTMLElement>(':scope>.whg-line-now')??panel.querySelector<HTMLElement>('.r95-speech.in-dlg>p')):null;root.style.setProperty('--gx-stage-h',root.clientHeight+'px');if(panel){const rest=Math.max(0,panel.offsetHeight-(line?.offsetHeight??0));root.style.setProperty('--gx-dlg-rest',rest+'px');root.style.setProperty('--gx-line-room',dialogueLineRoom(root.clientHeight,rest,line?parseFloat(getComputedStyle(line).lineHeight):31)+'px');}if(panel&&top)root.style.setProperty('--gx-pop-room',Math.max(0,Math.round(panel.getBoundingClientRect().top-top.getBoundingClientRect().bottom-28))+'px')};const observer=new ResizeObserver(()=>{if(!frame)frame=requestAnimationFrame(measure)});layoutObserver.current={observer,measure};return()=>{observer.disconnect();if(frame)cancelAnimationFrame(frame);layoutObserver.current=null;observed.current={}}},[])
+  useEffect(()=>{const current=layoutObserver.current;if(!current)return;const root=document.getElementById('whg-tab-root'),panel=root?.querySelector('#whg-panel'),top=root?.querySelector('.gx-top');for(const [key,node] of [['root',root],['panel',panel],['top',top]] as any[])if(node&&observed.current[key]!==node){current.observer.observe(node);observed.current[key]=node}current.measure()})
   useEffect(() => (window as any).whale?.onChatCommitted(() => {
     callApi('view').then((value) => { setS(value); setApiError(null) }).catch(() => {})
   }), [props.sessionId])
@@ -1598,8 +1645,9 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   function send(): void {
     const t = text
     if (!t.trim()) return
-    setText('')
-    say({ text: t }, t)
+    setText('');r95Input(false)
+    // replying to her line counts as reading it (approved design C8); only a line already presented can be read
+    say({ text: t }, t, shownSpeech.current?.status === 'presented' ? shownSpeech.current : null)
   }
 
   // whale-girl emotion sprites: filename = emotion (local asset keys)
@@ -2176,7 +2224,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     return React.createElement('span', { className, 'aria-hidden': 'true' }, src ? React.createElement('img', { src, alt: '', draggable: false }) : String(companionCharacterName(s?.companion, id) || id || '?').slice(0, 1))
   }
   function topbar(showBack: boolean): React.ReactElement {
-    if (group) return React.createElement(GroupHeader, { key:group.id, toolbarRef:setGroupToolbarTarget, state:s.companion, request:companionRequest, resolveArt:art, onBrowse:(characterId:string)=>setGroupBrowseRequest({groupId:group.id,characterId,nonce:Date.now()}), panelRequest:groupPanelRequest,loadCg:(id:string)=>requestCgData(id,props.sessionId), petEnabled:s.petEnabled!==false, onPetToggle:()=>act('pet-set',{enabled:s.petEnabled===false}), chat:props.chat, onToggleChat:props.onToggleChat })
+    if (group) return React.createElement(GroupHeader, { key:group.id, toolbarRef:setGroupToolbarTarget, state:s.companion, request:companionRequest, resolveArt:art, onBrowse:(characterId:string)=>setGroupBrowseRequest({groupId:group.id,characterId,nonce:Date.now()}), panelRequest:groupPanelRequest,loadCg:(id:string)=>requestCgData(id,props.sessionId), petEnabled:s.petEnabled!==false, onPetToggle:()=>act('pet-set',{enabled:s.petEnabled===false}), chat:props.chat, onToggleChat:props.onToggleChat, r95Action:r95ClientRef.current, onOpenSocial:openSocial })
     const characterModel = s.characterModelLabel || s.modelLabel || ''
     const petEnabled = s.petEnabled !== false
     const galleryCount = typeof s.galleryCount === 'number' ? s.galleryCount : 0
@@ -2217,9 +2265,9 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         React.createElement('span', { className: 'gx-grow' }),
         s.resourcePendingCharacter && validPetCharacter(s.resourcePendingCharacter) ? React.createElement('button',{className:'gx-tb gx-glass',type:'button',onClick:()=> (window as any).whale.resources.manage(s.resourcePendingCharacter)},Icon('download',{size:15}),t('补装角色')+' · '+s.resourcePendingCharacter) : null,
         s.customCharacter ? React.createElement('span', { className: 'gx-chip np buddy-pet-note' }, t('此角色没有桌宠资源，保留当前桌宠')) : null,
-        props.chat ? React.createElement('div', { className: 'gx-net', 'data-galgame-net': true }, Icon('globe', { size: 15 }), React.createElement('span', null, t("联网聊天")), React.createElement(Switch, { checked: !!props.chat.enabled, label: t("联网聊天"), onChange: () => props.onToggleChat?.() })) : null,
+        props.chat && s.companion?.r95 ? React.createElement(R95NetButton,{view:s.companion.r95,onAction:r95ClientRef.current,chat:{enabled:!!props.chat.enabled,onToggle:()=>props.onToggleChat?.()}}) : props.chat ? React.createElement('div', { className: 'gx-net', 'data-galgame-net': true }, Icon('globe', { size: 15 }), React.createElement('span', null, t("联网聊天")), React.createElement(Switch, { checked: !!props.chat.enabled, label: t("联网聊天"), onChange: () => props.onToggleChat?.() })) : null,
       ),
-      React.createElement('div', { className: 'gx-tools', role: 'toolbar', 'aria-label': t("Galgame 工具") },
+      React.createElement('div', { ref: toolsRef, className: 'gx-tools', role: 'toolbar', 'aria-label': t("Galgame 工具"), 'data-fit': toolsCollapsed ? 'more' : 'full' },
         React.createElement('div', { className: 'whg-chip-wrap' },
           tool('image', t("背景图"), { 'aria-controls': 'whg-background-picker-' + appScope, 'aria-expanded': pickerPanel === 'background', 'aria-haspopup': 'dialog', className: pickerPanel === 'background' ? 'open' : '', onClick: (event: any) => openPicker('background', event.currentTarget) }),
           pickerOverlay(backgroundPicker()),
@@ -2233,13 +2281,19 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         sep('s1'),
         tool('users', t("管理角色"), { 'aria-controls': 'buddy-companion-dialog', 'aria-expanded': companionPanel === 'characters', 'aria-haspopup': 'dialog', title: t("修改") + (s.name || t("当前角色")) + t("的昵称、称呼、问候、性格、语气与 CG 外观描述"), onClick: () => openCompanion('characters') }),
         tool('idcard', t('我的身份') + (persona ? ' · ' + persona : ''), { title: t('选择和管理我的身份'), 'data-companion-personas': true, onClick: () => openCompanion('personas') }),
-        tool('clock', t("对话历史"), { 'aria-controls': 'buddy-companion-dialog', 'aria-expanded': companionPanel === 'history', 'aria-haspopup': 'dialog', onClick: () => openCompanion('history') }),
         sep('s2'),
-        tool('chats', t('群聊'), { 'data-companion-groups': true, onClick: () => openCompanion('groups') }),
+        // approved design C6: background, portraits | characters, me | history, CG, pet | mood | group
+        ...(toolsCollapsed ? [React.createElement(MoreMenu, { key: 'more', items: [
+          { key: 'history', icon: 'clock', label: t("对话历史"), onClick: () => openCompanion('history') },
+          { key: 'gallery', icon: 'gallery', label: t("CG 图鉴"), count: galleryCount, onClick: (_event: any, anchor: any) => openArchive('gallery', anchor) },
+          { key: 'pet', icon: 'paw', label: t("桌宠"), checked: petEnabled, disabled: busy, title: petEnabled ? t("关闭桌宠，避免与其他悬浮插件冲突") : t("开启可跳转 galgame 的桌宠"), onClick: () => act('pet-set', { enabled: !petEnabled }) }] })] : [
+          tool('clock', t("对话历史"), { key: 'history', 'aria-controls': 'buddy-companion-dialog', 'aria-expanded': companionPanel === 'history', 'aria-haspopup': 'dialog', onClick: () => openCompanion('history') }),
+          tool('gallery', React.createElement(React.Fragment, null, t("CG 图鉴"), galleryCount > 0 ? React.createElement('span', { className: 'gx-cnt' }, galleryCount) : null), { key: 'gallery', 'aria-expanded': archivePanel === 'gallery', className: archivePanel === 'gallery' ? 'open' : '', onClick: (event: any) => openArchive('gallery', event.currentTarget) }),
+          tool('paw', t("桌宠"), { key: 'pet', 'aria-pressed': petEnabled, disabled: busy, title: petEnabled ? t("关闭桌宠，避免与其他悬浮插件冲突") : t("开启可跳转 galgame 的桌宠"), onClick: () => act('pet-set', { enabled: !petEnabled }) })]),
         sep('s3'),
-        tool('gallery', React.createElement(React.Fragment, null, t("CG 图鉴"), galleryCount > 0 ? React.createElement('span', { className: 'gx-cnt' }, galleryCount) : null), { 'aria-expanded': archivePanel === 'gallery', className: archivePanel === 'gallery' ? 'open' : '', onClick: (event: any) => openArchive('gallery', event.currentTarget) }),
+        s.companion?.r95 ? React.createElement('div', { 'data-chat-toolbar': 'private', className: 'r95-toolbar' }, React.createElement(MoodChip, { view: s.companion.r95, onAction: r95ClientRef.current, onOpenSocial: openSocial })) : null,
         sep('s4'),
-        tool('paw', t("桌宠"), { 'aria-pressed': petEnabled, disabled: busy, title: petEnabled ? t("关闭桌宠，避免与其他悬浮插件冲突") : t("开启可跳转 galgame 的桌宠"), onClick: () => act('pet-set', { enabled: !petEnabled }) }),
+        tool('chats', t('群聊'), { 'data-companion-groups': true, onClick: () => openCompanion('groups') }),
         // restarting clears level and affection, so it asks once in a small bubble
         React.createElement('span', { className: 'gx-confirm-wrap', ref: resetRef },
           React.createElement('button', { type: 'button', className: 'gx-tb only', 'aria-label': t("重新开始"), title: t("重新开始（清零等级与好感度）"), 'aria-expanded': armReset, onClick: (e: any) => { e.stopPropagation(); setArmReset(!armReset) } }, Icon('retry', { size: 15 })),
@@ -2323,16 +2377,16 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
 
 
   // A chat turn: the typed text comes back into the box if the model call fails, so nothing has to be retyped.
-  function say(payload: any, typed = ''): void {
+  function say(payload: any, typed = '', answered: any = null): void {
     if (busy) return
     setBusy(true)
     setPendingChat(payload)
     setFailedChat(null)
     callApi('chat', payload).then((v) => {
       if (v && typeof v === 'object') { setS(v); setApiError(null) }
+      if (answered?.messageId) void r95ClientRef.current('speech-read', { messageId: answered.messageId }).catch(() => {})
     }).catch((e) => {
-      setApiError(String(e && e.message ? e.message : e))
-      setFailedChat(payload)
+      if (!/用户停止回复$/.test(String(e && e.message ? e.message : e))) { setApiError(String(e && e.message ? e.message : e)); setFailedChat(payload) }
       if (typed) setText((current: string) => current || typed)
     }).finally(() => { setBusy(false); setPendingChat(null) })
   }
@@ -2361,27 +2415,28 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       : null
     const blocked = busy || offline
     const input = React.createElement('div', { className: 'whg-input-row gx-say' },
-      React.createElement('label', { className: 'gx-ta' + (blocked ? ' dis' : '') },
+      React.createElement('label', { className: 'gx-ta gx-compact' + (blocked ? ' dis' : '') },
         React.createElement('textarea', {
-          className: 'whg-input', rows: 2, 'aria-label': t('私聊消息'),
+          className: 'whg-input', rows: 1, title: t('Enter 发送 · Shift+Enter 换行'), 'aria-label': t('私聊消息'),
           value: text,
           placeholder: replying ? t("等 ") + s.name + t(" 说完…") : offline ? t("开启联网聊天后就能回复") : t("回复 ") + s.name + ' …',
           disabled: blocked,
-          onChange: (e: any) => { setText(e.target.value) },
+          onFocus:()=>r95Input(true),onBlur:()=>r95Input(false),
+          onChange: (e: any) => { setText(e.target.value);r95Input(!!e.target.value) },
           // an empty box takes 1 / 2 / 3 as the matching choice
           onKeyDown: (e: any) => {
+            if (!text && speechShown && /^[1-9]$/.test(e.key) && !e.ctrlKey && !e.altKey && !e.metaKey) { const option = speechOptionsRef.current?.[Number(e.key) - 1]; if (option && !option.disabled) { e.preventDefault(); option.run() } return }
             if (!text && showChoices && /^[1-9]$/.test(e.key) && !e.ctrlKey && !e.altKey && !e.metaKey) { const c = choiceList[Number(e.key) - 1]; if (c) { e.preventDefault(); choose(c) } return }
             if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send() }
           },
-        }),
-        React.createElement('small', { 'aria-hidden': 'true' }, t("Enter 发送 · Shift+Enter 换行"))),
+        })),
       React.createElement('button', { className: 'whg-send gx-send', type: 'button', disabled: blocked || !text.trim(), onClick: send },
         replying ? React.createElement('span', { className: 'ui-spinner', 'aria-hidden': 'true' }) : Icon('send', { size: 15 }),
         replying ? t("回复中") : t("回复")))
     const truncated = apiError ? modelOutputTruncated(apiError) : false
     const alert = apiError
       ? React.createElement('div', { className: 'gx-alert', role: 'alert' }, Icon('alert', { size: 16 }),
-        React.createElement('span', { className: 'grow' }, React.createElement('b', null, truncated ? t("回复被截断") : t("没连上模型")), ' · ', modelErrorText(String(apiError).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''))),
+        React.createElement('span', { className: 'grow' }, React.createElement('b', null, truncated ? t("回复被截断") : /人生切换|正在保存或切换/.test(String(apiError)) ? t("角色的人生正在切换") : /缺少联网搜索组件|missing its web search component/i.test(String(apiError)) ? t("联网搜索未就绪") : t("没连上模型")), ' · ', modelErrorText(String(apiError).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''))),
         failedChat && !truncated ? React.createElement('button', { type: 'button', className: 'gx-gbtn', disabled: busy, onClick: () => { setText(''); say(failedChat) } }, Icon('retry', { size: 14 }), t("重试")) : null,
         React.createElement('button', { type: 'button', className: 'gx-gbtn', onClick: () => (window as any).whale?.open?.('settings') }, truncated ? t('打开通用设置') : t("去设置")))
       : s.fallbackUsed
@@ -2392,21 +2447,47 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
             React.createElement('span', { className: 'grow' }, t("联网聊天已关闭，现在只能翻看之前的对话。")),
             props.onToggleChat ? React.createElement('button', { type: 'button', className: 'gx-gbtn pri', onClick: () => props.onToggleChat?.() }, t("开启联网聊天")) : null)
           : null
-    const now = replying
-      ? React.createElement('div', { className: 'whg-line-now gx-typing', role: 'status' }, s.name + t(" 正在回复"), React.createElement('span', { 'aria-hidden': 'true' }, React.createElement('i'), React.createElement('i'), React.createElement('i')))
+    const lastStored=s.companion?.messages?.at(-1),interrupted=lastStored?.status==='failed'&&lastStored.requestId===s.companion?.interruptedReply?.requestId?s.companion.interruptedReply:null;const liveStream=streamReply??s.companion?.streaming,liveText=liveStream?String(liveStream.text??''):!replying?visibleInterruptedText(interrupted,{requestText:lastStored?.role==='user'?lastStored.text:''}):''
+    // approved design C9: while the reply streams the footer says which paragraph she is on; after a stop it says the
+    // partial text was kept, and Full text opens that kept text (not the line before it).
+    const stopped = !!liveText && (streamReply?.status === 'incomplete' || !streamReply && !!interrupted?.text), streaming = !!liveText && !stopped
+    const stopError = stopped ? (streamReply?.error || interrupted?.error) : null, stopReason = stopError && !/用户停止回复$/.test(String(stopError)) ? String(stopError) : ''
+    // approved design C8: her unread line is shown as her line in the box, with reply options
+    const speech = !liveText && !replying ? unreadLines(s.companion?.r95) : [], speechShown = speech.length > 0
+    shownSpeech.current = speechShown ? speech[0] : null
+    const replyPlate = !!liveText || speechShown, pWho = replyPlate ? 'heroine' : plateWho, pLabel = replyPlate ? s.name : plateLabel, pStyle = replyPlate ? plateVars({ who: 'heroine', characterId: s.current, color: s.color }) : plateStyle
+    const displayLastText=visibleCompanionText(last?{...last,request:lastStored?.request}:null,{messages:s.companion?.messages??[]})
+    const now = speechShown
+      ? React.createElement(ChatSpeechLines, { view: s.companion.r95, onAction: r95ClientRef.current, onReply: () => focusGalgameReply(), inDialog: true, optionsRef: speechOptionsRef })
+      : liveText
+      ? React.createElement('div',{className:'whg-line-now heroine','data-streaming-reply':true,'aria-live':'off','aria-busy':replying},liveText,streaming?React.createElement('i',{className:'gx-caret','aria-hidden':'true'}):null)
+      : replying
+      ? React.createElement('div', { className: 'whg-line-now gx-typing', role: 'status' }, React.createElement('span', { 'aria-hidden': 'true' }, React.createElement('i'), React.createElement('i'), React.createElement('i')), fill(t('{name} 正在想…'), { name: s.name }))
       : last
-        ? React.createElement('div', { key: 'now-' + ((s.history || []).length), className: 'whg-line-now ' + last.who + (apiError ? ' muted' : '') }, last.text)
+        ? React.createElement('div', { key: 'now-' + ((s.history || []).length), className: 'whg-line-now ' + last.who + (apiError ? ' muted' : ''), 'aria-live': 'polite' }, displayLastText)
         : React.createElement('div', { className: 'whg-line-now narrator' }, t("（点击输入框，开始和") + s.name + t("对话吧）"))
+    const footStatus = streaming
+      ? React.createElement('span', { className: 'gx-foot-st', 'data-stream-paragraph': Math.max(1, paragraphCount(liveText)) }, fill(t('第 {n} 段 · 正在说'), { n: Math.max(1, paragraphCount(liveText)) }))
+      : stopped ? React.createElement('span', { className: 'gx-foot-st stopped', role: 'status' }, Icon('stop', { size: 12 }), t('已停止 · 保留了已生成的部分') + (stopReason ? ' · ' + stopReason : '')) : null
+    const sourceMessage = !replying && !liveText && !speechShown ? lastStored : null
+    const fullText = stopped ? liveText : !replying && !liveText && !speechShown && displayLastText ? displayLastText : ''
+    const fullAt = stopped ? (interrupted?.updatedAt ?? interrupted?.at ?? lastStored?.createdAt) : (s.companion?.messages?.find((m: any) => m.id && m.id === last?.id)?.createdAt ?? (lastStored?.role === 'assistant' ? lastStored.createdAt : undefined))
+    const stopButton = replying ? React.createElement('button',{type:'button',className:'gx-gbtn gx-stop',onClick:()=>{void callApi('companion-chat-cancel',{conversationId:s.companion?.activeConversationId}).catch(()=>{})}},Icon('stop',{size:14}),t('停止回复')) : null
+    const foot = footStatus || stopButton || needsFullView(fullText) || sourceView(sourceMessage)
+      ? React.createElement('div', { className: 'gx-foot' }, footStatus, React.createElement(MessageSources, { message: sourceMessage }), React.createElement('span', { className: 'grow' }), stopButton,
+        fullText ? React.createElement(FullMessageButton, { text: fullText, messageId: [s.current, s.companion?.activePersonaId, s.companion?.activeConversationId, stopped ? 'stopped:' + (interrupted?.requestId || streamReply?.requestId || '') : last?.id || (s.history || []).length].join(':'), title: plateLabel, name: stopped || last?.who === 'heroine' ? s.name : undefined, at: fullAt, interrupted: stopped }) : null)
+      : null
     const pct = Math.min(100, Math.round((s.affection / Math.max(1, s.cap)) * 100))
     return React.createElement('div', { id: 'whg-panel', className: 'whg-panel gx-dlg' },
-      React.createElement('div', { className: 'whg-plate gx-plate' + (plateWho === 'heroine' ? '' : ' ' + plateWho), style: plateStyle }, plateLabel, plateWho === 'heroine' ? React.createElement('i', { className: 'gx-acc', 'aria-hidden': 'true' }) : null),
+      React.createElement('div', { className: 'whg-plate gx-plate' + (pWho === 'heroine' ? '' : ' ' + pWho), style: pStyle }, pLabel, pWho === 'heroine' ? React.createElement('i', { className: 'gx-acc', 'aria-hidden': 'true' }) : null),
       React.createElement('div', { className: 'whg-level gx-lvl' },
-        React.createElement('span', null, 'Lv.', React.createElement('b', null, s.level), t(" · 好感度 "), React.createElement('b', null, s.affection), '/' + s.cap),
+        React.createElement('span', null, 'Lv.', React.createElement('b', null, s.level), t(" · 好感度 "), React.createElement('b', null, affectionText(s.affection)), '/' + s.cap),
         React.createElement('i', { className: 'gx-track', 'aria-hidden': 'true' }, React.createElement('s', { style: { width: pct + '%' } }))),
       now,
+      foot,
       s.companion?.lifeRecovery?.characterId === s.current ? React.createElement(LifeRecoveryBanner, { state: s.companion, request: companionRequest, characterId: s.current, setFeedback: (text: string, error?: boolean) => setApiError(error ? text : null) }) : null,
       alert,
-      choices,
+      speechShown ? null : choices,
       input,
     )
   }

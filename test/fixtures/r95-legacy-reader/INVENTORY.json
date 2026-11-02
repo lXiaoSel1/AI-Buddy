@@ -1,0 +1,47 @@
+{
+  "format": "r95-pinned-legacy-reader-test-fixture",
+  "sourceTreeSha256": "c31280613f7386c62f25d36217eff9d9a265fb9da0dd64ad6ceeefb6215b283e",
+  "source": "R95 B BASE-SOURCE-INVENTORY; actual pre-R95 source, copied without edits",
+  "files": [
+    {
+      "path": "src/atomic-write.mjs",
+      "bytes": 607,
+      "sha256": "9f0b4c2e53b16841f4b9cf9dd369ca715673c8a2d2c861f2af1084c2252a1e98"
+    },
+    {
+      "path": "src/companion-life.mjs",
+      "bytes": 4238,
+      "sha256": "34ae8328bc5386b53c0f8733cc2c287ddc749c32d4c2037c037bce3d3ef5ef6e"
+    },
+    {
+      "path": "src/companion-store.mjs",
+      "bytes": 18601,
+      "sha256": "134e2f662b7d14b6f9a38e3fc25d3ae1148274d548fc65d3ae1ab9a762bbadc4"
+    },
+    {
+      "path": "src/group-cg-planner.mjs",
+      "bytes": 4711,
+      "sha256": "bc39281ef7720d93f8ab8b5216f2ceb4d6b0f101cddd0d503e0f9596725140b4"
+    },
+    {
+      "path": "src/media-store.mjs",
+      "bytes": 4579,
+      "sha256": "6ce3b0f07cafa8b018765849a33c723a92886ed40b3db66cb05a1c36fb8cb4e6"
+    },
+    {
+      "path": "src/reasoning-settings.mjs",
+      "bytes": 5038,
+      "sha256": "e3de2e78aa4a07f97bf8bafa305b271885a37665d1c4fe7b411e45410ee3627e"
+    },
+    {
+      "path": "src/storage.mjs",
+      "bytes": 10094,
+      "sha256": "915137e6b898043beed10050b7bcdb4469fe0b55ca7cb2f47e677ac696437318"
+    },
+    {
+      "path": "src/usage-repository.mjs",
+      "bytes": 6517,
+      "sha256": "f729e0a42b2a0c08dddf2b30f6b0a177bc54fecec4aeb8170fba067013415dfb"
+    }
+  ]
+}

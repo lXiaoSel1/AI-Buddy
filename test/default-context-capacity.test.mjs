@@ -75,7 +75,7 @@ test('Actual private/group/day-end paths share the 272000 default, bounded outpu
  await game.action('companion-group-select',{id:group.id});await game.action('companion-group-send',{text:'群聊原文也必须完整。',forceCharacterId:'deepseek'});
  for(let n=0;n<300;n++){snapshot=await state();if(snapshot.groupRuntime.pendingMessage)break;assert.notEqual(snapshot.groupRuntime.status,'failed',snapshot.groupRuntime.error);await delay(5);}
  const pending=snapshot.groupRuntime.pendingMessage;assert(pending);assertDefault(pending.request.capacity);await game.action('companion-group-present',{requestId:pending.id});
- game.close();await delay(20);
+ await game.close();await delay(20);
  const disk=await openCompanionStore(dataRoot),day=new Date(Date.now()-86400000).toISOString().slice(0,10);let original;
  await disk.mutate(s=>{s.memorySettings.timeZone='UTC';const conversation=Object.values(s.conversations).find(row=>row.characterId==='deepseek'&&row.personaId==='default');original={id:'daily-capacity-source',role:'user',text:'昨日的完整原文与出处。',createdAt:Date.parse(day+'T12:00:00Z'),lifeId:conversation.lifeId,status:'sent'};conversation.messages.push(original);});await disk.flush();
  game=await createGalgame({dataRoot,provider,model:'local-model'});

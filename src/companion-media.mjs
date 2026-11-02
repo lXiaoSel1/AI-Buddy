@@ -6,6 +6,7 @@ const sha=b=>createHash('sha256').update(b).digest('hex');
 const ID=/^[a-zA-Z0-9_:.-]{1,200}$/,HASH=/^[a-f0-9]{64}$/;
 const MAX_IMAGE=32*1024*1024,MAX_BUNDLE=50*1024*1024;
 const fields=['id','status','charId','prompt','level','at','deletedAt','kind','label','personaId','groupId','sourceEventId','provider','model','connectionName','referenceMode','referenceNotice','theme','groupSource','characters','scene'];
+const dailyFields=['daily','compositionPolicy','rewardScope','lifeIds','themeBrief','retryOf','submittedAt','completedAt'];
 function id(value){if(typeof value!=='string'||!ID.test(value)||value==='prototype'||Object.hasOwn(Object.prototype,value))throw Error('CG 标识无效');return value;}
 function imageBytes(data){
  if(typeof data!=='string'||data.length>Math.ceil(MAX_IMAGE/3)*4+100)throw Error('CG 图片大小无效');
@@ -19,7 +20,10 @@ function imageBytes(data){
 }
 function metadata(record){
  id(record.id);id(record.charId);
- const out=Object.fromEntries(fields.filter(k=>record[k]!==undefined).map(k=>[k,structuredClone(record[k])]));
+ // Legacy portable photos deliberately omit source-machine life ownership.
+ // Daily artwork retains its frozen owner and must pass the daily scope guard.
+ const keys=record.kind==='daily'?[...fields,...dailyFields]:fields;
+ const out=Object.fromEntries(keys.filter(k=>record[k]!==undefined).map(k=>[k,structuredClone(record[k])]));
  if(out.characters&&!Array.isArray(out.characters))throw Error('CG 角色名单无效');
  for(const c of out.characters??[])id(c.id);
  // Only finished local images can be ready. Imported tasks never submit work.

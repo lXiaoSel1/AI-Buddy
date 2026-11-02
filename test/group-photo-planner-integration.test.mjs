@@ -21,7 +21,7 @@ async function fixture(){
  let game=await createGalgame({dataRoot:root,provider,model:'global-model',cg});
  const group=(await game.action('companion-group-save',{name:'策划测试群',memberIds:['deepseek'],mode:'list'})).group;
  await game.action('companion-group-select',{id:group.id});
- return {root,provider,group,calls,photos,cg,get game(){return game;},async restart(){game.close();game=await createGalgame({dataRoot:root,provider,model:'global-model',cg});},async presented(){await game.action('companion-group-send',{text:'讨论晚餐'});for(let i=0;i<300;i++){if((await presentedState(game)).groupRuntime.status==='idle')return;await new Promise(r=>setTimeout(r,5));}throw Error('Presentation timed out');}};
+ return {root,provider,group,calls,photos,cg,get game(){return game;},async restart(){await game.close();game=await createGalgame({dataRoot:root,provider,model:'global-model',cg});},async presented(){await game.action('companion-group-send',{text:'讨论晚餐'});for(let i=0;i<300;i++){if((await presentedState(game)).groupRuntime.status==='idle')return;await new Promise(r=>setTimeout(r,5));}throw Error('Presentation timed out');}};
 }
 
 test('A group saves its planner without model calls, survives restart/export/import, and leaves global/card bindings unchanged',async()=>{
@@ -35,8 +35,8 @@ test('A group saves its planner without model calls, survives restart/export/imp
   const exported=(await f.game.action('companion-group-export',{id:f.group.id})).data;
   // A real single-group export restores the preference as a reference, without copying credentials.
   const restored=await createGalgame({dataRoot:mkdtempSync(join(tmpdir(),'buddy-photo-import-')),provider:f.provider,model:'global-model',cg:f.cg});
-  try{await restored.action('companion-conversation-import',{data:exported});const groups=(await restored.action('companion-state')).companion.groups;assert.deepEqual(groups[0].photoPlannerBinding,saved.photoPlannerBinding);}finally{restored.close();}
- }finally{f.game.close();}
+  try{await restored.action('companion-conversation-import',{data:exported});const groups=(await restored.action('companion-state')).companion.groups;assert.deepEqual(groups[0].photoPlannerBinding,saved.photoPlannerBinding);}finally{await restored.close();}
+ }finally{await f.game.close();}
 });
 
 test('New photo captures the explicit model/effort, next selection cannot rewrite an old job, automatic photo uses saved selection',async()=>{
@@ -49,7 +49,7 @@ test('New photo captures the explicit model/effort, next selection cannot rewrit
   const reused=await f.game.action('companion-group-photo',{id:f.group.id});assert.equal(reused.photo.cgId,first.photo.cgId);assert.equal(f.photos.length,1);
   await f.game.action('companion-group-photo',{id:f.group.id,regenerate:true,clientRequestId:'new-model'});assert.equal(f.photos[1].themeConnection.profile.id,'global');
   await f.game.action('companion-group-end',{id:f.group.id});await f.game.action('companion-group-save',{id:f.group.id,autoPhoto:true});await f.presented();await f.game.action('companion-group-end',{id:f.group.id});assert.equal(f.photos.length,3);assert.equal(f.photos[2].themeConnection.profile.id,'global');
- }finally{f.game.close();}
+ }finally{await f.game.close();}
 });
 
 test('Offline and deleted explicit planners reject before CG queueing; automatic keeps the existing local fallback route',async()=>{
@@ -61,7 +61,7 @@ test('Offline and deleted explicit planners reject before CG queueing; automatic
   await assert.rejects(()=>f.game.action('companion-group-photo',{id:f.group.id}),/提示词策划/);assert.equal(f.photos.length,0);
   await f.game.action('companion-group-photo-planner',{id:f.group.id,binding:{enabled:false,connectionId:null}});
   await f.game.action('companion-group-photo',{id:f.group.id});assert.equal(f.photos.length,1);assert.equal(f.photos[0].themeConnection.enabled,false);
- }finally{f.game.close();}
+ }finally{await f.game.close();}
 });
 
 test('Planning profile is frozen before asynchronous reference validation and cannot change model or effort in flight',async()=>{
@@ -70,5 +70,5 @@ test('Planning profile is frozen before asynchronous reference validation and ca
   f.cg.validateReferences=async()=>{await Promise.resolve();const p=f.provider.state.profiles.find(p=>p.id==='cheap');p.model='changed-later';p.reasoningEffort='high';f.provider.state.profiles=f.provider.state.profiles.filter(p=>p.id!=='cheap');};
   await f.game.action('companion-group-photo',{id:f.group.id,plannerBinding:{enabled:true,connectionId:'cheap'}});
   assert.equal(f.photos.length,1);assert.equal(f.photos[0].themeConnection.enabled,true);assert.equal(f.photos[0].themeConnection.profile.model,'cheap-model');assert.equal(f.photos[0].themeConnection.profile.reasoningEffort,'medium');
- }finally{f.game.close();}
+ }finally{await f.game.close();}
 });

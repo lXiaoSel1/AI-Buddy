@@ -17,7 +17,7 @@ function peer(handle=()=>undefined){
    if(child.killed)return;
    const result=handle(message,{notify,child,requests});
    if(result?.error){child.stdout.write(JSON.stringify({id:message.id,error:result.error})+'\n');return;}
-   const value=result===undefined?(message.method==='account/read'?{account:{type:'chatgpt'},requiresOpenaiAuth:true}:message.method==='thread/start'?{thread:{id:'thread-'+(++thread)}}:{}):result;
+   const value=result===undefined?(message.method==='account/read'?{account:{type:'chatgpt'},requiresOpenaiAuth:true}:message.method==='thread/start'?{thread:{id:'thread-'+(++thread)}}:message.method==='turn/start'?{turn:{id:'turn-'+message.id}}:{}):result;
    child.stdout.write(JSON.stringify({id:message.id,result:value})+'\n');
   });
  }});
@@ -27,7 +27,7 @@ function peer(handle=()=>undefined){
 function provider(spawnImpl){const root=mkdtempSync(join(tmpdir(),'buddy-models-'));return new CodexProvider({binary:'fixture.exe',defaultModel:'fixture',dataRoot:join(root,'data'),env:{USERPROFILE:root,CODEX_HOME:join(root,'home')},spawnImpl});}
 const efforts=[{reasoningEffort:'low',description:'Fast'},{reasoningEffort:'high',description:'Detailed'}];
 async function output(stream){let text='';for await(const part of stream)if(part.type==='text-delta')text+=part.text;return text;}
-const finish=(notify,threadId,text='reply')=>{notify('item/agentMessage/delta',{threadId,delta:text});notify('turn/completed',{threadId,turn:{status:'completed'}});};
+const finish=(notify,threadId,turnId,text='reply')=>{notify('item/agentMessage/delta',{threadId,turnId,itemId:'message',delta:text});notify('item/completed',{threadId,turnId,item:{id:'message',type:'agentMessage',text}});notify('turn/completed',{threadId,turn:{id:turnId,status:'completed'}});};
 
 test('Disabled model discovery paginates app-server metadata without guessing IDs or starting a turn',async()=>{
  let server;const p=provider(()=>{server=peer(message=>{
@@ -71,12 +71,12 @@ test('Catalog reads during an active chat use an independent process and never t
  try{
   const work=output(p.stream({reasoningEffort:'high',messages:[{role:'user',content:'hello'}]}));const turn=await started;
   await p.fetchModels();assert.equal(p.child,chat.child);assert.equal(p.enabled,true);assert.ok(!chat.child.killed);assert.equal(catalog.child.killed,true);assert.ok(!catalog.requests.some(value=>value.method==='thread/start'||value.method==='turn/start'));
-  finish(chat.notify,turn.params.threadId);assert.equal(await work,'reply');assert.equal(turn.params.effort,'high');
+  finish(chat.notify,turn.params.threadId,'turn-'+turn.id);assert.equal(await work,'reply');assert.equal(turn.params.effort,'high');
  }finally{p.close();}
 });
 
 test('Each new turn honors configured effort; automatic does not inherit a previous explicit effort',async()=>{
- let server;const p=provider(()=>{server=peer((message,{notify})=>{if(message.method==='turn/start')queueMicrotask(()=>finish(notify,message.params.threadId));});return server.child;});p.setEnabled(true);
+ let server;const p=provider(()=>{server=peer((message,{notify})=>{if(message.method==='turn/start')queueMicrotask(()=>finish(notify,message.params.threadId,'turn-'+message.id));});return server.child;});p.setEnabled(true);
  try{
   for(const reasoningEffort of [undefined,'high',null,'auto','low'])assert.equal(await output(p.stream({reasoningEffort,messages:[{role:'user',content:'hi'}]})),'reply');
   const turns=server.requests.filter(value=>value.method==='turn/start'),threads=server.requests.filter(value=>value.method==='thread/start');

@@ -10,6 +10,31 @@ import {isMediaUrl,mediaName} from './media-store.mjs';
 const LIMITS=Object.freeze({MAX_TOTAL:512*1024*1024,MAX_IMAGE:32*1024*1024,MAX_TEXT:64*1024*1024});
 const {MAX_TOTAL,MAX_IMAGE,MAX_TEXT}=LIMITS;
 export const archiveHash=bytes=>createHash('sha256').update(bytes).digest('hex');
+export function workEvidenceHash(evidence){return archiveHash(Buffer.from(JSON.stringify({version:evidence.version,characterId:evidence.characterId,lifeId:evidence.lifeId,tasks:evidence.tasks})));}
+export function validateWorkEvidence(evidence,{characterId,lifeId}={}){
+ if(!evidence||evidence.version!==1||evidence.characterId!==characterId||evidence.lifeId!==lifeId||!Array.isArray(evidence.tasks)||!/^[a-f0-9]{64}$/.test(evidence.sha256??'')||workEvidenceHash(evidence)!==evidence.sha256)throw Error('人生工作证据归属或哈希无效');
+ const ids=new Set();for(const task of evidence.tasks){if(!task||typeof task.id!=='string'||ids.has(task.id)||task.scope?.characterId!==characterId||task.scope?.lifeId!==lifeId||typeof task.scope.personaId!=='string'||!task.workspace?.id||!task.workspace?.path||!Array.isArray(task.events))throw Error('人生工作任务证据不完整');ids.add(task.id);}
+ return evidence;
+}
+export function validateSocialCoreState(value,{characterId,lifeId}={}){
+ const allowed=new Set(['version','characterId','lifeId','feeding','mood','attention','proactive']);
+ if(!value||typeof value!=='object'||Array.isArray(value)||value.version!==1||value.characterId!==characterId||value.lifeId!==lifeId||Object.keys(value).some(key=>!allowed.has(key)))throw Error('人生本体状态或账户边界无效');
+ // Account money, stock and reward cursors are deliberately never portable as
+ // character state, even if someone hides them inside a declared facet.
+ const inspect=item=>{if(Array.isArray(item)){for(const child of item)inspect(child);}else if(item&&typeof item==='object')for(const [key,child]of Object.entries(item)){if(['wallet','inventory','accountLedger','rewardFacts','rewardStartCursor'].includes(key))throw Error('人生本体状态不能包含共享钱包、库存或账户账本');inspect(child);}};inspect(value);
+ if(value.feeding!==undefined){const feeding=value.feeding;if(!feeding||feeding.version!==1||feeding.format!=='ai-buddy-feeding-state'||feeding.scope?.characterId!==characterId||feeding.scope?.lifeId!==lifeId||typeof feeding.scope?.personaId!=='string'||typeof feeding.scope?.operationId!=='string'||!Number.isFinite(feeding.satiety)||feeding.satiety<0||feeding.satiety>100||feeding.mealEvidence!==undefined&&!Array.isArray(feeding.mealEvidence))throw Error('人生进食状态无效');for(const event of feeding.mealEvidence??[])if(!event||typeof event.id!=='string'||event.scope?.characterId!==characterId||event.scope?.lifeId!==lifeId||typeof event.scope?.personaId!=='string')throw Error('人生进食经历归属无效');}
+ return value;
+}
+export function lifeArchiveCapabilities(snapshot){
+ const version=snapshot.version??1,caps=snapshot.requiredCapabilities??[];
+ if(![1,2,3].includes(version)||!Array.isArray(caps)||new Set(caps).size!==caps.length)throw Error('不支持的人生存档能力');
+ if(version===1){if(caps.length||snapshot.coreState||snapshot.workEvidence||(snapshot.life?.workExperiences??[]).length)throw Error('旧格式不能包含未经声明的本体或工作证据');return [];}
+ if(version===2){if(snapshot.requiredCapabilities!==undefined&&(caps.length!==1||caps[0]!=='work-task-evidence-v1')||snapshot.coreState)throw Error('不支持的人生存档能力');validateWorkEvidence(snapshot.workEvidence,{characterId:snapshot.characterId,lifeId:snapshot.life?.id});return ['work-task-evidence-v1'];}
+ if(!caps.includes('social-core-state-v1')||caps.some(cap=>!['social-core-state-v1','work-task-evidence-v1'].includes(cap)))throw Error('不支持的人生存档能力');
+ validateSocialCoreState(snapshot.coreState,{characterId:snapshot.characterId,lifeId:snapshot.life?.id});
+ if(caps.includes('work-task-evidence-v1'))validateWorkEvidence(snapshot.workEvidence,{characterId:snapshot.characterId,lifeId:snapshot.life?.id});else if(snapshot.workEvidence||(snapshot.life?.workExperiences??[]).length)throw Error('人生工作证据格式未声明');
+ return [...caps];
+}
 
 // ZIP building, structural/hash verification and verified writing. It uses only
 // its arguments and globals, so the same source also runs in a worker thread
@@ -39,7 +64,9 @@ function archiveCore({zlib,crypto,fs},{MAX_TOTAL,MAX_IMAGE,MAX_TEXT}){
  function json(bytes){return JSON.parse(bytes.toString('utf8'),(key,value)=>{if(['__proto__','prototype','constructor'].includes(key))throw Error('备份包含无效对象键');return value;});}
  // Structure, manifest and per-file hashes; image content is checked by the caller.
  function verify(bytes){
-  const files=unzip(bytes),manifest=files.get('manifest.json')&&json(files.get('manifest.json'));if(manifest?.format!=='ai-buddy-life'||manifest.version!==1||!Array.isArray(manifest.files)||!Array.isArray(manifest.dependencies))throw Error('不支持的人生存档格式');
+  const files=unzip(bytes),manifest=files.get('manifest.json')&&json(files.get('manifest.json'));if(manifest?.format!=='ai-buddy-life'||![1,2,3].includes(manifest.version)||!Array.isArray(manifest.files)||!Array.isArray(manifest.dependencies))throw Error('不支持的人生存档格式');
+  if(manifest.version===2&&(!Array.isArray(manifest.requiredCapabilities)||manifest.requiredCapabilities.length!==1||manifest.requiredCapabilities[0]!=='work-task-evidence-v1'))throw Error('不支持的人生存档能力');
+  if(manifest.version===3&&(!Array.isArray(manifest.requiredCapabilities)||!manifest.requiredCapabilities.includes('social-core-state-v1')||new Set(manifest.requiredCapabilities).size!==manifest.requiredCapabilities.length||manifest.requiredCapabilities.some(cap=>!['social-core-state-v1','work-task-evidence-v1'].includes(cap))))throw Error('不支持的人生存档能力');
   const declared=new Set();let total=0;for(const row of manifest.files){if(!safePath(row.path)||row.path==='manifest.json'||declared.has(row.path)||!Number.isSafeInteger(row.bytes)||row.bytes<0||!/^[a-f0-9]{64}$/.test(row.sha256??''))throw Error('人生文件清单无效');declared.add(row.path);const raw=files.get(row.path);if(!raw||raw.length!==row.bytes||hash(raw)!==row.sha256)throw Error('人生存档文件哈希不匹配');total+=raw.length;}
   if(files.size!==declared.size+1||!declared.has('text/state.json')||total>MAX_TOTAL)throw Error('人生存档包含未声明的文件或缺少文字');
   return {files,manifest,declared};
@@ -138,17 +165,19 @@ export function createLifeArchiveRepository({dataRoot,imageCodec=null,imageConve
  // Snapshot -> archive entries. Images are decoded once, here. CG records whose
  // files are gone are collected and reported together so the user can clean them up.
  function entriesFor(snapshot,converted=new Map()){
+  const capabilities=lifeArchiveCapabilities(snapshot);
   const files=new Map(),ctx={missing:[],converted,notes:[]},portable=separate(snapshot,files,ctx);
   if(ctx.missing.length){const byId=new Map();for(const row of ctx.missing)if(!byId.has(row.cgId??row.ref))byId.set(row.cgId??row.ref,row);const missing=[...byId.values()];throw Object.assign(Error(`有 ${missing.length} 张 CG 的图片文件已丢失，人生存档没有保存。可以先清理这些缺失记录，再重新保存`),{code:'LIFE_ARCHIVE_MISSING_CG',missing});}
   const state=Buffer.from(JSON.stringify(portable));if(state.length>MAX_TEXT)throw Error('单个人生文本超过安全大小 64 MiB');files.set('text/state.json',state);
-  return {entries:[...files],meta:{createdAt:Date.now(),characterId:snapshot.characterId,lifeId:snapshot.life.id,dependencies:snapshot.dependencies??[],...(ctx.notes.length?{convertedImages:ctx.notes}:{})}};
+  return {entries:[...files],meta:{version:snapshot.version??1,...(capabilities.length?{requiredCapabilities:capabilities}:{}),createdAt:Date.now(),characterId:snapshot.characterId,lifeId:snapshot.life.id,dependencies:snapshot.dependencies??[],...(ctx.notes.length?{convertedImages:ctx.notes}:{})}};
  }
  function prepare(snapshot){const {entries,meta}=entriesFor(snapshot);return core.build(entries,meta);}
  function decode(bytes){
   const {files,manifest,declared}=core.verify(bytes);
   for(const path of declared)if(path.startsWith('images/'))checkImage(files.get(path));
   const hydrate=(value,key='',parentKey='')=>{if(typeof value==='string'&&(imageField(key,parentKey)&&/^data:image\//i.test(value)||assetKey(key)&&value))throw Error('人生存档图片必须使用已校验的包内引用');if(Array.isArray(value))return value.map(item=>hydrate(item,'',key));if(value&&typeof value==='object'){if(Object.hasOwn(value,'$image')){if(Object.keys(value).length!==1||!declared.has(value.$image)||!value.$image.startsWith('images/'))throw Error('人生存档图片引用缺失');const data='data:image/'+value.$image.split('.').at(-1)+';base64,'+files.get(value.$image).toString('base64');return assetKey(key)?{$assetImage:data}:data;}return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,hydrate(v,k,key)]));}return value;};
-  const snapshot=hydrate(core.json(files.get('text/state.json')));if(snapshot?.format!=='ai-buddy-life-state'||snapshot.version!==1||snapshot.characterId!==manifest.characterId||!/^[a-zA-Z0-9_-]{1,100}$/.test(snapshot.characterId)||['__proto__','prototype','constructor'].includes(snapshot.characterId)||snapshot.life?.id!==manifest.lifeId||!snapshot.card||!snapshot.relationships||!Array.isArray(snapshot.conversations))throw Error('人生状态内容不完整');return {manifest,snapshot};
+  const snapshot=hydrate(core.json(files.get('text/state.json')));if(snapshot?.format!=='ai-buddy-life-state'||![1,2,3].includes(snapshot.version)||snapshot.version!==manifest.version||snapshot.characterId!==manifest.characterId||!/^[a-zA-Z0-9_-]{1,100}$/.test(snapshot.characterId)||['__proto__','prototype','constructor'].includes(snapshot.characterId)||snapshot.life?.id!==manifest.lifeId||!snapshot.card||!snapshot.relationships||!Array.isArray(snapshot.conversations))throw Error('人生状态内容不完整');
+  const capabilities=lifeArchiveCapabilities(snapshot);if(JSON.stringify([...capabilities].sort())!==JSON.stringify([...(manifest.requiredCapabilities??[])].sort()))throw Error('人生状态与清单能力不一致');return {manifest,snapshot};
  }
  function file(id){if(!/^archive-[a-f0-9-]{36}$/.test(id))throw Error('人生存档 ID 无效');const target=join(directory,id+'.zip');if(existsSync(target)&&relative(realpathSync(directory),realpathSync(target)).startsWith('..'))throw Error('人生存档路径越界');return target;}
  async function write(task){const id='archive-'+randomUUID(),target=file(id),result=await runArchiveTask({...task,target,temp:target+'.partial'},{worker});return {id,bytes:result.bytes,sha256:result.sha256,fileName:id+'.zip'};}

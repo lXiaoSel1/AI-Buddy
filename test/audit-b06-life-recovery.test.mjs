@@ -20,7 +20,7 @@ async function failedSwitch(t,{keepArchive}){
  const archives=join(root,'galgame','life-archives');
  const first=await launch(root,()=>{if(!keepArchive)for(const name of readdirSync(archives))rmSync(join(archives,name));throw Error('人生内容无效');});
  await assert.rejects(first.service.action('companion-life-reset',{characterId:'claude',mode:'blank'}),/人生切换失败，恢复待完成/);
- first.service.close();await first.store.flush();
+ await first.service.close();await first.store.flush();
  assert.ok(first.store.state.lifeTransaction);
  return root;
 }
@@ -37,7 +37,7 @@ test('a replay that keeps failing starts the service, locks only that character 
   if(attempt===1)await service.action('companion-growth-mode',{characterId:'gpt',mode:'seed'});
   // The single transaction slot is still held, so another character's switch says what to do.
   await assert.rejects(service.action('companion-life-reset',{characterId:'gpt',mode:'blank'}),/另一个角色（claude）的人生切换还没有处理/);
-  service.close();await store.flush();
+  await service.close();await store.flush();
  }
 });
 
@@ -47,24 +47,30 @@ test('retry, abandon and rollback resolve a failed replay',async t=>{
  const {service,store,audit}=await launch(root,()=>{if(!healthy)throw Error('人生内容无效');return {ok:true};});
  await assert.rejects(service.action('companion-life-transaction-retry',{characterId:'claude'}),/人生内容无效/);
  assert.equal((await service.action('companion-state')).companion.lifeRecovery.attempts,2);
+ // R95 has a second durable state projection. A failed engine call can fail
+ // after mutating memory, so abandoning while it remains unavailable must not
+ // claim the stores agree. Once healthy, the frozen rollback content is used.
+ await assert.rejects(service.action('companion-life-transaction-abandon',{characterId:'claude'}),/人生内容无效/);
+ assert.ok(store.state.lifeTransaction);
+ healthy=true;
  await service.action('companion-life-transaction-abandon',{characterId:'claude'});
  assert.equal(store.state.lifeTransaction,undefined);assert.equal(store.state.lastLifeTransaction.status,'abandoned');
  assert.equal((await service.action('companion-state')).companion.lifeRecovery,null);
  await service.action('companion-growth-mode',{characterId:'claude',mode:'seed'});
  assert.ok(audit.some(entry=>entry.type==='life-transaction-abandon'));
- service.close();await store.flush();
+ await service.close();await store.flush();
 
  const rollbackRoot=await failedSwitch(t,{keepArchive:true});
  const rolled=await launch(rollbackRoot,args=>{if(args.content?.reset)throw Error('人生内容无效');return {ok:true};});
- assert.equal((await rolled.service.action('companion-state')).companion.lifeRecovery.archiveAvailable,true);
- await rolled.service.action('companion-life-transaction-rollback',{characterId:'claude'});
+ // R95 persisted rollback, so healthy startup completes that same direction.
+ assert.equal((await rolled.service.action('companion-state')).companion.lifeRecovery,null);
  assert.equal(rolled.store.state.lifeTransaction,undefined);assert.equal(rolled.store.state.lastLifeTransaction.status,'rolled-back');
- rolled.service.close();
+ await rolled.service.close();
 
  const retryRoot=await failedSwitch(t,{keepArchive:false});
  healthy=false;let ok=false;
  const retried=await launch(retryRoot,()=>{if(!ok)throw Error('人生内容无效');return {ok:true};});
  ok=true;await retried.service.action('companion-life-transaction-retry',{characterId:'claude'});
- assert.equal(retried.store.state.lifeTransaction,undefined);assert.equal(retried.store.state.lastLifeTransaction.status,'committed');
- retried.service.close();
+ assert.equal(retried.store.state.lifeTransaction,undefined);assert.equal(retried.store.state.lastLifeTransaction.status,'rolled-back');
+ await retried.service.close();
 });

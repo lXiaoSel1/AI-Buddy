@@ -1,0 +1,24 @@
+{
+  "format": "ai-buddy-frozen-reward-oracle",
+  "version": 1,
+  "sourceDirectory": "test/fixtures/reward-pre-batch",
+  "purpose": "Genuine pre-batch single-fact transaction implementation; preserve exact source bytes",
+  "files": [
+    {
+      "file": "companion-economy-store.mjs",
+      "sha256": "fd64d073b3b171b827eacd5636c86ab16dd053dc7d272ed8425e196506a362fd",
+      "bytes": 25769
+    },
+    {
+      "file": "food-catalog.mjs",
+      "sha256": "116338a89a63e30cc5f6887ae566db54e00bd49e1d8e1ddabba2bdc697694cbb",
+      "bytes": 1338
+    },
+    {
+      "file": "reward-facts.mjs",
+      "sha256": "5dbf91ef25ba35f9e051d7dc6c3795f29547a98772eaea4c3ae0aff74556e7e7",
+      "bytes": 3109
+    }
+  ],
+  "sourcePathNote": "Developer path omitted; the three oracle source files retain their exact pinned bytes, hashes and sizes."
+}

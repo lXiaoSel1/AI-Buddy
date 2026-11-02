@@ -9,10 +9,11 @@ function collisionInsets(value,bounds){
   return result;
 }
 export class PetActivityClock{
-  constructor({now=()=>performance.now(),delayMs=300000,durations={},speed=1,requireReady=false}={}){
+  constructor({now=()=>performance.now(),delayMs=300000,durations={},speed=1,requireReady=false,resolveOrigin=()=>null,verifyActivitySummary=()=>null}={}){
     this.requireReady=requireReady;this.animationEpoch=0;this.animationWaiting=false;this.now=now;this.delayMs=delayMs;this.durations={enter:4000,wake:4000,...durations};this.enabled=true;
     this.busy=new Set();this.lastActivity=now();this.awakeUntil=this.lastActivity+delayMs;this.phase='awake';this.since=this.lastActivity;this.wakeReason=null;
     this.speed=speed;this.animationAt=this.lastActivity;this.animationElapsed=0;
+    this.resolveOrigin=resolveOrigin;this.verifyActivitySummary=verifyActivitySummary;this.sleepIntentVersion=0;this.sleepPreservingBusy=new Set();this.temporarySleep=null;
   }
   animationNow(now=this.now()){return this.animationWaiting?0:this.animationElapsed+Math.max(0,now-this.animationAt)*this.speed;}
   markReady(epoch){if(epoch!==this.animationEpoch||!this.animationWaiting)return false;this.animationWaiting=false;this.animationAt=this.now();this.animationElapsed=0;return true;}
@@ -22,29 +23,41 @@ export class PetActivityClock{
     this.enabled=!!enabled;this.durations={...this.durations,...durations};if(!this.enabled)this.wake('disabled');
   }
   setPhase(phase,now=this.now()){this.phase=phase;this.since=now;this.animationAt=now;this.animationElapsed=0;this.animationEpoch++;this.animationWaiting=this.requireReady&&['sleep-enter','waking'].includes(phase);}
-  activity(reason='token'){this.lastActivity=this.now();this.wake(reason);}
-  request(id,active){if(!id)return;if(active){this.busy.add(id);this.activity('request');}else if(this.busy.delete(id))this.activity('request-end');}
+  originPolicy(options={}){const origin=options.originId?this.resolveOrigin(options.originId):null;return origin&&origin.sleepIntentGeneration===this.sleepIntentVersion&&['preserve','temporary'].includes(origin.sleepPolicy)?origin.sleepPolicy:'wake';}
+  activity(reason='token',options={}){this.lastActivity=this.now();if(this.originPolicy(options)!=='wake'&&(['sleep-enter','asleep'].includes(this.phase)||this.temporarySleep))return false;return this.wake(reason,options);}
+  request(id,active,options={}){if(!id)return;if(active){if(this.originPolicy(options)!=='wake'){this.sleepPreservingBusy.add(id);this.activity('request',options);}else{this.busy.add(id);this.activity('request');}}else if(this.sleepPreservingBusy.delete(id)){this.activity('request-end',options);}else if(this.busy.delete(id))this.activity('request-end');}
   observeExternal(snapshot){
+    const summary=this.verifyActivitySummary(snapshot.activitySummary);
+    if(summary){
+      if(this.summaryEpoch!==summary.epoch||snapshot.indexing){this.summaryEpoch=summary.epoch;this.summaryWake=summary.wakeTokens;this.summaryPreserving=summary.sleepPreservingTokens;this.summaryReady=!snapshot.indexing;return false;}
+      if(!this.summaryReady){this.summaryWake=summary.wakeTokens;this.summaryPreserving=summary.sleepPreservingTokens;this.summaryReady=true;return false;}
+      const waking=summary.wakeTokens-(this.summaryWake??0),preserving=summary.sleepPreservingTokens-(this.summaryPreserving??0);this.summaryWake=Math.max(this.summaryWake??0,summary.wakeTokens);this.summaryPreserving=Math.max(this.summaryPreserving??0,summary.sleepPreservingTokens);
+      if(waking>0){this.activity('token');return true;}if(preserving>0){this.lastActivity=this.now();return true;}return false;
+    }
     const value=Number(snapshot.workSinceStart)||0,epoch=snapshot.activityEpoch??'default';
     if(this.externalEpoch!==epoch||snapshot.indexing){this.externalEpoch=epoch;this.externalValue=value;this.externalReady=!snapshot.indexing;return false;}
     if(!this.externalReady){this.externalValue=value;this.externalReady=true;return false;}
     const added=value-(this.externalValue??value);this.externalValue=value;
     if(added>0){this.activity('token');return true;}return false;
   }
-  wake(reason='touch'){
+  wake(reason='touch',options={}){
+    if(this.originPolicy(options)!=='wake'&&(['sleep-enter','asleep'].includes(this.phase)||this.temporarySleep))return false;
+    this.sleepIntentVersion++;this.temporarySleep=null;
     if(reason==='feedback')this.awakeUntil=Math.max(this.awakeUntil,this.now()+this.delayMs);
     if(this.phase==='sleep-enter'||this.phase==='asleep'){this.setPhase('waking');this.wakeReason=reason;this.awakeUntil=this.now()+this.delayMs;return true;}
     return this.phase==='waking';
   }
-  tick({defer=false,feedback=false}={}){
+  tick({defer=false,feedback=false,feedbackOriginId}={}){
     const now=this.now();
-    if(feedback)this.wake('feedback');
+    if(feedback)this.wake('feedback',{originId:feedbackOriginId});
     if(this.phase==='waking'&&this.animationNow(now)>=this.durations.wake){this.setPhase('awake',now);this.awakeUntil=Math.max(this.awakeUntil,now+this.delayMs);}
     if(this.phase==='sleep-enter'&&this.animationNow(now)>=this.durations.enter)this.setPhase('asleep',now);
     if(this.phase==='awake'&&this.enabled&&!defer&&!feedback&&!this.busy.size&&now>=Math.max(this.lastActivity+this.delayMs,this.awakeUntil))this.setPhase('sleep-enter',now);
-    return {phase:this.phase,animationEpoch:this.animationEpoch,animationWaiting:this.animationWaiting,elapsedMs:now-this.since,animationElapsedMs:this.animationNow(now),snapshotSpeed:this.speed,activeRequests:this.busy.size,lastActivity:this.lastActivity,awakeUntil:this.awakeUntil,wakeReason:this.wakeReason};
+    return {phase:this.phase,animationEpoch:this.animationEpoch,animationWaiting:this.animationWaiting,elapsedMs:now-this.since,animationElapsedMs:this.animationNow(now),snapshotSpeed:this.speed,activeRequests:this.busy.size,sleepPreservingRequests:this.sleepPreservingBusy.size,sleepIntentGeneration:this.sleepIntentVersion,lastActivity:this.lastActivity,awakeUntil:this.awakeUntil,wakeReason:this.wakeReason};
   }
-  resume(){const now=this.now();this.lastActivity=now;this.awakeUntil=now+this.delayMs;this.setPhase('awake',now);}
+  resume(){const now=this.now();this.sleepIntentVersion++;this.temporarySleep=null;this.sleepPreservingBusy.clear();this.lastActivity=now;this.awakeUntil=now+this.delayMs;this.setPhase('awake',now);}
+  beginTemporaryWake(originId){const origin=this.resolveOrigin(originId);if(this.temporarySleep||!['sleep-enter','asleep'].includes(this.phase)||origin?.sleepPolicy!=='temporary'||origin.sleepIntentGeneration!==this.sleepIntentVersion)return false;this.temporarySleep={originId,generation:this.sleepIntentVersion};this.setPhase('waking');this.wakeReason='temporary-feeding';return true;}
+  endTemporaryWake(originId){const pending=this.temporarySleep;if(!pending||pending.originId!==originId||pending.generation!==this.sleepIntentVersion)return false;this.temporarySleep=null;if(this.busy.size)return false;this.setPhase('sleep-enter');return true;}
   // "Let her nap" from the pet menu: only while she is awake and nothing is running.
   sleepNow(){if(this.phase!=='awake'||!this.enabled||this.busy.size)return false;this.setPhase('sleep-enter');return true;}
 }

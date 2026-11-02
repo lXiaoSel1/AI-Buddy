@@ -30,7 +30,7 @@ test('Members receive presented peer turns in order, can disagree in their own m
   for(const id of ['deepseek','claude','chatgpt'])await f.game.action('companion-character-save',{id,modelBinding:{enabled:true,connectionId:id+'-api'}});
   f.respond((options,index)=>index===1?{text:'Claude，我觉得今晚吃火锅，你赞成吗？',emotion:'cheerful',affection:0,interactionTarget:'claude',affectionTarget:'none'}:index===2?{text:'DeepSeek，我不赞成！昨天才吃过火锅，今晚换清淡一点的吧。',emotion:'angry',affection:-1,interactionTarget:'deepseek',affectionTarget:'member'}:{text:'你们先别争，我赞成 Claude 的建议，再留一份辣菜就好。',emotion:'serious',affection:0,interactionTarget:'group',affectionTarget:'none'});
   await f.game.action('companion-group-send',{text:'你们讨论今晚吃什么，不用逐个回答我。'});
-  assert.equal(f.calls.length,1);const first=await pending(f);assert.equal((await state(f.game)).groupMessages.length,1);
+  const first=await pending(f);assert.equal(f.calls.length,1);assert.equal((await state(f.game)).groupMessages.length,1);
   await f.game.action('companion-group-continue');assert.equal(f.calls.length,1);await present(f);
   await new Promise(resolve=>setTimeout(resolve,15));assert.equal(f.calls.length,1);assert.equal((await state(f.game)).groupRuntime.status,'awaiting-continue');
   await f.game.action('companion-group-continue');const second=await pending(f),request=f.calls[1];
@@ -61,11 +61,33 @@ test('Arguing with another member does not deduct player affection; explicit pla
  }finally{await f.close();}
 });
 
-test('Legacy JSON and plain dialogue remain readable; malformed new affection targets cannot penalize the player',async()=>{
+test('Structured group replies preserve legacy affection compatibility and malformed targets cannot penalize the player',async()=>{
  const f=await fixture();try{
-  for(const [output,expected]of [[{text:'谢谢玩家。',emotion:'cheerful',affection:1},1],[{text:'Claude，别胡说。',emotion:'angry',affection:-1,interactionTarget:'claude'},1],[{text:'观点不同。',emotion:'normal',affection:-1,affectionTarget:{user:true}},1],['DeepSeek：我很困惑。',1]]){
-   f.respond(()=>output);await f.game.action('companion-group-send',{text:'继续讨论',forceCharacterId:'deepseek'});const p=await present(f);assert.equal((await state(f.game)).relationship.affection,expected);if(typeof output==='string'){assert.equal(p.text,'我很困惑。');assert.equal(p.emotion,'confused');}
+  for(const [output,expected]of [[{text:'谢谢玩家。',emotion:'cheerful',affection:1},1],[{text:'Claude，别胡说。',emotion:'angry',affection:-1,interactionTarget:'claude'},1],[{text:'观点不同。',emotion:'normal',affection:-1,affectionTarget:{user:true}},1]]){
+   f.respond(()=>output);await f.game.action('companion-group-send',{text:'继续讨论',forceCharacterId:'deepseek'});await present(f);assert.equal((await state(f.game)).relationship.affection,expected);
   }
+ }finally{await f.close();}
+});
+
+test('Complete plain group output presents neutrally without affection; saved legacy plain dialogue remains readable',async()=>{
+ const f=await fixture();try{
+  const before=(await state(f.game)).relationship.affection;f.respond(()=>'DeepSeek：我很困惑。');await f.game.action('companion-group-send',{text:'继续讨论',forceCharacterId:'deepseek'});
+  const line=await pending(f),waiting=await state(f.game);assert.equal(line.text,'我很困惑。');assert.equal(line.emotion,'normal');assert.equal(line.emotionSource,'compatibility');assert.equal(waiting.relationship.affection,before);assert.equal(waiting.groupMessages.filter(row=>row.role==='assistant').length,0);
+  await f.game.action('companion-group-present',{requestId:line.id});const shown=await state(f.game);assert.equal(shown.relationship.affection,before);assert.equal(shown.groupMessages.at(-1).emotion,'normal');assert.equal(shown.groupMessages.at(-1).emotionSource,'compatibility');assert.equal(shown.groupRuntime.status,'idle');
+  const data=(await f.game.action('companion-group-export',{id:f.group.id})).data,group=data.groups[0],at=Date.now();group.id='legacy-plain-readable';group.seq=(group.seq??0)+1;group.messages.push({id:'legacy-plain-line',seq:group.seq,role:'assistant',characterId:'deepseek',characterName:'DeepSeek',text:'DeepSeek：我很困惑。',emotion:'confused',emotionSource:'keyword',status:'presented',presentedAt:at,createdAt:at});
+  await f.game.action('companion-conversation-import',{data});await f.game.action('companion-group-select',{id:group.id});const legacy=(await state(f.game)).groupMessages.at(-1);assert.equal(legacy.text,'我很困惑。');assert.equal(legacy.emotion,'confused');assert.equal((await f.game.action('companion-group-export',{id:group.id})).data.groups[0].messages.at(-1).text,'DeepSeek：我很困惑。');assert.equal(f.calls.filter(row=>row.purpose==='group-chat').length,1,'viewing/importing legacy history does not generate another group reply');
+ }finally{await f.close();}
+});
+
+test('Damaged JSON group output still fails without presentation or affection and is never guessed as plain dialogue',async()=>{
+ const f=await fixture();try{
+  const before=(await state(f.game)).relationship.affection;
+  for(const raw of ['{"text":"这段JSON被截断"','{"emotion":"angry","affection":1}']){
+   f.respond(()=>raw);await f.game.action('companion-group-send',{text:'验证损坏结构化回复',forceCharacterId:'deepseek'});
+   await until(async()=>(await state(f.game)).groupRuntime.status==='failed');const failed=await state(f.game);assert.match(failed.groupRuntime.error,/格式不完整/);assert.equal(failed.relationship.affection,before);assert.equal(failed.groupMessages.filter(row=>row.role==='assistant').length,0);assert.equal(failed.groupRuntime.pendingMessage,null);assert.equal(f.events.length,0);
+   await f.game.action('companion-group-stop');
+  }
+  assert.equal(f.calls.filter(row=>row.purpose==='group-chat').length,2,'invalid JSON is not automatically resubmitted');
  }finally{await f.close();}
 });
 
@@ -82,8 +104,10 @@ test('Peer context still excludes unpresented drafts, old membership intervals, 
   f.respond(()=>({text:'Claude缺席期间的秘密',affection:0}));await f.game.action('companion-group-send',{text:'缺席期讨论',forceCharacterId:'deepseek'});await present(f);
   await f.game.action('companion-group-member',{characterId:'claude',op:'join'});
   f.respond(()=>({text:'没有呈现的草稿秘密',affection:0}));await f.game.action('companion-group-send',{text:'可知的用户信息',forceCharacterId:'deepseek'});await pending(f);await f.game.action('companion-group-stop');
-  f.respond(()=>({text:'现在请继续',affection:0}));await f.game.action('companion-group-send',{text:'重新加入后的公开信息',forceCharacterId:'claude'});await pending(f);
-  const request=f.calls.at(-1),payload=JSON.stringify(request);
+  f.respond(()=>({text:'现在请继续',affection:0}));await f.game.action('companion-group-send',{text:'重新加入后的公开信息',forceCharacterId:'claude'});const current=await pending(f);
+  // A separately scoped mood review can finish later than this group request.
+  // Inspect the actual group-chat turn, not whichever model purpose ran last.
+  const request=f.calls.filter(row=>row.purpose==='group-chat').at(-1),payload=JSON.stringify(request);assert.equal(current.characterId,'claude');assert.equal(request.purpose,'group-chat');
   for(const secret of ['A私聊暗号','私聊中真正呈现的秘密','B群私密暗号','B用户私密问题','Claude缺席期间的秘密','缺席期讨论','没有呈现的草稿秘密'])assert.ok(!payload.includes(secret),secret);
   assert.match(bodies(request),/重新加入后的公开信息/);assert.match(bodies(request),/可知的用户信息/);
  }finally{await f.close();}

@@ -15,10 +15,11 @@ export function defaultTokenSources({home,env=process.env,dataRoot}){
  for(const editor of ['Code','Code - Insiders','VSCodium','Cursor'])for(const [tool,extension] of [['cline','saoudrizwan.claude-dev'],['roo','rooveterinaryinc.roo-cline']])add(tool,join(env.APPDATA||join(home,'AppData','Roaming'),editor,'User','globalStorage',extension));
  add('cline',join(home,'.cline','data','sessions'));
  add('dsh',join(env.DSH_HOME||join(home,'.dsh'),'sessions'));
- if(dataRoot)for(const file of ['api-usage.jsonl','cg-usage.jsonl'])add('companion',join(dataRoot,file),{name:file==='api-usage.jsonl'?'鲸鱼娘聊天 API':'鲸鱼娘 CG',purpose:file.startsWith('cg')?'cg':'galgame'});
+ if(dataRoot)for(const file of ['api-usage.jsonl','cg-usage.jsonl','plugin-usage.jsonl'])add('companion',join(dataRoot,file),{name:file==='plugin-usage.jsonl'?'插件原生用量':file==='api-usage.jsonl'?'鲸鱼娘聊天 API':'鲸鱼娘 CG',purpose:file==='plugin-usage.jsonl'?'plugin':file.startsWith('cg')?'cg':'galgame'});
  return list;
 }
 export function validateSource(draft){
+ if(draft&&Object.hasOwn(draft,'workAttribution'))throw Object.assign(Error('Core managed work attribution cannot be supplied by ordinary source settings'),{code:'WORK_USAGE_ATTRIBUTION_HOST_ONLY'});
  if(!draft||!Object.hasOwn(TOOL_NAMES,draft.tool))throw Error('请选择工具类型');
  if(typeof draft.path!=='string'||!isAbsolute(draft.path.trim()))throw Error('请选择绝对路径');
  const format=draft.format||'auto';if(!FORMATS.includes(format))throw Error('不支持的文件格式');
@@ -42,7 +43,7 @@ export class TokenSources {
   const paths=new Set();return list.filter(s=>{const key=s.tool+':'+resolve(s.path).toLowerCase();if(paths.has(key))return false;paths.add(key);return true;});
  }
  async view(){const sources=[];for(const s of this.list()){let exists=false,error='';try{await stat(s.path);exists=true;}catch(e){if(e.code!=='ENOENT')error='无读取权限';}const status=this.statuses.get(s.id);sources.push({...s,status:!s.enabled?'已停用':error||(!exists?'目录不存在':status?.message||'等待首次请求'),...status,exists});}return {...this.state,sources,tools:TOOL_NAMES,providers:{...PROVIDER_NAMES,...this.state.aliases}};}
- async action(action,args={}){const run=async()=>{const previous=structuredClone(this.state);try{
+ async action(action,args={},{settingsView=true}={}){const run=async()=>{const previous=structuredClone(this.state);try{
   if(action==='get')return this.view();
   if(action==='save'){const s=validateSource(args);const old=this.list().find(x=>x.id===s.id);if(old?.automatic)s.automatic=true;const physical=await realpath(s.path).catch(()=>s.path);for(const other of this.list()){if(other.id===s.id||!other.enabled)continue;const path=await realpath(other.path).catch(()=>other.path);if(path.toLowerCase()===physical.toLowerCase())throw Error('这个路径已有数据源，请编辑原配置');}this.state.sources=this.state.sources.filter(x=>x.id!==s.id);this.state.sources.push(s);}
   else if(action==='toggle'||action==='remove'){const old=this.list().find(s=>s.id===args.id);if(!old)throw Error('数据源不存在');this.state.sources=this.state.sources.filter(s=>s.id!==args.id);if(action==='toggle'||old.automatic)this.state.sources.push({...old,enabled:action==='toggle'?args.enabled===true:false});}
@@ -51,6 +52,6 @@ export class TokenSources {
   else if(action==='import'){if(args.version!==1||!Array.isArray(args.sources)||args.sources.length>100)throw Error('模板格式无效');for(const item of args.sources){const s=validateSource({...item,id:randomUUID(),automatic:false});if(this.list().some(o=>o.path.toLowerCase()===s.path.toLowerCase()))continue;this.state.sources.push(s);}for(const [key,values] of Object.entries({aliases:args.aliases,modelAliases:args.modelAliases})){if(values){if(typeof values!=='object'||Array.isArray(values)||Object.keys(values).length>200)throw Error('别名格式无效');for(const [id,name] of Object.entries(values)){if(id.length>160||typeof name!=='string'||name.length>80)throw Error('别名格式无效');}this.state[key]={...this.state[key],...values};}}}
   else if(action==='export')return {version:1,sources:this.state.sources.filter(s=>!s.automatic).map(({path,id,...s})=>({...s,enabled:false,path:''})),aliases:this.state.aliases,modelAliases:this.state.modelAliases||{}};
   else throw Error('不支持的操作');
-  await this.store.writeText(JSON.stringify(this.state));return this.view();
+  await this.store.writeText(JSON.stringify(this.state));return settingsView?this.view():undefined;
  }catch(error){this.state=previous;throw error;}};const result=this.tail.then(run,run);this.tail=result.catch(()=>{});return result;}
 }

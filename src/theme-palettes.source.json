@@ -1,0 +1,604 @@
+{
+  "schemaVersion": 1,
+  "approved": "2026-10-21",
+  "sourceDigests": {
+    "themePreview": "a0bce8968707e701b8ffe54814a7224f25fa1c2a6da87758d313faaf63ed644f",
+    "uiDesign": "682ee717b9d7c1612a6fd698c9ab81ea109521bddebc2a8ec18ed55487fa9994"
+  },
+  "palettes": [
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "zh": "深海女仆",
+      "mode": "dark",
+      "radius": {
+        "card": 16,
+        "btn": 10,
+        "dlg": 18
+      },
+      "colors": {
+        "chrome": "#09111F",
+        "sideBg": "#0C1627",
+        "sideText": "#DCE6F4",
+        "sideMuted": "#93A6C2",
+        "sideActive": "#172A4B",
+        "sideAccent": "#9CC3FF",
+        "bg": "#0A1220",
+        "surface": "#111D33",
+        "surface2": "#182844",
+        "border": "#263A5C",
+        "text": "#E8EEF7",
+        "muted": "#9FB0C8",
+        "accent": "#5B9BFF",
+        "accentHover": "#7DB1FF",
+        "onAccent": "#071226",
+        "accentText": "#8DBBFF",
+        "a2": "#F3F6FB",
+        "a3": "#7FD3F7",
+        "barEnd": "#7FD3F7",
+        "ok": "#5ED3A5",
+        "warn": "#F0C36A",
+        "err": "#FF8D96",
+        "dlgBg": "#0D1830",
+        "dlgText": "#EEF3FA",
+        "dlgMuted": "#A9BAD3",
+        "dlgBorder": "rgba(243,246,251,.28)",
+        "plateBg": "#F3F6FB",
+        "plateText": "#0D1B33",
+        "choiceBg": "#15274A"
+      },
+      "headFont": null,
+      "accessorySize": [
+        88,
+        44
+      ],
+      "backgroundPosition": "center top",
+      "extra": {}
+    },
+    {
+      "id": "grok",
+      "name": "Grok",
+      "zh": "哥特蔷薇",
+      "mode": "dark",
+      "radius": {
+        "card": 6,
+        "btn": 4,
+        "dlg": 6
+      },
+      "colors": {
+        "chrome": "#0D0A0C",
+        "sideBg": "#130E11",
+        "sideText": "#EFE4E6",
+        "sideMuted": "#B19DA2",
+        "sideActive": "#2C1219",
+        "sideAccent": "#F28A9C",
+        "bg": "#110D10",
+        "surface": "#1A1417",
+        "surface2": "#241B1F",
+        "border": "#3A2A30",
+        "text": "#F3EAEC",
+        "muted": "#B8A5AA",
+        "accent": "#C8324D",
+        "accentHover": "#DB4560",
+        "onAccent": "#FFF6F7",
+        "accentText": "#F28A9C",
+        "a2": "#CFA95C",
+        "a3": "#7A1426",
+        "barEnd": "#CFA95C",
+        "ok": "#74CF9E",
+        "warn": "#E7B95E",
+        "err": "#FF9478",
+        "dlgBg": "#160F12",
+        "dlgText": "#F3EAEC",
+        "dlgMuted": "#BCA9AE",
+        "dlgBorder": "rgba(207,169,92,.45)",
+        "plateBg": "#C8324D",
+        "plateText": "#FFF6F7",
+        "choiceBg": "#24161B"
+      },
+      "headFont": "Georgia,\"Source Han Serif SC\",\"SimSun\",serif",
+      "accessorySize": [
+        54,
+        52
+      ],
+      "backgroundPosition": "right bottom",
+      "extra": {}
+    },
+    {
+      "id": "seed",
+      "name": "Seed",
+      "zh": "活力科技",
+      "mode": "light",
+      "radius": {
+        "card": 18,
+        "btn": 999,
+        "dlg": 20
+      },
+      "colors": {
+        "chrome": "#FFFFFF",
+        "sideBg": "#FFFFFF",
+        "sideText": "#24213F",
+        "sideMuted": "#5F5C7E",
+        "sideActive": "#EEEAFE",
+        "sideAccent": "#4F33DE",
+        "bg": "#F4F5FB",
+        "surface": "#FFFFFF",
+        "surface2": "#EEF0F8",
+        "border": "#DCDFEE",
+        "text": "#1A1833",
+        "muted": "#5B5977",
+        "accent": "#6044F2",
+        "accentHover": "#4C31DE",
+        "onAccent": "#FFFFFF",
+        "accentText": "#5034E0",
+        "a2": "#12B8B8",
+        "a3": "#B9A8FF",
+        "barEnd": "#12B8B8",
+        "ok": "#08744F",
+        "warn": "#8F5A00",
+        "err": "#C42746",
+        "dlgBg": "#FFFFFF",
+        "dlgText": "#1A1833",
+        "dlgMuted": "#5B5977",
+        "dlgBorder": "rgba(96,68,242,.28)",
+        "plateBg": "#6044F2",
+        "plateText": "#FFFFFF",
+        "choiceBg": "#F2F0FE"
+      },
+      "headFont": "\"Bahnschrift\",\"Microsoft YaHei UI\",sans-serif",
+      "accessorySize": [
+        52,
+        52
+      ],
+      "backgroundPosition": "right top",
+      "extra": {}
+    },
+    {
+      "id": "kimi",
+      "name": "Kimi",
+      "zh": "星夜乐章",
+      "mode": "dark",
+      "radius": {
+        "card": 16,
+        "btn": 10,
+        "dlg": 18
+      },
+      "colors": {
+        "chrome": "#0A0E1F",
+        "sideBg": "#0D1226",
+        "sideText": "#E6E9F8",
+        "sideMuted": "#A2A8CB",
+        "sideActive": "#1D2549",
+        "sideAccent": "#C3C7FC",
+        "bg": "#0B0F21",
+        "surface": "#131A33",
+        "surface2": "#1B2342",
+        "border": "#2C3560",
+        "text": "#EDEFFB",
+        "muted": "#A9AED2",
+        "accent": "#A3A8F5",
+        "accentHover": "#BCC0FA",
+        "onAccent": "#0B0F21",
+        "accentText": "#B9BDFB",
+        "a2": "#DDE1F2",
+        "a3": "#8FE3E0",
+        "barEnd": "#DDE1F2",
+        "ok": "#6FD8B3",
+        "warn": "#F3CD78",
+        "err": "#FF9AAB",
+        "dlgBg": "#0F1530",
+        "dlgText": "#EDEFFB",
+        "dlgMuted": "#AEB3D6",
+        "dlgBorder": "rgba(221,225,242,.26)",
+        "plateBg": "#DDE1F2",
+        "plateText": "#141A38",
+        "choiceBg": "#18204A"
+      },
+      "headFont": null,
+      "accessorySize": [
+        48,
+        52
+      ],
+      "backgroundPosition": "center top",
+      "extra": {
+        "--prism": "linear-gradient(90deg,#FF9AD5,#FFE08A,#8FF0E0,#9AA8FF,#D6A8FF)"
+      }
+    },
+    {
+      "id": "qwen",
+      "name": "Qwen",
+      "zh": "青花瓷",
+      "mode": "light",
+      "radius": {
+        "card": 8,
+        "btn": 6,
+        "dlg": 8
+      },
+      "colors": {
+        "chrome": "#FBFCFE",
+        "sideBg": "#FBFCFE",
+        "sideText": "#18264A",
+        "sideMuted": "#4F5D7C",
+        "sideActive": "#E5EBF9",
+        "sideAccent": "#2A49AE",
+        "bg": "#F3F6FA",
+        "surface": "#FFFFFF",
+        "surface2": "#EDF1F8",
+        "border": "#D2DAE9",
+        "text": "#13203F",
+        "muted": "#4D5B79",
+        "accent": "#2A49AE",
+        "accentHover": "#1F3A90",
+        "onAccent": "#FFFFFF",
+        "accentText": "#2A49AE",
+        "a2": "#B08A3A",
+        "a3": "#6F8FD8",
+        "barEnd": "#B08A3A",
+        "ok": "#1A6E4B",
+        "warn": "#835600",
+        "err": "#AC2D2A",
+        "dlgBg": "#FBFCFE",
+        "dlgText": "#13203F",
+        "dlgMuted": "#4D5B79",
+        "dlgBorder": "rgba(42,73,174,.35)",
+        "plateBg": "#2A49AE",
+        "plateText": "#FFFFFF",
+        "choiceBg": "#EEF2FA"
+      },
+      "headFont": "\"Source Han Serif SC\",\"Noto Serif SC\",\"SimSun\",serif",
+      "accessorySize": [
+        49,
+        52
+      ],
+      "backgroundPosition": "left bottom",
+      "extra": {}
+    },
+    {
+      "id": "minimax",
+      "name": "MiniMax",
+      "zh": "外景记者",
+      "mode": "light",
+      "radius": {
+        "card": 10,
+        "btn": 8,
+        "dlg": 12
+      },
+      "colors": {
+        "chrome": "#FFFCF8",
+        "sideBg": "#FFFCF8",
+        "sideText": "#33241D",
+        "sideMuted": "#6E5C51",
+        "sideActive": "#FBE4DD",
+        "sideAccent": "#A93A25",
+        "bg": "#FBF5EE",
+        "surface": "#FFFFFF",
+        "surface2": "#F6EDE3",
+        "border": "#E9DCCB",
+        "text": "#2E211B",
+        "muted": "#6B5A4F",
+        "accent": "#C9452F",
+        "accentHover": "#B23A26",
+        "onAccent": "#FFFFFF",
+        "accentText": "#B03C27",
+        "a2": "#E7799A",
+        "a3": "#C8A97E",
+        "barEnd": "#E7799A",
+        "ok": "#256F43",
+        "warn": "#835600",
+        "err": "#A2234B",
+        "dlgBg": "#FFFBF6",
+        "dlgText": "#2E211B",
+        "dlgMuted": "#6B5A4F",
+        "dlgBorder": "rgba(201,69,47,.30)",
+        "plateBg": "#C9452F",
+        "plateText": "#FFFFFF",
+        "choiceBg": "#FBEFE6"
+      },
+      "headFont": "\"Bahnschrift SemiCondensed\",\"Bahnschrift\",\"Microsoft YaHei UI\",sans-serif",
+      "accessorySize": [
+        76,
+        44
+      ],
+      "backgroundPosition": "right bottom",
+      "extra": {}
+    },
+    {
+      "id": "chatgpt",
+      "name": "GPT",
+      "zh": "白龙",
+      "mode": "light",
+      "radius": {
+        "card": 20,
+        "btn": 12,
+        "dlg": 20
+      },
+      "colors": {
+        "chrome": "#FFFFFF",
+        "sideBg": "#FCFCFE",
+        "sideText": "#23213A",
+        "sideMuted": "#5E5B74",
+        "sideActive": "#EEECF8",
+        "sideAccent": "#4F4799",
+        "bg": "#F6F6FA",
+        "surface": "#FFFFFF",
+        "surface2": "#F1F0F6",
+        "border": "#E0DEEA",
+        "text": "#1E1C2E",
+        "muted": "#5C5972",
+        "accent": "#5E56A8",
+        "accentHover": "#4B4490",
+        "onAccent": "#FFFFFF",
+        "accentText": "#544C9E",
+        "a2": "#C4C3D6",
+        "a3": "#B9B4E6",
+        "barEnd": "#B9B4E6",
+        "ok": "#1F7553",
+        "warn": "#835A00",
+        "err": "#B0304A",
+        "dlgBg": "#FFFFFF",
+        "dlgText": "#1E1C2E",
+        "dlgMuted": "#5C5972",
+        "dlgBorder": "rgba(94,86,168,.22)",
+        "plateBg": "#5E56A8",
+        "plateText": "#FFFFFF",
+        "choiceBg": "#F4F3FA"
+      },
+      "headFont": null,
+      "accessorySize": [
+        63,
+        52
+      ],
+      "backgroundPosition": "left bottom",
+      "extra": {}
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini",
+      "zh": "星光猫",
+      "mode": "dark",
+      "radius": {
+        "card": 20,
+        "btn": 12,
+        "dlg": 22
+      },
+      "colors": {
+        "chrome": "#0B081B",
+        "sideBg": "#100D24",
+        "sideText": "#EEEAFF",
+        "sideMuted": "#ABA4D3",
+        "sideActive": "#261F52",
+        "sideAccent": "#C3BAFF",
+        "bg": "#0D0A1E",
+        "surface": "#171332",
+        "surface2": "#201B41",
+        "border": "#342C62",
+        "text": "#F1EEFF",
+        "muted": "#B0A9D7",
+        "accent": "#8C7DFF",
+        "accentHover": "#A698FF",
+        "onAccent": "#0D0A1E",
+        "accentText": "#B3A9FF",
+        "a2": "#4FA8FF",
+        "a3": "#FF8AD8",
+        "barEnd": "#FF8AD8",
+        "ok": "#6EDFB0",
+        "warn": "#FFD27A",
+        "err": "#FF8FA6",
+        "dlgBg": "#151130",
+        "dlgText": "#F1EEFF",
+        "dlgMuted": "#B4ADDA",
+        "dlgBorder": "rgba(140,125,255,.45)",
+        "plateBg": "#8C7DFF",
+        "plateText": "#0D0A1E",
+        "choiceBg": "#221C48"
+      },
+      "headFont": "\"Segoe UI Variable Display\",\"Segoe UI\",\"Microsoft YaHei UI\",sans-serif",
+      "accessorySize": [
+        50,
+        52
+      ],
+      "backgroundPosition": "right top",
+      "extra": {
+        "--iri": "linear-gradient(90deg,#4FA8FF,#8C7DFF 50%,#FF8AD8)"
+      }
+    },
+    {
+      "id": "claude",
+      "name": "Claude",
+      "zh": "象牙书页",
+      "mode": "light",
+      "radius": {
+        "card": 6,
+        "btn": 6,
+        "dlg": 8
+      },
+      "colors": {
+        "chrome": "#FAF5EC",
+        "sideBg": "#FAF5EC",
+        "sideText": "#2E2520",
+        "sideMuted": "#6A5C50",
+        "sideActive": "#F5E2D4",
+        "sideAccent": "#9E401C",
+        "bg": "#F6F0E6",
+        "surface": "#FFFCF6",
+        "surface2": "#F2EADC",
+        "border": "#E3D6C1",
+        "text": "#2A221D",
+        "muted": "#6A5B4F",
+        "accent": "#BE5129",
+        "accentHover": "#A3441F",
+        "onAccent": "#FFFFFF",
+        "accentText": "#A6451F",
+        "a2": "#2B2420",
+        "a3": "#B08A45",
+        "barEnd": "#B08A45",
+        "ok": "#336E45",
+        "warn": "#805400",
+        "err": "#9C2F46",
+        "dlgBg": "#FFFBF3",
+        "dlgText": "#2A221D",
+        "dlgMuted": "#6A5B4F",
+        "dlgBorder": "rgba(176,138,69,.55)",
+        "plateBg": "#BE5129",
+        "plateText": "#FFFFFF",
+        "choiceBg": "#F7EFE2"
+      },
+      "headFont": "\"Source Han Serif SC\",\"Noto Serif SC\",\"SimSun\",serif",
+      "accessorySize": [
+        52,
+        52
+      ],
+      "backgroundPosition": "right bottom",
+      "extra": {}
+    },
+    {
+      "id": "glm",
+      "name": "GLM",
+      "zh": "墨狼",
+      "mode": "dark",
+      "radius": {
+        "card": 4,
+        "btn": 3,
+        "dlg": 4
+      },
+      "colors": {
+        "chrome": "#0C0D10",
+        "sideBg": "#111216",
+        "sideText": "#ECEDF0",
+        "sideMuted": "#A2A5AE",
+        "sideActive": "#24272F",
+        "sideAccent": "#F2F3F5",
+        "bg": "#0F1013",
+        "surface": "#18191E",
+        "surface2": "#212228",
+        "border": "#33353D",
+        "text": "#EDEEF0",
+        "muted": "#A5A8B1",
+        "accent": "#84A0C8",
+        "accentHover": "#9CB4D6",
+        "onAccent": "#0D0E11",
+        "accentText": "#A2B9DA",
+        "a2": "#EDEEF0",
+        "a3": "#5E7FA8",
+        "barEnd": "#EDEEF0",
+        "ok": "#7FC7A2",
+        "warn": "#D9BD78",
+        "err": "#E88F8F",
+        "dlgBg": "#141519",
+        "dlgText": "#EDEEF0",
+        "dlgMuted": "#A9ACB5",
+        "dlgBorder": "rgba(237,238,240,.22)",
+        "plateBg": "#EDEEF0",
+        "plateText": "#111216",
+        "choiceBg": "#1F2026"
+      },
+      "headFont": null,
+      "accessorySize": [
+        95,
+        44
+      ],
+      "backgroundPosition": "left bottom",
+      "extra": {}
+    },
+    {
+      "id": "hunyuan",
+      "name": "混元",
+      "nameEn": "Hunyuan",
+      "zh": "雪夜红巾",
+      "mode": "light",
+      "radius": {
+        "card": 14,
+        "btn": 10,
+        "dlg": 16
+      },
+      "colors": {
+        "chrome": "#141B26",
+        "sideBg": "#18202C",
+        "sideText": "#EEF2F7",
+        "sideMuted": "#A9B4C4",
+        "sideActive": "#2B3546",
+        "sideAccent": "#FF9DA3",
+        "bg": "#F2F5F8",
+        "surface": "#FFFFFF",
+        "surface2": "#EBF0F5",
+        "border": "#D5DCE6",
+        "text": "#141A25",
+        "muted": "#505B6C",
+        "accent": "#BD2D36",
+        "accentHover": "#9F232B",
+        "onAccent": "#FFFFFF",
+        "accentText": "#AE2730",
+        "a2": "#7FB3E0",
+        "a3": "#1A2230",
+        "barEnd": "#7FB3E0",
+        "ok": "#1A6C4A",
+        "warn": "#7E5500",
+        "err": "#952858",
+        "dlgBg": "#FFFFFF",
+        "dlgText": "#141A25",
+        "dlgMuted": "#505B6C",
+        "dlgBorder": "rgba(127,179,224,.6)",
+        "plateBg": "#BD2D36",
+        "plateText": "#FFFFFF",
+        "choiceBg": "#F0F5FA"
+      },
+      "headFont": null,
+      "accessorySize": [
+        51,
+        52
+      ],
+      "backgroundPosition": "right top",
+      "extra": {}
+    }
+  ],
+  "ornaments": {
+    "deepseek": {
+      "--pat-main": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'140'%20height%3D'140'%20viewBox%3D'0%200%20140%20140'%3E%3Cg%20fill%3D'none'%20stroke%3D'%23A9CBFF'%20stroke-opacity%3D'.14'%20stroke-width%3D'1.2'%3E%3Ccircle%20cx%3D'22'%20cy%3D'34'%20r%3D'7'%2F%3E%3Ccircle%20cx%3D'36'%20cy%3D'16'%20r%3D'3'%2F%3E%3Ccircle%20cx%3D'94'%20cy%3D'84'%20r%3D'10'%2F%3E%3Ccircle%20cx%3D'112'%20cy%3D'62'%20r%3D'4'%2F%3E%3Ccircle%20cx%3D'70'%20cy%3D'124'%20r%3D'5'%2F%3E%3Ccircle%20cx%3D'126'%20cy%3D'120'%20r%3D'2.5'%2F%3E%3Ccircle%20cx%3D'50'%20cy%3D'70'%20r%3D'2'%2F%3E%3C%2Fg%3E%3Cg%20fill%3D'%23FFFFFF'%20fill-opacity%3D'.12'%3E%3Ccircle%20cx%3D'19.5'%20cy%3D'31'%20r%3D'1.7'%2F%3E%3Ccircle%20cx%3D'90.5'%20cy%3D'80'%20r%3D'2.3'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E\")",
+      "--orn-bow": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'40'%20height%3D'20'%20viewBox%3D'0%200%2040%2020'%3E%3Cg%20stroke%3D'%23F3F6FB'%20stroke-width%3D'1'%20stroke-linejoin%3D'round'%20stroke-linecap%3D'round'%3E%3Cpath%20d%3D'M20%209C15%203%207.5%202%204.6%205C2.6%207.4%204%2011.8%209%2012.4C13%2012.9%2017%2011%2020%209Z'%20fill%3D'%23F3F6FB'%20fill-opacity%3D'.1'%2F%3E%3Cpath%20d%3D'M20%209C25%203%2032.5%202%2035.4%205C37.4%207.4%2036%2011.8%2031%2012.4C27%2012.9%2023%2011%2020%209Z'%20fill%3D'%23F3F6FB'%20fill-opacity%3D'.1'%2F%3E%3Cpath%20d%3D'M19%207.6C15.6%206.4%2011.4%206.2%208.6%207.4M21%207.6C24.4%206.4%2028.6%206.2%2031.4%207.4'%20fill%3D'none'%20stroke-opacity%3D'.55'%20stroke-width%3D'.8'%2F%3E%3Cpath%20d%3D'M18.9%2011.6C17.8%2014.2%2015.8%2016.6%2013.2%2018.6M21.1%2011.6C22.2%2014.2%2024.2%2016.6%2026.8%2018.6'%20fill%3D'none'%2F%3E%3C%2Fg%3E%3Crect%20x%3D'17.8'%20y%3D'6.6'%20width%3D'4.4'%20height%3D'5.4'%20rx%3D'1.8'%20fill%3D'%23F3F6FB'%2F%3E%3C%2Fsvg%3E\")",
+      "--orn-tail": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'160'%20height%3D'124'%20viewBox%3D'0%200%20160%20124'%3E%3Cg%20fill%3D'none'%20stroke%3D'%23F3F6FB'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M74%20122C75%20100%2074%2084%2070%2070C58%2063%2038%2058%2022%2047C13%2041%209%2033%2011%2026C25%2034%2043%2040%2059%2042C70%2043.5%2077%2047%2080%2053C83%2047%2090%2043.5%20101%2042C117%2040%20135%2034%20149%2026C151%2033%20147%2041%20138%2047C122%2058%20102%2063%2090%2070C86%2084%2085%20100%2086%20122'%20stroke-opacity%3D'.16'%20stroke-width%3D'1.4'%2F%3E%3Cpath%20d%3D'M80%2058C80%2074%2080%2096%2080%20122M26%2040C40%2047%2056%2051%2068%2054M134%2040C120%2047%20104%2051%2092%2054'%20stroke-opacity%3D'.08'%20stroke-width%3D'1'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E\")"
+    },
+    "grok": {
+      "--pat-main": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'56'%20height%3D'56'%20viewBox%3D'0%200%2056%2056'%3E%3Cpath%20d%3D'M28%202L54%2028L28%2054L2%2028Z'%20fill%3D'none'%20stroke%3D'%23CFA95C'%20stroke-opacity%3D'.07'%2F%3E%3Ccircle%20cx%3D'28'%20cy%3D'28'%20r%3D'1.8'%20fill%3D'%23C8324D'%20fill-opacity%3D'.28'%2F%3E%3C%2Fsvg%3E\")",
+      "--orn-rose": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'180'%20height%3D'18'%20viewBox%3D'0%200%20180%2018'%3E%3Cdefs%3E%3ClinearGradient%20id%3D'f'%20x1%3D'0'%20x2%3D'1'%3E%3Cstop%20offset%3D'0'%20stop-color%3D'%23CFA95C'%2F%3E%3Cstop%20offset%3D'.7'%20stop-color%3D'%23CFA95C'%20stop-opacity%3D'.5'%2F%3E%3Cstop%20offset%3D'1'%20stop-color%3D'%23CFA95C'%20stop-opacity%3D'0'%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Cpath%20d%3D'M15%209C40%207.2%2068%2010.6%2098%209S150%207.8%20179%209'%20fill%3D'none'%20stroke%3D'url(%23f)'%2F%3E%3Cg%20fill%3D'%23CFA95C'%3E%3Cpath%20d%3D'M33%208.4l2.6-3.4.5%203.2z'%2F%3E%3Cpath%20d%3D'M60%209.7l2.4%203.4.6-3.3z'%2F%3E%3Cpath%20d%3D'M90%209.2l2.6-3.3.4%203.1z'%20fill-opacity%3D'.7'%2F%3E%3Cpath%20d%3D'M120%208.9l2.2%203.2.5-3z'%20fill-opacity%3D'.45'%2F%3E%3Cpath%20d%3D'M44%208.6C47%203.4%2053%202.2%2057%203.2C54%206.4%2049.5%208.2%2044%208.6Z'%20fill-opacity%3D'.75'%2F%3E%3Cpath%20d%3D'M72%209.9C75.5%2014.6%2081.5%2015.6%2085%2014.4C81.5%2011.4%2077.4%2010%2072%209.9Z'%20fill-opacity%3D'.55'%2F%3E%3C%2Fg%3E%3Ccircle%20cx%3D'9'%20cy%3D'9'%20r%3D'6.2'%20fill%3D'%23C8324D'%20stroke%3D'%23CFA95C'%20stroke-width%3D'.8'%2F%3E%3Cpath%20d%3D'M9%209m-2.4%200a2.4%202.4%200%201%201%202.4%202.4a3.8%203.8%200%201%201%203.6-4.4M4.4%206.2a5.4%205.4%200%200%201%204-3'%20fill%3D'none'%20stroke%3D'%23CFA95C'%20stroke-width%3D'.8'%20stroke-linecap%3D'round'%2F%3E%3C%2Fsvg%3E\")",
+      "--orn-wing": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'28'%20height%3D'14'%20viewBox%3D'0%200%2028%2014'%3E%3Cg%20fill%3D'%23C8324D'%20stroke%3D'%23CFA95C'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M14%202.6L16.6%207L14%2011.4L11.4%207Z'%20stroke-width%3D'.8'%2F%3E%3Cpath%20d%3D'M17.4%207C19.8%203.6%2023.8%202%2027.4%202.6C26.4%204%2026.3%206%2027.2%207.8C25.4%207.4%2024%208.2%2023.4%209.8C22.6%208.6%2021.2%208.2%2019.8%208.8C19.4%207.8%2018.6%207.2%2017.4%207Z'%20fill-opacity%3D'.85'%20stroke-width%3D'.7'%2F%3E%3Cpath%20transform%3D'translate(28%200)%20scale(-1%201)'%20d%3D'M17.4%207C19.8%203.6%2023.8%202%2027.4%202.6C26.4%204%2026.3%206%2027.2%207.8C25.4%207.4%2024%208.2%2023.4%209.8C22.6%208.6%2021.2%208.2%2019.8%208.8C19.4%207.8%2018.6%207.2%2017.4%207Z'%20fill-opacity%3D'.85'%20stroke-width%3D'.7'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E\")"
+    },
+    "seed": {
+      "--pat-main": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'22'%20height%3D'22'%20viewBox%3D'0%200%2022%2022'%3E%3Ccircle%20cx%3D'11'%20cy%3D'11'%20r%3D'1.15'%20fill%3D'%236044F2'%20fill-opacity%3D'.17'%2F%3E%3C%2Fsvg%3E\")"
+    },
+    "kimi": {
+      "--pat-main": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'240'%20height%3D'240'%20viewBox%3D'0%200%20240%20240'%3E%3Cg%20fill%3D'%23DDE1F2'%3E%3Ccircle%20cx%3D'18'%20cy%3D'22'%20r%3D'1'%20fill-opacity%3D'.55'%2F%3E%3Ccircle%20cx%3D'64'%20cy%3D'48'%20r%3D'.7'%20fill-opacity%3D'.4'%2F%3E%3Ccircle%20cx%3D'122'%20cy%3D'18'%20r%3D'1.3'%20fill-opacity%3D'.75'%2F%3E%3Ccircle%20cx%3D'196'%20cy%3D'40'%20r%3D'.8'%20fill-opacity%3D'.45'%2F%3E%3Ccircle%20cx%3D'226'%20cy%3D'96'%20r%3D'1'%20fill-opacity%3D'.5'%2F%3E%3Ccircle%20cx%3D'40'%20cy%3D'120'%20r%3D'.6'%20fill-opacity%3D'.35'%2F%3E%3Ccircle%20cx%3D'98'%20cy%3D'150'%20r%3D'1.1'%20fill-opacity%3D'.6'%2F%3E%3Ccircle%20cx%3D'150'%20cy%3D'112'%20r%3D'.8'%20fill-opacity%3D'.45'%2F%3E%3Ccircle%20cx%3D'176'%20cy%3D'184'%20r%3D'1.4'%20fill-opacity%3D'.75'%2F%3E%3Ccircle%20cx%3D'26'%20cy%3D'206'%20r%3D'.9'%20fill-opacity%3D'.5'%2F%3E%3Ccircle%20cx%3D'120'%20cy%3D'222'%20r%3D'.6'%20fill-opacity%3D'.35'%2F%3E%3Ccircle%20cx%3D'214'%20cy%3D'224'%20r%3D'.8'%20fill-opacity%3D'.45'%2F%3E%3C%2Fg%3E%3Cpolyline%20points%3D'122%2C18%20150%2C112%2098%2C150%20176%2C184'%20fill%3D'none'%20stroke%3D'%23A3A8F5'%20stroke-opacity%3D'.24'%20stroke-width%3D'.8'%2F%3E%3C%2Fsvg%3E\")",
+      "--orn-star": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'10'%20height%3D'10'%20viewBox%3D'0%200%2010%2010'%3E%3Cpath%20d%3D'M5%200Q5%205%2010%205Q5%205%205%2010Q5%205%200%205Q5%205%205%200Z'%20fill%3D'%23DDE1F2'%20fill-opacity%3D'1'%2F%3E%3C%2Fsvg%3E\")"
+    },
+    "qwen": {
+      "--pat-main": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'150'%20height%3D'150'%20viewBox%3D'0%200%20150%20150'%3E%3Cg%20fill%3D'none'%20stroke%3D'%232A49AE'%20stroke-opacity%3D'.08'%20stroke-width%3D'1.3'%20stroke-linecap%3D'round'%3E%3Cpath%20d%3D'M30%2040c-10-12%206-24%2015-14c6%206-2%2013-7%208'%2F%3E%3Cpath%20d%3D'M45%2040c8%204%2012%2012%206%2018'%2F%3E%3Cpath%20d%3D'M110%20112c10%2012-6%2024-15%2014c-6-6%202-13%207-8'%2F%3E%3Cpath%20d%3D'M95%20112c-8-4-12-12-6-18'%2F%3E%3C%2Fg%3E%3Cg%20fill%3D'%232A49AE'%20fill-opacity%3D'.07'%3E%3Ccircle%20cx%3D'51'%20cy%3D'60'%20r%3D'3'%2F%3E%3Cellipse%20cx%3D'60'%20cy%3D'56'%20rx%3D'6'%20ry%3D'2.6'%20transform%3D'rotate(-30%2060%2056)'%2F%3E%3Ccircle%20cx%3D'89'%20cy%3D'92'%20r%3D'3'%2F%3E%3Cellipse%20cx%3D'80'%20cy%3D'96'%20rx%3D'6'%20ry%3D'2.6'%20transform%3D'rotate(-30%2080%2096)'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E\")",
+      "--orn-fret-l": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'36'%20height%3D'12'%20viewBox%3D'0%200%2036%2012'%3E%3Cg%20fill%3D'none'%20stroke%3D'%232A49AE'%20stroke-opacity%3D'.75'%3E%3Cpath%20d%3D'M.5%2010.5V1.5H9.5V10.5H2.5V3.5H7.5V8.5H5'%2F%3E%3Cpath%20d%3D'M13.5%2010.5V1.5H22.5V10.5H15.5V3.5H20.5V8.5H18'%2F%3E%3Cpath%20d%3D'M26.5%2010.5V1.5H35.5V10.5H28.5V3.5H33.5V8.5H31'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E\")",
+      "--orn-fret-r": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'36'%20height%3D'12'%20viewBox%3D'0%200%2036%2012'%3E%3Cg%20transform%3D'translate(36%200)%20scale(-1%201)'%3E%3Cg%20fill%3D'none'%20stroke%3D'%232A49AE'%20stroke-opacity%3D'.75'%3E%3Cpath%20d%3D'M.5%2010.5V1.5H9.5V10.5H2.5V3.5H7.5V8.5H5'%2F%3E%3Cpath%20d%3D'M13.5%2010.5V1.5H22.5V10.5H15.5V3.5H20.5V8.5H18'%2F%3E%3Cpath%20d%3D'M26.5%2010.5V1.5H35.5V10.5H28.5V3.5H33.5V8.5H31'%2F%3E%3C%2Fg%3E%3C%2Fg%3E%3C%2Fsvg%3E\")",
+      "--orn-ruyi": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'56'%20height%3D'22'%20viewBox%3D'0%200%2056%2022'%3E%3Cpath%20d%3D'M28%2020.5C22%2020.5%2017%2018.4%2015%2014.4C11%2015.4%207%2013.4%207%209.6C7%206%2010%204%2013%205C13%202%2016%20.8%2019%201.5C22%202.2%2023.5%205%2022.5%207.5C24.5%206%2026.5%205.2%2028%205.2C29.5%205.2%2031.5%206%2033.5%207.5C32.5%205%2034%202.2%2037%201.5C40%20.8%2043%202%2043%205C46%204%2049%206%2049%209.6C49%2013.4%2045%2015.4%2041%2014.4C39%2018.4%2034%2020.5%2028%2020.5Z'%20fill%3D'%23FFFFFF'%20stroke%3D'%232A49AE'%20stroke-width%3D'1.1'%20stroke-linejoin%3D'round'%2F%3E%3Cg%20fill%3D'none'%20stroke%3D'%232A49AE'%20stroke-width%3D'.9'%20stroke-linecap%3D'round'%3E%3Cpath%20d%3D'M13.2%209.6C13.2%208%2014.8%207.4%2015.8%208.3C16.6%209.1%2015.9%2010.5%2014.8%2010.1'%2F%3E%3Cpath%20d%3D'M42.8%209.6C42.8%208%2041.2%207.4%2040.2%208.3C39.4%209.1%2040.1%2010.5%2041.2%2010.1'%2F%3E%3Cpath%20d%3D'M28%2016.4C25.4%2016.4%2024.4%2014%2025.8%2012.6C27.2%2011.2%2029.6%2012.2%2029.1%2013.9'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E\")",
+      "--orn-tassel": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'10'%20height%3D'26'%20viewBox%3D'0%200%2010%2026'%3E%3Cpath%20d%3D'M5%200V7'%20stroke%3D'%23B08A3A'%20stroke-width%3D'1.2'%2F%3E%3Cpath%20d%3D'M5%206l3%203-3%203-3-3z'%20fill%3D'%23B08A3A'%2F%3E%3Cpath%20d%3D'M3%2012h4l1.2%2013h-6.4z'%20fill%3D'%23B08A3A'%20fill-opacity%3D'.8'%2F%3E%3C%2Fsvg%3E\")"
+    },
+    "minimax": {
+      "--orn-film": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'18'%20height%3D'20'%20viewBox%3D'0%200%2018%2020'%3E%3Crect%20width%3D'18'%20height%3D'20'%20fill%3D'%232E211B'%2F%3E%3Crect%20x%3D'5'%20y%3D'5'%20width%3D'8'%20height%3D'10'%20rx%3D'2'%20fill%3D'%23FBF5EE'%2F%3E%3C%2Fsvg%3E\")"
+    },
+    "chatgpt": {
+      "--pat-main": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'28'%20height%3D'28'%20viewBox%3D'0%200%2028%2028'%3E%3Cpath%20d%3D'M0%2014A14%2014%200%200%201%2028%2014M-14%2028A14%2014%200%200%201%2014%2028M14%2028A14%2014%200%200%201%2042%2028'%20fill%3D'none'%20stroke%3D'%235E56A8'%20stroke-opacity%3D'.07'%2F%3E%3C%2Fsvg%3E\")"
+    },
+    "gemini": {
+      "--pat-main": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'200'%20height%3D'200'%20viewBox%3D'0%200%20200%20200'%3E%3Cpath%20d%3D'M24%2025Q24%2030%2029%2030Q24%2030%2024%2035Q24%2030%2019%2030Q24%2030%2024%2025Z'%20fill%3D'%23FFFFFF'%20fill-opacity%3D'0.55'%2F%3E%3Cpath%20d%3D'M92%2015Q92%2018%2095%2018Q92%2018%2092%2021Q92%2018%2089%2018Q92%2018%2092%2015Z'%20fill%3D'%234FA8FF'%20fill-opacity%3D'0.6'%2F%3E%3Cpath%20d%3D'M160%2048Q160%2054%20166%2054Q160%2054%20160%2060Q160%2054%20154%2054Q160%2054%20160%2048Z'%20fill%3D'%23FF8AD8'%20fill-opacity%3D'0.45'%2F%3E%3Cpath%20d%3D'M60%2093.5Q60%2096%2062.5%2096Q60%2096%2060%2098.5Q60%2096%2057.5%2096Q60%2096%2060%2093.5Z'%20fill%3D'%23FFFFFF'%20fill-opacity%3D'0.5'%2F%3E%3Cpath%20d%3D'M128%20128Q128%20132%20132%20132Q128%20132%20128%20136Q128%20132%20124%20132Q128%20132%20128%20128Z'%20fill%3D'%234FA8FF'%20fill-opacity%3D'0.45'%2F%3E%3Cpath%20d%3D'M186%20167Q186%20170%20189%20170Q186%20170%20186%20173Q186%20170%20183%20170Q186%20170%20186%20167Z'%20fill%3D'%23FFFFFF'%20fill-opacity%3D'0.5'%2F%3E%3Cpath%20d%3D'M30%20166Q30%20170%2034%20170Q30%20170%2030%20174Q30%20170%2026%20170Q30%20170%2030%20166Z'%20fill%3D'%23FF8AD8'%20fill-opacity%3D'0.4'%2F%3E%3Cpath%20d%3D'M96%20184Q96%20186%2098%20186Q96%20186%2096%20188Q96%20186%2094%20186Q96%20186%2096%20184Z'%20fill%3D'%23FFFFFF'%20fill-opacity%3D'0.45'%2F%3E%3C%2Fsvg%3E\")",
+      "--orn-star": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'12'%20height%3D'12'%20viewBox%3D'0%200%2012%2012'%3E%3Cpath%20d%3D'M6%200Q6%206%2012%206Q6%206%206%2012Q6%206%200%206Q6%206%206%200Z'%20fill%3D'%23FF8AD8'%20fill-opacity%3D'1'%2F%3E%3C%2Fsvg%3E\")",
+      "--orn-sparkles": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'220'%20height%3D'260'%20viewBox%3D'0%200%20220%20260'%3E%3Cpath%20d%3D'M30%2031Q30%2040%2039%2040Q30%2040%2030%2049Q30%2040%2021%2040Q30%2040%2030%2031Z'%20fill%3D'%23FFFFFF'%20fill-opacity%3D'0.9'%2F%3E%3Cpath%20d%3D'M196%2064Q196%2070%20202%2070Q196%2070%20196%2076Q196%2070%20190%2070Q196%2070%20196%2064Z'%20fill%3D'%23FF8AD8'%20fill-opacity%3D'0.85'%2F%3E%3Cpath%20d%3D'M184%20192Q184%20200%20192%20200Q184%20200%20184%20208Q184%20200%20176%20200Q184%20200%20184%20192Z'%20fill%3D'%234FA8FF'%20fill-opacity%3D'0.85'%2F%3E%3Cpath%20d%3D'M22%20185Q22%20190%2027%20190Q22%20190%2022%20195Q22%20190%2017%20190Q22%20190%2022%20185Z'%20fill%3D'%23FF8AD8'%20fill-opacity%3D'0.7'%2F%3E%3Cpath%20d%3D'M120%2012Q120%2016%20124%2016Q120%2016%20120%2020Q120%2016%20116%2016Q120%2016%20120%2012Z'%20fill%3D'%23FFFFFF'%20fill-opacity%3D'0.7'%2F%3E%3C%2Fsvg%3E\")"
+    },
+    "claude": {
+      "--pat-main": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'160'%20height%3D'160'%20viewBox%3D'0%200%20160%20160'%3E%3Cfilter%20id%3D'n'%3E%3CfeTurbulence%20type%3D'fractalNoise'%20baseFrequency%3D'.85'%20numOctaves%3D'2'%20stitchTiles%3D'stitch'%2F%3E%3CfeColorMatrix%20values%3D'0%200%200%200%20.42%200%200%200%200%20.32%200%200%200%200%20.2%200%200%200%20.09%200'%2F%3E%3C%2Ffilter%3E%3Crect%20width%3D'160'%20height%3D'160'%20filter%3D'url(%23n)'%2F%3E%3C%2Fsvg%3E\")",
+      "--orn-flower": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'16'%20height%3D'16'%20viewBox%3D'0%200%2016%2016'%3E%3Cellipse%20cx%3D'8'%20cy%3D'3.6'%20rx%3D'1.5'%20ry%3D'3.4'%20transform%3D'rotate(0%208%208)'%20fill%3D'%23BE5129'%2F%3E%3Cellipse%20cx%3D'8'%20cy%3D'3.6'%20rx%3D'1.5'%20ry%3D'3.4'%20transform%3D'rotate(30%208%208)'%20fill%3D'%23BE5129'%2F%3E%3Cellipse%20cx%3D'8'%20cy%3D'3.6'%20rx%3D'1.5'%20ry%3D'3.4'%20transform%3D'rotate(60%208%208)'%20fill%3D'%23BE5129'%2F%3E%3Cellipse%20cx%3D'8'%20cy%3D'3.6'%20rx%3D'1.5'%20ry%3D'3.4'%20transform%3D'rotate(90%208%208)'%20fill%3D'%23BE5129'%2F%3E%3Cellipse%20cx%3D'8'%20cy%3D'3.6'%20rx%3D'1.5'%20ry%3D'3.4'%20transform%3D'rotate(120%208%208)'%20fill%3D'%23BE5129'%2F%3E%3Cellipse%20cx%3D'8'%20cy%3D'3.6'%20rx%3D'1.5'%20ry%3D'3.4'%20transform%3D'rotate(150%208%208)'%20fill%3D'%23BE5129'%2F%3E%3Cellipse%20cx%3D'8'%20cy%3D'3.6'%20rx%3D'1.5'%20ry%3D'3.4'%20transform%3D'rotate(180%208%208)'%20fill%3D'%23BE5129'%2F%3E%3Cellipse%20cx%3D'8'%20cy%3D'3.6'%20rx%3D'1.5'%20ry%3D'3.4'%20transform%3D'rotate(210%208%208)'%20fill%3D'%23BE5129'%2F%3E%3Cellipse%20cx%3D'8'%20cy%3D'3.6'%20rx%3D'1.5'%20ry%3D'3.4'%20transform%3D'rotate(240%208%208)'%20fill%3D'%23BE5129'%2F%3E%3Cellipse%20cx%3D'8'%20cy%3D'3.6'%20rx%3D'1.5'%20ry%3D'3.4'%20transform%3D'rotate(270%208%208)'%20fill%3D'%23BE5129'%2F%3E%3Cellipse%20cx%3D'8'%20cy%3D'3.6'%20rx%3D'1.5'%20ry%3D'3.4'%20transform%3D'rotate(300%208%208)'%20fill%3D'%23BE5129'%2F%3E%3Cellipse%20cx%3D'8'%20cy%3D'3.6'%20rx%3D'1.5'%20ry%3D'3.4'%20transform%3D'rotate(330%208%208)'%20fill%3D'%23BE5129'%2F%3E%3Ccircle%20cx%3D'8'%20cy%3D'8'%20r%3D'2.3'%20fill%3D'%23B08A45'%2F%3E%3C%2Fsvg%3E\")"
+    },
+    "glm": {
+      "--pat-main": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'420'%20height%3D'420'%20viewBox%3D'0%200%20420%20420'%3E%3Cfilter%20id%3D'f'%3E%3CfeTurbulence%20type%3D'fractalNoise'%20baseFrequency%3D'.011'%20numOctaves%3D'3'%20seed%3D'7'%20stitchTiles%3D'stitch'%2F%3E%3CfeColorMatrix%20values%3D'0%200%200%200%201%200%200%200%200%201%200%200%200%200%201%200%200%200%201.1%20-.55'%2F%3E%3C%2Ffilter%3E%3Crect%20width%3D'420'%20height%3D'420'%20filter%3D'url(%23f)'%20opacity%3D'.10'%2F%3E%3C%2Fsvg%3E\")",
+      "--orn-brush": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'170'%20height%3D'12'%20viewBox%3D'0%200%20170%2012'%3E%3Cpath%20d%3D'M3%207C40%202%20100%202.5%20167%204.5L166%206.5C105%206%2050%207.5%205%2010.5Z'%20fill%3D'%23EDEEF0'%20fill-opacity%3D'.85'%2F%3E%3C%2Fsvg%3E\")",
+      "--orn-claw": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'14'%20height%3D'14'%20viewBox%3D'0%200%2014%2014'%3E%3Cg%20fill%3D'%2384A0C8'%3E%3Cpath%20d%3D'M4.6%201C4%205%203.1%209%201.4%2013.2C2.9%209.6%204.4%206%205.4%201.2Z'%2F%3E%3Cpath%20d%3D'M8.6%20.6C8%204.8%207.1%209%205.4%2013.6C6.9%209.8%208.4%206%209.4%20.8Z'%2F%3E%3Cpath%20d%3D'M12.6%201C12%205%2011.1%209%209.4%2013.2C10.9%209.6%2012.4%206%2013.4%201.2Z'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E\")"
+    },
+    "hunyuan": {
+      "--pat-main": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'130'%20height%3D'130'%20viewBox%3D'0%200%20130%20130'%3E%3Cg%20fill%3D'%237FB3E0'%3E%3Ccircle%20cx%3D'14'%20cy%3D'20'%20r%3D'2'%20fill-opacity%3D'.28'%2F%3E%3Ccircle%20cx%3D'70'%20cy%3D'12'%20r%3D'1.3'%20fill-opacity%3D'.22'%2F%3E%3Ccircle%20cx%3D'110'%20cy%3D'44'%20r%3D'2.4'%20fill-opacity%3D'.24'%2F%3E%3Ccircle%20cx%3D'44'%20cy%3D'70'%20r%3D'1.4'%20fill-opacity%3D'.2'%2F%3E%3Ccircle%20cx%3D'92'%20cy%3D'96'%20r%3D'1.8'%20fill-opacity%3D'.26'%2F%3E%3Ccircle%20cx%3D'20'%20cy%3D'112'%20r%3D'1.2'%20fill-opacity%3D'.2'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E\")",
+      "--pat-side": "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'90'%20height%3D'90'%20viewBox%3D'0%200%2090%2090'%3E%3Cg%20fill%3D'%23FFFFFF'%3E%3Ccircle%20cx%3D'12'%20cy%3D'14'%20r%3D'1.4'%20fill-opacity%3D'.4'%2F%3E%3Ccircle%20cx%3D'58'%20cy%3D'8'%20r%3D'1'%20fill-opacity%3D'.3'%2F%3E%3Ccircle%20cx%3D'76'%20cy%3D'44'%20r%3D'1.7'%20fill-opacity%3D'.35'%2F%3E%3Ccircle%20cx%3D'30'%20cy%3D'54'%20r%3D'1'%20fill-opacity%3D'.25'%2F%3E%3Ccircle%20cx%3D'54'%20cy%3D'80'%20r%3D'1.3'%20fill-opacity%3D'.35'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E\")"
+    }
+  }
+}

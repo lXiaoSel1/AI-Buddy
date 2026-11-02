@@ -1,3 +1,4 @@
+import {assertR95DatabaseCompatible} from './r95-data-compatibility.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {mkdirSync} from 'node:fs';
 import {dirname} from 'node:path';
@@ -6,14 +7,20 @@ import {dirname} from 'node:path';
 // and the existing session/status summaries may remain in JavaScript.
 export class UsageRepository {
  constructor(path){
-  mkdirSync(dirname(path),{recursive:true});this.db=new DatabaseSync(path);this.path=path;this.buffer=new Map();this.bufferBytes=0;
+  assertR95DatabaseCompatible(path,{versions:[2,3],writer:'r95-usage-v3'});mkdirSync(dirname(path),{recursive:true});this.db=new DatabaseSync(path);this.path=path;this.buffer=new Map();this.bufferBytes=0;
+  // Reject newer writers before any journal/schema changes or pending-row cleanup.
+  if(this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'").get()){
+   const raw=this.db.prepare("SELECT value FROM meta WHERE key='schemaVersion'").get();
+   if(raw){const version=JSON.parse(raw.value);if(![2,3].includes(version)){this.db.close();throw Error('Unsupported usage database version: '+version);}}
+  }
   this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
    CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
    CREATE TABLE IF NOT EXISTS facts(kind TEXT NOT NULL,key TEXT NOT NULL,grp TEXT NOT NULL,time REAL NOT NULL,seq INTEGER PRIMARY KEY AUTOINCREMENT,value TEXT NOT NULL,UNIQUE(kind,key));
    CREATE INDEX IF NOT EXISTS facts_group ON facts(kind,grp,time,seq);
    CREATE TABLE IF NOT EXISTS pending(kind TEXT NOT NULL,key TEXT NOT NULL,grp TEXT NOT NULL,time REAL NOT NULL,value TEXT NOT NULL,PRIMARY KEY(kind,key));
    CREATE TABLE IF NOT EXISTS changes(kind TEXT NOT NULL,grp TEXT NOT NULL,PRIMARY KEY(kind,grp));`);
-  const schema=this.meta('schemaVersion');if(schema!==undefined&&schema!==2){this.db.close();throw Error('Unsupported usage database version: '+schema);}this.meta('schemaVersion',2);
+  const schema=this.meta('schemaVersion');if(schema!==undefined&&![2,3].includes(schema)){this.db.close();throw Error('Unsupported usage database version: '+schema);}this.meta('schemaVersion',3);this.meta('minimumWriter','r95-usage-v3');
+  if(schema===2)this.meta('r95Migration',{from:2,to:3,at:Date.now(),historicalRewards:'baseline-only'});
   // Unpublished rows have no committed file cursor. Replay from the last cursor.
   this.db.exec('DELETE FROM pending');
   this.db.function('buddy_locale_compare',{deterministic:true},(a,b)=>String(a).localeCompare(String(b)));

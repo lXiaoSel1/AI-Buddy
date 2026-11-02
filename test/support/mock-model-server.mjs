@@ -4,14 +4,15 @@ export async function mockModelServer(){
  const server=createServer(async(req,res)=>{
   let raw='';for await(const part of req)raw+=part;
   const body=raw?JSON.parse(raw):null,path=req.url,protocol=path.includes('/chat/completions')?'chat-completions':path.includes('/responses')?'responses':path.includes(':streamGenerateContent')?'gemini':'anthropic';
-  requests.push({method:req.method,path,body,headers:req.headers,protocol});
+  const entry={method:req.method,path,body,headers:req.headers,protocol};requests.push(entry);
   if(req.method==='GET'){res.setHeader('content-type','application/json');res.end(JSON.stringify(path.includes('/gemini/')?{models:[{name:'models/fixture',supportedGenerationMethods:['generateContent']}]}:{data:[{id:'fixture'}]}));return;}
   const system=body?.instructions??body?.system??body?.systemInstruction?.parts?.[0]?.text??body?.messages?.find(m=>m.role==='system')?.content??'';
-  const purpose=/情绪分类器/.test(system)?'emotion':/选项生成器/.test(system)?'choices':/三幕|acts/.test(system)?'story':'chat';
-  const selectedFailure=typeof failure==='function'?failure({purpose,body,path}):failure;
+  const purpose=/评估你自己当前持续心情/.test(system)?'mood':/情绪分类器/.test(system)?'emotion':/选项生成器/.test(system)?'choices':/三幕|acts/.test(system)?'story':'chat';
+  entry.purpose=purpose;
+ const selectedFailure=typeof failure==='function'?failure({purpose,body,path}):failure;
   if(selectedFailure?.status){res.writeHead(selectedFailure.status,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'PRIVATE_KEY_SHOULD_NEVER_BE_EXPOSED'}}));return;}
   if(delay)await new Promise(r=>setTimeout(r,delay));if(res.destroyed)return;
-  let text=purpose==='emotion'?'cheerful':purpose==='choices'?JSON.stringify({positive:'再聊一会吧',neutral:'说说今天吧',negative:'我先忙一下'}):'你好呀，今天也一起加油。';
+  let text=purpose==='mood'?JSON.stringify({changed:false}):purpose==='emotion'?'cheerful':purpose==='choices'?JSON.stringify({positive:'再聊一会吧',neutral:'说说今天吧',negative:'我先忙一下'}):'你好呀，今天也一起加油。';
   if(purpose==='story'){
    const ids=[...system.matchAll(/^- ([a-z]+)（/gm)].map(v=>v[1]);
    const cast=[...new Set(ids)].slice(0,3);while(cast.length<3)cast.push(['deepseek','kimi','gemini'][cast.length]);

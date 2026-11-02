@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "ai-buddy-official",
+  "name": "AI Buddy 官方预览扩展源",
+  "catalogUrl": "https://raw.githubusercontent.com/lXiaoSel1/AI-Buddy-Extensions/main/catalog.json",
+  "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFLmFoAgOaffTLAwNJ+U1v0MK4iaTHbMZ+BjaidVla05",
+  "keyId": "ai-buddy-release",
+  "repositoryUrl": "https://github.com/lXiaoSel1/AI-Buddy-Extensions",
+  "feedbackUrl": "https://github.com/lXiaoSel1/AI-Buddy-Extensions/issues"
+}

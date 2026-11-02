@@ -1,5 +1,5 @@
 import {readFileSync,readdirSync,statSync} from 'node:fs';
-import {join,isAbsolute} from 'node:path';
+import {join,isAbsolute,dirname} from 'node:path';
 import {homedir} from 'node:os';
 import {execFile} from 'node:child_process';
 import {t} from './i18n.mjs';
@@ -9,9 +9,10 @@ const file=path=>{try{return !!path&&statSync(path).isFile();}catch{return false
 function directories(path){try{return readdirSync(path,{withFileTypes:true}).filter(x=>x.isDirectory()).map(x=>join(path,x.name)).sort((a,b)=>statSync(b).mtimeMs-statSync(a).mtimeMs||b.localeCompare(a));}catch{return [];}}
 function npmCandidates(base,arch){const target=arch==='arm64'?'aarch64-pc-windows-msvc':'x86_64-pc-windows-msvc',platform=arch==='arm64'?'arm64':'x64';return [join(base,'node_modules/@openai/codex/node_modules/@openai/codex-win32-'+platform+'/vendor',target,'bin/codex.exe'),join(base,'node_modules/@openai/codex/node_modules/@openai/codex-win32-'+platform+'/vendor',target,'codex/codex.exe'),join(base,'node_modules/@openai/codex/vendor',target,'codex/codex.exe')];}
 function installedCandidates(folder){return [join(folder,'app/resources/codex.exe'),join(folder,'resources/codex.exe')];}
-export function codexBinary({root,env=process.env,explicit,arch=process.arch,registeredInstallations=[]}={}){
+const completeSearchRuntime=binary=>file(join(dirname(binary),'codex-code-mode-host.exe'));
+export function codexBinary({root,env=process.env,explicit,arch=process.arch,registeredInstallations=[],requireSearchHost=false}={}){
  const chosen=explicit||env.AI_BUDDY_CODEX_PATH;
- if(chosen)return isAbsolute(chosen)&&file(chosen)&&/\.exe$/i.test(chosen)?chosen:null;
+ if(chosen)return isAbsolute(chosen)&&file(chosen)&&/\.exe$/i.test(chosen)&&(!requireSearchHost||completeSearchRuntime(chosen))?chosen:null;
  const home=env.USERPROFILE||env.HOME||homedir(),local=env.LOCALAPPDATA||join(home,'AppData/Local'),roaming=env.APPDATA||join(home,'AppData/Roaming');
  const desktop=join(local,'OpenAI/Codex/bin');
  let recorded;try{recorded=root&&JSON.parse(readFileSync(join(root,'local/receipts/runtime-paths.json'),'utf8')).codex;}catch{}
@@ -19,7 +20,8 @@ export function codexBinary({root,env=process.env,explicit,arch=process.arch,reg
  const candidates=[...registeredInstallations.flatMap(installedCandidates),...directories(desktop).map(dir=>join(dir,'codex.exe')),
   ...[join(local,'Programs/Codex'),join(local,'Programs/OpenAI/Codex'),join(local,'Codex'),...(env.ProgramFiles?[join(env.ProgramFiles,'Codex')]:[])].flatMap(installedCandidates),
   ...paths.filter(isAbsolute).map(dir=>join(dir,'codex.exe')),...npmCandidates(join(roaming,'npm'),arch),...paths.filter(isAbsolute).flatMap(dir=>npmCandidates(dir,arch)),recorded];
- return candidates.find(path=>path&&isAbsolute(path)&&file(path))||null;
+ const installed=candidates.filter(path=>path&&isAbsolute(path)&&file(path));
+ return installed.find(completeSearchRuntime)??(requireSearchHost?null:installed[0])??null;
 }
 // Query the current user's registered app only, never scan WindowsApps recursively.
 export function registeredCodexInstallations(env=process.env){
@@ -34,5 +36,6 @@ export async function resolveCodexBinary(options={}){
  const local=codexBinary(options);if(local)return local;
  const env=options.env||process.env;
  if(!options.explicit&&!env.AI_BUDDY_CODEX_PATH){const registered=await (options.discoverRegistered||registeredCodexInstallations)(env),found=codexBinary({...options,registeredInstallations:registered});if(found)return found;}
+ if(options.requireSearchHost&&codexBinary({...options,requireSearchHost:false}))throw Object.assign(Error(t('当前 Codex 安装缺少联网搜索组件，请选择完整的 Codex 安装。')),{code:'CODEX_SEARCH_HOST_MISSING'});
  throw codexRuntimeError({code:'CODEX_NOT_FOUND'});
 }

@@ -1,0 +1,13 @@
+{
+  "name": "@ai-buddy-examples/native-tool-page",
+  "version": "0.1.0",
+  "description": "A native DSH tool and client page author template",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {".": "./lib/index.js", "./client": "./lib/client.js", "./package.json": "./package.json"},
+  "files": ["lib", "src", "cordis.patch.yml", "README.md", "LICENSE.md"],
+  "license": "SEE LICENSE IN LICENSE.md",
+  "engines": {"dsh": "0.2.1-rc.3"},
+  "scripts": {"build": "node build.mjs"},
+  "dsh": {"bundle": {"patch": "./cordis.patch.yml"}, "client": {"inject": ["@deepseek-ai/dsh-client-ui-layout", "@deepseek-ai/dsh-client-ui-sidebar"], "platform": "web"}}
+}

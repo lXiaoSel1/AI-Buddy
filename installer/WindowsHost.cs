@@ -71,12 +71,13 @@ public sealed class WindowsHost(string? rootsFile=null,TimeSpan? exitTimeout=nul
         var onboarding=value.TryGetProperty("onboarding",out var o)&&o.ValueKind==JsonValueKind.True;
         var safe=value.TryGetProperty("safeMode",out var s)&&s.ValueKind==JsonValueKind.True;
         var failure=value.TryGetProperty("startupFailure",out var f)&&f.ValueKind!=JsonValueKind.Null?f.Clone():(JsonElement?)null;
+        var components=value.TryGetProperty("components",out var c)&&c.ValueKind==JsonValueKind.Object?c.Clone():(JsonElement?)null;
         if(importVerification&&(onboarding||ready&&(safe||failure is not null)))throw new IOException("Imported profile did not start normally (safe mode or empty welcome); the previous profile will be restored");
-        if(ready&&!onboarding)return new(safe,failure);
+        if(ready&&!onboarding)return new(safe,failure,Components:components);
         // Welcome is deliberately not game-ready: no business save is initialized
         // until the user chooses create/import. It is nevertheless a healthy
         // completed program launch for a genuinely fresh ordinary installation.
-        if(!importVerification&&installed.DataInitialized!=true&&onboarding&&!safe&&failure is null)return new(false,null,true);
+        if(!importVerification&&installed.DataInitialized!=true&&onboarding&&!safe&&failure is null)return new(false,null,true,components);
         return null;
     }
     async Task StartCore(string root,Installation installed,string? importId,CancellationToken cancel) {

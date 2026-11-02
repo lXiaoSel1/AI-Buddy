@@ -89,5 +89,5 @@ test('public archive preview never returns another Persona private raw lines via
   const b=(await game.action('companion-persona-save',{name:'Fixture B'})).persona;await game.action('companion-persona-select',{id:b.id});await game.action('chat',{text:'persona-B-private-never-preview-to-A-79231'});await presentedState(game);
   const saved=(await game.action('companion-life-save',{characterId:card.id})).archive;await game.action('companion-persona-select',{id:'default'});const preview=(await game.action('companion-life-preview',{id:saved.id})).preview;
   assert.equal(preview.conversations.every(row=>row.personaId==='default'),true);assert.equal(JSON.stringify(preview).includes('persona-A-raw-visible'),true);assert.equal(JSON.stringify(preview).includes('persona-B-private-never-preview-to-A-79231'),false);assert.equal(preview.life.memory,undefined);
- }finally{game.close();}
+ }finally{await game.close();}
 });

@@ -215,11 +215,11 @@ export class VideoSequenceRenderer{
    if(slot.seekPending&&state.shown)return false;
    image=slot.video;shownFrame=videoSourceFrameAt(clip,slot.mediaMs+.1);key='video/'+state.resource+'/'+slot.serial;
   }
-  const surface=this.fallback.targetState(target);key+='/'+target.width+'/'+target.height;
+  const surface=this.fallback.targetState(target);key+='/'+target.width+'/'+target.height+(sample.reducedMotion?'/reduced-motion':'');
   state.actionId=sample.actionId;state.lastElapsed=elapsed;
   if(!force&&state.drawKey===key&&surface.key===key)return false;
   surface.ctx.clearRect(0,0,target.width,target.height);if(region)surface.ctx.drawImage(image,region.x,region.y,region.width,region.height);else surface.ctx.drawImage(image,0,0,target.width,target.height);surface.key=key;state.drawKey=key;state.alpha=null;this.videoDraws++;
-  state.shown={...sample,displayedSequenceFrame:shownFrame,displayedTargetId:state.id,decodedMediaMs:slot.mediaMs};return true;
+  state.shown={...sample,displayedSequenceFrame:shownFrame,displayedTargetId:state.id,decodedMediaMs:slot.mediaMs,displayedSource:stillMode?'still':'video',displayedResource:state.resource,displayedReducedMotion:sample.reducedMotion===true};return true;
  }
  displayedSample(target){return this.targets.get(target)?.shown??null;}
  alpha(sample,x,y){

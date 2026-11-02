@@ -7,9 +7,12 @@ import {createSnapshotStorage,readJson} from './storage.mjs';
 import {MODEL_PRESETS,API_PROTOCOLS,presetFor,apiBaseUrl,localEndpoint} from './model-presets.mjs';
 import {ApiTransport} from './api-transport.mjs';
 import {profileEffort,validateProfileEffort,cleanModelCatalog} from './reasoning-settings.mjs';
+import {nativeSearchCapability,nativeSearchSystem} from './native-search.mjs';
+import {imageInputCapability} from './model-images.mjs';
 export class ModelRouter{
-  constructor({codex,dataRoot,crypto,legacy=false,onChange=()=>{},onUsage=()=>{},onActivity=()=>{},audit=()=>{},fetchImpl,timeoutMs=110000,storeName='model-connections.json',presets=MODEL_PRESETS,protocols=API_PROTOCOLS,outputLimit=()=>8192}){
-    Object.assign(this,{codex,dataRoot,crypto,onChange,onActivity,audit,timeoutMs,presets,protocols,outputLimit});this.store=createSnapshotStorage(join(dataRoot,storeName));this.enabled=false;this.activeTurns=0;this.controllers=new Set();this.context=new AsyncLocalStorage();this.tail=Promise.resolve();this.transport=new ApiTransport({fetchImpl,onUsage,audit});
+  get supportsSubmissionLifecycle(){return true;}
+  constructor({codex,dataRoot,crypto,legacy=false,onChange=()=>{},onUsage=()=>{},onActivity=()=>{},audit=()=>{},fetchImpl,timeoutMs=110000,storeName='model-connections.json',presets=MODEL_PRESETS,protocols=API_PROTOCOLS,outputLimit=()=>8192,searchPolicy=()=>false,onNativeSearch=()=>{}}){
+    Object.assign(this,{codex,dataRoot,crypto,onChange,onActivity,audit,timeoutMs,presets,protocols,outputLimit,searchPolicy,onNativeSearch});this.store=createSnapshotStorage(join(dataRoot,storeName));this.enabled=false;this.activeTurns=0;this.controllers=new Set();this.context=new AsyncLocalStorage();this.tail=Promise.resolve();this.transport=new ApiTransport({fetchImpl,onUsage,audit});
     this.ready=readJson(this.store,null).then(async value=>{this.state=value??{version:1,activeId:legacy?'codex':null,profiles:legacy?[{id:'codex',kind:'codex',name:'本机 Codex 登录',protocol:'codex',baseUrl:'',model:codex.defaultModel,models:[]}]:[]};if(!value)await this.store.writeText(JSON.stringify(this.state));return this;});
   }
   selected(){return this.context.getStore()?.profile??this.state?.profiles.find(profile=>profile.id===this.state.activeId)??null;}
@@ -59,6 +62,10 @@ export class ModelRouter{
     if(Number.isSafeInteger(declared)&&declared>=2048&&declared<=2000000)return {tokens:declared,source:'model-catalog',verified:true};
     return defaultContextCapacity();
   }
+  captureConnection(binding){return structuredClone(binding?.enabled?this.state.profiles.find(p=>p.id===binding.connectionId):this.selected());}
+  resolveSearchCapability(binding){const profile=binding?.enabled?this.state?.profiles.find(p=>p.id===binding.connectionId):this.selected();return nativeSearchCapability(profile??{});}
+  resolveImageCapability(binding){return imageInputCapability(this.captureConnection(binding));}
+  async runCaptured(profile,fn,signal,{background=false}={}){await this.ready;if(!profile)throw Error('聊天连接不存在');return this.scheduleTurn(profile,fn,background?1:0,signal);}
   async runProfile(id,fn,signal,{background=false}={}){await this.ready;const profile=this.state.profiles.find(p=>p.id===id);if(!profile)throw Error('角色关联的聊天连接不存在');const route=this.resolveConnection({enabled:true,connectionId:id});if(route.error)throw Error(route.error);return this.scheduleTurn(profile,fn,background?1:0,signal);}
   async runBackground(profile,fn,signal){await this.ready;return this.scheduleTurn(profile,fn,1,signal);}
   // One serial lane per connection: a background job on one provider never
@@ -68,32 +75,47 @@ export class ModelRouter{
     const captured=structuredClone(profile);this.materialize(captured);
     this.lanes??=new Map();const key=captured.id??captured.kind??'default';let lane=this.lanes.get(key);if(!lane)this.lanes.set(key,lane={queue:[],running:false,executing:null});
     this.activeTurns++;this.onChange(this.view());
-    return new Promise((resolve,reject)=>{lane.queue.push({profile:captured,fn,priority,signal,resolve,reject});queueMicrotask(()=>this.pumpTurns(lane));});
+    // Capture every caller ALS (activity, privacy and budget), then select the
+    // frozen connection inside that context. The lane pump belongs to whichever
+    // request started it and must not lend that request's scope to queued work.
+    const execute=AsyncLocalStorage.bind(()=>this.context.run({profile:this.materialize(captured)},fn));
+    return new Promise((resolve,reject)=>{lane.queue.push({profile:captured,execute,priority,signal,resolve,reject});queueMicrotask(()=>this.pumpTurns(lane));});
   }
   async pumpTurns(lane){
     if(lane.running)return;lane.running=true;
     try{while(lane.queue.length){lane.queue.sort((a,b)=>a.priority-b.priority);const turn=lane.queue.shift();lane.executing=turn.profile.id;
-      try{if(turn.signal?.aborted)throw Error('主题准备已取消');turn.resolve(await this.context.run({profile:this.materialize(turn.profile)},turn.fn));}catch(error){turn.reject(error);}finally{lane.executing=null;this.activeTurns--;this.onChange(this.view());}
+      try{if(turn.signal?.aborted)throw Error('主题准备已取消');turn.resolve(await turn.execute());}catch(error){turn.reject(error);}finally{lane.executing=null;this.activeTurns--;this.onChange(this.view());}
     }}finally{lane.running=false;}
   }
   requestController(signal,timeout=this.timeoutMs){const controller=new AbortController(),abort=()=>controller.abort();if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});const timer=setTimeout(abort,timeout);this.controllers.add(controller);return {controller,dispose:()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);this.controllers.delete(controller);}};}
   async *stream(options){
+    options={...this.requestContext?.getStore(),...options};
     await this.ready;if(!this.enabled)throw Error('联网聊天已关闭');const profile=this.materialize(this.selected());const request=this.requestController(options.signal);
-    const activityId='chat:'+randomUUID();this.onActivity({id:activityId,active:true,kind:options.purpose==='cg-theme'?'cg-theme':'chat'});
-    try{if(profile.kind==='codex'){this.codex.setEnabled(true);yield* this.codex.stream({...options,connectionIdentity:connectionIdentity(profile),model:profile.model,reasoningEffort:profileEffort(profile),signal:request.controller.signal});}else yield* this.streamWithRetry(profile,options,request.controller.signal);}finally{request.controller.abort();request.dispose();this.onActivity({id:activityId,active:false,kind:'chat'});}
+    const activityId='chat:'+randomUUID(),activity={id:activityId,kind:options.purpose==='cg-theme'?'cg-theme':'chat',purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId};this.onActivity({...activity,active:true});
+    try{
+      const selectedPolicy=options.singleSubmission===true?false:await this.searchPolicy({profile:this.publicProfile(profile),purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId}),policy=selectedPolicy===true?{allowed:true}:selectedPolicy&&typeof selectedPolicy==='object'?selectedPolicy:{allowed:false},capability=nativeSearchCapability(profile);
+      // Only the Core callback grants this lane; serializable caller fields do not. A granted turn's prompt says
+      // so plainly and no longer carries the companion rule's blanket tool ban (nativeSearchSystem).
+      const allowed=policy.allowed===true&&capability.supported,scoped={...options,nativeSearch:allowed?{allowed:true,check:policy.check}:undefined,...(allowed?{system:nativeSearchSystem(options.system)}:{})};
+      if(policy.allowed===true&&!capability.supported){yield {type:'native-search-status',status:'unavailable',capability,reason:capability.reason};if(policy.required)throw Object.assign(Error(capability.reason),{code:'NATIVE_SEARCH_UNAVAILABLE'});scoped.system=(options.system??'')+'\n当前连接的原生联网能力尚未可用。本次不能声称已经联网核实；需要时明确说明未完成核验。';}
+      if(profile.kind==='codex'){this.codex.setEnabled(true);const args={...scoped,connectionIdentity:connectionIdentity(profile),model:profile.model,reasoningEffort:profileEffort(profile),signal:request.controller.signal};yield* this.observeNativeSearch(this.codex.streamForConnection?this.codex.streamForConnection(profile.id,args):this.codex.stream(args),scoped);}else yield* this.observeNativeSearch(this.streamWithRetry(profile,scoped,request.controller.signal),scoped);
+    }finally{request.controller.abort();request.dispose();this.onActivity({...activity,active:false});}
   }
+  withRequestContext(metadata,fn){this.requestContext??=new AsyncLocalStorage();return this.requestContext.run(metadata,fn);}
+  withFrozenBudget({outputLimit,contextTokens},fn){if(outputLimit!=='auto'&&(!Number.isSafeInteger(outputLimit)||outputLimit<256||outputLimit>65536)||!Number.isSafeInteger(contextTokens)||contextTokens<2048||contextTokens>2000000)throw Error('Invalid captured request budget');this.budgetContext??=new AsyncLocalStorage();return this.budgetContext.run(Object.freeze({outputLimit,contextTokens}),fn);}
+  async *observeNativeSearch(stream,options){for await(const chunk of stream){if(chunk.type?.startsWith('native-search-'))this.onNativeSearch?.({activityOriginId:options.activityOriginId,scope:options.scope,event:structuredClone(chunk)});yield chunk;}}
   // Output limit for one request: the user's setting ('auto' or 256-65536) for
   // callers that follow it, never below the caller's own floor, and never above
   // the model's declared output limit, 65536 or what the context window leaves.
   outputCeiling(profile,options){
     const model=profile.models?.find(m=>m.id===profile.model||m.model===profile.model),declared=Number(model?.maxOutputTokens??model?.max_output_tokens??model?.outputTokenLimit)||65536;
-    const capacity=this.resolveContextCapacity({enabled:true,connectionId:profile.id}).tokens,input=Buffer.byteLength(JSON.stringify([options.system??'',options.messages??[]]),'utf8')+12;
+    const capacity=this.budgetContext?.getStore()?.contextTokens??this.resolveContextCapacity({enabled:true,connectionId:profile.id}).tokens,input=Buffer.byteLength(JSON.stringify([options.system??'',options.messages??[]]),'utf8')+12;
     return Math.min(declared,65536,Math.max(256,capacity-input-64));
   }
   outputBudget(profile,options){
     if(!options.userLimit)return options.maxTokens;
     const ceiling=this.outputCeiling(profile,options);
-    const setting=this.outputLimit();
+    const setting=this.budgetContext?.getStore()?.outputLimit??this.outputLimit();
     if(setting==='auto')return 'auto';
     return Math.max(1,Math.min(Math.max(Number(setting)||8192,Number(options.maxTokens)||0),ceiling));
   }
@@ -103,11 +125,13 @@ export class ModelRouter{
     let maxTokens=this.outputBudget(profile,options);const started=Date.now();
     for(let attempt=0;;attempt++){
       const parts=[];let finish=null;
-      for await(const part of this.transport.stream(profile,{...options,maxTokens,signal}))if(part.type==='finish')finish=part;else parts.push(part);
+      let delivered=false,searchUsed=false;
+      for await(const part of this.transport.stream(profile,{...options,maxTokens,signal}))if(part.type==='finish')finish=part;else{searchUsed||=part.type==='native-search-tool'||part.type==='native-search-sources';if(options.incremental){delivered||=part.type==='text-delta'&&!!part.text;yield part;}else parts.push(part);}
       if(finish?.reason?.kind!=='length'){yield* parts;if(finish)yield finish;return;}
       this.audit({type:'model-output-truncated',profileId:profile.id,model:profile.model,purpose:options.purpose??'galgame',maxTokens,attempt});
+      if(delivered||searchUsed)throw Object.assign(Error('回复被截断：已显示部分及实际检索记录保留，请重试或继续提问'),{code:'MODEL_OUTPUT_TRUNCATED',partial:delivered});
       // A retry needs time: past half the request timeout it would only be cut off.
-      if(attempt>=1||Date.now()-started>this.timeoutMs/2)throw Object.assign(Error('回复被截断：模型输出达到上限，可以调高通用设置里的“模型最多输出”后重试'),{code:'MODEL_OUTPUT_TRUNCATED'});
+      if(options.singleSubmission===true||attempt>=1||Date.now()-started>this.timeoutMs/2)throw Object.assign(Error('回复被截断：模型输出达到上限，可以调高通用设置里的“模型最多输出”后重试'),{code:'MODEL_OUTPUT_TRUNCATED'});
       const ceiling=this.outputCeiling(profile,options);
       maxTokens=maxTokens==='auto'?Math.min(16384,ceiling):Math.min(ceiling,Math.max(256,(Number(maxTokens)||2048)*2));
     }

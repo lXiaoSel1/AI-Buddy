@@ -24,8 +24,10 @@ export const GalgameDesignCSS=`
 .gx-net{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 5px 0 12px;border-radius:999px;font-size:var(--buddy-fs-sm);color:var(--buddy-dlg-text);background:color-mix(in srgb,var(--buddy-dlg-bg) 80%,transparent);box-shadow:inset 0 0 0 1px var(--buddy-dlg-border);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);white-space:nowrap}
 .gx-net>.ui-icon{color:var(--buddy-dlg-muted)}
 .gx-net .ui-switch{width:34px;height:20px}.gx-net .ui-switch::after{width:14px;height:14px}.gx-net .ui-switch[aria-checked=true]::after{left:17px}
-.gx-tools{display:flex;flex-wrap:wrap;align-items:center;gap:2px;max-width:100%;padding:3px;border-radius:12px;background:color-mix(in srgb,var(--buddy-dlg-bg) 74%,transparent);box-shadow:inset 0 0 0 1px var(--buddy-dlg-border);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
-.gx-tb{position:relative;display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:0;border-radius:9px;background:none;font:inherit;font-size:var(--buddy-fs-sm);color:var(--buddy-dlg-text);white-space:nowrap;cursor:pointer}
+.gx-tools{box-sizing:border-box;display:flex;flex-wrap:wrap;align-items:center;gap:2px;max-width:100%;padding:3px;border-radius:12px;background:color-mix(in srgb,var(--buddy-dlg-bg) 74%,transparent);box-shadow:inset 0 0 0 1px var(--buddy-dlg-border);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.gx-tools>*{flex-shrink:0}
+.gx-tools .whg-chip-wrap{max-width:100%;flex:0 0 auto}
+.gx-tb{flex-shrink:0;position:relative;display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:0;border-radius:9px;background:none;font:inherit;font-size:var(--buddy-fs-sm);color:var(--buddy-dlg-text);white-space:nowrap;cursor:pointer}
 .gx-tb>.ui-icon{color:var(--buddy-dlg-muted)}
 .gx-tb:hover,.gx-tb.open{background:color-mix(in srgb,var(--buddy-dlg-text) 12%,transparent)}
 .gx-tb[aria-pressed=true]{background:color-mix(in srgb,var(--buddy-accent) 22%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--buddy-accent) 48%,transparent)}
@@ -67,6 +69,10 @@ export const GalgameDesignCSS=`
 .gx-ta{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;padding:7px 12px 6px;border-radius:12px;background:color-mix(in srgb,var(--buddy-dlg-text) 6%,var(--buddy-dlg-bg));box-shadow:inset 0 0 0 1px var(--buddy-dlg-border);cursor:text}
 .gx-ta:focus-within{box-shadow:inset 0 0 0 1px var(--buddy-accent),0 0 0 3px color-mix(in srgb,var(--buddy-accent) 22%,transparent)}
 .gx-ta.dis{opacity:.6}
+.galgame-page .whg-panel .gx-ta.gx-compact{padding:8px 12px;justify-content:center}
+.galgame-page .whg-panel .gx-ta.gx-compact .whg-input{field-sizing:content;flex:none;width:100%;min-height:1.5em;max-height:4.5em;overflow-y:auto;box-sizing:border-box}
+.galgame-page .whg-root-tab .whg-panel.gx-dlg{gap:8px}
+.galgame-page .whg-panel .gx-say:has(.gx-compact){flex:none;min-height:38px}
 .galgame-page .whg-panel .gx-ta .whg-input,.gx-ta .whg-input{flex:1;min-height:22px;padding:0;border:0;border-radius:0;background:none;color:var(--buddy-dlg-text);font:inherit;font-size:var(--buddy-fs-body);line-height:1.5;resize:none;outline:0;box-shadow:none}
 .gx-ta .whg-input::placeholder{color:var(--buddy-dlg-muted)}
 .gx-ta>small{align-self:flex-end;font-size:11px;color:var(--buddy-dlg-muted)}
@@ -172,7 +178,7 @@ button.gx-back:hover{text-decoration:underline;text-underline-offset:3px}
 .gx-acts{display:flex;gap:8px;flex-wrap:wrap}
 .gx-detail .whg-gallery-prompt{margin:0;padding:8px 12px 10px 36px;font-size:var(--buddy-fs-cap);color:var(--buddy-muted);white-space:pre-wrap;overflow-wrap:anywhere}
 /* CG progress toast, reward dialog, whole-page states */
-.whg-toast.gx-toast{position:absolute;z-index:30;left:auto;top:auto;right:16px;bottom:16px;transform:none;display:flex;gap:12px;align-items:flex-start;width:min(350px,calc(100% - 32px));padding:12px 12px 12px 14px;border:0;border-radius:12px;background:var(--buddy-surface);color:var(--buddy-text);box-shadow:0 0 0 1px var(--buddy-border),0 16px 32px -14px rgba(0,0,0,.55);font-size:var(--buddy-fs-sm);cursor:default}
+.whg-toast.gx-toast{box-sizing:border-box;overflow-wrap:anywhere;position:absolute;z-index:30;left:auto;top:auto;right:16px;bottom:16px;transform:none;display:flex;gap:12px;align-items:flex-start;width:min(350px,calc(100% - 32px));padding:12px 12px 12px 14px;border:0;border-radius:12px;background:var(--buddy-surface);color:var(--buddy-text);box-shadow:0 0 0 1px var(--buddy-border),0 16px 32px -14px rgba(0,0,0,.55);font-size:var(--buddy-fs-sm);cursor:default}
 .gx-toast>.ui-icon,.gx-toast>.ui-spinner{flex:none;margin-top:1px}
 .gx-toast>.ui-spinner{color:var(--buddy-accent)}
 .gx-toast>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}

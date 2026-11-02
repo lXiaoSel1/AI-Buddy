@@ -4,7 +4,10 @@ export function interactionPresentation(value,{now=Date.now(),speed=.75,hasClip=
   const elapsed=nativeElapsed(value);
   const motion=value.motion??{},motionElapsed=nativeElapsed(motion);
   let id=null,at=0,hold=false,staticFrame=null,playing=true;
-  if(['pressed','dragging','flying','landing','charging'].includes(motion.mode)){
+  // A light press wakes her without briefly replacing the sleep/wake clip
+  // with the ordinary grab pose. Real movement still belongs to physics.
+  const wakingPress=motion.mode==='pressed'&&['sleep-enter','asleep','waking'].includes(value.phase);
+  if(!wakingPress&&['pressed','dragging','flying','landing','charging'].includes(motion.mode)){
     hold=true;at=motionElapsed;
     // A thrown pet is already off the ground: the hold shows throw-loop frame 0, and the
     // flight continues that loop from there. The standing throw-start would snap back to the floor.
@@ -17,6 +20,27 @@ export function interactionPresentation(value,{now=Date.now(),speed=.75,hasClip=
     if(id!=='sleep-loop')at=Math.min(at,cycle(id)-.01);
   }
   return {id:hasClip(id)?id:null,elapsed:at,hold,staticFrame,playing,readyScope:['flying','landing'].includes(motion.mode)?'motion':'sleep',animationEpoch:['flying','landing'].includes(motion.mode)?motion.animationEpoch:value.animationEpoch,animationWaiting:['flying','landing'].includes(motion.mode)?motion.animationWaiting:value.animationWaiting,missing:id&&!hasClip(id)?id:null,asleep:value.phase==='asleep',motion:motion.mode};
+}
+
+// One contract for the renderer's first-frame acknowledgement and its owner
+// in the main process. A decoder belonging to a hidden or unrelated action
+// must not start (or fail) another transition's animation clock.
+export function expectedInteractionTransition(value){
+  if(!value)return null;
+  const motion=value.motion??{};
+  if(['flying','landing'].includes(motion.mode)){
+    if(motion.animationWaiting!==true||!Number.isSafeInteger(motion.animationEpoch)||motion.animationEpoch<0)return null;
+    return {id:motion.mode==='flying'?'throw-loop':'land-recover',scope:'motion',epoch:motion.animationEpoch};
+  }
+  if(['dragging','charging'].includes(motion.mode)||value.animationWaiting!==true||!Number.isSafeInteger(value.animationEpoch)||value.animationEpoch<0)return null;
+  const id=({'sleep-enter':'sleep-enter',waking:'wake'})[value.phase];
+  return id?{id,scope:'sleep',epoch:value.animationEpoch}:null;
+}
+
+export function matchesInteractionReady(value,ack){
+  if(!ack||!value||typeof value.characterId!=='string'||ack.characterId!==value.characterId)return false;
+  const expected=expectedInteractionTransition(value);
+  return !!expected&&ack.scope===expected.scope&&ack.epoch===expected.epoch&&ack.id===expected.id;
 }
 
 // Clips that can start next, so they are decoded before the switch: a flight ends in a

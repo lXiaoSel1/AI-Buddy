@@ -8,6 +8,15 @@ export function stageWindow(order,capacity,target,previous=[]){
  return order.slice(start,start+count);
 }
 export const GROUP_EMOTIONS=['normal','cheerful','shy','serious','confused','angry','frightened','exasperated','starry'];
+// The last displayed line, an in-flight request and a failed request are three
+// different identities. Camera focus may keep a past line without calling it speech.
+export function groupSpeakerState(runtime={},messages=[]){
+ const status=runtime.status??'idle',running=['queued','waiting-model','waiting-life-save','generating','running','preparing','awaiting-presentation'].includes(status);
+ const displayMessage=runtime.currentMessage?.role==='assistant'?runtime.currentMessage:[...messages].reverse().find(row=>row.role==='assistant'&&row.status!=='pending-presentation');
+ const activeId=running?(runtime.pendingMessage?.characterId??runtime.streaming?.characterId??runtime.queue?.[0]):null;
+ const failedId=status==='failed'?(runtime.queue?.[0]??null):null;
+ return {status,running,activeId,failedId,displayId:displayMessage?.characterId??null,displayMessage,speakingId:['generating','awaiting-presentation'].includes(status)?activeId:null};
+}
 // The nameplate supplies the speaker. Strip only that speaker's leading labels;
 // never remove names elsewhere in dialogue or rewrite the stored source text.
 export function groupDialogueText(value,speakerName){

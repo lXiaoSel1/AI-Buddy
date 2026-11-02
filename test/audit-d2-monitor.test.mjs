@@ -52,7 +52,7 @@ test('D2-5: two quick restarts leave exactly one monitor running',async t=>{
  const restart=TokenMonitor.prototype.restartLegacy.bind(host);
  await Promise.all([restart(),restart(),restart()]);
  t.after(()=>host.legacy.close());
- assert.equal(created.length,3);assert.deepEqual(created.map(m=>m.closed),[true,true,false]);assert.equal(host.legacy,created[2]);
+ assert.equal(created.length,1);assert.deepEqual(created.map(m=>m.closed),[false]);assert.equal(host.legacy,created[0]);
 });
 
 test('D2-6: a failed monitor start is reported and the next restart works',async t=>{

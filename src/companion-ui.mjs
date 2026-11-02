@@ -1,5 +1,10 @@
+import {visibleCompanionText} from './companion-presentation.mjs';
+import {affectionText} from './companion-display.mjs';
 import React,{useEffect,useRef,useState} from 'react';
+import {FullMessageButton,FullMessageCSS,needsFullView} from './full-message-viewer.mjs';
 import {t} from './i18n.mjs';
+import {createR95ActionClient,r95GroupInputPolicy} from './r95-core-page.mjs';
+import {AutoRoundStrip,ChatSpeechLines,MessageSources,sourceView,unreadLines,autoProgress,speechHistory,speechTag,clock} from './chat-r95-ui.mjs';
 import {CHARACTER_CATALOG} from './character-catalog.mjs';
 import {GroupMentionInput} from './group-mention-input.mjs';
 import {companionImage} from './companion-image.mjs';
@@ -30,7 +35,7 @@ const groupModeHelp={
 };
 const characterTalkativeness=value=>typeof value==='number'&&Number.isFinite(value)?Math.max(0,Math.min(1,value)):.5;
 
-export const CompanionCSS=CompanionLifeCSS+`
+export const CompanionCSS=CompanionLifeCSS+FullMessageCSS+`
 .buddy-title-edit{font:inherit;border:0;border-radius:8px;background:color-mix(in srgb,var(--buddy-surface2) 60%,transparent);cursor:pointer;padding:5px 10px;max-width:min(480px,70vw);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.buddy-title-edit span{opacity:.65;font-size:13px}.buddy-title-edit:hover{background:color-mix(in srgb,var(--buddy-surface2) 73%,transparent)}.buddy-title-edit:focus-visible{outline:2px solid var(--buddy-accent-text);outline-offset:2px}.buddy-dialog.buddy-title-dialog{width:min(500px,calc(100vw - 32px));height:fit-content;min-height:0;max-height:calc(100dvh - 32px);padding:22px;margin:auto;overflow:auto}.buddy-dialog.buddy-title-dialog h2{font-size:18px}.buddy-title-dialog .buddy-note{margin:12px 0}.buddy-title-dialog input{width:100%}.buddy-title-dialog .buddy-inline-actions{justify-content:flex-end;margin-top:16px}
 .buddy-mention-menu{box-sizing:border-box;z-index:30000;overflow:auto;padding:6px;border:1px solid var(--buddy-border);border-radius:12px;background:var(--buddy-surface);color:var(--buddy-text);box-shadow:0 12px 35px #0007;font:14px/1.4 system-ui,sans-serif;overscroll-behavior:contain;scrollbar-width:thin}.buddy-mention-menu button{display:flex;width:100%;min-height:46px;align-items:center;gap:10px;padding:5px 8px;border:0;border-radius:7px;background:transparent;color:inherit;text-align:left;cursor:pointer;font:inherit}.buddy-mention-menu button[aria-selected=true]{background:color-mix(in srgb,currentColor 18%,transparent)}.buddy-mention-menu button>span:not(.buddy-mention-initial){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.buddy-mention-menu img,.buddy-mention-initial{width:34px;height:36px;flex:none;object-fit:contain;border-radius:5px;background:color-mix(in srgb,var(--buddy-text) 9%,transparent)}.buddy-mention-initial{display:grid;place-items:center}.buddy-mention-menu small{margin-left:auto;opacity:.7;font-size:10px}
 .buddy-dialog{box-sizing:border-box;width:min(980px,calc(100vw - 32px));height:min(850px,calc(100dvh - 40px));max-height:calc(100dvh - 40px);max-width:calc(100vw - 32px);padding:0;border:1px solid var(--buddy-border);border-radius:18px;color:var(--buddy-text);background:var(--buddy-surface);font:14px/1.55 system-ui,"Microsoft YaHei",sans-serif;box-shadow:0 28px 90px #0008;user-select:text;overscroll-behavior:contain}
@@ -77,8 +82,9 @@ export function companionCardDraft(character){
  return {id:character?.id||undefined,name:character?.name||'',avatar:character?.avatar||'',fields,examples:Array.isArray(character?.examples)?structuredClone(character.examples):[],modelBinding:{enabled:false,connectionId:'',...character?.modelBinding},...(draft&&typeof draft==='object'?structuredClone(draft):{}),talkativeness:characterTalkativeness(draft?.talkativeness??character?.talkativeness)};
 }
 export function groupCurrentMessage(companion){
- const message=companion?.groupRuntime?.currentMessage;
- // Only the server's committed, displayed message is exposed here. Never render queue drafts.
+ const runtime=companion?.groupRuntime,stream=runtime?.streaming,message=runtime?.currentMessage;
+ // Only received dialogue text can be a transient preview; queued/pending model drafts remain hidden and do not settle rewards.
+ if(stream?.text&&['generating','failed','idle'].includes(runtime.status))return {...stream,id:stream.requestId,role:'assistant',transient:true};
  return message&&typeof message.text==='string'?message:null;
 }
 export function activeCompanionGroup(companion){return companion?.groups?.find(row=>row.id===companion.activeGroupId)||null;}
@@ -160,7 +166,7 @@ function PersonaEditor({state,request,setFeedback,resolveArt}){
     h('div',{className:'buddy-fields',style:{marginTop:14}},field('interests','兴趣',{placeholder:'如：游戏、摄影'}),h(ImageField,{label:'头像',value:draft.avatar,onChange:value=>setDraft(old=>({...old,avatar:value})),resolveArt,disabled:saving,onError:message=>setFeedback(message,true)}),field('background','背景',{multiline:true,placeholder:'想让角色知道的事'}),field('preferences','交流偏好',{multiline:true,placeholder:'比如：别太客气、可以开玩笑'}))),
    h('fieldset',{className:'buddy-section'},h('legend',null,role&&face(characterHead(role,resolveArt),companionCharacterName(role),'buddy-face sm'),t('对当前角色的专属关系')+' · '+companionCharacterName(role),h('small',null,t('只对这个角色生效'))),h('div',{className:'buddy-fields'},relation('address','专属称呼',{placeholder:'如：主人'}),relation('relationship','关系补充',{multiline:true,placeholder:'如：一起做项目的搭档'}))),
    h('fieldset',{className:'buddy-section'},h('legend',null,t('当前角色的关系进度')),
-    h('div',{className:'buddy-scope'},h('div',null,h('small',null,companionCharacterName(role)),h('b',null,'Lv.'+(progress?.level??1)+' · '+t('好感')+' '+(progress?.affection??0))),
+    h('div',{className:'buddy-scope'},h('div',null,h('small',null,companionCharacterName(role)),h('b',null,'Lv.'+(progress?.level??1)+' · '+t('好感')+' '+affectionText(progress?.affection??0))),
      h(Segmented,{size:'sm',label:t('当前角色的关系进度'),value:progress?.mode==='shared'?'shared':'independent',options:[['independent',t('独立进度')],['shared',t('共用进度')]],onChange:mode=>void progressMode(mode)}),
      h('label',{className:'buddy-scope-source'},t('共用进度的起点身份'),h('select',{'aria-label':t('共用进度的起点身份'),value:sourcePersonaId,disabled:progress?.mode==='shared',onChange:e=>setSourcePersonaId(e.target.value)},...(state.personas||[]).map(p=>h('option',{key:p.id,value:p.id},p.name))))),
     note('独立进度与共享进度分别保留；共用进度不会开放另一身份的聊天。')),
@@ -206,6 +212,10 @@ function MessageHistory({state,request,setFeedback,onGroups,resolveArt}){
  useEffect(()=>{let active=true;const timer=setTimeout(()=>request('companion-conversation-list',{search,from,to,archived}).then(result=>{if(active)setItems(result.conversations||result.items||result.companion?.conversations||[]);}).catch(error=>{if(active)setFeedback(errorText(error),true);}),250);return()=>{active=false;clearTimeout(timer);};},[search,from,to,archived,state.activeConversationId,state.conversations?.length]);
  const messages=isActive?(state.messages||[]):Array.isArray(preview)?preview:[];
  const shown=messages.filter(row=>!onlyFavorites||row.favorite);
+ // Her proactive / self-talk / dream lines stay in this conversation's history with what you said next (approved design C8).
+ const lines=isActive&&!onlyFavorites&&state.r95?.scope?.conversationId===viewing?speechHistory(state.r95?.lines,messages):[],timeline=shown.map(row=>({row,at:row.createdAt}));
+ for(const entry of lines){const index=timeline.findIndex(item=>Number.isFinite(item.at)&&item.at>entry.line.at);timeline.splice(index<0?timeline.length:index,0,{...entry,at:entry.line.at});}
+ const historyLine=({line,kind,reply,read})=>h('article',{key:'line:'+line.messageId,className:'buddy-history-line '+kind,'data-history-line':line.messageId},h('span',{className:'r95-spk '+kind},Icon(speechTag(kind)[0],{size:12}),[t(speechTag(kind)[1]),clock(line.at)].filter(Boolean).join(' · ')),h('p',null,line.text),h('small',null,!read?t('还没回应'):reply?t('你：')+(reply.length>80?reply.slice(0,80)+'…':reply):t('已读')));
  const mutate=async(action,args,success)=>{try{const result=await request(action,args);setFeedback(t(success));return result;}catch(error){setFeedback(errorText(error),true);}};
  const who=row=>row.role==='user'?(state.personas?.find(p=>p.id===row.personaId)?.nickname||t('你')):companionCharacterName(characterOf(row));
  if(showSkits)return h(OldSkits,{request,onBack:()=>setShowSkits(false),onGroups});
@@ -228,10 +238,10 @@ function MessageHistory({state,request,setFeedback,onGroups,resolveArt}){
      isActive?h('span',{className:'ws-tag'},t('正在聊')):button('继续这段对话',()=>void mutate('companion-conversation-select',{id:current.id},'已恢复会话。'),{className:'buddy-primary'})),
     h('div',{className:'buddy-history-filters'},h(Segmented,{size:'sm',label:t('消息筛选'),value:onlyFavorites?'favorite':'all',options:[['all',t('全部消息')],['favorite',t('仅收藏')]],onChange:value=>setOnlyFavorites(value==='favorite')}),h('span',{className:'spacer'}),h('span',{className:'buddy-switch-row'},t('允许更正我发的消息'),h(Switch,{checked:!!state.settings?.allowUserMessageEdit,label:t('允许更正我发的消息'),onChange:value=>void mutate('companion-settings',{allowUserMessageEdit:value},'消息更正设置已保存。')}))),
     !isActive&&h('div',{className:'ui-note'},Icon('info',{size:16}),h('div',null,t('这是只读预览；继续这段对话后可以收藏和更正。'))),
-    preview==='loading'?h('div',{className:'buddy-empty'},t('读取中…')):h('div',{className:'buddy-msgs'},...shown.map(row=>{const mine=row.role==='user',c=characterOf(row);return h('article',{key:row.id,className:'buddy-message'+(mine?' me':''),'data-role':row.role},
+    preview==='loading'?h('div',{className:'buddy-empty'},t('读取中…')):h('div',{className:'buddy-msgs'},...timeline.map(entry=>{if(entry.line)return historyLine(entry);const row=entry.row,mine=row.role==='user',c=characterOf(row);return h('article',{key:row.id,className:'buddy-message'+(mine?' me':''),'data-role':row.role},
      mine?personaFace(state.personas?.find(p=>p.id===row.personaId),resolveArt):face(characterHead(c,resolveArt),companionCharacterName(c)),
      h('div',{className:'buddy-message-main'},h('div',{className:'buddy-message-head'},h('strong',null,who(row)),h('small',{className:'buddy-muted'},dateLabel(row.createdAt))),
-      editing===row.id?h(F,null,h('div',{className:'buddy-field'},h('textarea',{'aria-label':t('更正消息'),value:editText,onChange:e=>setEditText(e.target.value),rows:4})),h('div',{className:'buddy-inline-actions'},button('保存更正',async()=>{setSaving(true);const result=await mutate('companion-message-edit',{conversationId:state.activeConversationId,id:row.id,text:editText},'更正已保存，下次正常聊天时提供给模型。');setSaving(false);if(result)setEditing(null);},{disabled:saving||!editText.trim(),className:'buddy-primary'}),button('取消',()=>setEditing(null),{disabled:saving}))):h('p',{className:'buddy-message-body'},row.text),
+      editing===row.id?h(F,null,h('div',{className:'buddy-field'},h('textarea',{'aria-label':t('更正消息'),value:editText,onChange:e=>setEditText(e.target.value),rows:4})),h('div',{className:'buddy-inline-actions'},button('保存更正',async()=>{setSaving(true);const result=await mutate('companion-message-edit',{conversationId:state.activeConversationId,id:row.id,text:editText},'更正已保存，下次正常聊天时提供给模型。');setSaving(false);if(result)setEditing(null);},{disabled:saving||!editText.trim(),className:'buddy-primary'}),button('取消',()=>setEditing(null),{disabled:saving}))):h('p',{className:'buddy-message-body'},visibleCompanionText(row,{messages})),
       isActive&&h('div',{className:'buddy-message-actions'},h('button',{type:'button',className:'buddy-op','aria-pressed':!!row.favorite,onClick:()=>void mutate('companion-message-favorite',{conversationId:state.activeConversationId,id:row.id,value:!row.favorite},'收藏已更新。')},Icon('star',{size:13}),t(row.favorite?'已收藏':'收藏')),mine&&state.settings?.allowUserMessageEdit&&h('button',{type:'button',className:'buddy-op',onClick:()=>{setEditing(row.id);setEditText(row.text);}},Icon('pencil',{size:13}),t('更正'))),
       (row.revisions?.length>0||row.originalText&&row.originalText!==row.text)&&h('details',{className:'buddy-revisions'},h('summary',null,h('span',{className:'ws-tag'},t('已更正')),t('原文与更正记录')),h('p',null,row.originalText),...(row.revisions||[]).map((revision,index)=>h('p',{key:index},dateLabel(revision.at||revision.updatedAt||revision.createdAt)+'\n'+(revision.text||revision.previousText||''))))));}),shown.length===0&&empty(onlyFavorites?'还没有收藏的消息。':'还没有消息。'))
    ):empty('选一段会话查看消息。'),
@@ -290,14 +300,17 @@ export {CompanionGroupStage} from './group-stage-ui.mjs';
 export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onToggleChat,onApi}){
  const group=activeCompanionGroup(state),[text,setText]=useState(''),[bindings,setBindings]=useState([]),[busy,setBusy]=useState(false),[error,setError]=useState(''),[photoOpen,setPhotoOpen]=useState(false);
  useEffect(()=>{setText('');setBindings([]);setError('');},[group?.id]);
- const operationRef=useRef(null);
+ const operationRef=useRef(null),requestRef=useRef(request),r95Client=useRef(null);requestRef.current=request;if(!r95Client.current)r95Client.current=createR95ActionClient((...args)=>requestRef.current(...args));
+ const inputActive=useRef(false),inputScope=useRef(state?.r95?.scope);inputScope.current=state?.r95?.scope;
+ const setInputActive=active=>{if(!inputScope.current||inputActive.current===active)return;inputActive.current=active;void r95Client.current('input',{active,scope:inputScope.current}).catch(e=>setError(e.message));};
+ useEffect(()=>{const expected=state?.r95?.scope;return()=>{if(inputActive.current){inputActive.current=false;void r95Client.current('input',{active:false,scope:expected}).catch(()=>{});}};},[group?.id,JSON.stringify(state?.r95?.scope)]);
  const runtime=state?.groupRuntime||{};
  useEffect(()=>{if(!group||!GROUP_BUSY_STATUSES.includes(runtime.status))return;const timer=setInterval(()=>request('companion-state',{}).catch(()=>{}),900);return()=>clearInterval(timer);},[group?.id,runtime.status]);
  const [,setTick]=useState(0);
  useEffect(()=>{if(runtime.status!=='waiting-life-save'||!runtime.waitDeadline)return;const timer=setInterval(()=>setTick(v=>v+1),1000);return()=>clearInterval(timer);},[runtime.status,runtime.waitDeadline]);
  if(!group)return null;
  const message=groupCurrentMessage(state),member=state.characters?.find(c=>c.id===(message?.characterId||message?.speaker)),isRunning=busy||GROUP_BUSY_STATUSES.includes(runtime.status),canContinue=!!runtime.canContinue,canRetry=!!runtime.canRetry,hasQueue=!!runtime.queue?.length;
- const perform=async(action,args={})=>{if(operationRef.current&&action!=='companion-group-stop')return;const token={action};if(action!=='companion-group-stop')operationRef.current=token;setError('');if(action!=='companion-group-stop')setBusy(true);try{await request(action,{id:group.id,...args,...(action==='companion-group-send'?{clientRequestId:crypto.randomUUID()}: {})});if(action==='companion-group-send'){setText('');setBindings([]);}}catch(error){setError(errorText(error));}finally{if(operationRef.current===token){operationRef.current=null;setBusy(false);}}};
+ const perform=async(action,args={})=>{if(operationRef.current&&action!=='companion-group-stop')return;const token={action};if(action!=='companion-group-stop')operationRef.current=token;setError('');if(action!=='companion-group-stop')setBusy(true);try{await request(action,{id:group.id,...args,...(action==='companion-group-send'?{clientRequestId:crypto.randomUUID()}: {})});if(action==='companion-group-send'){setText('');setBindings([]);setInputActive(false);}return true;}catch(error){setError(errorText(error));return false;}finally{if(operationRef.current===token){operationRef.current=null;setBusy(false);}}};
  const characterOf=id=>state.characters?.find(c=>c.id===id),nameOf=id=>companionCharacterName(characterOf(id))||t('成员');
  // This round: who already spoke since the last user message, who is next, who is still waiting.
  const queue=(runtime.queue||[]).filter(id=>typeof id==='string'),current=queue[0];
@@ -306,6 +319,7 @@ export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onTo
  const steps=[...spoken.map((id,i)=>({id,kind:'done',key:'d'+i})),...queue.map((id,i)=>({id,kind:i?'':isRunning?'busy':canRetry?'fail':'next',key:'q'+i}))];
  const roundDone=!isRunning&&!canContinue&&!canRetry&&!queue.length&&spoken.length>0;
  const offline=chat?chat.enabled===false:false,blocked=isRunning||canContinue||canRetry||offline,locked=isRunning||canContinue;
+ const {autoSession,inputBlocked,sendBlocked}=r95GroupInputPolicy(state.r95,{offline,busy:isRunning,canContinue,canRetry});
  const turn=step=>h('span',{key:step.key,className:'buddy-turn'+(step.kind?' '+step.kind:'')},step.kind==='busy'?h('span',{className:'ui-spinner','aria-hidden':true}):face(characterHead(characterOf(step.id)),nameOf(step.id),'buddy-face sm'),step.kind==='next'?t('下一位 ')+nameOf(step.id):step.kind==='busy'?nameOf(step.id)+t(' 正在回复'):nameOf(step.id),step.kind==='done'&&Icon('check',{size:13}));
  const round=(steps.length>0||isRunning||canContinue||canRetry||hasQueue)&&h('div',{className:'buddy-round','data-group-round':true},
   h('span',{className:'buddy-round-k'},t('本轮')),
@@ -323,15 +337,28 @@ export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onTo
   :offline?h('div',{className:'gx-alert info',role:'status'},Icon('globe',{size:16}),h('span',{className:'grow'},t('群聊离线 · 开启联网后使用成员 API')),onToggleChat&&h('button',{type:'button',className:'gx-gbtn pri',onClick:()=>onToggleChat()},t('开启联网聊天'))):null;
  const who=message?.role==='user'?'user':member?'character':'narrator';
  const placeholder=isRunning?t('等这一位说完…'):canRetry?t('先重试或停止本轮'):canContinue?t('点「继续」让下一位接话'):offline?t('开启联网聊天后就能回复'):t('发送群消息，输入 @ 点名成员');
- const send=()=>{if(text.trim()&&!blocked)void perform('companion-group-send',{text,mentionBindings:bindings});};
+ // A reply to her line counts as reading it (approved design C8); only a presented line can be read.
+ const speech=unreadLines(state.r95);
+ const send=()=>{if(!text.trim()||sendBlocked)return;const line=speech[0];void perform('companion-group-send',{text,mentionBindings:bindings}).then(sent=>{if(sent&&line?.status==='presented')void r95Client.current('speech-read',{messageId:line.messageId}).catch(e=>setError(e.message));});};
+ const focusInput=()=>document.querySelector('#whg-panel[data-companion-group-dialogue] textarea:not(:disabled)')?.focus({preventScroll:true});
+ const autoStrip=autoProgress(state.r95?.auto),queued=runtime.queuedUserMessages>0?runtime.queuedUserMessages:0;
+ const partial=!!message?.transient&&!isRunning,speakerName=message?.role==='assistant'?(message.characterName||(member?companionCharacterName(member):'')):'';
+ const displayMessageText=visibleCompanionText(message,{messages:state.groupMessages??[]}),fullText=!isRunning&&displayMessageText?displayMessageText:'';
  return h('section',{id:'whg-panel',className:'whg-panel gx-dlg buddy-group-panel','aria-label':t('群聊对话'),'data-companion-group-dialogue':group.id},
   h('div',{className:'whg-plate gx-plate'+(who==='character'?'':' '+who),style:plateVars({who,characterId:member?.id,color:member?.color})},message?.role==='user'?(message?.personaName||message?.personaSnapshot?.nickname||state.personas?.find(p=>p.id===group.personaId)?.nickname||t('你')):(message?.characterName||(member?companionCharacterName(member):t('群聊')))),
   h('div',{className:'buddy-group-meta'},h('button',{type:'button',className:'gx-gbtn',disabled:locked,title:locked?t('本轮结束后可用'):undefined,onClick:()=>setPhotoOpen(true)},Icon('camera',{size:13}),t('合影 CG')),h('button',{type:'button',className:'gx-gbtn',disabled:locked,title:locked?t('本轮结束后可用'):undefined,onClick:()=>void perform('companion-group-end')},t('结束本次聊天'))),
-  h('div',{className:'whg-line-now'+(message?'':' narrator'),key:message?.id||group.id,'aria-live':'polite'},message?.text||t('说点什么，开始这一轮群聊。')),
+  // Approved designs C6 / C9: mood and Auto chips are in the toolbar now; while Auto runs, one strip says who is
+  // talking, round n / total, who is next and whether your message waits behind hers.
+  h(AutoRoundStrip,{view:state.r95?{...state.r95,groupId:state.r95.groupId??group.id}:null,onAction:r95Client.current,nameOf,busy:isRunning,speaker:isRunning&&member?companionCharacterName(member):'',queued}),
+  h('div',{className:'whg-line-now'+(message?'':' narrator'),key:message?.id||group.id,'aria-live':'polite','data-group-message-id':!runtime.streaming?.text?message?.id:undefined,'data-auto-request-id':!runtime.streaming?.text?message?.autoRequestId:undefined},((isRunning||canRetry)&&runtime.streaming?.text)||displayMessageText||t('说点什么，开始这一轮群聊。')),
+  h(ChatSpeechLines,{view:state.r95,onAction:r95Client.current,onReply:focusInput}),
+  runtime.streaming?.interrupted&&h('p',{className:'buddy-muted',role:'status'},t('上次回复已中断，以下仅为保留的部分正文，未结算。')),
+  (sourceView(message)||needsFullView(fullText))&&h('div',{className:'gx-foot'},h(MessageSources,{message}),h('span',{className:'grow'}),fullText&&h(FullMessageButton,{text:fullText,messageId:group.id+':'+message.id,title:message?.characterName||member?.name||message?.personaName,name:speakerName||undefined,at:message?.createdAt??message?.at,interrupted:partial})),
   !message&&!round&&h('p',{className:'buddy-group-hint'},t('发送后第一位会自动回复，后续成员点击“继续”接话。')),
-  alert,round,
-  h('div',{className:'whg-input-row gx-say'},h('div',{className:'gx-ta'+(blocked?' dis':'')},h(GroupMentionInput,{value:text,bindings,placeholder,onChange:(value,nextBindings)=>{setText(value);setBindings(nextBindings);},members:group.memberIds.map(id=>characterOf(id)).filter(Boolean),disabled:blocked,onSubmit:send}),h('small',{'aria-hidden':true},t('Enter 发送 · Shift+Enter 换行'))),
-   h('button',{type:'button',className:'whg-send gx-send',disabled:blocked||!text.trim(),onClick:send},isRunning?h('span',{className:'ui-spinner','aria-hidden':true}):Icon('send',{size:15}),t('发送'))),
+  alert,autoStrip?.status==='active'?null:round,
+  queued>0&&!autoStrip&&h('p',{role:'status',className:'r95-queued','data-r95-queued-user':queued},Icon('clock',{size:13}),t('你的消息排在她后面'),' · ',queued),
+  h('div',{className:'whg-input-row gx-say',onFocusCapture:()=>setInputActive(true),onBlurCapture:e=>{if(!e.currentTarget.contains(e.relatedTarget))setInputActive(false);}},h('div',{className:'gx-ta'+(inputBlocked?' dis':'')},h(GroupMentionInput,{value:text,bindings,placeholder:autoSession?t('插一句…（Auto 进行中也可以说话）'):placeholder,onChange:(value,nextBindings)=>{setText(value);setBindings(nextBindings);setInputActive(!!value);},members:group.memberIds.map(id=>characterOf(id)).filter(Boolean),disabled:inputBlocked,onSubmit:send}),h('small',{'aria-hidden':true},t('Enter 发送 · Shift+Enter 换行'))),
+   h('button',{type:'button',className:'whg-send gx-send',disabled:sendBlocked||!text.trim(),onClick:send},isRunning&&!autoSession?h('span',{className:'ui-spinner','aria-hidden':true}):Icon('send',{size:15}),autoSession?t('插话'):t('发送'))),
   photoOpen&&h(GroupPhotoDialog,{state,request,chat,onToggleChat,onApi,onClose:()=>setPhotoOpen(false),onPhoto}));
 }
 

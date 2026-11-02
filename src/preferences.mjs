@@ -1,12 +1,14 @@
 import {THEMES} from './appearance.mjs';
 import {validPetCharacter} from './pet-characters.mjs';
 import {defaultViews,validateViews} from './statistics-views.mjs';
-export const DEFAULT_PREFERENCES=Object.freeze({maxOutputTokens:8192,language:'zh-CN',theme:'deepseek',themeMode:'fixed',hideSpriteOnCg:true,petVisible:true,petCharacterMode:'follow',petFixedCharacter:'deepseek',petScale:1.25,animationSpeed:0.75,alwaysOnTop:true,clickThrough:true,followCursor:true,showStatusBadge:true,showUsageGapNotice:true,completionBubbles:true,autoSleep:true,petPhysics:true,throwStrength:'standard',monitorRefreshMs:1000,displayTimeZone:'America/New_York',statisticsTimeZone:'local',autoPriceUpdates:false,statisticsViews:defaultViews()});
+import {REPLY_STYLES} from './reply-style.mjs';
+export const DEFAULT_PREFERENCES=Object.freeze({replyStyle:'natural',maxOutputTokens:8192,language:'zh-CN',theme:'deepseek',themeMode:'fixed',hideSpriteOnCg:true,petVisible:true,petCharacterMode:'follow',petFixedCharacter:'deepseek',petScale:1.25,animationSpeed:0.75,alwaysOnTop:true,clickThrough:true,followCursor:true,showStatusBadge:true,showUsageGapNotice:true,completionBubbles:true,autoSleep:true,petPhysics:true,throwStrength:'standard',monitorRefreshMs:1000,displayTimeZone:'America/New_York',statisticsTimeZone:'local',autoPriceUpdates:false,statisticsViews:defaultViews()});
 export const PET_SCALES=Object.freeze([0.75,1,1.25,1.5]);
 export const ANIMATION_SPEEDS=Object.freeze([0.25,0.5,0.75,1]);
 export const MONITOR_INTERVALS=Object.freeze([1000,2000,5000]);
 const zones=['America/New_York','local','UTC'];
 function valid(key,value){
+  if(key==='replyStyle')return REPLY_STYLES.includes(value);
   if(key==='throwStrength')return ['gentle','standard','strong','exaggerated'].includes(value);
   if(key==='petCharacterMode')return ['follow','fixed'].includes(value);
   if(key==='petFixedCharacter')return validPetCharacter(value);
@@ -36,7 +38,13 @@ export function validatePreferencesPatch(patch){
   }
   return result;
 }
+// The one place a time-zone preference becomes an Intl option. 'local' (the default) and anything Intl
+// rejects mean the system zone; passing 'local' itself to toLocale*() throws RangeError and blanks the window.
+export function intlTimeZone(zone){if(typeof zone!=='string'||!zone||zone==='local')return undefined;try{new Intl.DateTimeFormat('en',{timeZone:zone});return zone;}catch{return undefined;}}
+export const zoneOptions=zone=>{const timeZone=intlTimeZone(zone);return timeZone?{timeZone}:{};};
+// Calendar day (YYYY-MM-DD) of a moment in the given zone, for "today" / "yesterday" grouping.
+export function zoneDay(value,zone){return new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit',...zoneOptions(zone)}).format(new Date(value));}
 export function formatActivityTime(value,zone='America/New_York'){
   if(!value)return '—';
-  return new Date(value).toLocaleString('zh-CN',{...(zone==='local'?{}:{timeZone:zone}),hour12:false});
+  return new Date(value).toLocaleString('zh-CN',{...zoneOptions(zone),hour12:false});
 }

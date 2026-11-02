@@ -1,4 +1,5 @@
 import {UsageQuery,normalizedRequest,dateInZone} from './usage-query.mjs';
+import {UsageRewardOutbox} from './usage-reward-outbox.mjs';
 const fields=['input','output','cacheRead','cacheWrite','reasoning','total'];
 const dims=['tool','provider','modelVendor','model','workspace','sourceId','purpose','sessionId'];
 export class SqlUsageQuery extends UsageQuery {
@@ -18,7 +19,9 @@ export class SqlUsageQuery extends UsageQuery {
    for(const dim of dims.filter(d=>d!=='sessionId'))for(const r of this.db.prepare(`SELECT ${dim} AS value,COUNT(*) AS n FROM usage_contributions WHERE ${dim} IS NOT NULL AND ${dim}<>'' GROUP BY ${dim}`).iterate())this.facets[dim].set(r.value,r.n);
    for(const r of this.db.prepare(`SELECT value,COUNT(*) AS count FROM usage_contributions GROUP BY json_extract(value,'$.serviceProvider'),model,modelVendor,json_extract(value,'$.billingRoute')`).iterate()){const row=JSON.parse(r.value),identity=Object.fromEntries(['serviceProvider','model','modelVendor','billingRoute'].map(k=>[k,row[k]]));this.priceIdentities.set(JSON.stringify(identity),{...identity,count:r.count});}
   }
-  this.insert=this.db.prepare(`INSERT INTO usage_contributions(key,grp,value,${dims.join(',')},timestamp,search,${fields.join(',')},requests) VALUES(${Array(20).fill('?').join(',')})`);
+  this.insert=this.db.prepare(`INSERT INTO usage_contributions(key,grp,value,${dims.join(',')},timestamp,search,${fields.join(',')},requests) VALUES(${Array(20).fill('?').join(',')}) ON CONFLICT(key) DO UPDATE SET ${['grp','value',...dims,'timestamp','search',...fields,'requests'].map(k=>k+'=excluded.'+k).join(',')}`);
+  this.db.exec('CREATE TEMP TABLE IF NOT EXISTS contribution_seen(key TEXT PRIMARY KEY)');
+  this.rewardOutbox=new UsageRewardOutbox(repository);
  }
  saveIndex(){if(!this.dimensionsDirty&&this.repository.meta('queryDimensions'))return;this.repository.meta('queryDimensions',{facets:Object.fromEntries(Object.entries(this.facets).filter(([k])=>k!=='sessionId').map(([k,m])=>[k,[...m]])),prices:[...this.priceIdentities]});this.dimensionsDirty=false;}
  restoreIndex(){this.cache.clear();for(const map of Object.values(this.facets))map.clear();this.priceIdentities.clear();for(const r of this.rows.values())this.facet(r,1);this.dimensionsDirty=true;}
@@ -26,16 +29,23 @@ export class SqlUsageQuery extends UsageQuery {
  replaceGroup(id,rows){
   let count=0;
   try{this.repository.transaction(()=>{
-   for(const item of this.db.prepare('SELECT value FROM usage_contributions WHERE grp=? ORDER BY seq').iterate(id)){const r=JSON.parse(item.value);this.facet(r,-1);for(const c of this.cache.values())this.fold(c,r,-1);count++;}
-   this.db.prepare('DELETE FROM usage_contributions WHERE grp=?').run(id);
-   let i=0;for(const source of rows){const r={...normalizedRequest(source,this.identityResolver(source)),key:id+':'+(source.requestId||i++)};const d={...r,provider:r.serviceProvider,workspace:r.workspace||'未记录项目'};
-    this.insert.run(r.key,id,JSON.stringify(r),...dims.map(k=>d[k]??null),r.timestamp,[r.model,r.workspace,r.sessionId].join(' ').toLowerCase(),...fields.map(k=>r.usage[k]??null),r.usage.requests??1);this.facet(r,1);for(const c of this.cache.values())this.fold(c,r,1);count++;
+   this.db.exec('DELETE FROM contribution_seen');
+   const seen=this.db.prepare('INSERT INTO contribution_seen VALUES(?)'),prior=this.db.prepare('SELECT value,grp FROM usage_contributions WHERE key=?');
+   const fold=(r,sign)=>{this.facet(r,sign);for(const c of this.cache.values())this.fold(c,r,sign);};
+   let i=0;for(const source of rows){const r={...normalizedRequest(source,this.identityResolver(source)),key:id+':'+(source.requestId||i++)},value=JSON.stringify(r),old=prior.get(r.key);
+    seen.run(r.key);if(old&&old.grp!==id)throw Error('Contribution key belongs to another group');if(old?.value===value)continue;
+    if(old)fold(JSON.parse(old.value),-1);
+    const d={...r,provider:r.serviceProvider,workspace:r.workspace||'未记录项目'};
+    this.insert.run(r.key,id,value,...dims.map(k=>d[k]??null),r.timestamp,[r.model,r.workspace,r.sessionId].join(' ').toLowerCase(),...fields.map(k=>r.usage[k]??null),r.usage.requests??1);
+    this.rewardOutbox.observe(r,{live:this.rewardLive?.(r)===true});fold(r,1);count++;
    }
+   const missing='grp=? AND NOT EXISTS(SELECT 1 FROM contribution_seen s WHERE s.key=usage_contributions.key)';
+   for(const item of this.db.prepare('SELECT value FROM usage_contributions WHERE '+missing).iterate(id)){fold(JSON.parse(item.value),-1);count++;}
+   this.db.prepare('DELETE FROM usage_contributions WHERE '+missing).run(id);
+   if(count)this.db.prepare("DELETE FROM meta WHERE key='queryDimensions'").run();
   });}catch(e){this.restoreIndex();throw e;}
-  this.revision++;this.incrementalUpdates+=count;for(const c of this.cache.values())c.result=null;
-  // A stale dimension snapshot is never reused after a standalone update.
-  this.db.prepare("DELETE FROM meta WHERE key='queryDimensions'").run();
-  this.dimensionsDirty=true;
+  if(!count)return;
+  this.revision++;this.incrementalUpdates+=count;for(const c of this.cache.values())c.result=null;this.dimensionsDirty=true;
  }
  filter(c){
   const conditions=[],params=[];

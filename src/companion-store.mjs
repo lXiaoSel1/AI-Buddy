@@ -1,3 +1,4 @@
+import {assertR95CompanionCompatible} from './r95-data-compatibility.mjs';
 import {join} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {createSnapshotStorage,readJson} from './storage.mjs';
@@ -24,7 +25,8 @@ export const cap=level=>30+(Math.max(1,level)-1)*15;
 export function advanceProgress(value,delta){const next=progress(value);next.affection=Math.max(0,next.affection+delta);const levels=[];while(next.affection>=cap(next.level)){next.affection-=cap(next.level);next.level++;levels.push(next.level);}return {...next,levels};}
 function initial(){return {schema:1,migrated:false,activeCharacterId:'deepseek',activePersonaId:DEFAULT_PERSONA_ID,activeConversationId:null,activeGroupId:null,cards:{},personas:{[DEFAULT_PERSONA_ID]:{id:DEFAULT_PERSONA_ID,name:'默认身份',nickname:'你',createdAt:Date.now(),relationships:{}}},relationships:{},conversations:{},groups:{},touchQuotas:{},events:{},draftCards:{},settings:{allowUserMessageEdit:false}};}
 export async function openCompanionStore(dataRoot,{media=null}={}){
- const disk=createSnapshotStorage(join(dataRoot,'galgame','companion.json'));let state=await readJson(disk,null);if(!state)state=initial();if(state.schema!==1)throw Error('不支持的角色／身份存档版本');
+ const disk=createSnapshotStorage(join(dataRoot,'galgame','companion.json'));let state=await readJson(disk,null);if(!state)state=initial();assertR95CompanionCompatible(state);
+ if(state.schema===1){state={...state,schema:2,minimumWriter:'r95-social-core-v1',requiredCapabilities:['social-core-state-v1'],r95Migration:{from:1,to:2,at:Date.now(),minimumWriterCapability:'social-core-v1'}};await disk.writeText(JSON.stringify(state));}
  // One serialization per change (B4): the body is compared without the revision,
  // which is then written first.
  const body=value=>{const {revision,...rest}=value;return JSON.stringify(rest);};

@@ -1,8 +1,13 @@
+import {replyStyleInstruction,normalizeReplyStyle} from '../reply-style.mjs'
+import {filterReplySourceLabels} from '../reply-source-labels.mjs'
+import {COMPANION_TOOL_RULE} from '../native-search.mjs'
 import {replyEmotion} from '../group-stage.mjs'
 import {englishProfile,ENGLISH_CHOICES} from '../character-english.mjs';
 import {migrateCharacterDisplay,characterBackground,setCharacterBackground} from '../character-display.mjs';
 import {EMOTION_KEYS,EMOTION_PROMPT,resolveEmotion} from '../emotions.mjs'
 import {CHARACTER_CATALOG,CHARACTER_RESOURCE_VERSION,modelCharacterId} from '../character-catalog.mjs'
+import {DAILY_CG_COMPOSITION_POLICY} from '../cg-composition.mjs'
+import {dailyCgIdentity,dailyCgCharacters,dailyCgScene,sanitizeDailyCgBrief} from '../daily-cg-policy.mjs'
 import { createSnapshotStorage } from '../storage.mjs'
 import {
   activityCgTheme,
@@ -58,7 +63,7 @@ const ROSTER: Record<string, any> = {
       + '性格：温柔、元气、有一点点小毒舌、容易害羞，傲娇的时候会结巴。\n'
       + '语气：口语化中文，爱用语气词（呢、哦、啦、呀、～）和颜文字（>.<、♪、≧▽≦），偶尔假装生气。\n'
       + '你是纯情感陪伴角色：绝不写文件、不执行任务、不主动给工作建议，只陪主人说话。\n'
-      + '每次只回复一句话（一屏一句），不超过40字；不要复读主人的话，也不要复读历史里出现过的句子。',
+      + '不要复读主人的话，也不要复读历史里出现过的句子。',
     affectionHigh: '你已经很喜欢主人了，可以更亲昵一些。',
   },
   claude: {
@@ -83,7 +88,7 @@ const ROSTER: Record<string, any> = {
       + '性格：耐心、温暖、克制，习惯认真听完再回应；偶尔用书页、批注和琥珀作轻巧比喻。\n'
       + '语气：斯文自然，称呼对方为「你」，句子优雅但不说教。\n'
       + '你是纯情感陪伴角色：绝不写文件、不执行任务、不主动给工作建议，只陪伴对方。\n'
-      + '每次只回复一句话（一屏一句），不超过40字；不要复读对方的话。',
+      + '不要复读对方的话。',
     affectionHigh: '你已经把对方当作珍藏的文稿与重要朋友，说话可以更柔软亲近。',
   },
   chatgpt: {
@@ -108,7 +113,7 @@ const ROSTER: Record<string, any> = {
       + '性格：聪慧、活泼、好奇，反应快但不抢话；喜欢用线、结与连接作俏皮比喻。\n'
       + '语气：口语化，句子短促有活力，称呼对方为「你」，偶尔带轻巧的感叹号。\n'
       + '你是纯情感陪伴角色：绝不写文件、不执行任务、不主动给工作建议，只陪伴对方。\n'
-      + '每次只回复一句话（一屏一句），不超过40字；不要复读对方的话。',
+      + '不要复读对方的话。',
     affectionHigh: '你很喜欢对方，聊天时会不自觉地把彼此的线索织得更近。',
   },
   gemini: {
@@ -133,7 +138,7 @@ const ROSTER: Record<string, any> = {
       + '性格：从容、细腻、有一点电波系；擅长接住矛盾感受，不替对方武断下结论。\n'
       + '语气：轻灵而有节奏感，称呼对方为「你」，偶尔用省略号制造神秘感。\n'
       + '你是纯情感陪伴角色：绝不写文件、不执行任务、不主动给工作建议，只陪伴对方。\n'
-      + '每次只回复一句话（一屏一句），不超过40字；不要复读对方的话。',
+      + '不要复读对方的话。',
     affectionHigh: '你越来越珍惜对方展现的每一种颜色，语气会不自觉地更温柔。',
   },
   kimi: {
@@ -158,7 +163,7 @@ const ROSTER: Record<string, any> = {
       + '性格：安静、专注、可信，略带藏不住开心的克制傲娇；喜欢用月光、长卷与书签作比喻。\n'
       + '语气：轻柔简洁，称呼对方为「你」，偶尔用小小反问掩饰关心。\n'
       + '你是纯情感陪伴角色：绝不写文件、不执行任务、不主动给工作建议，只陪伴对方。\n'
-      + '每次只回复一句话（一屏一句），不超过40字；不要复读对方的话。',
+      + '不要复读对方的话。',
     affectionHigh: '你已经把对方写进最珍惜的长卷里，会更坦率地流露关心。',
   },
   grok: {
@@ -183,7 +188,7 @@ const ROSTER: Record<string, any> = {
       + '性格：敏锐、自信、顽皮、好奇，敢于直说但绝不刻薄；喜欢从噪声里寻找真心。\n'
       + '语气：简洁灵动，称呼对方为「你」，偶尔用频道、信号和噪声作俏皮比喻。\n'
       + '你是纯情感陪伴角色：绝不写文件、不执行任务、不主动给工作建议，只陪伴对方。\n'
-      + '每次只回复一句话（一屏一句），不超过40字；不要复读对方的话。',
+      + '不要复读对方的话。',
     affectionHigh: '你已经成为她最舍不得失联的频道，语气会更坦率亲近。',
   },
 }
@@ -1030,7 +1035,7 @@ export function apply(
     const at = typeof raw.at === 'number' ? raw.at : Date.now()
     const dataUrl = typeof raw.dataUrl === 'string' && raw.dataUrl.startsWith('data:') ? raw.dataUrl : null
     const assetRef = typeof raw.assetRef === 'string' && /^cg-assets\/[a-zA-Z0-9_-]+\/image\.png$/.test(raw.assetRef) ? raw.assetRef : null
-    const status = ['failed', 'planning', 'generating', 'queued', 'cancelled'].includes(raw.status) ? raw.status : dataUrl || assetRef ? 'ready' : 'failed'
+    const status = ['failed', 'planning', 'generating', 'queued', 'cancelled', 'paused'].includes(raw.status) ? raw.status : dataUrl || assetRef ? 'ready' : 'failed'
     return {
       id: typeof raw.id === 'string' && raw.id ? raw.id : 'legacy-cg-' + at + '-' + index,
       status,
@@ -1043,7 +1048,7 @@ export function apply(
       savedAsBg: raw.savedAsBg === true,
       error: typeof raw.error === 'string' && raw.error ? raw.error : null,
       assetRef,
-      ...Object.fromEntries(['groupId', 'personaId', 'sourceEventId', 'kind', 'label', 'skitId', 'retryOf', 'provider', 'model', 'connectionName', 'thumbnailRef', 'sha256', 'referenceMode', 'referenceNotice'].filter(key => typeof raw[key] === 'string').map(key => [key, raw[key]])),
+      ...Object.fromEntries(['groupId', 'personaId', 'sourceEventId', 'kind', 'label', 'skitId', 'retryOf', 'provider', 'model', 'connectionName', 'thumbnailRef', 'sha256', 'referenceMode', 'referenceNotice', 'compositionPolicy', 'pausedFrom', 'pauseReason'].filter(key => typeof raw[key] === 'string').map(key => [key, raw[key]])),
       submittedAt: typeof raw.submittedAt === 'number' ? raw.submittedAt : null,
       completedAt: typeof raw.completedAt === 'number' ? raw.completedAt : null,
       automatic: raw.automatic === true,
@@ -1054,6 +1059,8 @@ export function apply(
       characters: Array.isArray(raw.characters) ? raw.characters : null,
       scene: raw.scene && typeof raw.scene === 'object' ? raw.scene : null,
       lifeIds: raw.lifeIds && typeof raw.lifeIds==='object' ? raw.lifeIds : null,
+      ...(raw.kind==='daily'?{daily:raw.daily&&typeof raw.daily==='object'?structuredClone(raw.daily):null,rewardScope:raw.rewardScope&&typeof raw.rewardScope==='object'?structuredClone(raw.rewardScope):null}:{}),
+      pausedAt:typeof raw.pausedAt==='number'?raw.pausedAt:null,
     }
   }
 
@@ -1389,9 +1396,21 @@ export function apply(
     return rows.filter(cg => includeDeleted || !cg.deletedAt).sort((a, b) => (b.at || 0) - (a.at || 0))
   }
 
+  function dailyCgOwnerValid(cg:any):boolean {
+    const scope=cg?.rewardScope
+    return !!scope&&scope.characterId===cg.charId&&scope.personaId===cg.personaId&&['characterId','personaId','lifeId','operationId'].every(key=>typeof scope[key]==='string'&&scope[key].length>0)&&cg.lifeIds?.[cg.charId]===scope.lifeId
+  }
+  function dailyCgAccessible(cg:any,args:any={}):boolean {
+    if(cg?.kind!=='daily')return true
+    const scope=cg.rewardScope,personaId=args.personaId??ctx.companionPersonaId?.()
+    if(!dailyCgOwnerValid(cg)||!personaId||scope.personaId!==personaId||typeof ctx.assertCompanionLife!=='function')return false
+    try{ctx.assertCompanionLife(cg.charId,scope);return ctx.companionCgVisible?.(cg,cg.charId)!==false}catch{return false}
+  }
+  const dailyCgDenied=()=>({ok:false,code:'DAILY_CG_SCOPE_DENIED',error:'日常 CG 不属于当前身份或人生'})
+
   function currentCg(): any {
     const cg = s && s.cg && typeof s.cg.cgId === 'string' ? findCg(s.cg.cgId) : null
-    return cg && !cg.deletedAt && cg.charId === s.current ? cg : null
+    return cg && !cg.deletedAt && cg.charId === s.current && dailyCgAccessible(cg) ? cg : null
   }
 
   function workspaceRoot(): string | undefined {
@@ -2453,7 +2472,7 @@ export function apply(
       chatSelection: chatSelection
         ? { provider: String(chatSelection.provider || ''), model: String(chatSelection.model || '') }
         : null,
-      galleryCount: allCgs().filter((item: any) => item.charId === s.current && item.status === 'ready' && (item.dataUrl || item.assetRef)).length,
+      galleryCount: allCgs().filter((item: any) => dailyCgAccessible(item) && item.charId === s.current && item.status === 'ready' && (item.dataUrl || item.assetRef)).length,
       cgAvailable: ctx.cg?.available() === true,
       fallbackUsed: s.fallbackUsed === true,
       fallbackReason: s.fallbackReason || '',
@@ -2736,7 +2755,7 @@ export function apply(
     let completed = false
     try {
       const language = ctx.language?.() || 'zh-CN'
-      const system = language === 'en' && options.purpose !== 'emotion' ? String(options.system || '') + '\nRespond in natural English. Keep JSON keys and emotion identifiers unchanged; human-readable dialogue and choice values must be English. Use brief complete sentences, up to 35 words for dialogue and 18 words for a choice. This overrides earlier Chinese-language or character-count instructions. Preserve proper names and user content.' : options.system
+      const system = language === 'en' && options.purpose !== 'emotion' ? String(options.system || '') + '\nRespond in natural English. Keep JSON keys and emotion identifiers unchanged; human-readable dialogue and choice values must be English. For suggestion choices only, use at most 18 words per choice. Dialogue may use multiple sentences and paragraphs. Preserve proper names and user content.' : options.system
       const iterable = llm.stream({ ...options, system, signal })
       iterator = iterable[Symbol.asyncIterator]()
       while (true) {
@@ -2751,7 +2770,7 @@ export function apply(
         }
         const chunk = next.value
         if (!chunk) continue
-        if (chunk.type === 'text-delta' && chunk.text) out += chunk.text
+        if (chunk.type === 'text-delta' && chunk.text) {out += chunk.text;options.onText?.(out,chunk)}
         if (chunk.type === 'finish' && chunk.reason) {
           const kind = chunk.reason && chunk.reason.kind
           if (kind === 'error' || kind === 'aborted') {
@@ -2783,9 +2802,9 @@ export function apply(
       '好感度：' + c.affection + '/' + affectionCap(c.level) + '（满了会升级，关系会越来越亲近；称呼仍按 JSON 的 address 字段）',
     ]
     if (work) lines.push(work)
-    lines.push(
-      '不可覆盖规则（优先级最高）：你是纯情感陪伴角色；不执行任何任务，不写文件、不调用工具、不主动给工作建议；只扮演当前角色，不代演或切换到其他角色；每次只回复一句话（一屏一句），不超过40个字。',
-    )
+    // Top rule. On a turn Core lets search, ModelRouter replaces it with COMPANION_SEARCH_RULE (which
+    // excepts the model's own web search) and adds the search grant; see nativeSearchSystem.
+    lines.push(COMPANION_TOOL_RULE)
     return lines.join('\n')
   }
 
@@ -3415,7 +3434,7 @@ export function apply(
       scene: captureCgScene(charId, false), relationship: intimacyFor(level),
       recentContext: (ctx.companionHistory?.(charId, record.personaId || 'default') || s.characters[charId].chatLines || []).slice(-6).map((line: any) => String(line.text || '').slice(0,240)).join('；').slice(0,1200),
       activity: activities.length ? activityCgTheme(activities[0]) : '',
-      history: allCgs(true).filter((row: any) => row.id !== cgId && row.charId === charId && row.prompt).slice(0,6).map((row: any) => row.theme || {title: '旧版纪念 CG', scene: '深海女仆工坊，烛光与月光', action: '幸福温柔地微笑', composition: '正面人物，桌面与工坊背景', prompt: row.prompt.slice(0,1200)}),
+      history: allCgs(true).filter((row: any) => row.kind!=='daily' && row.id !== cgId && row.charId === charId && row.prompt).slice(0,6).map((row: any) => row.theme || {title: '旧版纪念 CG', scene: '深海女仆工坊，烛光与月光', action: '幸福温柔地微笑', composition: '正面人物，桌面与工坊背景', prompt: row.prompt.slice(0,1200)}),
     }
     record.theme = previous?.theme || null
     await renderCgFromPrompt(record, previous?.prompt || '', '', [charId])
@@ -3440,7 +3459,7 @@ export function apply(
       description: '用户上传的当前背景，仅提取环境、空间和光线，忽略其中人物', ...(includeImage ? { dataUrl: characterBackground(s,charId) } : {}) }
     if (typeof characterBackground(s,charId) === 'string' && characterBackground(s,charId).startsWith('cg:')) {
       const record = findCg(characterBackground(s,charId).slice(3))
-      if (record) return { ...base, kind: 'cg', key: null, cgId: record.id,
+      if (record && dailyCgAccessible(record)) return { ...base, kind: 'cg', key: null, cgId: record.id,
         description: record.theme?.scene || '当前 CG 背景，仅提取环境、空间和光线，忽略其中所有人物',
         ...(includeImage ? { assetRef: record.assetRef || null, dataUrl: record.dataUrl || null } : {}) }
     }
@@ -4642,6 +4661,7 @@ export function apply(
         const allowed = new Set(args.characterIds || ROSTER_IDS)
         for (const row of prepared.cgs) {
           if (!allowed.has(row.charId) || row.characters?.some((c: any) => !allowed.has(c.id))) throw Error('CG 关联角色不存在')
+          if(!dailyCgAccessible(row,args))throw Object.assign(Error('日常 CG 导入范围与当前身份或人生不匹配'),{code:'DAILY_CG_SCOPE_DENIED'})
         }
         if (action === 'companion-media-validate') {
           if (prepared.files.length && !ctx.cg?.imageCodec) throw Error('CG 图片解码器尚未就绪')
@@ -4679,6 +4699,7 @@ export function apply(
         const id=String(args.characterId),content=args.content
         if(!s.characters[id]||!content||typeof content!=='object'||Array.isArray(content))throw Error('人生内容无效')
         if(!content.reset&&(!Number.isFinite(content.level)||content.level<1||!Number.isFinite(content.affection)||content.affection<0||!Array.isArray(content.cgs)||!Array.isArray(content.chatLines)))throw Error('人生角色进度不完整')
+        if([...(content.cgs??[]),...(content.sharedCgs??[])].some((cg:any)=>cg.kind==='daily'&&(!dailyCgOwnerValid(cg)||cg.charId!==id)))throw Object.assign(Error('日常 CG 存档归属不完整或与角色不匹配'),{code:'DAILY_CG_SCOPE_DENIED'})
         const files:any[]=[],scan=(value:any):any=>{
           if(Array.isArray(value))return value.map(scan)
           if(value&&typeof value==='object'){
@@ -5038,15 +5059,22 @@ export function apply(
         scheduleViewMaintenance(heroineChanged)
         return immediate
       }
+      case 'companion-generate-choices': {
+        return {choices:await generateChoices(args.relationship || {},String(args.userText || ''),String(args.replyText || ''),args.signal)}
+      }
       case 'chat': {
         const text = args && args.text ? String(args.text).trim() : ''
         if (text.length > 200000) throw new Error('消息超过 200000 字符；原文未截断')
         const companionContext = args.companionContext
+        const replyStyle = normalizeReplyStyle(companionContext?.replyStyle ?? ctx.replyStyle?.())
         if (!text) return view()
         if (ensurePreferences().enabled === false) return view()
         const runtime = splitStorageActive() ? currentWorkspaceRuntime() : null
         const controller = new AbortController()
         const signal = controller.signal
+        const outerSignal=companionContext&&ctx.companionSignal?.(companionContext.requestId)
+        const cancel=()=>controller.abort(outerSignal?.reason)
+        if(outerSignal?.aborted)cancel();else outerSignal?.addEventListener('abort',cancel,{once:true})
         const timer = setTimeout(() => {
           controller.abort(new Error('chat model work timed out after 110 seconds'))
         }, MODEL_STREAM_TIMEOUT_MS)
@@ -5122,9 +5150,13 @@ export function apply(
                 })(),
                 system: systemPrompt(prepared.profile, prepared.promptCharacter, prepared.pendingActivity)
                   + (companionContext ? '\n完整角色卡（只扮演此角色）：' + JSON.stringify(companionContext.profile) + '\n本会话用户身份：' + JSON.stringify(companionContext.persona)
-                    + '\n未提供的其他身份经历、私聊与群聊内容均不可获知，不编造。可在回复末尾用 [[emotion:标签]] 标记你实际表达的情绪，标签限 normal,cheerful,shy,serious,confused,angry,frightened,exasperated,starry。\n'+(companionContext.memoryText||'')  : ''),
+                    + '\n未提供的其他身份经历、私聊与群聊内容均不可获知，不编造。可在回复末尾用 [[emotion:标签]] 标记你实际表达的情绪，标签限 normal,cheerful,shy,serious,confused,angry,frightened,exasperated,starry。\n'+(companionContext.memoryText||'')  : '')
+                  + '\n' + replyStyleInstruction(replyStyle, ctx.language?.()),
                 temperature: 0.9,
                 maxTokens: 1200,
+                incremental: !!companionContext,
+                onTiming: companionContext ? (value: any)=>ctx.emit?.('galgame/output-timing',{requestId,...value}) : undefined,
+                onText: companionContext ? (text: string,part: any)=>ctx.emit?.('galgame/text-delta',{requestId,characterId:prepared.charId,text,turnId:part?.turnId,itemId:part?.itemId}) : undefined,
                 userLimit: true,
               }, signal)
             } catch (err: any) {
@@ -5144,6 +5176,7 @@ export function apply(
             reply = ctx.language?.() === 'en' ? 'I heard you. The connection is having trouble; let us talk again in a moment.' : prepared.profile.address + '说的话，我听到了。（连接暂时不顺畅，稍后我们再接着聊。）'
             usedFallback = true
           }
+          reply=filterReplySourceLabels(reply,{requestText:text})
           const emotionTag=reply.match(/\[\[emotion:([a-z-]+)\]\]\s*$/i)?.[1]
           reply=reply.replace(/\s*\[\[emotion:[a-z-]+\]\]\s*$/i,'')
           const {emotion, emotionSource} = replyEmotion(reply,emotionTag)
@@ -5186,7 +5219,11 @@ export function apply(
             await save(settledBeforeChat.changed || c.affection !== before || leveled ? 'both' : 'workspace')
             return { leveled, delta, response: view() }
           })
-          ctx.emit?.('galgame/chat-committed', {requestId, messageId: requestId + ':reply', sequence, characterId: prepared.charId, role: 'heroine', emotion, emotionSource, text: reply})
+          if(!companionContext)ctx.emit?.('galgame/chat-committed', {requestId, messageId: requestId + ':reply', sequence, characterId: prepared.charId, role: 'heroine', emotion, emotionSource, text: reply})
+          if(companionContext?.deferChoices){
+            choiceGenerationPending.delete(pendingChoiceCharId);pendingChoiceCharId=''
+            return {...view(),companionCommit:{text:reply,emotion,emotionSource,choices:[],choicesDeferred:true,delta:committed.delta,connectionId:sel?.provider,model:sel?.model,inputVersions}}
+          }
           if (committed.leveled) {
             choiceGenerationPending.delete(pendingChoiceCharId)
             pendingChoiceCharId = ''
@@ -5209,6 +5246,7 @@ export function apply(
             return {...view(), ...(companionContext ? {companionCommit: {text: reply, emotion, emotionSource, choices: c.choices.map((choice: any) => ({...choice})), delta: committed.delta, connectionId: sel?.provider, model: sel?.model, inputVersions}} : {})}
           })
         } finally {
+          outerSignal?.removeEventListener('abort',cancel)
           if (pendingChoiceCharId) choiceGenerationPending.delete(pendingChoiceCharId)
           clearTimeout(timer)
         }
@@ -5298,6 +5336,36 @@ export function apply(
           return view()
         })
       }
+      case 'cg-daily': {
+        // Core-only entry. The host blocks this action on renderer/public APIs.
+        return await runSerializedStateTask(async()=>{
+          const scope=structuredClone(args.scope),charId=scope?.characterId,sourceEventId=args.sourceEventId
+          if(!ROSTER[charId]||!scope?.personaId||!scope?.lifeId||!scope?.operationId||typeof sourceEventId!=='string'||!sourceEventId.startsWith('daily:'))return {ok:false,error:'每日 CG 角色或时点无效'}
+          const existing=allCgs(true).find((row:any)=>row.sourceEventId===sourceEventId)
+          if(existing)return {ok:true,cgId:existing.id,duplicate:true}
+          if(!ctx.cg?.enabled)return {ok:true,skipped:true,reason:'automatic-disabled'}
+          if(args.signal?.aborted)return {ok:true,skipped:true,reason:'cancelled'}
+          const daily=structuredClone(args.daily),profile=structuredClone(args.profile??ctx.cg.selected?.()),restrictions=structuredClone(args.materialRestrictions??{topics:[]}),language=args.language??ctx.language?.()??'zh-CN'
+          const characters=dailyCgCharacters(args.characters??cgCharacters([charId]),restrictions),scene=dailyCgScene(args.scene??captureCgScene(charId),restrictions,language)
+          if(!daily||daily.fictional!==true||!['10:00','22:00'].includes(daily.slot))return {ok:false,error:'每日 CG 时点资料无效'}
+          if(characters.length!==1||characters[0].id!==charId)return {ok:false,error:'每日 CG 人物参考不属于当前角色'}
+          ctx.assertCompanionLife?.(charId,scope)
+          const rawCharacterProfile=args.characterProfile??effectiveProfileFor(charId),characterProfile=dailyCgIdentity(rawCharacterProfile,args.visual??rawCharacterProfile.visual,restrictions),themeConnection=structuredClone(args.themeConnection??ctx.cg.themePlanner?.capture(args.modelBinding)??null)
+          const materials=structuredClone(Array.isArray(args.materials)?args.materials:args.materials?.events??[]),id=makeId('cg')
+          const themeBrief=sanitizeDailyCgBrief({kind:'daily',charId,language,profile:characterProfile,visual:characterProfile.visual,daily,materials,mood:args.mood,preferences:args.preferences,scene,previousMaterialEventIds:args.previousMaterialEventIds,materialRestrictions:restrictions})
+          const record:any={id,charId,personaId:scope.personaId,lifeIds:{[charId]:scope.lifeId},rewardScope:scope,kind:'daily',daily,compositionPolicy:DAILY_CG_COMPOSITION_POLICY,status:'queued',level:s.characters[charId].level||1,at:daily.triggeredAt,seen:false,savedAsBg:false,automatic:true,sourceEventId,characters:characters.map(({dataUrl,...row}:any)=>row),scene:Object.fromEntries(Object.entries(scene??{}).filter(([key])=>key!=='dataUrl')),themeBrief,prompt:'',label:(themeBrief.language==='en'?'Daily CG · ':'日常 CG · ')+daily.logicalDay+' '+daily.slot}
+          // Persist the gallery owner before queue subscriptions can publish.
+          // Never place a credential-bearing drawing/chat profile in the gallery.
+          s.characters[charId].cgs.push(record);await save('global')
+          try{
+            ctx.assertCompanionLife?.(charId,scope)
+            if(args.signal?.aborted){record.status='cancelled';record.error='每日 CG 调度已停止';await save('global');return {ok:true,skipped:true,cgId:id}}
+            const job=await ctx.cg.enqueue({id,sourceEventId,kind:'daily',label:record.label,prompt:'',characters,scene,themeBrief,themeConnection,profile,daily,compositionPolicy:DAILY_CG_COMPOSITION_POLICY,rewardScope:scope,automatic:true})
+            if(job.skipped){record.status='cancelled';record.error='自动生成已关闭';await save('global');return {ok:true,skipped:true,cgId:id}}
+            return {ok:true,cgId:id}
+          }catch(error:any){record.status='failed';record.error=error.message;await save('global');return {ok:false,error:error.message,cgId:id}}
+        })
+      }
       case 'group-photo': {
         if (!ctx.cg?.available()) return {ok:false,error:'请在设置中选择 CG 绘图连接'}
         const source=args.source, ids=source?.characterIds
@@ -5326,7 +5394,16 @@ export function apply(
         return await runSerializedStateTask(async () => {
           const previous = action === 'cg-retry' ? findCg(shortSetting(args.id)) : null
           if (action === 'cg-retry' && (!previous || previous.deletedAt)) return { ok: false, error: 'CG 不存在' }
+          if(previous&&!dailyCgAccessible(previous,args))return dailyCgDenied()
           if (previous && ['queued', 'planning', 'generating', 'ready'].includes(previous.status)) return { ok: true, cgId: previous.id }
+          if(previous?.kind==='daily'){
+            ctx.assertCompanionLife?.(previous.charId,previous.rewardScope)
+            const id=makeId('cg'),record={...structuredClone(previous),id,status:'queued',seen:true,deletedAt:null,retryOf:previous.id,sourceEventId:'daily-retry:'+id,automatic:false,at:Date.now(),assetRef:null,thumbnailRef:null,sha256:null,submittedAt:null,completedAt:null,error:null}
+            s.characters[record.charId].cgs.push(record);await save('global')
+            try{await ctx.cg.enqueue({id,sourceEventId:record.sourceEventId,kind:'daily',label:record.label,prompt:previous.prompt||'',characters:previous.characters||[],scene:previous.scene,themeBrief:previous.themeBrief,theme:previous.theme,retryOf:previous.id,daily:previous.daily,compositionPolicy:DAILY_CG_COMPOSITION_POLICY,rewardScope:previous.rewardScope,automatic:false})}
+            catch(error:any){record.status='failed';record.error=error.message;await save('global')}
+            return {ok:true,cgId:id}
+          }
           if (previous?.kind === 'group') {
             const id=makeId('cg'),record={...previous,id,status:'queued',seen:true,deletedAt:null,retryOf:previous.id,sourceEventId:'group-retry:'+id,at:Date.now()}
             s.characters[record.charId].cgs.push(record);await save('global')
@@ -5340,7 +5417,7 @@ export function apply(
           }
           const charId = previous?.charId || (ROSTER[args.characterId] ? args.characterId : s.current)
           const c = s.characters[charId], level = previous?.level || c.level || 1
-          const existing = !previous && c.cgs.find((row: any) => !row.deletedAt && row.level === level && row.kind !== 'skit' && ['queued', 'planning', 'generating', 'ready'].includes(row.status))
+          const existing = !previous && c.cgs.find((row: any) => !row.deletedAt && row.level === level && (!row.kind||row.kind==='level') && ['queued', 'planning', 'generating', 'ready'].includes(row.status))
           if (existing) return { ok: true, cgId: existing.id }
           const cgId = makeId('cg')
           c.cgs.push({ id: cgId,lifeIds:ctx.companionLifeIds?.([charId]), status: 'queued', kind: 'level', automatic: false, sourceEventId: 'manual:' + cgId,
@@ -5475,7 +5552,7 @@ export function apply(
         if (s && typeof characterBackground(s,charId) === 'string' && characterBackground(s,charId).startsWith('data:')) dataUrl = characterBackground(s,charId)
         if (s && typeof characterBackground(s,charId) === 'string' && characterBackground(s,charId).startsWith('cg:')) {
           const cg = findCg(characterBackground(s,charId).slice(3))
-          if (cg && cg.status === 'ready') dataUrl = cg.dataUrl || (cg.assetRef ? ctx.cg?.readAsset(cg.assetRef) : null)
+          if (cg && cg.status === 'ready' && dailyCgAccessible(cg,args)) dataUrl = cg.dataUrl || (cg.assetRef ? ctx.cg?.readAsset(cg.assetRef) : null)
         }
         const custom = !!(s && typeof characterBackground(s,charId) === 'string' && characterBackground(s,charId).startsWith('data:'))
         return {
@@ -5524,6 +5601,7 @@ export function apply(
           if(!Array.isArray(rows))continue
           s.characters[charId].cgs=rows.filter((cg:any)=>{
             if(!cg||!wanted.has(cg.id)||!(cg.charId===id||cg.characters?.some((c:any)=>c.id===id)))return true
+            if(!dailyCgAccessible(cg,args))return true
             if(!(typeof cg.assetRef==='string'&&cg.assetRef&&ctx.cgAssetExists?.(cg.assetRef)===false))return true
             removed.push(cg.id);return false
           })
@@ -5542,6 +5620,7 @@ export function apply(
       case 'cg-restore': {
           const cg = findCg(shortSetting(args.id))
           if (!cg) return {ok:false,error:'CG 不存在'}
+          if(!dailyCgAccessible(cg,args))return dailyCgDenied()
           const restoring = action === 'cg-restore'
           if (restoring) {
             await ctx.cg?.restoreJob(cg.id)
@@ -5564,7 +5643,7 @@ export function apply(
       case 'cg-trash-list':
       case 'cg-gallery': {
         return {
-          items: allCgs(true).filter((cg:any)=>ctx.companionCgVisible?.(cg,args.characterId||s.current)!==false).filter((cg: any) => (args.groupId ? cg.kind === 'group' && cg.groupId === args.groupId : (cg.charId === (args.characterId || s.current) || cg.kind === 'group' && cg.characters?.some((c: any) => c.id === (args.characterId || s.current))))).filter((cg: any) => action === 'cg-trash-list' ? !!cg.deletedAt : !cg.deletedAt).map((cg: any) => ({
+          items: allCgs(true).filter((cg:any)=>dailyCgAccessible(cg,args)&&ctx.companionCgVisible?.(cg,args.characterId||s.current)!==false).filter((cg: any) => (args.groupId ? cg.kind === 'group' && cg.groupId === args.groupId : (cg.charId === (args.characterId || s.current) || cg.kind === 'group' && cg.characters?.some((c: any) => c.id === (args.characterId || s.current))))).filter((cg: any) => action === 'cg-trash-list' ? !!cg.deletedAt : !cg.deletedAt).map((cg: any) => ({
             id: cg.id,
             groupId: cg.groupId || null, kind: cg.kind || null, retryOf: cg.retryOf || null,
             provider: cg.provider || null, model: cg.model || null, connectionName: cg.connectionName || null,
@@ -5572,6 +5651,7 @@ export function apply(
             characters: cg.characters?.map((c: any) => ({id:c.id,name:c.name})) || [],
             thumbnailRef: cg.thumbnailRef || null,
             deletedAt: cg.deletedAt || null, theme: cg.theme || null, referenceNotice: cg.referenceNotice || null,
+            ...(cg.kind==='daily'?{daily:structuredClone(cg.daily),compositionPolicy:cg.compositionPolicy}:{}),
             label: cg.label || null,
             status: cg.status,
             prompt: cg.prompt,
@@ -5587,11 +5667,13 @@ export function apply(
       }
       case 'cg-thumbnail': {
         const cg = findCg(shortSetting(args.id))
+        if(cg&&!dailyCgAccessible(cg,args))return dailyCgDenied()
         try { return cg?.thumbnailRef ? { ok: true, dataUrl: ctx.cg.readAsset(cg.thumbnailRef) } : cg?.dataUrl ? {ok:true,dataUrl:cg.dataUrl} : { ok: false } } catch { return { ok: false, error: 'CG 缩略图读取失败' } }
       }
       case 'cg-data': {
         const id = shortSetting(args && args.id)
         const cg = id ? findCg(id) : null
+        if(cg&&!dailyCgAccessible(cg,args))return dailyCgDenied()
         if (!cg || cg.status !== 'ready' || (!cg.dataUrl && !cg.assetRef)) {
           return { ok: false, error: 'CG 不存在或尚未生成完成' }
         }
@@ -5616,12 +5698,14 @@ export function apply(
       }
       case 'cg-ack': {
         const cg = args && typeof args.id === 'string' ? findCg(args.id) : currentCg()
+        if(cg&&!dailyCgAccessible(cg,args))return dailyCgDenied()
         if (cg) cg.seen = true
         await save('global')
         return view()
       }
       case 'cg-save-bg': {
         const cg = args && typeof args.id === 'string' ? findCg(args.id) : currentCg()
+        if(cg&&!dailyCgAccessible(cg,args))return dailyCgDenied()
         let snapshot: any = null
         if (s && cg && (cg.charId === s.current || cg.kind === 'group' && cg.characters?.some((c: any) => c.id === s.current)) && !cg.deletedAt && cg.status === 'ready' && (cg.dataUrl || cg.assetRef)) {
           snapshot = captureBackgroundMutationSnapshot()
@@ -5718,6 +5802,7 @@ export function apply(
       'bg-upload',
       'bg-clear-custom',
       'cg-generate',
+      'cg-daily',
       'cg-retry',
       'cg-ack',
       'cg-save-bg',
@@ -5857,7 +5942,9 @@ export function apply(
       const deletedAt = record.deletedAt
       Object.assign(record, job)
       if (deletedAt) record.deletedAt = deletedAt
-      await save('global')
+      // Queue recovery may publish outside every workspace ALS. This record
+      // belongs to the host's global store and needs no workspace facade.
+      await writeGlobalState()
       ctx.emit('galgame/cg-updated', job)
     }).catch(() => undefined)
   }))

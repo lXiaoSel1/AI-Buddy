@@ -3,6 +3,7 @@ import React,{useEffect,useState,useRef} from 'react';
 import {TOOL_NAMES,providerLabel} from './token-types.mjs';
 import {platformLabel,BILLING_ROUTES} from './service-identity.mjs';
 import {defaultViews,defaultView,SORT_OPTIONS,compactNumber} from './statistics-views.mjs';
+import {effectiveUsageOptions} from './usage-query.mjs';
 import {StatisticsModal} from './statistics-modal.mjs';
 import {QuotaCards} from './quota-ui.mjs';
 import {PriceEditor,priceStamp as stamp} from './price-editor.mjs';
@@ -127,7 +128,7 @@ export function UsageGapNotice({count,onDismiss}){
 export function AnalyticsPage({page='overview',settings,revision,onManage,onSaved,onAttribution,onPage,monitor}){
  const [tab,setTab]=useState('usage'),[result,setResult]=useState(null),[spark,setSpark]=useState(null),[error,setError]=useState(''),[refresh,setRefresh]=useState(0),[loading,setLoading]=useState(true),[modal,setModal]=useState(null),[detail,setDetail]=useState(null),[more,setMore]=useState(null),[priceSearch,setPriceSearch]=useState(''),[priceVersion,setPriceVersion]=useState(''),detailId=useRef(0),refreshQuery=useRef(null),moreRef=useRef(null),errorsRef=useRef(null);
  const views=settings?.preferences.statisticsViews||defaultViews(),filters=views[page]||defaultView(page),zone=settings?.preferences.statisticsTimeZone||'America/New_York',isQuota=page==='overview'&&tab==='quota';
- const {visibleTools,...query}=filters,queryKey=JSON.stringify(query),pet=settings?.effectivePetCharacter||settings?.petCharacterId||'deepseek';
+ const {visibleTools}=filters,query=effectiveUsageOptions(filters),queryKey=JSON.stringify(query),pet=settings?.effectivePetCharacter||settings?.petCharacterId||'deepseek';
  useEffect(()=>{
   if(isQuota){refreshQuery.current=null;return;}
   let live=true,running=false,pending=false,timer;setLoading(true);

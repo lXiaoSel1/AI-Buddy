@@ -35,8 +35,35 @@ README screenshots are captures of the actual application with an independent te
 
 [Electron](https://www.electronjs.org/) 44.6.0 and Chromium licenses ship in the runtime folder. React 19.3.0, React DOM, scheduler and esbuild licenses ship in `licenses/`. Windows executable resources are branded with [rcedit](https://github.com/electron/rcedit) 2.0.0. [RIFE](https://github.com/hzwer/ECCV2022-RIFE) was used during motion production; Python, OpenCV, RIFE and video-generation models are not required by the distributed app.
 
+### Optional DSH runtime and work plugin SDK
+
+The optional verified DSH component uses DeepSeek Harness `0.2.1-rc.3`, source
+commit `22ddee3792402c3e70ec5f86a63c3e3e895a2f60`, Node.js `24.21.0` and pnpm
+`11.28.5`. The component keeps its own `DSH-LICENSE` and
+`DSH-THIRD-PARTY-NOTICES.md` at the component root. Its `runtime-lock.json`
+records the exact shipped files and hashes, including dependency license and
+notice files. DSH's MIT license does not replace its dependencies' terms.
+
+The separately installed work and collaboration plugin includes Claude Agent
+SDK `0.3.296` and its locked JavaScript dependency closure under
+`lib/vendor/claude-sdk/`. Its `SDK-DEPENDENCY-LOCK.json` and
+`SDK-VENDOR-MANIFEST.json` record the dependency versions and file inventory.
+The SDK's original terms are retained in
+`lib/vendor/claude-sdk/node_modules/@anthropic-ai/claude-agent-sdk/LICENSE.md`
+and `README.md`; the SDK identifies its license as `SEE LICENSE IN README.md`
+and refers to [Anthropic's legal agreements](https://code.claude.com/docs/en/legal-and-compliance).
+The JavaScript SDK is not relicensed under AI Buddy's license or DSH's MIT
+license. Other vendored packages keep their own original licenses and notices.
+The platform CLI executable is resolved separately by the trusted host; the
+work plugin does not silently download it. The pinned SDK integration requires
+Claude Code `2.1.296`, and the captured executable identity is checked before use.
+
 AI Buddy is not an official product of the named AI providers or character artists. Service and model names identify compatibility and appearance choices.
 
 ## .NET installer runtime
 The self-contained online installer includes Microsoft .NET and Windows Forms (MIT). See [license](licenses/DOTNET-LICENSE.txt), [third-party notices](licenses/DOTNET-THIRD-PARTY-NOTICES.txt), and [dotnet/runtime](https://github.com/dotnet/runtime). Build SDK: 10.0.402; runtime: 10.0.13.
 
+
+## FFmpeg optional upstream component
+
+Bilibili Companion installation prepares the original Gyan FFmpeg 8.1.2 full-build ZIP directly from https://github.com/GyanD/codexffmpeg/releases/tag/8.1.2. This host release does not redistribute that executable or archive. Its fixed download and selected-file hashes are published in release/bili-ffmpeg-upstream.json. The upstream GPLv3 LICENSE and original build README are preserved byte-for-byte in licenses/ffmpeg-8.1.2/ and with the installed component. Only ffmpeg.exe and those notices are prepared; no ffplay, ffprobe, Whisper binary or speech model is installed. This does not claim corresponding-source clearance for mirroring the upstream static binary.

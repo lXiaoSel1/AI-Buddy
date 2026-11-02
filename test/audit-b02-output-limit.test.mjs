@@ -83,13 +83,13 @@ test('group chat never stores or shows a raw JSON fragment',async t=>{
  const store=memoryStore(await companionFixture()),{engine}=syntheticEngine({getStore:()=>store});
  let reply=CUT;const provider={enabled:true,currentSelection:()=>({provider:'p1',model:'m'}),resolveConnection:()=>({mode:'global',connectionId:'p1',name:'p1',model:'m',error:null}),resolveContextCapacity:()=>({tokens:128000,source:'fixture',verified:true}),runTurn:async fn=>fn(),
   async *stream(){yield {type:'text-delta',text:reply};yield {type:'finish',reason:{kind:'stop'}};}};
- const service=await createCompanionService({store,engine,provider,dataRoot:tmpDir('b02-group',{t}),now:Date.now});t.after(()=>service.close());
+ const service=await createCompanionService({store,engine,provider,dataRoot:tmpDir('b02-group',{t,beforeRemove:()=>service.close()}),now:Date.now});t.after(()=>service.close());
  const group=(await service.action('companion-group-save',{name:'测试群',memberIds:['claude','gpt'],mode:'list'})).companion.groups[0];
  await service.action('companion-group-select',{id:group.id,entryCharacterId:'claude'});
  await service.action('companion-group-send',{id:group.id,text:'大家好',forceCharacterId:'claude'});
- for(let n=0;n<40&&service.viewState().groupRuntime.status!=='awaiting-presentation';n++)await sleep(25);
- const pending=store.state.groups[group.id].pending.message;
- assert.equal(pending.text,'今天我们一起去海边散步，然后');assert.doesNotMatch(service.viewState().groupRuntime.pendingMessage.text,/\{"text"/);
+ for(let n=0;n<40&&service.viewState().groupRuntime.status!=='failed';n++)await sleep(25);
+ assert.equal(service.viewState().groupRuntime.status,'failed','visible partial cannot be committed as valid JSON');
+ assert.equal(store.state.groups[group.id].messages.filter(m=>m.role==='assistant').length,0);
  await service.action('companion-group-stop',{id:group.id});
  reply='{"emotion":"cheerful"';await service.action('companion-group-send',{id:group.id,text:'再说一次',forceCharacterId:'claude'});
  for(let n=0;n<40&&service.viewState().groupRuntime.status!=='failed';n++)await sleep(25);

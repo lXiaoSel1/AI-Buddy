@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,cpSync,mkdirSync,writeFileSync,readFileSync,existsSync,renameSync,symlinkSync} from 'node:fs';
+import {mkdtempSync,cpSync,mkdirSync,writeFileSync,readFileSync,existsSync,renameSync,symlinkSync,lstatSync,readlinkSync,rmdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {join,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import {CgService} from '../src/cg-service.mjs';
 
@@ -35,16 +35,25 @@ test('legacy absolute paths migrate by job and reference identity with the old r
  const {target}=await copiedSource({keepOld:false,legacy:true});const {cg}=await service(target);try{cg.start();await until(()=>['ready','failed'].includes(cg.job('portable').status));assert.equal(cg.job('portable').status,'ready',cg.job('portable').error);assert.equal(cg.job('portable').directoryRef,'cg-assets/portable');assert.equal(cg.job('portable').references[0].assetRef,'cg-assets/portable/reference-0.png');}finally{await cg.close();}
 });
 for(const defect of ['missing','hash','reference-escape','directory-escape','directory-link','reference-link'])test('CG '+defect+' fails before theme planning and any network submission',async()=>{
- let plans=0;const {cg,calls}=await service(temp(),{themePlanner:{capture:()=>null,prepare:async()=>{plans++;return {theme:{},prompt:'planned'};}}});try{
+ let plans=0;const junctions=[];const {cg,calls}=await service(temp(),{themePlanner:{capture:()=>null,prepare:async()=>{plans++;return {theme:{},prompt:'planned'};}}});try{
   await cg.enqueue({id:'portable',sourceEventId:'portable',themeBrief:{charId:'deepseek'}});const j=cg.job('portable'),path=j.references[0].path;
   if(defect==='missing')renameSync(path,path+'.unavailable');
   if(defect==='hash')writeFileSync(path,'corrupted');
   if(defect==='reference-escape')j.references[0].assetRef='../outside.png';
   if(defect==='directory-escape')j.directoryRef='../outside';
-  if(defect==='directory-link'){const outside=temp();cpSync(j.directory,outside,{recursive:true});renameSync(j.directory,j.directory+'.original');symlinkSync(outside,j.directory,'junction');}
-  if(defect==='reference-link'){const outside=temp();writeFileSync(join(outside,'reference.png'),png);renameSync(path,path+'.original');symlinkSync(outside,path,'junction');}
+  if(defect==='directory-link'){const outside=temp();cpSync(j.directory,outside,{recursive:true});renameSync(j.directory,j.directory+'.original');symlinkSync(outside,j.directory,'junction');junctions.push({link:j.directory,target:outside});}
+  if(defect==='reference-link'){const outside=temp();writeFileSync(join(outside,'reference.png'),png);renameSync(path,path+'.original');symlinkSync(outside,path,'junction');junctions.push({link:path,target:outside});}
   cg.start();await until(()=>['ready','failed'].includes(j.status));assert.equal(j.status,'failed');assert.equal(plans,0);assert.equal(calls.length,0);assert.equal(j.submittedAt,undefined);
- }finally{await cg.close();}
+ }finally{
+  try{await cg.close();}finally{
+   for(const item of junctions){
+    assert(lstatSync(item.link).isSymbolicLink(),'Test junction changed before cleanup');
+    assert.equal(resolve(readlinkSync(item.link)),resolve(item.target),'Test junction target changed before cleanup');
+    rmdirSync(item.link);
+    assert(existsSync(item.target),'Removing test junction changed its target');
+   }
+  }
+ }
 });
 test('references changed while preparing a theme fail revalidation before onSubmit',async()=>{
  let cg,plans=0;const f=await service(temp(),{themePlanner:{capture:()=>null,prepare:async()=>{plans++;writeFileSync(cg.job('portable').references[0].path,'changed during planner');return {theme:{},prompt:'prepared'};}}});cg=f.cg;

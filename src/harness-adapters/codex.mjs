@@ -1,0 +1,55 @@
+import {EventEmitter} from 'node:events';
+import {isAbsolute} from 'node:path';
+import {HarnessRpcProcess} from '../agent-runtime-manager.mjs';
+
+const TOOL_TYPES=new Set(['commandExecution','fileChange','mcpToolCall','webSearch','dynamicToolCall','collabAgentToolCall']);
+const REQUEST_METHODS=new Set(['item/commandExecution/requestApproval','item/fileChange/requestApproval','item/permissions/requestApproval','item/tool/requestUserInput','mcpServer/elicitation/request','item/tool/call']);
+const failure=(message,code)=>Object.assign(Error(message),{code});
+
+export class CodexWorkAdapter extends EventEmitter {
+  constructor({binary,args=[],cwd,env,spawnImpl,requestTimeoutMs=30000,expectedModel,expectedProvider,developerInstructions='',baseInstructions,supportedEfforts,onUsage=()=>{},rpc}={}){
+    super();Object.assign(this,{expectedModel,expectedProvider,developerInstructions,baseInstructions,supportedEfforts,onUsage});this.sessions=new Map();this.turns=new Map();this.pendingTurns=new Map();this.doneTurns=new Set();this.textItems=new Set();this.usageTotals=new Map();this.initialized=null;this.disposed=false;
+    // Work has a separate process from chat. Keep Codex's built-in coding instructions.
+    const overrides=['notify=[]','web_search="disabled"','features.apps=false','features.memories=false','features.goals=false','features.image_generation=false','mcp_servers={}'];
+    this.rpc=rpc??new HarnessRpcProcess({binary,args:['app-server',...overrides.flatMap(value=>['-c',value]),...args],cwd,env,spawnImpl,requestTimeoutMs});
+    this.rpc.on('notification',message=>this.notification(message));this.rpc.on('request',message=>this.serverRequest(message));this.rpc.on('disconnect',error=>this.disconnected(error));
+  }
+  get busy(){return this.pendingTurns.size>0||this.turns.size>0;}
+  event(type,{threadId,turnId,itemId,...payload}={},replay=false){this.emit('event',{type,sessionId:threadId??null,turnId:turnId??null,itemId:itemId??null,replay,payload});}
+  async probe(){if(this.initialized)return this.initialized;this.initialized=(async()=>{await this.rpc.start();const result=await this.rpc.request('initialize',{clientInfo:{name:'ai_buddy_work',version:'2.0.0',title:'AI Buddy Work'},capabilities:{experimentalApi:true}});this.rpc.notify('initialized',{});return {kind:'codex',serverInfo:result,capabilities:{persistentSession:true,tools:true,interrupt:true}};})();try{return await this.initialized;}catch(error){this.initialized=null;throw error;}}
+  checkBinding(result,{model=this.expectedModel,provider=this.expectedProvider}={}){if(model&&result.model!==model)throw failure('工作执行器实际模型与角色绑定不一致','HARNESS_MODEL_MISMATCH');if(provider&&result.modelProvider!==provider)throw failure('工作执行器实际厂商与角色绑定不一致','HARNESS_PROVIDER_MISMATCH');}
+  sessionParams({workspace,model=this.expectedModel,provider=this.expectedProvider,developerInstructions=this.developerInstructions,config={}}={}){
+    if(!isAbsolute(workspace??''))throw failure('请选择绝对路径的工作目录','WORKSPACE_REQUIRED');if(!model)throw failure('未选择工作模型','MODEL_REQUIRED');
+    return {model,...(provider?{modelProvider:provider}:{}),cwd:workspace,sandbox:'workspace-write',approvalPolicy:'on-request',...(this.baseInstructions==null?{developerInstructions}:{baseInstructions:this.baseInstructions}),config:{...config,'features.shell_tool':true,'features.apply_patch_freeform':true},runtimeWorkspaceRoots:[workspace]};
+  }
+  async startSession(options={}){await this.probe();const params=this.sessionParams(options),result=await this.rpc.request('thread/start',{...params,ephemeral:false,allowProviderModelFallback:false});this.checkBinding(result,params);const session={sessionId:result.thread.id,workspace:params.cwd,model:result.model,provider:result.modelProvider,capabilities:(await this.probe()).capabilities};this.sessions.set(session.sessionId,session);this.usageTotals.set(session.sessionId,{});return {...session};}
+  async resumeSession({sessionId,usageBaseline,...options}){await this.probe();const params=this.sessionParams(options),result=await this.rpc.request('thread/resume',{...params,threadId:sessionId});this.checkBinding(result,params);if(result.thread?.id!==sessionId)throw failure('工作会话身份发生变化','HARNESS_SESSION_MISMATCH');const session={sessionId,workspace:params.cwd,model:result.model,provider:result.modelProvider,capabilities:(await this.probe()).capabilities};this.sessions.set(sessionId,session);if(usageBaseline)this.usageTotals.set(sessionId,{...usageBaseline});else if(!this.usageTotals.has(sessionId))this.usageTotals.set(sessionId,null);this.event('status',{threadId:sessionId,status:'resumed'});return {...session};}
+  async sendTurn({sessionId,text,model,effort,signal,clientMessageId}={}){
+    const session=this.sessions.get(sessionId);if(!session)throw failure('工作会话尚未加载','SESSION_NOT_LOADED');if(this.pendingTurns.has(sessionId)||[...this.turns.values()].some(value=>value.sessionId===sessionId))throw failure('当前工作会话仍在执行','HARNESS_BUSY');if(model&&model!==session.model)throw failure('工作任务不能静默切换模型','HARNESS_MODEL_MISMATCH');if(signal?.aborted)throw failure('工作任务已取消','ABORT_ERR');
+    if(effort!=null&&Array.isArray(this.supportedEfforts)&&!this.supportedEfforts.includes(effort))throw failure('工作模型不支持所选推理强度','HARNESS_WORK_EFFORT_UNSUPPORTED');
+    let resolve,reject;const completion=new Promise((yes,no)=>{resolve=yes;reject=no;});const run={sessionId,turnId:null,resolve,reject,signal,aborted:false,abort:null,buffer:[]};completion.catch(()=>{});
+    run.abort=()=>{run.aborted=true;if(run.turnId)void this.cancelTurn({sessionId,turnId:run.turnId}).catch(error=>this.settle(run,error));};signal?.addEventListener('abort',run.abort,{once:true});this.pendingTurns.set(sessionId,run);
+    try{const result=await this.rpc.request('turn/start',{threadId:sessionId,input:[{type:'text',text:String(text??'')}],cwd:session.workspace,model:session.model,...(effort==null?{}:{effort}),...(clientMessageId?{clientUserMessageId:clientMessageId}:{}),approvalPolicy:'on-request',sandboxPolicy:{type:'workspaceWrite',writableRoots:[session.workspace],networkAccess:false,excludeTmpdirEnvVar:true,excludeSlashTmp:true}});run.turnId=result.turn?.id;if(!run.turnId)throw failure('执行器没有返回工作轮次 ID','TURN_ID_MISSING');if(run.settled){this.doneTurns.add(run.turnId);run.buffer.length=0;if(run.aborted)await this.cancelTurn({sessionId,turnId:run.turnId});}else{this.turns.set(run.turnId,run);for(const message of run.buffer.splice(0))this.notification(message);if(run.aborted)await this.cancelTurn({sessionId,turnId:run.turnId});}}
+    catch(error){this.settle(run,error);}return completion;
+  }
+  settle(run,error,result){if(run.settled)return;run.settled=true;run.signal?.removeEventListener('abort',run.abort);if(this.pendingTurns.get(run.sessionId)===run)this.pendingTurns.delete(run.sessionId);if(run.turnId){this.turns.delete(run.turnId);this.doneTurns.add(run.turnId);if(this.doneTurns.size>1000)this.doneTurns.delete(this.doneTurns.values().next().value);}error?run.reject(error):run.resolve(result);}
+  runFor(params){return this.turns.get(params.turnId??params.turn?.id);}
+  notification({method,params:p={}}){
+    if(!this.sessions.has(p.threadId))return;const turnId=p.turnId??p.turn?.id;if(turnId&&this.doneTurns.has(turnId))return;const pending=this.pendingTurns.get(p.threadId);if(pending&&!pending.turnId){pending.buffer.push({method,params:p});return;}const run=this.runFor(p);if(!run)return;
+    if(method==='item/agentMessage/delta'){this.textItems.add(p.itemId);this.event('text',{...p,text:p.delta??''});}
+    else if(method==='item/started'||method==='item/completed'){const item=p.item??{};if(item.type==='agentMessage'){if(method==='item/completed'&&!this.textItems.has(item.id))this.event('text',{...p,itemId:item.id,text:item.text??'',complete:true,phase:item.phase});}else if(TOOL_TYPES.has(item.type))this.event('tool',{...p,itemId:item.id,state:method==='item/started'?'started':'completed',item});}
+    else if(['item/commandExecution/outputDelta','item/fileChange/outputDelta','item/fileChange/patchUpdated','turn/diff/updated','turn/plan/updated'].includes(method))this.event('tool',{...p,method});
+    else if(method==='thread/tokenUsage/updated'){
+      const total=p.tokenUsage?.total??{},previous=this.usageTotals.get(p.threadId),usage=previous===null?null:{};if(usage)for(const key of ['inputTokens','outputTokens','totalTokens','cachedInputTokens','cacheWriteInputTokens','reasoningOutputTokens'])usage[key]=Math.max(0,(Number(total[key])||0)-(Number(previous?.[key])||0));this.usageTotals.set(p.threadId,{...total});if(usage===null||Object.values(usage).some(value=>value>0)){const value={...p,usage,cumulative:total,billable:usage!==null,...(usage===null?{reason:'missing-resume-baseline'}:{})};this.event('usage',value);this.onUsage(value);}
+    }
+    else if(method==='turn/completed'){const status=p.turn?.status;this.event('status',{...p,status});if(run)this.settle(run,status==='completed'?null:failure(status==='interrupted'?'工作任务已取消':p.turn?.error?.message??'工作任务失败',status==='interrupted'?'ABORT_ERR':'HARNESS_TURN_FAILED'),{sessionId:p.threadId,turnId:p.turn?.id,status});}
+    else if(method==='error'){this.event('status',{...p,status:'error'});if(run&&p.willRetry!==true)this.settle(run,failure(p.error?.message??'工作执行器出错','HARNESS_TURN_FAILED'));}
+    else if(method==='model/rerouted'||method==='thread/modelRerouted'){this.event('status',{...p,status:'model-mismatch'});if(run){void this.cancelTurn({sessionId:p.threadId,turnId:run.turnId}).catch(()=>{});this.settle(run,failure('工作执行器更换了绑定模型，任务已暂停','HARNESS_MODEL_MISMATCH'));}}
+  }
+  serverRequest(message){const p=message.params??{};if(!REQUEST_METHODS.has(message.method)||!this.sessions.has(p.threadId)){this.rpc.respond({requestId:message.id,error:{code:-32601,message:'Unsupported work request'}});return;}this.event('request',{...p,requestId:message.id,method:message.method});}
+  respondToRequest(answer){this.rpc.respond(answer);}
+  rejectTransport(error){for(const run of new Set([...this.turns.values(),...this.pendingTurns.values()])){run.aborted=true;if(run.turnId)void this.cancelTurn({sessionId:run.sessionId,turnId:run.turnId}).catch(()=>{});this.settle(run,error);}this.event('status',{status:'transport-rejected',code:error.code});}
+  async cancelTurn({sessionId,turnId}={}){const run=turnId?this.turns.get(turnId):this.pendingTurns.get(sessionId);const id=turnId??run?.turnId;if(!id)throw failure('工作轮次尚未就绪，取消已等待轮次确认','TURN_ID_MISSING');await this.rpc.request('turn/interrupt',{threadId:sessionId,turnId:id},10000);this.event('status',{threadId:sessionId,turnId:id,status:'cancelling'});return {requested:true,sessionId,turnId:id};}
+  disconnected(error){for(const run of new Set([...this.turns.values(),...this.pendingTurns.values()]))this.settle(run,failure(error.message,'HARNESS_DISCONNECTED'));this.event('status',{status:'disconnected',code:error.code});}
+  dispose(){if(this.disposed)return;this.disposed=true;this.disconnected({message:'工作执行器已关闭',code:'HARNESS_DISPOSED'});this.rpc.dispose();this.sessions.clear();}
+}

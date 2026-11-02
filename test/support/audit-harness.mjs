@@ -5,9 +5,11 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 
-export function tmpDir(name,{t=null}={}){
+export function tmpDir(name,{t=null,beforeRemove=null}={}){
  const dir=mkdtempSync(join(tmpdir(),'audit-'+name+'-'));
- if(t)t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ // after hooks run in registration order. Let resource owners close before
+ // removing their directory; a later separately registered hook is too late.
+ if(t)t.after(async()=>{if(beforeRemove)await beforeRemove();rmSync(dir,{recursive:true,force:true});});
  return dir;
 }
 export const gate=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};

@@ -13,6 +13,10 @@ export function Segmented({value,options,onChange,disabled=false,size='',label,.
 export function Switch({checked,onChange,disabled=false,label,...rest}){
  return h('button',{type:'button',className:'ui-switch',role:'switch','aria-checked':!!checked,'aria-label':label,disabled,onClick:()=>onChange?.(!checked),...pick(rest)});
 }
+// The same switch on a real checkbox, for forms whose callers and tests count checkboxes.
+export function CheckSwitch({checked,onChange,disabled=false,label,...rest}){
+ return h('input',{type:'checkbox',className:'ui-switch ui-cswitch',role:'switch',checked:!!checked,'aria-checked':!!checked,'aria-label':label,disabled,onChange:event=>onChange?.(event.target.checked),...pick(rest)});
+}
 // tone: ok | warn | err | info | busy | idle
 export function StatusPill({tone='idle',children,...rest}){
  return h('span',{className:'ui-pill'+(tone==='idle'?'':' '+tone),...pick(rest)},tone==='busy'?h('span',{className:'ui-spinner','aria-hidden':true}):h('span',{className:'ui-dot','aria-hidden':true}),children);

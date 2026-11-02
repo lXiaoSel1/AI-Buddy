@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {createGalgame} from '../src/galgame-host.mjs';
 import {CgService} from '../src/cg-service.mjs';
+import {exportPortableCgs,validatePortableCgs} from '../src/companion-media.mjs';
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=','base64');
 const until=async fn=>{for(let i=0;i<300;i++){const v=await fn();if(v)return v;await new Promise(r=>setTimeout(r,10));}throw Error('Fixture timeout');};
 async function fixture(root){
@@ -17,7 +18,7 @@ async function fixture(root){
  await cg.activate((await cg.save({kind:'custom',name:'mock',protocol:'openai-images',baseUrl:'http://127.0.0.1:3',model:'fixture',options:{references:false}})).id);cg.start();
  const provider={enabled:true,currentSelection:()=>({provider:'fixture',model:'fixture'}),listProviders:()=>[{id:'fixture'}],listModels:()=>[{id:'fixture'}],runTurn:async fn=>fn(),async *stream(){yield{type:'text-delta',text:'{"text":"一起看星星","emotion":"cheerful","affection":0}'};}};
  const game=await createGalgame({dataRoot:root,provider,model:'fixture',cg});
- return {game,cg,draws:()=>draws,async close(){game.close();await cg.close();}};
+ return {game,cg,draws:()=>draws,async close(){await game.close();await cg.close();}};
 }
 async function withPhoto(root){
  const f=await fixture(root);
@@ -31,10 +32,14 @@ async function withPhoto(root){
 test('Group export carries actual CG bytes and restores with the original root unavailable, without new requests',async()=>{
  const base=mkdtempSync(join(tmpdir(),'buddy-portable-')),sourceRoot=join(base,'source'),f=await withPhoto(sourceRoot);
  const original=(await f.game.action('cg-data',{id:f.photo.cgId})).dataUrl;
+ const sourceLives=Object.fromEntries((await f.game.action('companion-state')).companion.characters.map(card=>[card.id,card.life.id]));
  const data=(await f.game.action('companion-group-export',{id:f.group.id})).data;
+ assert.equal(data.media.cgs[0].kind,'group');assert.equal(Object.hasOwn(data.media.cgs[0],'lifeIds'),false,'Legacy photos must not retain source-machine life UUIDs');
  await f.close();renameSync(sourceRoot,join(base,'source-unavailable'));assert.equal(existsSync(sourceRoot),false);
  const targetRoot=join(base,'另一台电脑 with space'),g=await fixture(targetRoot);
  try{
+  const targetLives=Object.fromEntries((await g.game.action('companion-state')).companion.characters.map(card=>[card.id,card.life.id]));
+  for(const characterId of ['deepseek','claude'])assert.notEqual(targetLives[characterId],sourceLives[characterId],'A different machine owns a different current life');
   await g.game.action('companion-conversation-import',{data});
   const state=(await g.game.action('companion-state')).companion,group=state.groups.find(x=>x.id===f.group.id||x.importedFrom===f.group.id),id=group.photos[0].cgId;
   const restored=await g.game.action('cg-data',{id});assert.equal(restored.ok,true,restored.error);assert.equal(restored.dataUrl,original);
@@ -62,6 +67,18 @@ test('Tampered media or invalid conversation rejects the entire import before ch
   const escape=structuredClone(data);escape.media.files[0].key='../../outside.png';
   await assert.rejects(()=>g.game.action('companion-conversation-import',{data:escape}),/文件|key|hash|校验/i);
  }finally{await f.close();await g.close();}
+});
+
+test('Legacy portable metadata retains its original whitelist and import identity despite daily-only fields',()=>{
+ const extras={daily:{logicalDay:'2026-11-01',slot:'10:00',fictional:true},compositionPolicy:'daily-v1',rewardScope:{characterId:'deepseek',personaId:'default',lifeId:'source-life',operationId:'source-operation'},lifeIds:{deepseek:'source-life'},themeBrief:{materials:[{text:'daily-only'}]},retryOf:'daily-retry',submittedAt:1,completedAt:2};
+ for(const kind of [undefined,'level','group','skit']){
+  const original={id:'legacy-'+(kind??'empty'),status:'failed',charId:'deepseek',personaId:'default',prompt:'original legacy prompt',...(kind?{kind}:{})};
+  const expected=exportPortableCgs([original],()=>assert.fail('No failed image bytes are read'));
+  const exported=exportPortableCgs([{...original,...extras}],()=>assert.fail('No failed image bytes are read'));
+  assert.deepEqual(exported,expected,kind??'empty kind');
+  const imported=validatePortableCgs({...expected,cgs:[{...expected.cgs[0],...extras}]});
+  assert.deepEqual(imported,validatePortableCgs(expected),'Ignored daily-only fields must not alter the legacy imported ID or owner');
+ }
 });
 
 test('Legacy JPEG bytes survive restore and re-export without a misleading PNG MIME type',async()=>{

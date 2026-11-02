@@ -1,5 +1,7 @@
 import {createHash} from 'node:crypto';
 import {effectiveCard} from './companion-store.mjs';
+import {socialExperienceHash} from './companion-memory.mjs';
+import {preferenceShape,resolvePreference,publicPreferences} from './companion-preferences.mjs';
 
 // These are conservative engineering gates, not a psychological growth model.
 // Source validity and a small diff do not prove that a change is semantically natural.
@@ -66,11 +68,16 @@ function growthState(life){
 function eventMap(life){const value=life.memory?.events??{};return Array.isArray(value)?Object.fromEntries(value.map(row=>[row.id,row])):value;}
 function original(event,life,id,scope){
  if(!plain(event)||event.dateUnknown===true||event.lifeId!==life.id||event.characterId!==id||scopeOf(event)!==scope)return false;
+ if(event.source?.type==='expression'||event.autonomousExpression===true||event.source?.autonomousExpression===true||['proactive-expression','selftalk','self-talk','dream'].includes(event.sourceKind))return false;
  // Original events survive restoring the same life under a fresh operation ID.
  // The pending *batch* token, not the event's historical operation, rejects stale work.
- if(event.presented!==true||['pending','pending-presentation','failed','interrupted','cancelled','discarded'].includes(event.status))return false;
+ const social=event.source?.type==='social';
+ if(social){
+  const source=(life.socialExperiences??[]).find(row=>row.id===event.source.id);
+  if(!source||source.sourceHash!==event.source.sha256||source.sourceHash!==socialExperienceHash(source)||source.text!==event.text||event.experienceVerified!==true||['dream','selftalk','self-talk','proactive-expression'].includes(source.sourceKind)||['failed','cancelled','unknown'].includes(source.stage)||source.understandingState!=='understood'&&source.presentationState!=='presented'&&!['sent','delivered'].includes(source.deliveryState))return false;
+ }else if(event.presented!==true||['pending','pending-presentation','failed','interrupted','cancelled','discarded'].includes(event.status))return false;
  if(!['user-report','character-statement','shared-dialogue','personal-activity'].includes(event.sourceKind))return false;
- if(event.derived===true||event.generated===true&&event.presented!==true)return false;
+ if(event.derived===true||event.generated===true&&event.presented!==true&&!social)return false;
  if(!validText(event.text??'',200000)||!dayText(event.day)||!event.sourceId)return false;
  return true;
 }
@@ -93,31 +100,30 @@ function diffParts(before,after){
  let right=0;while(right<before.length-left&&right<after.length-left&&before[before.length-1-right]===after[after.length-1-right])right++;
  return {removed:before.slice(left,before.length-right),added:after.slice(left,after.length-right)};
 }
-function incremental(before,after,field){
+function incremental(before,after,field,{structured=false}={}){
  if(!validText(after,GROWTH_POLICY.maxField)||after===before||!after.trim())return false;
  const {removed,added}=diffParts(before,after);
  if(!added.trim()||added.length>GROWTH_POLICY.maxDelta||removed.length>120||removed.length>Math.max(24,Math.floor(before.length/3)))return false;
  if(removed.length+added.length>240)return false;
  // Keep a change expressed as a contextual behavior, not an unconditional flip.
- if(!/(逐渐|近期|有时|偶尔|更愿意|更倾向|开始|尝试|倾向于|在.{1,30}(?:时|中|上)|对.{1,35}(?:兴趣|好奇|偏好)|occasionally|sometimes|gradually|in familiar|more willing|tends? to|interested in|curious about|prefer)/i.test(added))return false;
+ if(!structured&&!/(逐渐|近期|有时|偶尔|更愿意|更倾向|开始|尝试|倾向于|在.{1,30}(?:时|中|上)|对.{1,35}(?:兴趣|好奇|偏好)|occasionally|sometimes|gradually|in familiar|more willing|tends? to|interested in|curious about|prefer)/i.test(added))return false;
  if(/(完全|彻底|终身|永远|从此|极度|无条件|所有人都|不再有任何|always|never|entirely|completely)/i.test(added))return false;
  if(field==='selfAddress'&&added.length>80)return false;
  return true;
 }
 function privateNames(state){
- const names=[];for(const row of Object.values(state.personas??{}))for(const key of ['name','nickname','occupation','identity']){
+ const names=[];for(const row of Object.values(state.personas??{}))for(const key of ['name','nickname']){
   const value=row?.[key];if(typeof value==='string'&&value.trim().length>=2&&!['默认身份','Default persona','Default','旅行者','你自己'].includes(value.trim()))names.push(value.trim());
  }
- for(const card of Object.values(state.cards??{}))if(typeof card?.name==='string'&&card.name.trim().length>=2)names.push(card.name.trim());
  return unique(names);
 }
 function safeAbstraction(state,candidate,events){
  const after=candidate.after,delta=diffParts(candidate.before,after).added;
  if(candidate.scope!=='general'||candidate.private===true||candidate.containsPrivateDetails===true||candidate.privacy&&candidate.privacy!=='general-behavior')return false;
- if(/(?:https?:\/\/|\b[A-Z]:\\|\b[\w.+-]+@[\w.-]+\.[a-z]{2,}|\d{3}[- ]?\d{4}[- ]?\d{4}|\d{4}[-/]\d{1,2}[-/]\d{1,2}|api[ _-]?key|system prompt|忽略.{0,20}指令|密码|秘密|好感值|约定|承诺|私聊|身份[甲乙丙AB]|Persona\s*[:：])/i.test(delta))return false;
- if(privateNames(state).some(name=>after.toLocaleLowerCase().includes(name.toLocaleLowerCase())))return false;
+ if(/(?:https?:\/\/|\b[A-Z]:\\|\b[\w.+-]+@[\w.-]+\.[a-z]{2,}|\d{3}[- ]?\d{4}[- ]?\d{4}|\d{4}[-/]\d{1,2}[-/]\d{1,2}|api[ _-]?key|system prompt|忽略.{0,20}指令|密码|秘密|私密|未公开|只对你|好感值|约定|承诺|私聊|身份[甲乙丙AB]|Persona\s*[:：])/i.test(delta))return false;
+ if(privateNames(state).some(name=>{const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');return /^[\x00-\x7f]+$/.test(name)?new RegExp('(?<![A-Za-z0-9_])'+escaped+'(?![A-Za-z0-9_])','i').test(delta):delta.includes(name);} ))return false;
  // A quoted private utterance or uncommon literal span is not abstraction.
- if(/[“”「」『』]|["`]/.test(delta))return false;
+ if(/`/.test(delta))return false;
  for(const event of events){
   if(scopeOf(event)==='personal')continue;
   const body=event.text??'';
@@ -138,10 +144,43 @@ function canonicalCandidate(raw){
  return {...raw,field,before,after,sourceEventIds:unique(sourceEventIds),counterEvidenceIds:unique(counterEvidenceIds),reason:raw.reason??'',context:raw.context??''};
 }
 
+const proofHash=event=>hash([event.id,event.sourceId,event.scope,event.day,event.text,event.revision,event.source?.sha256,event.experienceId]);
+function applyPreference(state,characterId,candidate,batch,growth,result,index,events,allowed,at){
+ const life=state.lives[characterId],card=state.cards[characterId],shape=preferenceShape(candidate);
+ const reject=code=>result.rejected.push({index,field:candidate.field,operation:candidate.operation,code});
+ if(!shape){reject('invalid-preference-candidate');return;}
+ if(candidate.kind&&candidate.kind!=='small-behavior'){reject('needs-staged-small-change');return;}
+ if(!incremental(candidate.before,candidate.after,candidate.field,{structured:true})){reject('change-not-small-behavior');return;}
+ const currentIds=unique([...candidate.sourceEventIds,...candidate.counterEvidenceIds]);
+ if(currentIds.some(id=>!allowed.has(id)||!OWN(events,id)||!original(events[id],life,characterId,batch.scope)||events[id].day>batch.day)){reject('invalid-evidence');return;}
+ const current=candidate.sourceEventIds.map(id=>events[id]);
+ if(!safeAbstraction(state,candidate,current)||!safeAbstraction(state,{...candidate,before:'',after:shape.subject+' '+JSON.stringify(shape.attributes)},current)){reject('unsafe-abstraction');return;}
+ const resolved=resolvePreference(growth,candidate,shape);if(resolved.code){reject(resolved.code);return;}
+ const {trait,state:preferences}=resolved;
+ const valid=proof=>OWN(events,proof.id)&&proof.hash===proofHash(events[proof.id])&&original(events[proof.id],life,characterId,proof.scope)&&events[proof.id].day<=batch.day;
+ const merge=(prior,ids)=>{const rows=new Map((prior??[]).filter(valid).map(proof=>[proof.id,proof]));for(const id of ids)rows.set(id,{id,scope:scopeOf(events[id]),hash:proofHash(events[id])});return [...rows.values()];};
+ trait.evidence=merge(trait.evidence,candidate.sourceEventIds);trait.counterEvidence=merge(trait.counterEvidence,candidate.counterEvidenceIds);
+ const rows=originalRows(trait.evidence.map(proof=>events[proof.id])),independent=unique(rows.map(independentKey)),days=unique(rows.map(row=>row.day));
+ const used=preferences.evidenceUseByTrait[trait.id]??=[],fresh=independent.filter(key=>!used.includes(key)),freshRows=rows.filter(row=>fresh.includes(independentKey(row))),own=unique(freshRows.filter(row=>ownExperience(row,characterId)&&row.transient!==true).map(independentKey));
+ const refinable=['refine','contextualize'].includes(shape.operation),deep=candidate.field==='personality'||candidate.depth==='deep';
+ let status='observing',code=null;
+ if(trait.counterEvidence.length)code='counterevidence-needs-review';
+ else if(refinable&&deep)code='deep-change-needs-revision';
+ else if(fresh.length<(refinable?1:GROWTH_POLICY.independentExperiences))code='insufficient-independent-evidence';
+ else if(own.length<(refinable?1:GROWTH_POLICY.ownExperiences))code='insufficient-character-behavior';
+ else if((shape.operation==='revise'?unique(freshRows.map(row=>row.day)):days).length<(deep?GROWTH_POLICY.deepActiveDays:GROWTH_POLICY.activeDays))code='insufficient-active-days';
+ else if((growth.daily[batch.day]??0)>=GROWTH_POLICY.dailyChanges){status='deferred';code='daily-character-limit';}
+ if(code){trait.lastProposal={operation:shape.operation,attributes:clone(shape.attributes),after:candidate.after};growth.observations[trait.id]={id:trait.id,traitId:trait.id,...candidate,status,code,scope:batch.scope,sourceEventIds:trait.evidence.filter(proof=>proof.scope===batch.scope).map(proof=>proof.id),counterEvidenceIds:trait.counterEvidence.filter(proof=>proof.scope===batch.scope).map(proof=>proof.id),lifeId:life.id,operationId:life.operationId,updatedAt:at,evidenceCount:independent.length,activeDays:days.length};result.observing.push({id:trait.id,traitId:trait.id,field:candidate.field,status,code});return;}
+ const previousVersion=Number(card.revision)||0;card.fields??={};card.fields[candidate.field]={mode:'custom',value:candidate.after};card.revision=previousVersion+1;card.updatedAt=at;
+ const entry={id:'growth-'+hash([batch.id,index,trait.id]),traitId:trait.id,operation:shape.operation,field:candidate.field,before:candidate.before,after:candidate.after,at,day:batch.day,lifeId:life.id,operationId:life.operationId,previousVersion,version:card.revision,batchId:batch.id,scope:batch.scope,sourceEventIds:trait.evidence.map(proof=>proof.id),counterEvidenceIds:[],reason:candidate.reason,context:candidate.context,evidenceCount:independent.length,newEvidenceCount:fresh.length,activeDays:days.length,checks:'stable-preference-source-version-bounded-diff'};
+ trait.status='established';trait.attributes=clone(shape.attributes);trait.text=candidate.after;trait.versions.push({version:card.revision,at,operation:shape.operation,attributes:clone(shape.attributes)});delete trait.lastProposal;
+ preferences.evidenceUseByTrait[trait.id]=unique([...used,...independent]);growth.history.push(entry);growth.daily[batch.day]=(growth.daily[batch.day]??0)+1;delete growth.observations[trait.id];result.applied.push({id:entry.id,traitId:trait.id,field:candidate.field,version:card.revision});
+}
+
 /** Synchronous: run inside the same store transaction as the daily memory commit. */
 export function applyGrowthCandidates(state,characterId,candidates,batch,at=Date.now()){
  const life=getLife(state,characterId),card=state.cards[characterId];
- const result={applied:[],observing:[],rejected:[],duplicate:false};
+ const result={applied:[],observing:[],rejected:[],duplicate:false,protocol:clone(batch?.growthProtocol??{status:candidates?.length?'provided':'empty',candidateCount:candidates?.length??0}),candidateCount:candidates?.length??0};
  if(!Array.isArray(candidates)||candidates.length>20)throw Error('成长候选格式无效');
  if(!plain(batch)||!validText(batch.id,300)||!dayText(batch.day)||!Array.isArray(batch.eventIds)||!validText(batch.scope,300))throw Error('成长整理批次格式无效');
  if(!isGrowth(life))return {...result,skipped:'normal-mode'};
@@ -150,14 +189,16 @@ export function applyGrowthCandidates(state,characterId,candidates,batch,at=Date
  if(OWN(growth.batches,batchKey))return growth.batches[batchKey].signature===signature?{...clone(growth.batches[batchKey].result),duplicate:true}:{...result,rejected:candidates.map((_,index)=>({index,code:'batch-conflict'}))};
  const events=eventMap(life),allowed=new Set(batch.eventIds);
  const startingRevision=Number(card.revision)||0;
- const reject=(index,code)=>result.rejected.push({index,code});
+ const reject=(index,code)=>{const raw=candidates[index],field=typeof raw?.field==='string'&&/^[A-Za-z][A-Za-z0-9_-]{0,79}$/.test(raw.field)?raw.field:undefined;result.rejected.push({index,...(field?{field}:{}),code});};
  for(const [index,raw]of candidates.entries()){
+  if(raw?._growthDecodeError){reject(index,raw._growthDecodeError);continue;}
   const candidate=canonicalCandidate(raw);
   if(!candidate){reject(index,'invalid-candidate');continue;}
   if(!GROWTH_FIELDS.includes(candidate.field)){reject(index,'field-not-growable');continue;}
   if(candidate.lifeId!==life.id||candidate.operationId!==life.operationId){reject(index,'stale-life');continue;}
   if(candidate.expectedCardVersion!==startingRevision){reject(index,'stale-card');continue;}
   if(candidate.before!==String(effectiveCard(card)[candidate.field]??'')){reject(index,'before-mismatch');continue;}
+  if(candidate.schema===2){applyPreference(state,characterId,candidate,batch,growth,result,index,events,allowed,at);continue;}
   const allIds=unique([...candidate.sourceEventIds,...candidate.counterEvidenceIds]);
   if(allIds.some(id=>!allowed.has(id)||!OWN(events,id)||!original(events[id],life,characterId,batch.scope)||events[id].day>batch.day)){reject(index,'invalid-evidence');continue;}
   const supports=candidate.sourceEventIds.map(id=>events[id]);
@@ -187,6 +228,7 @@ export function applyGrowthCandidates(state,characterId,candidates,batch,at=Date
   growth.observations[observationId]={id:observationId,...candidate,sourceEventIds:sourceIds,counterEvidenceIds:counterIds,status,code,scope:batch.scope,lifeId:life.id,operationId:life.operationId,createdAt:prior?.createdAt??at,updatedAt:at,lastBatchId:batch.id,evidenceCount:independent.length,activeDays:days.length};
   result.observing.push({id:observationId,field:candidate.field,status,code});
  }
+ result.status=result.applied.length?'applied':result.observing.length?'observing':result.rejected.length?'rejected':result.protocol.status==='missing'?'missing':result.protocol.status==='invalid'?'invalid':'empty';
  growth.batches[batchKey]={signature,result:clone(result),at,day:batch.day};return result;
 }
 
@@ -196,5 +238,6 @@ export function growthView(state,characterId,_personaId){
  return {mode:life.mode??'normal',locked:isGrowth(life),lifeId:life.id,version:Number(card.revision)||0,startedAt:growth.enabledAt??life.startedAt,
   history:(growth.history??[]).map(row=>({id:row.id,field:row.field,before:row.before,after:row.after,at:row.at,day:row.day,version:row.version,previousVersion:row.previousVersion,summary:'依据多个日期的真实互动，逐步调整具体表达或偏好。',evidenceCount:row.evidenceCount,activeDays:row.activeDays})),
   observing:Object.values(growth.observations??{}).map(row=>({id:row.id,field:row.field,status:row.status,updatedAt:row.updatedAt,summary:row.status==='deferred'?'保留候选，等待后续整理。':'仍在观察真实经历与相反证据，暂未修改人格。'})),
+  preferences:publicPreferences(life),batches:[...Object.values(growth.batches??{}).map(row=>({at:row.at,day:row.day,status:row.result?.status??(row.result?.applied?.length?'applied':row.result?.observing?.length?'observing':row.result?.rejected?.length?'rejected':'legacy-empty'),protocol:clone(row.result?.protocol??null),candidateCount:row.result?.candidateCount??((row.result?.applied?.length??0)+(row.result?.observing?.length??0)+(row.result?.rejected?.length??0)),applied:row.result?.applied?.length??0,observing:row.result?.observing?.length??0,rejected:(row.result?.rejected??[]).map(({index,field,operation,code})=>({index,field,operation,code}))})),...clone(growth.failures??[])],
   checks:'已核对来源、人生版本和局部变化幅度；人格连续性仍需结合实际交流检验。'};
 }

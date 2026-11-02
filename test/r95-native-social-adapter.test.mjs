@@ -1,0 +1,24 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createHash} from 'node:crypto';
+import {gzipSync} from 'node:zlib';
+import {createNativeSocialAdapter} from '../src/buddy-plugin-services/native-social-adapter.mjs';
+const hash=value=>createHash('sha256').update(value).digest('hex');
+function tarball(entries){const parts=[];for(const [path,body]of Object.entries(entries)){const data=Buffer.from(body),h=Buffer.alloc(512);h.write('package/'+path,0,100);h.write('0000644\0',100);h.write('0000000\0',108);h.write('0000000\0',116);h.write(data.length.toString(8).padStart(11,'0')+'\0',124);h.write('00000000000\0',136);h.fill(32,148,156);h.write('0',156);h.write('ustar\0',257);h.write('00',263);h.write(h.reduce((s,n)=>s+n,0).toString(8).padStart(6,'0')+'\0 ',148);parts.push(h,data,Buffer.alloc((512-data.length%512)%512));}return gzipSync(Buffer.concat([...parts,Buffer.alloc(1024)]));}
+async function fixture(t){
+ const root=await mkdtemp(join(tmpdir(),'r95-native-social-unit-')),profileRoot=join(root,'profile'),packageRoot=join(profileRoot,'node_modules','fixture'),entries={'package.json':'{"name":"fixture","version":"1.0.0"}','index.mjs':'export const fixture=true;'};await mkdir(packageRoot,{recursive:true});for(const [file,body]of Object.entries(entries))await writeFile(join(packageRoot,file),body);const bytes=tarball(entries),artifactPath=join(root,'fixture.tgz');await writeFile(artifactPath,bytes);t.after(()=>rm(root,{recursive:true,force:true}));
+ let calls=0,identityCalls=0,revoked=false,verify,changeIdentity=false,stale=false;const admission={pluginId:'fixture',contextToken:'opaque-host-only',context:{characterId:'a',lifeId:'l',operationId:'o'}};
+ const identity={runtimeId:'runtime',profileId:'r95-unit',pid:12345,purpose:'ui',sourceCommit:'pinned',phase:'running'};
+ const host={registerTransport(spec){verify=spec.verify;return {async observe(ticket){const event=await spec.verify(ticket);return {eventRef:'real-ref',event};},revoke(){revoked=true;}};}};
+ const backend={identity:async()=>({...identity,...(++identityCalls>1&&changeIdentity?{pid:999}: {})}),callTool:async()=>{calls++;return {nativeValue:'actually called'};}};
+ const adapter=createNativeSocialAdapter({host,backend,packageRef:{packageName:'fixture',hostPluginId:'fixture',exactVersion:'1.0.0',sourceDigest:hash(bytes)},artifactPath,profileRoot,channel:'qq-private',accountBindingId:'account',generation:1,toolName:'observe',getAdmission:async()=>admission,checkAdmission:async()=>{if(stale)throw Object.assign(Error('old life'),{code:'BUDDY_CONTEXT_STALE'});},normalizeEvent:async value=>({text:value.nativeValue,actorId:'host-owner'})});
+ return {adapter,artifactPath,packageRoot,calls:()=>calls,verify:raw=>verify(raw),revoked:()=>revoked,changeIdentity:()=>changeIdentity=true,stale:()=>stale=true};
+}
+
+test('unit: Native adapter accepts only a private ticket from its own admitted call, never verified JSON',async t=>{const f=await fixture(t);await assert.rejects(f.verify({verified:true,actorId:'owner'}),{code:'BUDDY_NATIVE_SOCIAL_DENIED'});const result=await f.adapter.capture();assert.equal(f.calls(),1);assert.equal(result.event.text,'actually called');assert.equal(result.receipt.runtime.pid,12345);assert.equal('contextToken' in result.receipt,false);assert.match(result.receipt.contextTokenSha256,/^[a-f0-9]{64}$/);f.adapter.revoke();assert.equal(f.revoked(),true);await assert.rejects(f.adapter.capture(),{code:'BUDDY_NATIVE_SOCIAL_DENIED'});});
+test('unit: changed package source and installed bytes fail before a Native tool is invoked',async t=>{const a=await fixture(t);await writeFile(a.artifactPath,'tampered');await assert.rejects(a.adapter.capture(),{code:'BUDDY_NATIVE_SOCIAL_DENIED'});assert.equal(a.calls(),0);const b=await fixture(t);await writeFile(join(b.packageRoot,'index.mjs'),'changed native code');await assert.rejects(b.adapter.capture(),{code:'DSH_INSTALLED_ARTIFACT_MISMATCH'});assert.equal(b.calls(),0);});
+test('unit: backend process changes and old-life admission cannot produce trusted social evidence',async t=>{const a=await fixture(t);a.changeIdentity();await assert.rejects(a.adapter.capture(),{code:'BUDDY_NATIVE_SOCIAL_DENIED'});assert.equal(a.calls(),1);assert.equal(a.adapter.receipt('real-ref'),null);const b=await fixture(t);b.stale();await assert.rejects(b.adapter.capture(),{code:'BUDDY_CONTEXT_STALE'});assert.equal(b.calls(),0);});
+test('unit: overlapping host capture is one Native attempt and one actual evidence identity',async t=>{const f=await fixture(t),results=await Promise.all([f.adapter.capture(),f.adapter.capture(),f.adapter.capture()]);assert.equal(f.calls(),1);assert.deepEqual(results.map(x=>x.eventRef),['real-ref','real-ref','real-ref']);});

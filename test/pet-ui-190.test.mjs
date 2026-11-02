@@ -33,14 +33,15 @@ test('bubbles split into who/what and a second line; the log error opens Token d
  for(const value of [{source:'completed',text:'Codex完成任务啦，辛苦了～'},{source:'failed',text:'Codex日志记录了错误，点我查看。'},{source:'chat-error',text:'x'},{kind:'badge-hidden'}]){const view=bubbleView(value,{language:'en'});assert.doesNotMatch([view.title,view.detail,view.link,view.undo].join(' '),/[一-鿿]/,JSON.stringify(value));}
 });
 
-test('tray menu gains a separator; the pet menu has five items and swaps nap/wake while asleep',()=>{
+test('tray menu keeps its separators; pet menu retains its original five actions plus shop/backpack and swaps nap/wake',()=>{
  const noop=()=>{},tray=trayMenuTemplate({open:noop,setPetVisible:noop,setGestureMode:noop,quit:noop});
- assert.deepEqual(tray.map(item=>item.type==='separator'?'—':item.label),['工作概览','通用设置','动作展示','打开 Galgame','—','显示桌宠','拖动模式（整个窗口可拖动）','—','退出']);
+ assert.deepEqual(tray.map(item=>item.type==='separator'?'—':item.label),['工作概览','工作任务','扩展中心','通用设置','动作展示','打开 Galgame','—','显示桌宠','拖动模式（整个窗口可拖动）','—','退出']);
  const opened=[];const pet=petContextTemplate({open:page=>opened.push(page),sleep:noop,wake:noop,setStatusBadge:noop,hidePet:noop});
- assert.deepEqual(pet.filter(item=>item.type!=='separator').map(item=>item.label),['打开工作空间','打开 Galgame','让她睡一会儿','显示状态条','隐藏桌宠']);
- pet[0].click();pet[1].click();assert.deepEqual(opened,['overview','galgame']);
+ assert.deepEqual(pet.filter(item=>item.type!=='separator').map(item=>item.label),['打开工作空间','打开 Galgame','商店','背包','让她睡一会儿','显示状态条','隐藏桌宠']);
+ const original=['打开工作空间','打开 Galgame','让她睡一会儿','显示状态条','隐藏桌宠'];assert.deepEqual(pet.filter(item=>original.includes(item.label)).map(item=>item.label),original);
+ for(const label of ['打开工作空间','打开 Galgame','商店','背包'])pet.find(item=>item.label===label).click();assert.deepEqual(opened,['overview','galgame','shop','backpack']);
  assert.equal(pet.find(item=>item.label==='显示状态条').type,'checkbox');
- assert.equal(petContextTemplate({asleep:true,open:noop,sleep:noop,wake:noop,setStatusBadge:noop,hidePet:noop})[3].label,'叫醒她');
+ const sleeping=petContextTemplate({asleep:true,open:noop,sleep:noop,wake:noop,setStatusBadge:noop,hidePet:noop});assert.equal(sleeping.find(item=>item.label==='叫醒她').click,noop);assert.equal(sleeping.some(item=>item.label==='让她睡一会儿'),false);assert.equal(sleeping.filter(item=>item.type!=='separator').length,7);
  for(const item of [...trayMenuTemplate({language:'en',open:noop,setPetVisible:noop,setGestureMode:noop,quit:noop}),...petContextTemplate({language:'en',asleep:true,open:noop,sleep:noop,wake:noop,setStatusBadge:noop,hidePet:noop})])if(item.label)assert.doesNotMatch(item.label,/[一-鿿]/,item.label);
 });
 

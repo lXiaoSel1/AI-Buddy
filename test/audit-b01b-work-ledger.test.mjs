@@ -23,11 +23,11 @@ test('work-token deltas no longer write full global snapshots and fold into the 
  await game.flushWorkLedger();
  const tokens=await savedTokens(dataRoot);
  assert.equal(tokens.bank,bank0+sum);assert.equal(tokens.workFolded,sum);
- game.close();await sleep(200);
+ await game.close();await sleep(200);
  assert.equal(ledger(dataRoot).total,sum);
  const again=await createGalgame({dataRoot,provider,model:'fixture'});await sleep(300);await again.flushWorkLedger();
  assert.equal((await savedTokens(dataRoot)).bank,bank0+sum,'reopening does not count the ledger twice');
- again.close();
+ await again.close();
 });
 
 test('a crash after the counter is saved but before the global save loses nothing',async t=>{
@@ -37,9 +37,9 @@ test('a crash after the counter is saved but before the global save loses nothin
  assert.equal(ledger(dataRoot).total,5000);assert.equal((await savedTokens(dataRoot)).bank,bank0,'global not written yet');
  const next=await createGalgame({dataRoot,provider,model:'fixture'});await sleep(300);await next.flushWorkLedger();
  assert.deepEqual([(await savedTokens(dataRoot)).bank,(await savedTokens(dataRoot)).workFolded],[bank0+5000,5000]);
- next.close();crashed.close();await sleep(200);
+ await next.close();await crashed.close();await sleep(200);
  unlinkSync(join(home(dataRoot),'work-tokens.json'));
  const reset=await createGalgame({dataRoot,provider,model:'fixture'});await sleep(300);await reset.flushWorkLedger();
  assert.deepEqual([(await savedTokens(dataRoot)).bank,(await savedTokens(dataRoot)).workFolded],[bank0+5000,0],'a missing counter never removes banked tokens');
- reset.close();
+ await reset.close();
 });

@@ -1,0 +1,19 @@
+import {createHash} from 'node:crypto';
+import {createWriteStream} from 'node:fs';
+import {Readable,Transform} from 'node:stream';
+import {pipeline} from 'node:stream/promises';
+import {ffmpegError,checkpoint} from './ffmpeg-files.mjs';
+
+export const FFMPEG_UPSTREAM_URL='https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-full_build.zip';
+const cdn=new Set(['release-assets.githubusercontent.com','objects.githubusercontent.com']),redirects=new Set([301,302,303,307,308]);
+export function ffmpegDownloadUrl(value,{initial=false}={}){let url;try{url=new URL(value);}catch{throw ffmpegError('DOWNLOAD_ORIGIN','Invalid FFmpeg download origin');}if(url.protocol!=='https:'||url.username||url.password||url.hash||url.port||!(initial?url.href===FFMPEG_UPSTREAM_URL:cdn.has(url.hostname)))throw ffmpegError('DOWNLOAD_ORIGIN','Untrusted FFmpeg download origin');return url;}
+export async function downloadPinnedFfmpeg(descriptor,target,{fetchImpl=fetch,signal,check,onProgress=()=>{},timeoutMs=1800000,idleMs=65000,maxRedirects=3}={}){
+  let url=ffmpegDownloadUrl(descriptor.url,{initial:true}),response,total=0,idle;const controller=new AbortController(),abort=()=>controller.abort(ffmpegError('CANCELLED','FFmpeg preparation cancelled')),timer=setTimeout(()=>controller.abort(ffmpegError('DOWNLOAD_TIMEOUT','FFmpeg download timed out')),timeoutMs),touch=()=>{clearTimeout(idle);idle=setTimeout(()=>controller.abort(ffmpegError('DOWNLOAD_TIMEOUT','FFmpeg download stalled')),idleMs);};signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();const guard=()=>{checkpoint(signal,check);if(controller.signal.aborted)throw controller.signal.reason;};
+  try{
+    for(let hop=0;;hop++){guard();touch();response=await fetchImpl(url.href,{signal:controller.signal,redirect:'manual',credentials:'omit'});guard();if(!redirects.has(response.status))break;const location=response.headers.get('location');await response.body?.cancel();if(hop>=maxRedirects)throw ffmpegError('DOWNLOAD_REDIRECTS','Too many FFmpeg download redirects');if(!location)throw ffmpegError('DOWNLOAD_ORIGIN','FFmpeg redirect has no destination');let next;try{next=new URL(location,url);}catch{throw ffmpegError('DOWNLOAD_ORIGIN','Invalid FFmpeg redirect');}url=ffmpegDownloadUrl(next.href);}
+    if(response.status!==200||!response.body)throw ffmpegError('DOWNLOAD','FFmpeg download HTTP '+response.status);const length=response.headers.get('content-length');if(length!==null&&(!/^\d+$/.test(length)||Number(length)!==descriptor.bytes))throw ffmpegError('SIZE','FFmpeg archive size differs');
+    const digest=createHash('sha256'),checking=new Transform({transform(chunk,_encoding,done){try{guard();touch();total+=chunk.length;if(total>descriptor.bytes)throw ffmpegError('SIZE','FFmpeg archive exceeds pinned size');digest.update(chunk);onProgress({phase:'downloading',receivedBytes:total,totalBytes:descriptor.bytes});done(null,chunk);}catch(cause){done(cause);}}});
+    await pipeline(Readable.fromWeb(response.body),checking,createWriteStream(target,{flags:'wx',mode:0o600}),{signal:controller.signal});guard();if(total!==descriptor.bytes||digest.digest('hex')!==descriptor.sha256)throw ffmpegError('HASH','FFmpeg archive digest or size differs');return {bytes:total,sha256:descriptor.sha256};
+  }catch(cause){if(controller.signal.aborted)throw controller.signal.reason;if(signal?.aborted)throw ffmpegError('CANCELLED','FFmpeg preparation cancelled');if(cause?.code?.startsWith('FFMPEG_COMPONENT_'))throw cause;if(cause?.code==='ENOSPC')throw ffmpegError('DISK_FULL','Disk became full during FFmpeg download');throw ffmpegError('DOWNLOAD','FFmpeg download failed');}
+  finally{clearTimeout(timer);clearTimeout(idle);signal?.removeEventListener('abort',abort);if(response?.body&&!response.body.locked)await response.body.cancel().catch(()=>{});}
+}

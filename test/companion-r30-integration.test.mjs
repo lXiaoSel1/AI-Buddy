@@ -15,7 +15,7 @@ const PNG=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
 const image='data:image/png;base64,'+PNG.toString('base64');
 function modelFixture({growth=false}={}){
  const calls=[],profileCalls=[],provider={enabled:true,currentSelection:()=>({provider:'fixture',model:'local-only-model'}),listProviders:()=>[{id:'fixture',name:'Local test'}],listModels:()=>[{id:'local-only-model'}],resolveContextCapacity:()=>({tokens:128000,source:'local-fixture',verified:true}),resolveConnection:binding=>({model:binding.enabled?'role-model':'local-only-model',connectionId:binding.connectionId??'global'}),runTurn:async fn=>fn(),runProfile:async(id,fn)=>{profileCalls.push(id);return fn();},async *stream(options){
-  calls.push(structuredClone({...options,signal:undefined}));let output;
+  const {signal,onText,onTiming,...recordable}=options;calls.push(structuredClone(recordable));let output;
   if(options.purpose?.startsWith('memory-')){
    const input=JSON.parse(textInput(options));if(options.purpose.endsWith('-segment'))output={coverageHash:input.coverageHash,text:'压缩后的来源受限记录。',eventIds:[...new Set(input.events.map(row=>row.id))]};
    else if(options.purpose.endsWith('-merge'))output={coverageHash:input.coverageHash,text:'合并后的来源受限记录。'};
@@ -31,8 +31,8 @@ function modelFixture({growth=false}={}){
 async function setup(t,options={}){
  const dataRoot=mkdtempSync(join(tmpdir(),'ai-buddy-r30-integration-')),fixture=modelFixture(options);let game;
  const create=()=>createGalgame({dataRoot,provider:fixture.provider,model:'local-only-model',cg:{enabled:false,available:()=>false,job:()=>null,subscribe:()=>()=>{},imageCodec:bytes=>{if(!bytes.equals(PNG))throw Error('Fixture PNG decoder rejected image');return {width:1,height:1};}}});
- game=await create();const api={dataRoot,...fixture,get game(){return game;},async restart(mutate){game.close();await delay(10);if(mutate){const disk=await openCompanionStore(dataRoot);await disk.mutate(mutate);await disk.flush();}game=await create();return game;}};
- t.after(async()=>{game.close();await delay(15);assert(resolve(dataRoot).startsWith(resolve(tmpdir())+sep+'ai-buddy-r30-integration-'));rmSync(dataRoot,{recursive:true,force:true});});return api;
+ game=await create();const api={dataRoot,...fixture,get game(){return game;},async restart(mutate){await game.close();await delay(10);if(mutate){const disk=await openCompanionStore(dataRoot);await disk.mutate(mutate);await disk.flush();}game=await create();return game;}};
+ t.after(async()=>{await game.close();await delay(15);assert(resolve(dataRoot).startsWith(resolve(tmpdir())+sep+'ai-buddy-r30-integration-'));rmSync(dataRoot,{recursive:true,force:true});});return api;
 }
 async function groupSettled(game,id){return until(async()=>{const s=await raw(game);if(s.groupRuntime?.pendingMessage)await game.action('companion-group-present',{id,requestId:s.groupRuntime.pendingMessage.id});const next=await raw(game);return ['idle','awaiting-continue','failed'].includes(next.groupRuntime?.status)?next:false;});}
 

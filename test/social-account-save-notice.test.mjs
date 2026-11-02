@@ -1,0 +1,4 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as ui from '../src/social-accounts-ui.mjs';
+for(const en of [false,true])test('advanced Bilibili saves never claim anonymous watching or authenticated login without a check '+en,()=>{assert.equal(typeof ui.socialAccountSaveNotice,'function');for(const checked of [null,{checked:false,reason:'no-cookie'}]){const text=ui.socialAccountSaveNotice({pluginId:'@ai-buddy/bilibili-companion',checked,en});assert.match(text,en?/not verified|not yet verified/:/尚未验证/);assert.match(text,en?/does not mean you can watch/:/不代表能观看/);assert.doesNotMatch(text,/Watching needs no cookie|只看视频不需要/);}assert.match(ui.socialAccountSaveNotice({pluginId:'@ai-buddy/bilibili-companion',checked:{checked:true},en}),en?/Checked and saved/:/已检查并保存/);assert.match(ui.socialAccountSaveNotice({pluginId:'@ai-buddy/qq-connect',checked:null,en}),en?/Saved without a check/:/已保存，没有检查/);});

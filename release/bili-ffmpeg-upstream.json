@@ -1,0 +1,540 @@
+{
+  "schemaVersion": 1,
+  "id": "ai-buddy.bili-ffmpeg",
+  "version": "8.1.2",
+  "platform": "win32",
+  "arch": "x64",
+  "url": "https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-full_build.zip",
+  "sourceUrl": "https://github.com/GyanD/codexffmpeg/releases/tag/8.1.2",
+  "licenseUrl": "https://github.com/GyanD/codexffmpeg/releases/tag/8.1.2",
+  "bytes": 266085149,
+  "sha256": "b8cdefab5f50590a076c27c2b56b0294a0e6154faded28ba1ba05ebc4f801f57",
+  "localSpeechRecognition": false,
+  "executable": "ffmpeg.exe",
+  "files": [
+    {
+      "zipPath": "ffmpeg-8.1.2-full_build/bin/ffmpeg.exe",
+      "path": "ffmpeg.exe",
+      "bytes": 242496512,
+      "sha256": "ad8f211bc894755e0061c55ab280ae00e8d3d4f15a8cc4372b24cfa247b5942e"
+    },
+    {
+      "zipPath": "ffmpeg-8.1.2-full_build/LICENSE",
+      "path": "LICENSE",
+      "bytes": 35147,
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+    },
+    {
+      "zipPath": "ffmpeg-8.1.2-full_build/README.txt",
+      "path": "README.txt",
+      "bytes": 45280,
+      "sha256": "09124e0f7c3d43d9054c62726a176371e8b99960732f51ddd68c6ae68982f434"
+    }
+  ],
+  "zip": {
+    "centralOffset": 266079019,
+    "centralSize": 6108,
+    "centralExtraBytes": 36,
+    "commentBytes": 0,
+    "expandedBytes": 740433230
+  },
+  "limits": {
+    "entries": 64,
+    "centralBytes": 16384,
+    "nameBytes": 512,
+    "memberBytes": 268435456,
+    "totalBytes": 805306368
+  },
+  "inventory": [
+    {
+      "name": "ffmpeg-8.1.2-full_build/",
+      "bytes": 0,
+      "compressedBytes": 0,
+      "method": 0,
+      "crc32": "00000000",
+      "externalAttributes": 16,
+      "flags": 0,
+      "headerOffset": 0
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/bin/",
+      "bytes": 0,
+      "compressedBytes": 0,
+      "method": 0,
+      "crc32": "00000000",
+      "externalAttributes": 16,
+      "flags": 0,
+      "headerOffset": 54
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/bin/ffmpeg.exe",
+      "bytes": 242496512,
+      "compressedBytes": 87822721,
+      "method": 8,
+      "crc32": "bb141fc3",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 112
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/bin/ffplay.exe",
+      "bytes": 244020224,
+      "compressedBytes": 88374281,
+      "method": 8,
+      "crc32": "d6625840",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 87822901
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/bin/ffprobe.exe",
+      "bytes": 242291712,
+      "compressedBytes": 87718523,
+      "method": 8,
+      "crc32": "7fc2119f",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 176197250
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/",
+      "bytes": 0,
+      "compressedBytes": 0,
+      "method": 0,
+      "crc32": "00000000",
+      "externalAttributes": 16,
+      "flags": 0,
+      "headerOffset": 263915842
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/bootstrap.min.css",
+      "bytes": 109483,
+      "compressedBytes": 17086,
+      "method": 8,
+      "crc32": "16e72ee5",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 263915900
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/community.html",
+      "bytes": 13505,
+      "compressedBytes": 3982,
+      "method": 8,
+      "crc32": "e50aa0bf",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 263933061
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/default.css",
+      "bytes": 2494,
+      "compressedBytes": 628,
+      "method": 8,
+      "crc32": "0c410c3c",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 263937115
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/developer.html",
+      "bytes": 63982,
+      "compressedBytes": 18626,
+      "method": 8,
+      "crc32": "3286f5cf",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 263937812
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/drawvg-reference.html",
+      "bytes": 147341,
+      "compressedBytes": 24267,
+      "method": 8,
+      "crc32": "140e58bb",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 263956510
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/faq.html",
+      "bytes": 65088,
+      "compressedBytes": 14479,
+      "method": 8,
+      "crc32": "d7fbf26b",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 263980856
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/fate.html",
+      "bytes": 18768,
+      "compressedBytes": 5616,
+      "method": 8,
+      "crc32": "e70b997b",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 263995401
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/ffmpeg-all.html",
+      "bytes": 3059523,
+      "compressedBytes": 561078,
+      "method": 8,
+      "crc32": "918d17a8",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 264001084
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/ffmpeg-bitstream-filters.html",
+      "bytes": 61257,
+      "compressedBytes": 13283,
+      "method": 8,
+      "crc32": "c89a25db",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 264562235
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/ffmpeg-codecs.html",
+      "bytes": 348854,
+      "compressedBytes": 62072,
+      "method": 8,
+      "crc32": "eaa46bb1",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 264575605
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/ffmpeg-devices.html",
+      "bytes": 112837,
+      "compressedBytes": 22567,
+      "method": 8,
+      "crc32": "8e51c5d2",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 264637753
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/ffmpeg-filters.html",
+      "bytes": 1694787,
+      "compressedBytes": 302089,
+      "method": 8,
+      "crc32": "9edfe9ed",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 264660397
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/ffmpeg-formats.html",
+      "bytes": 323409,
+      "compressedBytes": 69678,
+      "method": 8,
+      "crc32": "746b73c3",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 264962563
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/ffmpeg-protocols.html",
+      "bytes": 118922,
+      "compressedBytes": 26149,
+      "method": 8,
+      "crc32": "3609475b",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 265032318
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/ffmpeg-resampler.html",
+      "bytes": 13818,
+      "compressedBytes": 3802,
+      "method": 8,
+      "crc32": "8509e37a",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 265058546
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/ffmpeg-scaler.html",
+      "bytes": 9342,
+      "compressedBytes": 2402,
+      "method": 8,
+      "crc32": "100afac9",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 265062427
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/ffmpeg-utils.html",
+      "bytes": 55775,
+      "compressedBytes": 10094,
+      "method": 8,
+      "crc32": "dd2a0075",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 265064905
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/ffmpeg.html",
+      "bytes": 216406,
+      "compressedBytes": 45220,
+      "method": 8,
+      "crc32": "e2e00f56",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 265075074
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/ffplay-all.html",
+      "bytes": 2370275,
+      "compressedBytes": 428819,
+      "method": 8,
+      "crc32": "c4823f04",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 265120363
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/ffplay.html",
+      "bytes": 42145,
+      "compressedBytes": 9659,
+      "method": 8,
+      "crc32": "d5555b5d",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 265549255
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/ffprobe-all.html",
+      "bytes": 2386712,
+      "compressedBytes": 431993,
+      "method": 8,
+      "crc32": "14e98f84",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 265558983
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/ffprobe.html",
+      "bytes": 58506,
+      "compressedBytes": 12977,
+      "method": 8,
+      "crc32": "48d6d7a2",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 265991050
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/general.html",
+      "bytes": 127488,
+      "compressedBytes": 17934,
+      "method": 8,
+      "crc32": "7e8a4faf",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266004097
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/git-howto.html",
+      "bytes": 27737,
+      "compressedBytes": 6817,
+      "method": 8,
+      "crc32": "7537c6e0",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266022101
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/libavcodec.html",
+      "bytes": 3147,
+      "compressedBytes": 1189,
+      "method": 8,
+      "crc32": "b1af4a4b",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266028990
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/libavdevice.html",
+      "bytes": 3026,
+      "compressedBytes": 1128,
+      "method": 8,
+      "crc32": "d8113bb8",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266030252
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/libavfilter.html",
+      "bytes": 3092,
+      "compressedBytes": 1090,
+      "method": 8,
+      "crc32": "0d8bb8eb",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266031454
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/libavformat.html",
+      "bytes": 3122,
+      "compressedBytes": 1150,
+      "method": 8,
+      "crc32": "ed91f96d",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266032618
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/libavutil.html",
+      "bytes": 3621,
+      "compressedBytes": 1368,
+      "method": 8,
+      "crc32": "fd209f1f",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266033842
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/libswresample.html",
+      "bytes": 4005,
+      "compressedBytes": 1520,
+      "method": 8,
+      "crc32": "ae1e9067",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266035282
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/libswscale.html",
+      "bytes": 3621,
+      "compressedBytes": 1379,
+      "method": 8,
+      "crc32": "5a1974a7",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266036878
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/mailing-list-faq.html",
+      "bytes": 31209,
+      "compressedBytes": 6404,
+      "method": 8,
+      "crc32": "a57d3e59",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266038330
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/nut.html",
+      "bytes": 11231,
+      "compressedBytes": 2719,
+      "method": 8,
+      "crc32": "bccd4510",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266044813
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/platform.html",
+      "bytes": 22177,
+      "compressedBytes": 6022,
+      "method": 8,
+      "crc32": "2804e814",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266047598
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/doc/style.min.css",
+      "bytes": 6523,
+      "compressedBytes": 2094,
+      "method": 8,
+      "crc32": "f3ef32ac",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266053691
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/LICENSE",
+      "bytes": 35147,
+      "compressedBytes": 11559,
+      "method": 8,
+      "crc32": "6677f57c",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266055856
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/presets/",
+      "bytes": 0,
+      "compressedBytes": 0,
+      "method": 0,
+      "crc32": "00000000",
+      "externalAttributes": 16,
+      "flags": 0,
+      "headerOffset": 266067476
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/presets/libvpx-1080p.ffpreset",
+      "bytes": 227,
+      "compressedBytes": 168,
+      "method": 8,
+      "crc32": "8fc7cd96",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266067538
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/presets/libvpx-1080p50_60.ffpreset",
+      "bytes": 227,
+      "compressedBytes": 167,
+      "method": 8,
+      "crc32": "dfd2e7d0",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266067789
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/presets/libvpx-360p.ffpreset",
+      "bytes": 219,
+      "compressedBytes": 164,
+      "method": 8,
+      "crc32": "9dce392c",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266068044
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/presets/libvpx-720p.ffpreset",
+      "bytes": 227,
+      "compressedBytes": 167,
+      "method": 8,
+      "crc32": "6519ed86",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266068290
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/presets/libvpx-720p50_60.ffpreset",
+      "bytes": 227,
+      "compressedBytes": 167,
+      "method": 8,
+      "crc32": "350cc7c0",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266068539
+    },
+    {
+      "name": "ffmpeg-8.1.2-full_build/README.txt",
+      "bytes": 45280,
+      "compressedBytes": 10162,
+      "method": 8,
+      "crc32": "3ecede01",
+      "externalAttributes": 32,
+      "flags": 0,
+      "headerOffset": 266068793
+    }
+  ]
+}

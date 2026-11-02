@@ -13,16 +13,18 @@ const PNG=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
 const BIG=Buffer.concat([PNG,Buffer.alloc(2*1024*1024,7)]);
 const url=bytes=>'data:image/png;base64,'+bytes.toString('base64');
 const provider={enabled:false,currentSelection:()=>({provider:'fixture',model:'fixture'}),runTurn:async fn=>fn(),resolveContextCapacity:()=>({tokens:8192,source:'fixture',verified:true})};
+const ownedServices=new Map();
+const own=(root,service)=>{const rows=ownedServices.get(root)??[];rows.push(service);ownedServices.set(root,rows);return service;};
 const companionFile=root=>join(root,'galgame','companion.json');
 async function seeded(t,mutate=()=>{}){
- const root=tmpDir('b04',{t}),state=await companionFixture();mutate(state);
+ const root=tmpDir('b04',{t,beforeRemove:async()=>{for(const service of ownedServices.get(root)??[])await service.close();ownedServices.delete(root);}}),state=await companionFixture();mutate(state);
  await createSnapshotStorage(companionFile(root)).writeText(JSON.stringify(state));return root;
 }
 async function launch(root,{hooks={}}={}){
  const media=createMediaStore(root),drafts=createDraftStore(root),store=await openCompanionStore(root,{media}),registered=[];
  const {engine}=syntheticEngine({getStore:()=>store,hooks:{call(action,args){if(action==='companion-register'){registered.push(args.card);return {ok:true};}return hooks.call?.(action,args);}}});
- const service=await createCompanionService({store,engine,provider,dataRoot:root,now:Date.now,media,drafts,imageCodec:()=>({})});
- return {media,drafts,store,service,registered,close:async()=>{service.close();await store.flush();}};
+ const service=own(root,await createCompanionService({store,engine,provider,dataRoot:root,now:Date.now,media,drafts,imageCodec:()=>({})}));
+ return {media,drafts,store,service,registered,close:async()=>{await service.close();await store.flush();}};
 }
 
 test('B4: media names are content hashes; only canonical image data URLs become files',t=>{
@@ -106,7 +108,7 @@ test('B4 review: every conversation row shows the drafts file value, and sending
  assert.equal(state.conversations.find(row=>row.id===id).draft,'新草稿');
  assert.equal((await app.service.action('companion-conversation-list',{})).conversations.find(row=>row.id===id).draft,'新草稿');
  const failing={...provider,enabled:true,resolveConnection:()=>({mode:'global',connectionId:'p1',name:'p1',model:'m',error:null}),async *stream(){throw Error('offline fixture');}};
- const chatApp=await createCompanionService({store:app.store,engine:syntheticEngine({getStore:()=>app.store}).engine,provider:failing,dataRoot:root,now:Date.now,media:app.media,drafts:app.drafts});t.after(()=>chatApp.close());
+ const chatApp=await createCompanionService({store:app.store,engine:syntheticEngine({getStore:()=>app.store}).engine,provider:failing,dataRoot:root,now:Date.now,media:app.media,drafts:app.drafts});own(root,chatApp);t.after(()=>chatApp.close());
  await chatApp.action('companion-conversation-select',{id}).catch(()=>{});
  assert.equal(app.drafts.get(id),'新草稿');await chatApp.chat({text:'新草稿'}).catch(()=>{});
  assert.equal(app.store.state.activeConversationId,id);assert.equal(app.drafts.get(id),'','the sent text does not come back as a draft');
@@ -123,7 +125,7 @@ test('B4 review: archive avatars are media too, AVIF pictures are converted for 
  const AVIF='data:image/avif;base64,'+Buffer.from('ftyp-avif-fixture').toString('base64');
  const root=await seeded(t),media=createMediaStore(root),drafts=createDraftStore(root),store=await openCompanionStore(root,{media}),{engine}=syntheticEngine({getStore:()=>store,hooks:{call(action){if(action==='companion-register'||action==='companion-life-project')return {ok:true};}}});
  const service=await createCompanionService({store,engine,provider,dataRoot:root,now:Date.now,media,drafts,imageCodec:bytes=>{if(!bytes.equals(PNG))throw Error('codec cannot read this');return {};},imageConverter:async()=>PNG});
- t.after(async()=>{service.close();await store.flush();});
+ own(root,service);t.after(async()=>{await service.close();await store.flush();});
  await service.action('companion-character-save',{...copy(store.state.cards.claude),avatar:AVIF});
  assert.match(store.state.cards.claude.avatar,/\.avif$/);
  await service.action('companion-conversation-update',{id:'conversation',draft:'切换前的草稿'});

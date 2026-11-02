@@ -2,7 +2,7 @@ using System.Text.Json;
 namespace AiBuddy.Install;
 
 public sealed record InstallOptions(string Root,string Cache,string Edition,string[] Characters,string InitialCharacter,string? OfflineDirectory=null,bool Shortcuts=true,bool Launch=true,string? DataPath=null,string? Pipe=null,bool KeepCache=false);
-public sealed record StartupStatus(bool SafeMode,JsonElement? StartupFailure,bool Onboarding=false);
+public sealed record StartupStatus(bool SafeMode,JsonElement? StartupFailure,bool Onboarding=false,JsonElement? Components=null);
 public sealed record Installation(int SchemaVersion,string Version,string ManifestSha256,string Edition,string[] Characters,string InitialCharacter,string Build,string Runtime,string Manager,string? DataPath,string? Pipe,DateTimeOffset InstalledAt,Dictionary<string,string> PackageHashes,StartupStatus? Startup=null,bool? DataInitialized=null,string[]? Warnings=null);
 public sealed record InstallDefaults(string Edition,string[] Characters,string InitialCharacter);
 public sealed record InstallJournal(string Id,string Phase,string ManifestHash,InstallOptions Options,string? PreviousPointer,string? PreviousInstallation,string Build,string Runtime,string[] RootFiles,string[] PreviouslyExistingRootFiles,string? AppVersion=null);

@@ -1,3 +1,17 @@
+import {createWorkResumeConfirmation} from './work-resume-confirmation.mjs';
+import {createWorkSourceRegistry,sourceMutation} from './work-source-registry.mjs';
+import {createWorkPluginGate} from './work-plugin-gate.mjs';
+import {deliverRewardFacts} from './reward-fact-delivery.mjs';
+import {closeMonitorWorker} from './monitor-worker-shutdown.mjs';
+import {createPluginMaintenanceClient} from './plugin-maintenance-client.mjs';
+import {pluginActionResult} from './plugin-ipc.mjs';
+import {createPluginPlatform} from './plugin-platform.mjs';
+import {createBiliSheetRenderer,createBiliFrameAnalyzer} from './bili-sheet-renderer.mjs';
+import {createPluginEmbed,embedCapable,EMBED_CHANNEL,EMBED_EVENT,EMBED_TARGETS} from './plugin-embed.mjs';
+import {pluginPageAppearance} from './plugin-page-appearance.mjs';
+import {builtinFaces,builtinPortraits,createCustomFaceProcessor,readFaceFile} from './plugin-faces.mjs';
+import {createPluginUsageRecorder} from './plugin-usage-recorder.mjs';
+import {extensionComponentStatus,extensionOperationBusy} from './installation-components.mjs';
 import {createInstalledResources} from './installed-resources.mjs';
 import {spawn,spawnSync} from 'node:child_process';
 import {resolveInstallation,commitInstallation,markInstallationInitialized} from './installation-record.mjs';
@@ -8,14 +22,16 @@ import {trayMenuTemplate,petContextTemplate} from './pet-menu.mjs';
 import {CgThemePlanner} from './cg-theme.mjs';
 import {createCharacterReferenceResolver} from './cg-reference-registry.mjs';
 import {monitorView} from './monitor-view.mjs';
-import { app,BrowserWindow,Tray,Menu,ipcMain,nativeImage,screen,session,safeStorage,dialog,powerMonitor,protocol } from 'electron';
+import { app,BrowserWindow,WebContentsView,Tray,Menu,ipcMain,nativeImage,screen,session,safeStorage,dialog,powerMonitor,protocol,shell } from 'electron';
+import {pluginWindowOpenHandler} from './dsh-platform/client-host.mjs';
 import {PetActivityClock,PetMotion} from './pet-interactions.mjs';
+import {matchesInteractionReady} from './pet-interaction-view.mjs';
 import {createPetButtonObserver} from './pet-buttons.mjs';
 import {PetTouchExpressions} from './pet-touch.mjs';
 import {frameSequence,CHARACTER_SEQUENCES} from './frame-sequence.mjs';
 import { Worker } from 'node:worker_threads';
 import { join,resolve,dirname } from 'node:path';
-import { readFileSync,mkdirSync,appendFileSync,writeFileSync,existsSync } from 'node:fs';
+import { readFileSync,mkdirSync,appendFileSync,writeFileSync,existsSync,statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { MEDIA_SCHEME,MEDIA_MIME,mediaName,createMediaStore } from './media-store.mjs';
 import { createSnapshotStorage,readJson } from './storage.mjs';
@@ -24,21 +40,25 @@ import { CodexProvider } from './codex-provider.mjs';
 import { ModelRouter } from './model-router.mjs';
 import {QuotaService} from './quota-service.mjs';
 import {CgService} from './cg-service.mjs';
+import {createDailyCgScheduler} from './daily-cg-scheduler.mjs';
 import {CodexImageProvider} from './codex-image-provider.mjs';
 import {createCgCodec} from './cg-images.mjs';
 import { clampToDisplays } from './window-position.mjs';
-import { petBounds,petSize,petWindowOptions,positionPet } from './pet-window.mjs';
+import { petBounds,petSize,petWindowOptions,positionPet,applyPetTopmost } from './pet-window.mjs';
+import {createPetWindowDiagnostics} from './pet-window-diagnostics.mjs';
+import {PET_RENDERER_DIAGNOSTIC_SCRIPT} from './pet-renderer-diagnostics.mjs';
 import {petCollisionInsets} from './pet-presentation.mjs';
 import { createLocalControlServer,requestLocalControl } from './local-control.mjs';
 import { DEFAULT_PREFERENCES,normalizePreferences,validatePreferencesPatch } from './preferences.mjs';
 import { PET_ACTIONS,PET_INTERACTION_ACTIONS,validatePetPlayback,getPetAction } from './pet-actions.mjs';
 import { EMOTIONS,validEmotion,shortReply } from './emotions.mjs';
 import { superviseWorker,pushBounded } from './worker-supervisor.mjs';
-import {validPetCharacter,resolvePetCharacter,brandPetCharacter} from './pet-characters.mjs';
+import {validPetCharacter,resolvePetCharacter,brandPetCharacter,PET_CHARACTERS} from './pet-characters.mjs';
 import {connectionView} from './connection-view.mjs';
 import {lockPageZoom} from './page-zoom.mjs';
 import {TOOL_NAMES} from './token-sources.mjs';
 import {resolveCodexBinary,codexHome} from './runtime-discovery.mjs';
+import {detectWorkEngines,readPreferencesFile,OFFLINE_BUNDLE_EXTENSION} from './community/host-files.mjs';
 import {APP_NAME,APP_ID,APP_ICON_ICO,APP_ICON_PNG} from './app-brand.mjs';
 import {brandIcons,brandTooltip} from './brand-icons.mjs';
 
@@ -87,21 +107,30 @@ const audit=value=>appendFileSync(auditPath,JSON.stringify({timestamp:new Date()
 const pipe=installationResolution?.pipe || '\\\\.\\pipe\\whale-companion-v001';
 let dataImport=null,importBarrier=false,onboarding=false;
 let buttonObserver=null,nativeButtons=0;
+let dailyCgScheduler;
 let pet,panel,tray,worker,game,provider,snapshot={indexing:true,sessions:[],active:[],todayUsage:{codex:{total:0},claude:{total:0}},workTotal:0},settings={},drag=null,lastWork=null,quitting=false,gestureMode=false,lastPetHit=false,ignoringMouse=true,petAssetsReady=false;
 const settingsStore=createSnapshotStorage(join(dataRoot,'settings.json'));
-let cg,quotas;
+let cg,quotas,agents,plugins,petDiagnostics,pluginUsage,pluginEmbed;
+const extraBusy=()=>!!(agents?.busy()||plugins?.busy?.()||extensionOperationBusy(plugins?.snapshot()));
 const stateBefore=new Map();const rendererErrors=[];
 // Set when startup could not bring up the companion features (or the app);
 // the app keeps running in safe mode instead of exiting on every launch.
 let startupFailure=null;
+let rewardDrainPending=false,rewardTail=Promise.resolve();
+function requestRewardDrain(){if(!worker||!game?.r95||quitting||rewardDrainPending)return;rewardDrainPending=true;worker.postMessage({type:'reward-drain'});}
+function consumeRewardFacts(facts,sender){rewardTail=rewardTail.then(async()=>{let delivered=false;try{const result=await deliverRewardFacts({facts,isCurrent:()=>!quitting&&sender===worker&&!!game?.r95,ingest:(rows,options)=>game.r95.feeding.ingestUsageFacts(rows,options),recordUsage:value=>game.r95.origins.recordUsage(value),acknowledge:sequences=>sender.postMessage({type:'reward-ack',sequences})});delivered=result.acknowledged;}catch(error){audit({type:'reward-facts-error',message:error.message});}finally{if(sender===worker){rewardDrainPending=false;if(delivered&&facts.length>=200)requestRewardDrain();}}}).catch(error=>{if(sender===worker)rewardDrainPending=false;audit({type:'reward-drain-error',message:error.message});});}
+
 function noteStartupFailure(scope,error){startupFailure={scope,message:String(error?.message??error).slice(0,2000),at:new Date().toISOString()};audit({type:'safe-mode',scope,message:error?.stack??String(error)});}
 let feedbackSerial=0;
 let reopenRequested=false;
 let logRoots=[],settingsTail=Promise.resolve(),monitorAppliedInterval=1000;
 let tokenSources=null,sourceRequest=0;const sourceRequests=new Map();
-function tokenAction(action,args={}){return new Promise((done,fail)=>{if(!worker)return fail(Error('监控正在启动'));const id=++sourceRequest,timer=setTimeout(()=>{sourceRequests.delete(id);fail(Error('检测尚未完成，请稍后查看'));},120000);sourceRequests.set(id,{done,fail,timer});worker.postMessage({type:'source-action',id,action,args});});}
+let workSourceRegistry;
+function sourceRegistry(){return workSourceRegistry??=createWorkSourceRegistry({dataRoot,home:process.env.USERPROFILE,env:process.env,roots:arg('roots')?logRoots:undefined},projection=>worker?.postMessage({type:'apply-source-registry',projection}),audit);}
+function tokenAction(action,args={}){if(sourceMutation(action))return sourceRegistry().edit(action,args);if(action==='reconcile-work-source')return agents?.reconcileUsageSource(args)??Promise.reject(Error('Core accounting reader is not ready'));return new Promise((done,fail)=>{if(!worker)return fail(Error('监控正在启动'));const id=++sourceRequest,timer=setTimeout(()=>{sourceRequests.delete(id);fail(Error('检测尚未完成，请稍后查看'));},120000);sourceRequests.set(id,{done,fail,timer});worker.postMessage({type:'source-action',id,action,args});});}
+async function managedWorkSource(value){try{return await sourceRegistry().register(value);}catch(error){if(error.code?.startsWith('WORK_'))throw error;throw Object.assign(Error('工作用量登记未完成，成员尚未开始执行。'+String(error.code??'')),{code:'WORK_USAGE_REGISTRATION_FAILED',cause:error});}}
 let petState={id:'idle',source:'monitor',manual:false,expiresAt:null},gameRequests=0;
-const activityClock=new PetActivityClock({requireReady:true});let petMotion=null,lastInteraction='',heldFollowCharacter=null,trajectoryWindow=null,trajectoryState=null;
+const activityClock=new PetActivityClock({requireReady:true,resolveOrigin:id=>game?.r95?.origins.resolve(id),verifyActivitySummary:value=>game?.r95?.origins.verifySummary(value)});let petMotion=null,lastInteraction='',heldFollowCharacter=null,trajectoryWindow=null,trajectoryState=null;
 function petInteraction(){const motion=petMotion?.state()??{mode:'rest'},area=petMotion?.area(),body=motion.collisionBounds,grounded=!!(area&&body&&Math.abs(body.y+body.height-area.y-area.height)<2);return {characterId:petState.characterId??effectivePetCharacter(),gestureId:drag?.gestureId??null,...activityClock.tick({defer:!!drag||['flying','charging','landing'].includes(petMotion?.mode)||petState.manual}),motion:{...motion,grounded,elapsedMs:motion.since===undefined?0:performance.now()-motion.since,preview:petMotion?.preview()??[],landing:petMotion?.landing?.()??null},at:Date.now()};}
 function publishInteraction(force=false){const value=petInteraction(),key=JSON.stringify([value.characterId,value.gestureId,value.phase,value.animationEpoch,value.animationWaiting,value.motion.animationEpoch,value.motion.animationWaiting,value.motion.mode,value.motion.button,value.motion.walkDirection,value.motion.pull,value.motion.anchor,value.motion.grounded]);if(force||key!==lastInteraction){lastInteraction=key;petEvent({kind:'interaction',value});updateTrajectory(value);}return value;}
 function trajectoryColors(){const v=themeVariables(resolvedTheme(settings.preferences,themeCharacter)),strength={gentle:'轻柔力度',standard:'标准力度',strong:'强力力度',exaggerated:'夸张力度'}[settings.preferences.throwStrength]??'标准力度';return {band:v['--buddy-a2'],path:v['--buddy-bar-end'],surface:v['--buddy-surface'],text:v['--buddy-text'],track:v['--buddy-border'],shadow:v['--buddy-shadow'],strengthLabel:t(strength,settings.preferences.language)};}
@@ -127,11 +156,25 @@ function cancelGesture(reason='cancel'){
 const gestureMatches=message=>!!drag&&(drag.gestureId===null?message?.gestureId==null:message?.gestureId===drag.gestureId);
 const touchExpressions=new PetTouchExpressions();
 const savePreference=patch=>{void setPreferences(patch).catch(e=>audit({type:'settings-error',message:e.message}));};
-function petContextMenu(){Menu.buildFromTemplate(petContextTemplate({language:settings.preferences.language,asleep:['sleep-enter','asleep'].includes(activityClock.phase),showStatusBadge:settings.preferences.showStatusBadge,open:page=>openPanel(page),sleep:()=>{if(activityClock.sleepNow())publishInteraction(true);},wake:()=>{activityClock.wake('menu');publishInteraction(true);},setStatusBadge:value=>savePreference({showStatusBadge:value}),hidePet:()=>savePreference({petVisible:false})})).popup({window:pet});}
+// Missed plugin bubbles can be found again from the pet menu (approved design C11).
+const recentPluginActivity=[];
+function openSocialPluginPage(pluginId){const record=plugins?.snapshot?.().dsh?.installed?.find(value=>value.pluginId===pluginId&&value.enabled&&['@ai-buddy/bilibili-companion','@ai-buddy/qq-connect'].includes(value.packageName));const target=record&&Object.keys(EMBED_TARGETS).find(key=>EMBED_TARGETS[key].packageName===record.packageName);if(target&&embedCapable(target,record.exactVersion)){openPanel('plugin-'+target);return;}if(record)void plugins.action({action:'dsh-open-client',packageKey:record.packageKey}).catch(()=>openPanel('plugins'));else openPanel('plugins');}
+// 「扫码连接」 on a plugin page (C-4, B7): the main window comes forward and shows its scan dialog over the page it is on.
+// With no main window yet, it opens on the Extension Center; a page still loading takes the waiting request on its first read.
+function openSocialLogin({platform,requestId,at}={}){if(!panel||panel.isDestroyed()){openPanel('plugins');return;}if(!panel.webContents.isLoading())panel.webContents.send('plugins:social-login',{platform,requestId,at});if(panel.isMinimized())panel.restore();panel.show();panel.focus();}
+// C-1: faces for plugin pages. Built-ins are read once; custom characters' avatars are re-read at most every 15 s, and
+// a change re-dresses the open pages.
+let builtinPluginFaces=null,builtinPluginPortraits=null,customPluginFaces={},customFacesAt=0,customFacesBusy=false;
+const pluginFaceMedia=createMediaStore(dataRoot),customFaceProcessor=createCustomFaceProcessor({readMedia:(name,max)=>readFaceFile(pluginFaceMedia.file(name),max),sizeMedia:name=>statSync(pluginFaceMedia.file(name)).size,image:nativeImage});
+function pluginFaces(){builtinPluginFaces??=builtinFaces(build);void refreshCustomFaces();return {...builtinPluginFaces,...customPluginFaces};}
+async function refreshCustomFaces(){if(customFacesBusy||!game||Date.now()-customFacesAt<15000)return;customFacesBusy=true;customFacesAt=Date.now();try{const value=await game.action('companion-state');const next=customFaceProcessor.faces(value?.companion?.characters);if(JSON.stringify(next)!==JSON.stringify(customPluginFaces)){customPluginFaces=next;void plugins?.refreshAppearance?.().catch(()=>{});}}catch{}finally{customFacesBusy=false;}}
+async function petContextMenu(){let feeding=null;try{const result=await game?.action('companion-r95',{action:'view',args:{}});feeding=result?.companion?.r95?.feeding??null;}catch{}
+ const language=settings.preferences.language,foods=feeding?(feeding.catalog??[]).filter(food=>(feeding.inventory?.[food.id]??0)>0).map(food=>({id:food.id,label:t(food.name,language)+' ×'+feeding.inventory[food.id]})):undefined;
+ Menu.buildFromTemplate(petContextTemplate({language,asleep:['sleep-enter','asleep'].includes(activityClock.phase),showStatusBadge:settings.preferences.showStatusBadge,open:page=>openPanel(page),foods,feedTarget:feeding?.characterName??PET_CHARACTERS.find(c=>c.id===feeding?.activeScope?.characterId)?.name,fullness:feeding?.hunger?.satiety,canFeed:!!feeding?.activeScope&&!feeding?.paused&&(feeding?.hunger?.satiety??0)<100,feed:foodId=>void game?.action('companion-r95',{action:'feeding-feed',args:{foodId,requestId:globalThis.crypto.randomUUID()}}).catch(()=>{}),recent:recentPluginActivity.slice(),openRecent:row=>openSocialPluginPage(row.pluginId),sleep:()=>{if(activityClock.sleepNow())publishInteraction(true);},wake:()=>{activityClock.wake('menu');publishInteraction(true);},setStatusBadge:value=>savePreference({showStatusBadge:value}),hidePet:()=>savePreference({petVisible:false})})).popup({window:pet});}
 // Renderer coordinates are accepted only by explicitly isolated simulation runs.
 // Normal operation has one position writer: the main process OS DIP sampler.
 const gesturePoint=message=>arg('cursor')==='manual'&&Number.isFinite(message?.x)&&Number.isFinite(message?.y)?{x:message.x,y:message.y}:screen.getCursorScreenPoint();
-function internalActivity({id,active}){activityClock.request(id,active);petEvent({kind:'dialog',active:activityClock.busy.size>0||gameRequests>0});publishInteraction();}
+function internalActivity({id,active,activityOriginId}){activityClock.request(id,active,{originId:activityOriginId});petEvent({kind:'dialog',active:activityClock.busy.size>0||gameRequests>0});publishInteraction();}
 function interactionMediaReady(id=petState.characterId??effectivePetCharacter()){return PET_INTERACTION_ACTIONS.every(a=>!!frameSequence(a.id,id)?.video?.src);}
 function configurePetInteractions(){const speed=settings.preferences.animationSpeed??.75,media=interactionMediaReady(),character=petState.characterId??effectivePetCharacter();if(drag&&(!settings.preferences.petPhysics||!media)&&['charging','dragging'].includes(petMotion?.mode))cancelGesture('physics-disabled');petMotion?.configure({enabled:settings.preferences.petPhysics&&media,strength:settings.preferences.throwStrength,landDurationMs:getPetAction('land-recover',petState.characterId).cycleMs,speed,collisionInsets:petCollisionInsets(character,settings.preferences.petScale,CHARACTER_SEQUENCES[character])});activityClock.configure({enabled:settings.preferences.autoSleep&&media,durations:{enter:getPetAction('sleep-enter',petState.characterId).cycleMs,wake:getPetAction('wake',petState.characterId).cycleMs},speed});if(!media)activityClock.resume();publishInteraction(true);}
 function effectivePetCharacter(){const target=resolvePetCharacter(settings.preferences,themeCharacter);if(!validPetCharacter(themeCharacter)&&settings.preferences?.petCharacterMode!=='fixed')return heldFollowCharacter??petState.characterId??resources.fallback('deepseek');const resolved=resources.fallback(target);if(resolved)heldFollowCharacter=resolved;return resolved;}
@@ -140,10 +183,10 @@ function petEvent(value){if(pet&&!pet.isDestroyed())pet.webContents.send('pet:ac
 function playPet(request){const value=validatePetPlayback({...request,characterId:request?.characterId??petState.characterId??resolvePetCharacter(settings.preferences,themeCharacter)});resources.require([value.characterId]);if(PET_INTERACTION_ACTIONS.some(a=>a.id===value.id)&&!frameSequence(value.id,value.characterId)?.video?.src)throw Error('该角色的新互动动作尚未完成审核');petEvent({kind:'play',...value});audit({type:'pet-manual-action',id:value.id,lookIndex:value.lookIndex,characterId:value.characterId});return {ok:true,...value};}
 function petAuto(){petEvent({kind:'auto'});return {ok:true};}
 function triggerPet(id,source='event',durationMs=null){petEvent({kind:'trigger',id,source,...(durationMs===null?{}:{durationMs})});}
-function feedback(value){activityClock.wake('feedback');publishInteraction();if(settings.preferences?.petVisible!==false)petEvent({kind:'feedback',value});}
+function feedback(value){activityClock.wake('feedback',{originId:value.activityOriginId});publishInteraction();if(settings.preferences?.petVisible!==false)petEvent({kind:'feedback',value});}
 function chatFeedback(value){if(!game?.hasCharacter?.(value.characterId)||!validEmotion(value.emotion))return;feedback({eventId:value.messageId,id:EMOTIONS[value.emotion]?.actionId??null,source:'dialog',origin:value.requestId?'chat':'story',provider:provider?.currentKind??'codex',sessionKey:'whale-companion-local',turnKey:value.requestId??value.messageId,characterId:value.characterId,role:'heroine',emotion:value.emotion,emotionSource:value.emotionSource??'story-label',sequence:value.sequence,text:shortReply(value.text),cycles:1});}
 function chatCommitted(value){if(panel&&!panel.isDestroyed())panel.webContents.send('game:chat-committed',value);chatFeedback(value);}
-app.on('second-instance',()=>{audit({type:'second-instance'});reopenRequested=true;if(app.isReady()&&(game||startupFailure))openPanel(game?'overview':'safe-mode',false);});
+app.on('second-instance',()=>{petDiagnostics?.reason('second-instance');petDiagnostics?.record('second-instance');audit({type:'second-instance'});reopenRequested=true;if(app.isReady()&&(game||startupFailure))openPanel(game?'overview':'safe-mode',false);});
 
 // Life archives store pictures as PNG/JPEG/WebP. A GIF (first frame), SVG or other
 // format is rasterized here: nativeImage first, otherwise Chromium in a hidden
@@ -174,7 +217,9 @@ function moveDrag(point){
 }
 async function saveSettings() {await settingsStore.writeText(JSON.stringify(settings));}
 function settingsView(){return {startupFailure,safeMode:!!startupFailure,interactionMedia:Object.fromEntries(resources.status().characters.map(c=>[c.id,interactionMediaReady(c.id)])),resources:resources.status(),effectivePetCharacter:effectivePetCharacter(),petResourceNotice:validPetCharacter(themeCharacter)?null:'当前角色没有桌宠资源，保留当前桌宠',preferences:{...settings.preferences},themeCharacter,petCharacterId:petState.characterId??resources.fallback('deepseek'),version:appVersion,build:build.split(/[\\/]/).at(-1),dataRoot,logRoots,tokenSources,defaultModel:provider?.defaultModel,modelConnections:provider?.state?connectionView(provider):null,cgConnections:cg?.state?connectionView(cg):null,systemTimeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,monitorAppliedInterval};}
-function broadcastSettings(){const value=settingsView();for(const win of [pet,panel])if(win&&!win.isDestroyed())win.webContents.send('settings:update',value);return value;}
+// a stop the user asked for (companion-chat-cancel) is not a chat failure
+const userStopped=message=>/用户停止回复$/.test(String(message??''));
+function broadcastSettings(){const value=settingsView();for(const win of [pet,panel])if(win&&!win.isDestroyed())win.webContents.send('settings:update',value);void plugins?.refreshAppearance?.().catch(()=>{});return value;}
 function saveConnection(service,draft){
   // An unusable edit must not overwrite the currently selected profile before
   // the subsequent activation can reject it. This check performs no request.
@@ -197,11 +242,14 @@ function applyPetPreferences(resize=false){
     positionPet(pet,settings.petBounds,settings.preferences.petScale);
     petMotion?.recover(settings.petBounds);
   }
-  pet.setAlwaysOnTop(settings.preferences.alwaysOnTop,'floating');
+  applyPetTopmost(pet,settings.preferences.alwaysOnTop);
   configurePetInteractions();
-  if(settings.preferences.petVisible&&petAssetsReady){const wasVisible=pet.isVisible();pet.showInactive();if(!wasVisible)triggerPet('wave','show');}else{cancelGesture('hidden');petAuto();pet.hide();}
+  if(settings.preferences.petVisible&&petAssetsReady){const wasVisible=pet.isVisible();pet.showInactive();if(!wasVisible){triggerPet('wave','show');void deliverKeptLine();}}else{cancelGesture('hidden');petAuto();pet.hide();}
   setGestureMode(gestureMode);updateTray();
 }
+// Approved design C8: a line kept while neither the pet nor the main window could show it appears on the pet once
+// the pet is back (it is still read only through speech-read; the Galgame shows the same stored line).
+async function deliverKeptLine(){try{const result=await game?.action('companion-r95',{action:'view',args:{}}),view=result?.companion?.r95??result?.r95Result,line=(view?.lines??[]).find(row=>row?.status!=='read'&&typeof row.text==='string');if(line&&pet&&!pet.isDestroyed()&&pet.isVisible()&&petState.characterId===view.scope?.characterId)petEvent({kind:'social-line',value:{...line,scope:view.scope}});}catch{}}
 async function syncPetVisibility(visible){
   if(!settings.preferences)return;
   settings.preferences={...settings.preferences,petVisible:visible};
@@ -233,6 +281,7 @@ async function settingsAction(action){
 function applyChrome(character){if(character&&character!==themeCharacter){const previousPet=effectivePetCharacter();themeCharacter=character;if(effectivePetCharacter()!==previousPet)cancelGesture('character-change');if(settings.preferences?.petCharacterMode!=='fixed'){activityClock.resume();publishInteraction(true);}broadcastSettings();}setLocale(settings.preferences?.language);if(panel&&!panel.isDestroyed()){panel.setTitle(workspaceTitle());const theme=resolvedTheme(settings.preferences,themeCharacter);panel.setBackgroundColor(windowBackground(theme));if(process.platform==='win32')panel.setTitleBarOverlay({color:chromeColor(theme),symbolColor:chromeSymbolColor(theme),height:34});}syncBrandIcons();if(tray)updateTray();}
 let themeCharacter=resources.fallback('deepseek');
 function openPanel(page='overview',focus=true) {
+  petDiagnostics?.reason('open-panel');petDiagnostics?.record('panel-open');
   if(page==='sessions')page='overview';
   if(!panel || panel.isDestroyed()) {
     panel=new BrowserWindow({width:1180,height:820,minWidth:900,minHeight:650,title:workspaceTitle(),icon:appIconPath,backgroundColor:windowBackground(resolvedTheme(settings.preferences,themeCharacter)),show:false,
@@ -244,15 +293,17 @@ function openPanel(page='overview',focus=true) {
     panel.on('close',event=>{if(!quitting){event.preventDefault();if(onboarding){void shutdown();return;}petAuto();panel.hide();}});
     // Lets the panel release heavy media (action gallery decoders, stills) while hidden.
     for(const [name,visible] of [['hide',false],['show',true]])panel.on(name,()=>{if(panel&&!panel.isDestroyed())panel.webContents.send('panel:visibility',{visible});});
+    panel.on('hide',()=>pluginEmbed?.release());for(const name of ['minimize','restore'])panel.on(name,()=>pluginEmbed?.refresh());panel.on('show',()=>{try{assertImportIdle();pluginEmbed?.resume();}catch{}});
+    panel.on('closed',()=>pluginEmbed?.release());panel.webContents.on('did-start-navigation',details=>{if(details?.isMainFrame&&!details.isSameDocument)pluginEmbed?.rendererReset();});
     panel.once('ready-to-show',()=>focus?panel.show():panel.showInactive());
-    panel.webContents.setWindowOpenHandler(()=>({action:'deny'}));
+    panel.webContents.setWindowOpenHandler(pluginWindowOpenHandler({openExternal:url=>shell.openExternal(url),isClosed:()=>!panel||panel.isDestroyed()}));
     panel.webContents.on('console-message',(event,...args)=>{if(event.level==='error'||args[0]===3)pushBounded(rendererErrors,event.message || args[1]);});
   } else {panel.webContents.send('panel:page',page);focus?panel.show():panel.showInactive();}
 }
 function publish(value) {
   if(quitting)return;
   snapshot=value;
-  activityClock.observeExternal(value);publishInteraction();
+  activityClock.observeExternal({...value,activitySummary:game?.r95?.origins.summary()});publishInteraction();
   if(!value.indexing) {
     const work=value.workSinceStart || 0;
     const delta=work-(lastWork || 0);if(delta>0)game?.workTokens(delta);lastWork=Math.max(lastWork || 0,work);
@@ -284,7 +335,7 @@ ipcMain.handle('settings:action',(_,action)=>settingsAction(action));
 ipcMain.handle('pet:play',(_,request)=>playPet(request));
 ipcMain.handle('pet:auto',()=>petAuto());
 ipcMain.handle('pet:state',()=>petState);
-ipcMain.on('pet:state',(event,value)=>{if(event.sender!==pet?.webContents||!actionIds.has(value?.id))return;const previous=petState.characterId;petState={id:value.id,source:String(value.source||'monitor').slice(0,20),manual:value.manual===true,expiresAt:Number.isFinite(value.expiresAt)?value.expiresAt:null,characterId:validPetCharacter(value.characterId)?value.characterId:'deepseek'};if(panel&&!panel.isDestroyed())panel.webContents.send('pet:state',petState);if(previous!==petState.characterId){configurePetInteractions();broadcastSettings();syncBrandIcons();}});
+ipcMain.on('pet:state',(event,value)=>{if(event.sender!==pet?.webContents||!actionIds.has(value?.id))return;const previous=petState.characterId;petState={socialPresentation:value.socialPresentation===true,id:value.id,source:String(value.source||'monitor').slice(0,20),manual:value.manual===true,expiresAt:Number.isFinite(value.expiresAt)?value.expiresAt:null,characterId:validPetCharacter(value.characterId)?value.characterId:'deepseek'};if(panel&&!panel.isDestroyed())panel.webContents.send('pet:state',petState);if(previous!==petState.characterId){configurePetInteractions();broadcastSettings();syncBrandIcons();}});
 async function manageResources(characterId){
   const manager=resources.manager();if(!manager)throw Error('请下载此版本的在线安装器进行管理 / Download this version’s installer to manage resources');
   const ids=(Array.isArray(characterId)?characterId:[characterId]).filter(Boolean);if(ids.some(id=>!validPetCharacter(id)))throw Error('Unknown character');
@@ -303,6 +354,18 @@ ipcMain.handle('data-import:cancel',async(_,args)=>{const value=await dataImport
 ipcMain.handle('data-import:create-new',()=>dataImport.createNew());
 ipcMain.handle('data-import:resume-work',()=>dataImport.resumeWork());
 function assertImportIdle(){if(importBarrier)throw Error('正在导入资料，请先完成或取消导入');}
+ipcMain.handle('agents:action',async(event,action,payload)=>{if(event.sender!==panel?.webContents)throw Error('Invalid workspace sender');assertImportIdle();if(!agents)throw Error('工作插件入口尚未就绪');try{return await agents.legacyAction(action,payload??{});}catch(error){return {__buddyError:true,message:error.message,code:error.code,details:error.details};}});
+ipcMain.handle('agents:choose-workspace',async event=>{if(event.sender!==panel?.webContents)throw Error('Invalid workspace sender');assertImportIdle();if(!agents?.status().enabled)throw Object.assign(Error('请先安装并启用工作与协作插件'),{code:'WORK_PLUGIN_REQUIRED'});const result=await dialog.showOpenDialog(panel,{title:t('选择工作项目目录'),properties:['openDirectory']});return result.canceled?null:result.filePaths[0];});
+ipcMain.handle('work:status',event=>{if(event.sender!==panel?.webContents)throw Error('Invalid workspace sender');return agents?.status()??{state:'not-ready',installed:false,enabled:false};});
+ipcMain.handle('work:open',async event=>{if(event.sender!==panel?.webContents)throw Error('Invalid workspace sender');assertImportIdle();try{return await agents.open();}catch(error){return {__buddyError:true,message:error.message,code:error.code};}});
+ipcMain.handle('plugins:action',async(event,request)=>{if(event.sender!==panel?.webContents)throw Error('Invalid extension sender');assertImportIdle();return pluginActionResult(plugins,request);});
+// Plugin pages inside the main window: only the main window's own page may place, cover or move them.
+ipcMain.handle(EMBED_CHANNEL,async(event,request)=>{if(event.sender!==panel?.webContents||event.senderFrame!==panel.webContents.mainFrame)throw Error('Invalid embed sender');if(!pluginEmbed)return {__buddyError:true,code:'PLUGIN_EMBED_UNAVAILABLE',message:'插件页面还没准备好'};try{if(!['state','slot','cover','capture'].includes(request?.op))assertImportIdle();return await pluginEmbed.handle(request);}catch(error){return {__buddyError:true,code:error.code??'PLUGIN_EMBED_FAILED',message:error.message};}});
+ipcMain.handle('plugins:choose',async event=>{if(event.sender!==panel?.webContents)throw Error('Invalid extension sender');assertImportIdle();if(!plugins)throw Error('扩展服务尚未就绪');const result=await dialog.showOpenDialog(panel,{title:t('选择签名离线扩展目录'),properties:['openDirectory']});return result.canceled?null:plugins.prepareOffline(result.filePaths[0]);});
+// Extensions (B6, B1, B3): the signed plugin file, favourites files and the Work engine list. Paths only ever come from the host's own dialogs.
+ipcMain.handle('plugins:choose-package',async event=>{if(event.sender!==panel?.webContents)throw Error('Invalid extension sender');assertImportIdle();if(!plugins)throw Error('扩展服务尚未就绪');const result=await dialog.showOpenDialog(panel,{title:t('选择插件包文件'),properties:['openFile'],filters:[{name:t('AI Buddy 插件包'),extensions:[OFFLINE_BUNDLE_EXTENSION,'tgz']}]});if(result.canceled)return {cancelled:true};return pluginActionResult({action:()=>plugins.prepareDshOffline(result.filePaths[0])},{});});
+ipcMain.handle('plugins:preferences-file',async(event,mode)=>{if(event.sender!==panel?.webContents)throw Error('Invalid extension sender');assertImportIdle();if(!plugins)throw Error('扩展服务尚未就绪');if(mode==='export'){const value=await pluginActionResult(plugins,{action:'community-export-preferences'});if(value?.error)return value;const result=await dialog.showSaveDialog(panel,{title:t('导出收藏与关注'),defaultPath:'ai-buddy-favorites.json',filters:[{name:'JSON',extensions:['json']}]});if(result.canceled)return {cancelled:true};writeFileSync(result.filePath,JSON.stringify(value,null,2),'utf8');return {saved:true};}if(mode!=='import')throw Error('Invalid favourites file mode');const result=await dialog.showOpenDialog(panel,{title:t('导入收藏与关注'),properties:['openFile'],filters:[{name:'JSON',extensions:['json']}]});if(result.canceled)return {cancelled:true};return pluginActionResult({action:async()=>plugins.action({action:'community-import-preferences',value:await readPreferencesFile(result.filePaths[0])})},{});});
+ipcMain.handle('plugins:work-engines',event=>{if(event.sender!==panel?.webContents)throw Error('Invalid extension sender');return detectWorkEngines({root,connections:provider?.view?.().profiles??[]});});
 ipcMain.handle('chat:status',()=>provider.status());
 ipcMain.handle('chat:enabled',(_,enabled)=>{assertImportIdle();provider.setEnabled(enabled);audit({type:'chat-enabled',enabled:provider.enabled});return provider.status();});
 ipcMain.handle('models:get',()=>connectionView(provider));
@@ -321,19 +384,30 @@ ipcMain.handle('cg:list',async(_,draft)=>{const models=await cg.fetchModels(draf
 ipcMain.handle('cg:check',(_,draft)=>cg.test(draft));
 ipcMain.handle('cg:test-image',(_,draft)=>{assertImportIdle();return cg.testImage(draft);});
 ipcMain.handle('cg:resume',async(_,id)=>{assertImportIdle();try{return {ok:true,job:await cg.resume(id)};}catch(error){return {ok:false,error:error.message};}});
-ipcMain.handle('cg:image',(_,id)=>{const job=cg.job(id);if(!job?.assetRef)throw Error('CG 尚未完成');return {dataUrl:cg.readAsset(job.assetRef)};});
-ipcMain.handle('game:action',async(_,action,args)=>{
+ipcMain.handle('cg:image',(_,id)=>{const job=cg.assertReadableJob(id);if(!job?.assetRef)throw Error('CG 尚未完成');return {dataUrl:cg.readAsset(job.assetRef)};});
+ipcMain.handle('game:action',async(event,action,args)=>{
+  if(action==='companion-r95'&&args?.action==='owner-bind'&&event.sender!==panel?.webContents)throw Error('主人绑定只能由本体设置页确认');
   if(typeof action!=='string')throw new Error('Invalid action');
   if(importBarrier&&!['view','settings-get','companion-state','companion-memory-view','companion-life-list','cg-gallery','cg-data','cg-thumbnail','sprite-data','bg-data'].includes(action))assertImportIdle();
   if(!game)return {ok:false,code:'COMPANION_SAFE_MODE',error:'陪伴功能启动失败，已进入安全模式：'+(startupFailure?.message??'尚未就绪')};
   const dialog=provider.enabled&&['chat','side-story','side-story-free-reply','companion-group-send','companion-group-continue'].includes(action);
   if(dialog){gameRequests++;petEvent({kind:'dialog',active:true});}
-  try{const result=await game.action(action,args||{});if(dialog&&result?.ok===false&&result.code!=='CHARACTER_NOT_INSTALLED')feedback({id:'fail',source:'chat-error',text:'聊天暂时失败，请重试。',cycles:1});return result;}
-  catch(error){if(dialog)feedback({id:'fail',source:'chat-error',text:'聊天暂时失败，请重试。',cycles:1});throw error;}
+  try{const result=await game.action(action,args||{});if(dialog&&result?.ok===false&&result.code!=='CHARACTER_NOT_INSTALLED'&&!userStopped(result.error?.message??result.message))feedback({id:'fail',source:'chat-error',text:'聊天暂时失败，请重试。',cycles:1});
+    // A line read on the pet or in the main window closes it in the other place too (approved design C8).
+    if(action==='companion-r95'&&args?.action==='speech-read'&&result?.ok!==false){petEvent({kind:'social-line-read',messageId:args.args?.messageId});if(panel&&!panel.isDestroyed())panel.webContents.send('game:output',{type:'social.updated'});}
+    return result;}
+  catch(error){if(dialog&&!userStopped(error?.message??error))feedback({id:'fail',source:'chat-error',text:'聊天暂时失败，请重试。',cycles:1});throw error;}
   finally{if(dialog){gameRequests--;petEvent({kind:'dialog',active:gameRequests>0||activityClock.busy.size>0});}}
 });
 ipcMain.handle('pet:story-feedback',(event,value)=>{if(event.sender!==panel?.webContents||!game?.hasCharacter?.(value?.characterId)||!validEmotion(value.emotion)||typeof value.text!=='string'||value.text.length>4000)return false;chatFeedback({...value,messageId:'story:'+String(value.messageId).slice(0,160)});return true;});
-ipcMain.on('panel:open',(_,page)=>openPanel(page));
+ipcMain.on('panel:open',(event,page)=>{
+  if(typeof page==='string'&&page.startsWith('social-plugin:')){
+    if(event.sender!==pet?.webContents)return;
+    openSocialPluginPage(page.slice('social-plugin:'.length));
+    return;
+  }
+  openPanel(page);
+});
 ipcMain.on('pet:hit',(_,hit)=>{lastPetHit=!!hit;if(!drag && pet && !pet.isDestroyed())setGestureMode(gestureMode);});
 ipcMain.on('pet:drag-start',(event,message)=>{
  if(event.sender!==pet?.webContents||!petMotion||drag)return;
@@ -342,8 +416,10 @@ ipcMain.on('pet:drag-start',(event,message)=>{
  // while pointer-down crosses IPC. This local offset never positions a window.
  const local=message?.local,point=Number.isFinite(local?.x)&&Number.isFinite(local?.y)&&local.x>=0&&local.x<=1&&local.y>=0&&local.y<=1?{x:bounds.x+local.x*bounds.width,y:bounds.y+local.y*bounds.height}:cursor;
  const button=message?.button??0;if(button!==0&&button!==2)return;
- petMotion.bounds={...bounds};const begin=petMotion.begin(point,{button});
+ // begin() publishes synchronously. Establish wake intent before that first
+ // pressed snapshot, and keep it attached to this gesture until release.
  const wakeOnly=activityClock.wake('touch');
+ petMotion.bounds={...bounds};const begin=petMotion.begin(point,{button});
  const capturedAt=Date.now();
  drag={gestureId,button,origin:point,moved:false,characterId:petState.characterId??effectivePetCharacter(),personaId:game?.context?.().personaId,eventId:'touch:'+process.pid+':'+capturedAt+':'+begin.serial,capturedAt,caught:begin.caught,wakeOnly};
  nativeButtons=button===2?2:1;buttonObserver?.start(gestureId);ignoringMouse=false;pet.setIgnoreMouseEvents(false);moveDrag(cursor);publishInteraction(true);audit({type:'pet-pointer-down',gestureId,button,point,cursor,bounds});
@@ -356,7 +432,7 @@ async function finishPetGesture(message){
  // position for placement/tap classification, without adding a velocity sample.
  if(arg('cursor')!=='manual')petMotion.move(screen.getCursorScreenPoint(),{sample:false});
  const captured=drag,result=petMotion.release(null,{button:message?.button??petMotion.releaseButton??drag.button});if(result.ignored)return result;drag=null;buttonObserver?.stop();petEvent({kind:'gesture-reset',gestureId:captured.gestureId,reason:'released',buttons:nativeButtons});petEvent({kind:'drag',active:false});publishInteraction(true);setGestureMode(gestureMode);
- if(result.touch){activityClock.activity('touch');const id=touchExpressions.next(captured.characterId);petEvent({kind:'feedback',value:{id,source:'touch',cycles:1,eventId:captured.eventId,gestureId:captured.gestureId,capturedAt:captured.capturedAt,confirmedAt:Date.now(),characterId:captured.characterId}});const awarded=await game?.touch?.({characterId:captured.characterId,personaId:captured.personaId,eventId:captured.eventId});audit({type:'pet-touch',characterId:captured.characterId,personaId:captured.personaId,expression:id,awarded:awarded?.awarded??false,reason:awarded?.reason});}
+ if(result.touch){activityClock.activity('touch');const playExpression=!captured.wakeOnly,id=playExpression?touchExpressions.next(captured.characterId):null;petEvent({kind:'feedback',value:{id,source:'touch',cycles:1,eventId:captured.eventId,gestureId:captured.gestureId,capturedAt:captured.capturedAt,confirmedAt:Date.now(),characterId:captured.characterId,playExpression}});const awarded=await game?.touch?.({characterId:captured.characterId,personaId:captured.personaId,eventId:captured.eventId});audit({type:'pet-touch',characterId:captured.characterId,personaId:captured.personaId,expression:id,playExpression,awarded:awarded?.awarded??false,reason:awarded?.reason});}
  if(captured.wakeOnly){result.wakeOnly=true;result.context=false;}
  else if(result.context)petContextMenu();
  settings.petBounds=petBounds(pet.getContentBounds(),settings.preferences.petScale);audit({type:'pet-pointer-up',gestureId:captured.gestureId,...result,bounds:settings.petBounds});await saveSettings();return result;
@@ -378,9 +454,10 @@ ipcMain.handle('pet:context',(event,message)=>{
 });
 ipcMain.on('pet:animation-ready',(event,value)=>{
  if(event.sender!==pet?.webContents||value?.characterId!==petState.characterId)return;
- const clock=value.scope==='motion'?petMotion:activityClock;if(!clock||value.epoch!==clock.animationEpoch)return;
+ if(!matchesInteractionReady(petInteraction(),value))return;
+ const clock=value.scope==='motion'?petMotion:activityClock;if(!clock)return;
  if(value.failed){audit({type:'interaction-media-error',id:value.id,characterId:value.characterId});if(value.scope==='motion')petMotion.stop();else activityClock.resume();}
- else clock.markReady(value.epoch);
+ else if(!clock.markReady(value.epoch))return;
  publishInteraction(true);
 });
 
@@ -389,9 +466,9 @@ const control=createLocalControlServer({
   onRequest:async request=>{
       let result;
       if(request.command==='snapshot')result={processId:process.pid,singleInstance:app.hasSingleInstanceLock(),snapshot,settings:settingsView(),petAction:petState,chat:{enabled:provider?.enabled || false,model:provider?.defaultModel},petBounds:pet?.getBounds(),petContentBounds:pet?.getContentBounds(),petVisible:pet?.isVisible(),petAssetsReady,petAlwaysOnTop:pet?.isAlwaysOnTop(),petInteraction:{gestureMode,lastPetHit,ignoringMouse,dragging:!!drag,...petInteraction()},displays:screen.getAllDisplays().map(d=>({workArea:d.workArea,scaleFactor:d.scaleFactor})),build,dataRoot};
-      else if(request.command==='installation-status')result={version:appVersion,build,dataRoot,processId:process.pid,ready:(!!game||!!startupFailure)&&petAssetsReady,onboarding,safeMode:!!startupFailure,startupFailure,busy:!!(gameRequests||provider?.status().busy||cg?.status().busy),resources:resources.status()};
+      else if(request.command==='installation-status')result={version:appVersion,build,dataRoot,processId:process.pid,ready:(!!game||!!startupFailure)&&petAssetsReady,onboarding,safeMode:!!startupFailure,startupFailure,busy:!!(gameRequests||provider?.status().busy||cg?.status().busy||extraBusy()),resources:resources.status(),components:{extensions:extensionComponentStatus(plugins?.snapshot())}};
       else if(request.command==='data-import-state')result=dataImport?.state();
-      else if(request.command==='installation-quit'){if(request.expectedBuild!==build)result={ok:false,error:'Different installation'};else if(gameRequests||provider?.status().busy||cg?.status().busy)result={ok:false,busy:true};else{result={ok:true};setTimeout(()=>{void shutdown();},100);}}
+      else if(request.command==='installation-quit'){if(request.expectedBuild!==build)result={ok:false,error:'Different installation'};else if(gameRequests||provider?.status().busy||cg?.status().busy||extraBusy())result={ok:false,busy:true};else{result={ok:true};setTimeout(()=>{void shutdown();},100);}}
       else if(request.command==='resources-status')result=resources.status(true);
       // One-time repairs: plan is read-only; apply needs the planId the user confirmed.
       else if(request.command==='maintenance-plan'){if(!game)throw Error('陪伴功能未启动');result=game.maintenance.plan(request.task);}
@@ -412,6 +489,7 @@ const control=createLocalControlServer({
         cancelGesture('validation-position');positionPet(pet,{x:request.x,y:request.y},settings.preferences.petScale);
         result={bounds:pet.getContentBounds()};
       }
+      else if(request.command==='validation-pet-window'&&arg('validation')==='1')result={state:petDiagnostics?.snapshot(),recent:petDiagnostics?.recent()};
       else if(request.command==='validation-metrics'&&arg('validation')==='1'){
         result={processes:app.getAppMetrics(),gpuFeatures:app.getGPUFeatureStatus(),displays:screen.getAllDisplays().map(d=>({id:d.id,bounds:d.bounds,workArea:d.workArea,scaleFactor:d.scaleFactor})),trajectoryVisible:!!trajectoryWindow&&!trajectoryWindow.isDestroyed(),rendererErrors:[...rendererErrors]};
       }
@@ -450,7 +528,7 @@ const control=createLocalControlServer({
         for(const [name,window] of [['pet',pet],['panel',panel]])if(window && !window.isDestroyed()){const image=await window.webContents.capturePage();const file=join(directory,name+'-'+stamp+'.png');writeFileSync(file,image.toPNG(),{flag:'wx'});captured[name]=file;}result=captured;
       }
       else if(request.command==='page-info'){
-        result={rendererErrors,pet:await pet.webContents.executeJavaScript('({width:innerWidth,height:innerHeight,scale:getComputedStyle(document.body).transform,badgeHidden:document.querySelector(".badge").hidden,sprite:getComputedStyle(document.querySelector(".sprite")).backgroundPosition,spriteRect:document.querySelector(".sprite").getBoundingClientRect().toJSON(),badgeRect:document.querySelector(".badge").getBoundingClientRect().toJSON(),input:window.petInputDiagnostic,action:window.petActionDiagnostic})'),panel:panel&&!panel.isDestroyed()?await panel.webContents.executeJavaScript('({title:document.title,scrollY:scrollY,bodyWidth:document.body.scrollWidth,viewportWidth:innerWidth,page:document.querySelector("nav .active")?.innerText,buttons:[...document.querySelectorAll("button")].map(b=>b.innerText).filter(Boolean).slice(0,35),inputs:[...document.querySelectorAll("input,textarea,select")].map(i=>({tag:i.tagName,type:i.type,placeholder:i.placeholder,setting:i.dataset.setting,value:i.type==="password"?"":i.value,checked:i.checked})),actionCards:[...document.querySelectorAll("[data-action-card]")].map(e=>e.dataset.actionCard),directionCount:document.querySelectorAll("[data-look-index]").length,contentText:document.querySelector(".content")?.innerText.slice(-500)})'):null};
+        result={rendererErrors,pet:await pet.webContents.executeJavaScript(PET_RENDERER_DIAGNOSTIC_SCRIPT),panel:panel&&!panel.isDestroyed()?await panel.webContents.executeJavaScript('({title:document.title,scrollY:scrollY,bodyWidth:document.body.scrollWidth,viewportWidth:innerWidth,page:document.querySelector("nav .active")?.innerText,buttons:[...document.querySelectorAll("button")].map(b=>b.innerText).filter(Boolean).slice(0,35),inputs:[...document.querySelectorAll("input,textarea,select")].map(i=>({tag:i.tagName,type:i.type,placeholder:i.placeholder,setting:i.dataset.setting,value:i.type==="password"?"":i.value,checked:i.checked})),actionCards:[...document.querySelectorAll("[data-action-card]")].map(e=>e.dataset.actionCard),directionCount:document.querySelectorAll("[data-look-index]").length,contentText:document.querySelector(".content")?.innerText.slice(-500)})'):null};
       }
       else if(request.command==='gallery-state'){
         result=panel&&!panel.isDestroyed()?await panel.webContents.executeJavaScript(`(()=>{const r=window.galleryPreviewInspection?.renderer;return {hidden:document.hidden,reducedMotion:matchMedia('(prefers-reduced-motion: reduce)').matches,control:document.querySelector('[data-action=pause-previews]')?.innerText,renderer:r?.backend,cache:r?.inspect(),cards:[...document.querySelectorAll('[data-preview]')].filter(e=>e.dataset.animating==='true').map(e=>({id:e.dataset.preview,phase:e.previewPhase,frame:r?.displayedSample(e.querySelector('canvas'))?.displayedSequenceFrame,draws:r?.targetDraws(e.querySelector('canvas'))}))};})()`):null;
@@ -465,12 +543,20 @@ control.on('error',error=>{
   else {audit({type:'control-error',message:error.message});}
 });
 
+let shuttingDown=false;
 async function shutdown() {
-  if(quitting)return;quitting=true;dataImport?.close();buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();provider?.close();await cg?.close();await game?.flushWorkLedger?.().catch(()=>{});game?.close();
-  if(worker){worker.postMessage({type:'close'});await Promise.race([new Promise(r=>{worker.once('exit',r);worker.on('message',m=>{if(m.type==='closed')r();});}),new Promise(r=>setTimeout(r,5000))]);}
+  if(quitting||shuttingDown)return;
+  shuttingDown=true;
+  try{
+  if(agents?.busy()){const choice=await dialog.showMessageBox(panel??pet,{type:'question',title:'工作与协作',message:'仍有工作任务正在运行。',buttons:['完成后退出','停止并保存后退出','返回'],defaultId:2,cancelId:2});if(choice.response===2)return;await agents.prepareExit(choice.response===0?'finish':'stop-save');}
+  quitting=true;await dailyCgScheduler?.stopAndDrain();await rewardTail;await agents?.close();pluginEmbed?.close();await plugins?.close();await pluginUsage?.close();petDiagnostics?.dispose();dataImport?.close();buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();provider?.close();await cg?.close();await game?.flushWorkLedger?.().catch(()=>{});await game?.close();
+  await workSourceRegistry?.flush();
+  if(worker)await closeMonitorWorker(worker,{onDiagnostic:value=>audit({type:'monitor-worker-close',...value})});
   control.close();app.exit(0);
+  }catch(error){quitting=false;audit({type:'shutdown-blocked',code:error.code,message:error.message});await dialog.showMessageBox(panel??pet,{type:'error',title:'工作尚未停止',message:'退出未完成，已保留当前运行状态。',detail:String(error.message),buttons:['返回']});}
+  finally{shuttingDown=false;}
 }
-app.on('before-quit',event=>{if(!quitting){event.preventDefault();void shutdown();}});
+app.on('before-quit',event=>{event.preventDefault();if(!quitting)void shutdown();});
 app.on('window-all-closed',()=>{});
 app.whenReady().then(async()=>{
   if(recoveryDispatched){app.exit(0);return;}
@@ -499,21 +585,53 @@ app.whenReady().then(async()=>{
   const home=process.env.USERPROFILE;
   let config='';try{config=readFileSync(join(codexHome(),'config.toml'),'utf8');}catch(error){if(error.code!=='ENOENT')throw error;}
   const model=config.match(/^model\s*=\s*"([^"]+)"/m)?.[1] || 'gpt-6.1-sol';
-  const binary=()=>resolveCodexBinary({root,explicit:arg('codex')});
+  const binary=options=>resolveCodexBinary({root,explicit:arg('codex'),requireSearchHost:options?.requireSearchHost===true});
   const codex=new CodexProvider({binary,defaultModel:model,dataRoot,onUsage:usage=>worker?.postMessage({type:'companion-usage',...usage}),audit});
-  provider=new ModelRouter({codex,dataRoot,crypto:safeStorage,outputLimit:()=>settings.preferences?.maxOutputTokens??8192,legacy:existsSync(settingsStore.target+'.snapshots'),onActivity:internalActivity,onChange:()=>broadcastSettings(),onUsage:usage=>{appendFileSync(join(dataRoot,'api-usage.jsonl'),JSON.stringify(usage)+'\n');worker?.postMessage({type:'refresh'});},audit});
+  provider=new ModelRouter({codex,dataRoot,crypto:safeStorage,outputLimit:()=>settings.preferences?.maxOutputTokens??8192,searchPolicy:request=>game?.r95?.searchPolicy(request)??false,onNativeSearch:event=>game?.r95?.recordNativeSearch(event),legacy:existsSync(settingsStore.target+'.snapshots'),onActivity:internalActivity,onChange:()=>broadcastSettings(),onUsage:usage=>{appendFileSync(join(dataRoot,'api-usage.jsonl'),JSON.stringify(usage)+'\n');worker?.postMessage({type:'refresh'});},audit});
   await provider.ready;
+  const publishPlugins=value=>{const snapshot=plugins?.snapshot()??value;if(panel&&!panel.isDestroyed())panel.webContents.send('plugins:update',snapshot);if(Array.isArray(snapshot?.dsh?.installed))pluginEmbed?.recordsChanged(snapshot.dsh.installed);};
+  const legacyPlugins=await createPluginMaintenanceClient({runnerPath:join(build,'plugin-maintenance.cjs'),root,dataRoot,appVersion,busy:async()=>!!agents?.busy(),onUpdate:publishPlugins});
+  pluginUsage=createPluginUsageRecorder({dataRoot,onRecorded:()=>worker?.postMessage({type:'refresh'})});
+  agents=createWorkPluginGate({dataRoot,build,verifyOwnerAuthority:(...args)=>{if(!game?.r95)throw Error('主人授权服务尚未就绪');return game.r95.owner.verifyProof(...args);},getPlatform:()=>plugins,getGame:()=>game,getProvider:()=>provider,binaryResolver:binary,audit,automaticWorkAllowed:()=>!importBarrier&&dataImport.automaticWorkAllowed(),
+    confirmResumeApproval:createWorkResumeConfirmation({dialog,BrowserWindow,language:()=>settings.preferences.language}),
+    chooseWorkspace:async(meta={})=>{const value=await dialog.showOpenDialog(meta.window instanceof BrowserWindow?meta.window:panel??undefined,{title:'选择工作项目目录',properties:['openDirectory']});return value.canceled?null:value.filePaths[0];},
+    onActivity:internalActivity,onUsage:value=>pluginUsage.record(value),onNativeApiUsage:value=>pluginUsage.recordNativeApi(value),
+    onRegisterUsageSource:async value=>{await managedWorkSource({id:value.id,tool:value.engine,path:value.path,name:'工作插件 · '+value.engine,format:'auto',enabled:true,mode:value.usageMode==='cumulative'?'cumulative':'request',workAttribution:value.workAttribution,...(value.nativeHistoryRange?{nativeHistoryRange:value.nativeHistoryRange}:{})});return {sourceId:value.id,registered:true};},
+    onEvent:()=>{if(panel&&!panel.isDestroyed())panel.webContents.send('work:event',{type:'work-status-changed',busy:!!agents?.busy()});},
+  });
+  plugins=await createPluginPlatform({pageAppearance:options=>pluginPageAppearance(settings.preferences,themeCharacter,{...options,faces:pluginFaces(),portraits:(builtinPluginPortraits??=builtinPortraits(build))}),root,build,dataRoot,crypto:safeStorage,legacyManager:legacyPlugins,getSocialHost:()=>game?.r95?.socialHost,getGame:()=>game,getProvider:()=>provider,BrowserWindow,session,ipcMain,pluginClientPreloadPath:join(build,'plugin-client-preload.cjs'),openSocialSetup:request=>openSocialLogin(request),renderBiliSheet:createBiliSheetRenderer(nativeImage),analyzeBiliFrames:createBiliFrameAnalyzer(nativeImage),onReadingOpen:async()=>{assertImportIdle();if(!pluginEmbed)throw Object.assign(Error('Plugin page is not ready'),{code:'PLUGIN_EMBED_UNAVAILABLE'});await pluginEmbed.handle({op:'open',target:'bilibili'});},
+    hostServices:{'work.host':{capability:'work.host',handler:request=>agents.service(request)}},resolveToolScope:context=>agents.nativeToolScope(context),
+    runtimeLockPath:arg('dsh-runtime-lock'),busy:()=>!!agents?.busy(),onUpdate:publishPlugins,audit,
+    openExternal:async url=>{const parsed=new URL(url);if(!['http:','https:'].includes(parsed.protocol)||parsed.username||parsed.password)throw Error('外部页面地址无效');await shell.openExternal(parsed.href);},
+    chooseComponentArchive:async()=>{const value=await dialog.showOpenDialog(panel??undefined,{title:'选择匹配的DSH运行组件',properties:['openFile'],filters:[{name:'DSH runtime component',extensions:['tgz']}]});return value.canceled?null:value.filePaths[0];},
+    onUsage:value=>pluginUsage.record(value),
+    onNotification:async value=>{audit({type:'plugin-notification',...value});if(value.kind==='social-activity'&&!value.clear&&value.title){const title=String(value.title).slice(0,80),seen=recentPluginActivity.findIndex(row=>row.pluginId===value.pluginId&&row.title===title);if(seen>=0)recentPluginActivity.splice(seen,1);recentPluginActivity.unshift({pluginId:value.pluginId,title,at:Date.now()});recentPluginActivity.splice(5);}if(value.kind==='social-activity'&&settings.preferences?.petVisible!==false)petEvent({kind:'social-activity',value});if(panel&&!panel.isDestroyed())panel.webContents.send('plugins:notification',value);},
+  });
+  plugins.setWorkClientOpener(()=>agents.open());
+  const embedRecord=target=>plugins.snapshot().dsh.installed.find(value=>value.packageName===EMBED_TARGETS[target].packageName);
+  pluginEmbed=createPluginEmbed({WebContentsView,getPanel:()=>panel,backgroundColor:()=>windowBackground(resolvedTheme(settings.preferences,themeCharacter)),
+    onState:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send(EMBED_EVENT,value);},
+    admit:async target=>{if(target==='work')return;const record=embedRecord(target);if(!record?.enabled)throw Object.assign(Error('插件没有启用'),{code:'PLUGIN_EMBED_NOT_ENABLED'});if(!embedCapable(target,record.exactVersion))throw Object.assign(Error('这个版本的插件还不能放进主窗口'),{code:'PLUGIN_EMBED_UNSUPPORTED'});await plugins.activateInstalled(record.packageKey);},
+    open:async(target,surface)=>{
+      if(target==='work')return agents.open({surface});
+      const record=embedRecord(target);if(!record?.enabled)throw Object.assign(Error('插件没有启用'),{code:'PLUGIN_EMBED_NOT_ENABLED'});if(!embedCapable(target,record.exactVersion))throw Object.assign(Error('这个版本的插件还不能放进主窗口'),{code:'PLUGIN_EMBED_UNSUPPORTED'});
+      return plugins.openClientEmbedded({packageKey:record.packageKey,surface});},
+    openWindow:async target=>{if(target==='work')return agents.open();const record=embedRecord(target);if(!record?.enabled)throw Object.assign(Error('插件没有启用'),{code:'PLUGIN_EMBED_NOT_ENABLED'});return plugins.action({action:'dsh-open-client',packageKey:record.packageKey});}});
+  plugins.onClientState(value=>pluginEmbed?.hostState(value));pluginEmbed.announce();
+  await agents.recoverUsage();
   quotas=new QuotaService({dataRoot,home,crypto:safeStorage,binary,onChange:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('quotas:update',value);}});await quotas.ready;quotas.start();
   const cgUsage=usage=>{appendFileSync(join(dataRoot,'cg-usage.jsonl'),JSON.stringify({timestamp:new Date().toISOString(),...usage})+'\n');worker?.postMessage({type:'refresh'});};
-  cg=new CgService({automaticWorkAllowed:()=>!importBarrier&&dataImport.automaticWorkAllowed(),resourceCheck:ids=>resources.require(ids.filter(validPetCharacter)),themePlanner:new CgThemePlanner(provider,()=>settings.preferences?.language|| (app.getLocale().startsWith('zh')?'zh-CN':'en')),codex:new CodexImageProvider({binary,defaultModel:model,dataRoot,onUsage:cgUsage,audit}),dataRoot,crypto:safeStorage,imageCodec:createCgCodec(nativeImage),onUsage:cgUsage,onActivity:internalActivity,onChange:()=>{broadcastSettings();if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',{});},audit,referenceResolver:createCharacterReferenceResolver(build,ref=>cg.readAsset(ref))});
+  cg=new CgService({canViewDailyScope:scope=>!!game&&scope?.personaId===game.context().personaId&&game.assertDailyCgScope(scope)===true,validateDailyScope:scope=>!quitting&&game?.assertDailyCgScope(scope)===true,captureRewardScope:()=>game?.r95?.activeScope()??null,onRewardFact:fact=>{if(!game?.r95)return {accepted:false};game.r95.feeding.ingestUsageFact(fact,{trusted:true});if(fact.basis==='actual'&&Number.isSafeInteger(fact.totalTokens))game.r95.origins.recordUsage({requestKey:fact.canonicalRequestId,totalTokens:fact.totalTokens,live:fact.live===true&&!fact.baseline});return {accepted:true};},automaticWorkAllowed:()=>!importBarrier&&dataImport.automaticWorkAllowed(),resourceCheck:ids=>resources.require(ids.filter(validPetCharacter)),themePlanner:new CgThemePlanner(provider,()=>settings.preferences?.language|| (app.getLocale().startsWith('zh')?'zh-CN':'en')),codex:new CodexImageProvider({binary,defaultModel:model,dataRoot,onUsage:cgUsage,audit}),dataRoot,crypto:safeStorage,imageCodec:createCgCodec(nativeImage),onUsage:cgUsage,onActivity:internalActivity,onChange:()=>{broadcastSettings();if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',{});},audit,referenceResolver:createCharacterReferenceResolver(build,ref=>cg.readAsset(ref))});
   await cg.ready;
   let legacyGameSettings={};
   try{
-  game=await createGalgame({dataRoot,provider,model,cg,resources,audit,imageConverter:rasterizeImage,onActivity:internalActivity,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,automaticWorkAllowed:()=>!importBarrier&&dataImport.automaticWorkAllowed(),getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value);}});
-  cg.start();
+  game=await createGalgame({workBridge:agents.lifeBridge,r95Options:{getTimeZone:()=>settings.preferences?.statisticsTimeZone??'local',work:{ownerAction:(...args)=>agents.ownerAction(...args),getOwnerPlan:value=>agents.getOwnerPlan(value),ownerWorkOptions:value=>agents.ownerWorkOptions(value)},getRuntimeState:scope=>({sleepPhase:activityClock.phase,sleepIntentVersion:activityClock.sleepIntentVersion,waitingForReply:gameRequests>0,presenting:petState.socialPresentation===true,canPresent:(!!panel&&!panel.isDestroyed()&&panel.isVisible()&&!panel.webContents.isLoading())||(!!pet&&!pet.isDestroyed()&&pet.isVisible()&&petState.characterId===scope.characterId&&!petState.manual),activityAllowed:false}),onSpeech:value=>{const petShown=!!pet&&!pet.isDestroyed()&&pet.isVisible()&&petState.characterId===value.scope.characterId;if(petShown)petEvent({kind:'social-line',value});if(panel&&!panel.isDestroyed()&&(panel.isVisible()||petShown))panel.webContents.send('game:output',{type:'social.updated',...(petShown?{petMessageId:value.messageId}:{})});},onSleepIntent:value=>{if(value.kind==='temporary-feeding-start')activityClock.beginTemporaryWake(value.activityOriginId);else if(value.resumeOriginalSleep)activityClock.endTemporaryWake(value.activityOriginId);publishInteraction(true);}},dataRoot,provider,model,cg,resources,audit,imageConverter:rasterizeImage,onActivity:internalActivity,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,onOutput:event=>{if(panel&&!panel.isDestroyed())panel.webContents.send('game:output',event);},automaticWorkAllowed:()=>!importBarrier&&dataImport.automaticWorkAllowed(),getReplyStyle:()=>settings.preferences?.replyStyle??'natural',getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value?.kind==='daily'?{id:value.id,status:value.status}:value);}});
+  await cg.drainRewardFacts();cg.start();
+   dailyCgScheduler=createDailyCgScheduler({dataRoot,now:Date.now,getTimeZone:()=>settings.preferences?.statisticsTimeZone??'local',admission:()=>!!game&&!quitting&&cg.enabled&&cg.available()&&!importBarrier&&dataImport.automaticWorkAllowed()&&activityClock.phase==='awake',capture:context=>{const captured=game.captureDailyCg(context);return {...captured,profile:structuredClone(cg.selected()),themeConnection:structuredClone(cg.themePlanner.capture(captured.modelBinding))};},enqueue:(snapshot,context)=>game.enqueueDailyCg({...snapshot,signal:context.signal}),onError:error=>audit({type:'daily-cg-failed',code:error.code??'DAILY_CG_FAILED',message:String(error.message).slice(0,300)})});
+   await dailyCgScheduler.ready;dailyCgScheduler.start();
   legacyGameSettings=await game.action('settings-get');
   markInstallationInitialized(installationResolution,dataRoot);
-  }catch(error){try{game?.close();}catch{}game=null;noteStartupFailure('companion',error);}
+  }catch(error){await dailyCgScheduler?.stopAndDrain();try{await game?.close();}catch{}game=null;noteStartupFailure('companion',error);}
   const firstPreferences=!settings.preferences||!Object.keys(settings.preferences).length;
   settings.preferences=normalizePreferences(settings.preferences,legacyGameSettings.petEnabled!==false);
   if(firstPreferences)settings.preferences.language=app.getLocale().startsWith('zh')?'zh-CN':'en';
@@ -526,13 +644,16 @@ app.whenReady().then(async()=>{
   const area=screen.getPrimaryDisplay().workArea;
   const bounds=clamp(petBounds(settings.petBounds || {x:area.x+area.width-290,y:area.y+area.height-290},settings.preferences.petScale));
   pet=new BrowserWindow({...petWindowOptions(bounds,settings.preferences.petScale),title:APP_NAME,icon:appIconPath,webPreferences:{preload:join(build,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,partition:'whale-memory'}});
+  petDiagnostics=createPetWindowDiagnostics(()=>pet,audit,{getExpected:()=>({visible:settings.preferences.petVisible,alwaysOnTop:settings.preferences.alwaysOnTop,assetsReady:petAssetsReady,quitting}),getInteraction:()=>({gestureMode,ignoringMouse,dragging:!!drag,gestureId:drag?.gestureId,motion:petMotion?.mode})});
+  for(const event of ['show','hide','minimize','restore','focus','blur','always-on-top-changed','closed'])pet.on(event,()=>petDiagnostics.record(event));
+  pet.webContents.on('render-process-gone',(_,value)=>petDiagnostics.record('render-process-gone',{renderGone:value}));petDiagnostics.record('created');
   brandWindow(pet);
   lockPageZoom(pet,error=>audit({type:'zoom-policy-error',message:error.message}));
   positionPet(pet,bounds,settings.preferences.petScale);pet.on('will-resize',event=>event.preventDefault());
   for(const name of ['show','hide'])pet.on(name,()=>syncBrandIcons());
   petMotion=new PetMotion({bounds,requireReady:true,displays:()=>screen.getAllDisplays(),onPosition:value=>{if(pet&&!pet.isDestroyed())positionPet(pet,value,settings.preferences.petScale);},onState:()=>{publishInteraction(true);}});
   configurePetInteractions();activityClock.resume();
-  pet.setAlwaysOnTop(settings.preferences.alwaysOnTop,'floating');setGestureMode(false);
+  applyPetTopmost(pet,settings.preferences.alwaysOnTop);setGestureMode(false);
   pet.loadFile(join(build,'pet.html'),{...previewQuery,query:{...previewQuery.query,petCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter))}});pet.once('ready-to-show',async()=>{
     if(PET_ACTIONS.some(action=>action.sourceFrameCount))try{await pet.webContents.executeJavaScript('window.petCharacterReady.then(()=>window.frameSequenceInspection.renderer.ready).then(()=>true)');}catch(error){pushBounded(rendererErrors,error.message);audit({type:'pet-assets-error',message:error.message});return;}
     if(!pet.isDestroyed()){petAssetsReady=true;applyPetPreferences();}
@@ -543,7 +664,7 @@ app.whenReady().then(async()=>{
   const recoverPet=()=>{if(!pet||pet.isDestroyed())return;cancelGesture('system-recovery');petMotion?.recover(clamp(petBounds(pet.getContentBounds(),settings.preferences.petScale)));publishInteraction(true);};
   pet.on('hide',()=>cancelGesture('window-hidden'));pet.webContents.on('render-process-gone',()=>cancelGesture('renderer-lost'));
   screen.on('display-removed',recoverPet);screen.on('display-metrics-changed',recoverPet);
-  powerMonitor.on('suspend',recoverPet);powerMonitor.on('resume',()=>{recoverPet();activityClock.resume();publishInteraction(true);});
+  powerMonitor.on('suspend',()=>{game?.r95?.feeding.pause('system-suspend');recoverPet();});powerMonitor.on('resume',()=>{game?.r95?.feeding.resume({sleeping:false});recoverPet();activityClock.resume();publishInteraction(true);});
   let lastCursorPoint=null;
   setInterval(()=>{
     if(pet&&!pet.isDestroyed()&&pet.isVisible()){const before=petMotion.mode;petMotion.tick();if(before!==petMotion.mode&&petMotion.mode==='rest'){settings.petBounds=petBounds(pet.getContentBounds(),settings.preferences.petScale);void saveSettings();}publishInteraction();}
@@ -559,15 +680,16 @@ app.whenReady().then(async()=>{
   monitorAppliedInterval=settings.preferences.monitorRefreshMs;
   // The monitor worker is restarted with backoff if it exits unexpectedly.
   superviseWorker(()=>{
-  worker=new Worker(join(build,'monitor-worker.cjs'),{workerData:{roots:arg('roots')?logRoots:undefined,home,env:process.env,dataRoot,refreshIntervalMs:settings.preferences.monitorRefreshMs,statisticsTimeZone:settings.preferences.statisticsTimeZone,autoPriceUpdates:settings.preferences.autoPriceUpdates}});
-  worker.on('message',message=>{if(message.type==='sources'){tokenSources=message.value;if(panel&&!panel.isDestroyed())panel.webContents.send('tokens:update',message.value);}if(message.type==='source-result'){const pending=sourceRequests.get(message.id);if(pending){clearTimeout(pending.timer);sourceRequests.delete(message.id);message.error?pending.fail(Error(message.error)):pending.done(message.value);}}if(message.type==='snapshot')publish(message.value);if(message.type==='configured'){monitorAppliedInterval=message.refreshIntervalMs;broadcastSettings();}if(message.type==='refreshed')broadcastSettings();if(message.type==='error')audit({type:'monitor-error',message:message.message});});
+  worker=new Worker(join(build,'monitor-worker.cjs'),{workerData:{hostOwnsRegistry:true,roots:arg('roots')?logRoots:undefined,home,env:process.env,dataRoot,refreshIntervalMs:settings.preferences.monitorRefreshMs,statisticsTimeZone:settings.preferences.statisticsTimeZone,autoPriceUpdates:settings.preferences.autoPriceUpdates}});
+  worker.on('message',message=>{if(message.type==='sources'){tokenSources=message.value;if(panel&&!panel.isDestroyed())panel.webContents.send('tokens:update',message.value);}if(message.type==='source-result'){const pending=sourceRequests.get(message.id);if(pending){clearTimeout(pending.timer);sourceRequests.delete(message.id);message.error?pending.fail(Error(message.error)):pending.done(message.value);}}if(message.type==='snapshot'){publish(message.value);requestRewardDrain();}if(message.type==='configured'){monitorAppliedInterval=message.refreshIntervalMs;broadcastSettings();}if(message.type==='refreshed')broadcastSettings();if(message.type==='error')audit({type:'monitor-error',message:message.message});});
+  const monitoredWorker=worker;worker.on('message',message=>{if(message.type==='reward-facts')consumeRewardFacts(message.value,monitoredWorker);});
   worker.on('message',message=>{if(message.type==='task-feedback'&&!quitting)feedback(message.value);if(message.type==='audit'&&message.value?.type)audit({...message.value,type:String(message.value.type)});});
   worker.on('error',error=>audit({type:'monitor-worker-error',message:error.stack}));
   return worker;
-  },{shouldRestart:()=>!quitting,onExit:code=>{if(!quitting)audit({type:'monitor-worker-exit',code});}});
+  },{shouldRestart:()=>!quitting,onExit:code=>{rewardDrainPending=false;if(!quitting)audit({type:'monitor-worker-exit',code});}});
   control.listen(pipe);audit({type:'app-start',mode:'offline',version:appVersion,build});
   if(startupFailure)openPanel('safe-mode',false);
-  else if(reopenRequested||['overview','galgame','settings','actions'].includes(arg('open')))openPanel(reopenRequested?'overview':arg('open'),false);
+  else if(reopenRequested||['overview','galgame','settings','actions','agent-tasks','plugins','shop','backpack','social'].includes(arg('open')))openPanel(reopenRequested?'overview':arg('open'),false);
 }).catch(error=>{audit({type:'startup-error',message:error.stack});console.error(error);enterSafeMode(error);});
 // Startup failed outside the companion features: keep a way to see the error
 // and quit instead of exiting silently on every launch.

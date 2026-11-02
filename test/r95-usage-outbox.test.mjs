@@ -1,0 +1,9 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {UsageRewardOutbox} from '../src/usage-reward-outbox.mjs';
+function fixture(t){const db=new DatabaseSync(':memory:'),meta=new Map();t.after(()=>db.close());return new UsageRewardOutbox({db,meta(k,v){if(arguments.length===2)meta.set(k,v);return meta.get(k);}},{now:()=>1000});}
+const row=(total,extra={})=>({tool:'codex',sessionId:'session',requestId:'request',sourceId:'source',timestamp:new Date(2000).toISOString(),usage:{total},...extra});
+test('canonical outbox retains unknown usage, baseline, updates and exact ACK separately from wallet',t=>{const o=fixture(t);o.observe(row(9999),{live:true});o.observe(row(9999),{live:true});assert.equal(o.pending().length,1);o.observe(row(10000),{live:true});assert.deepEqual(o.pending().map(x=>x.totalTokens),[9999,10000]);const ids=o.pending().map(x=>x.seq);o.ack(ids);assert.equal(o.pending().length,0);o.observe(row(10000),{live:true});assert.equal(o.pending().length,0);o.observe(row(9000),{live:true});assert.equal(o.pending()[0].revision,3);});
+test('historical and first-source scans establish baseline and never claim live activity',t=>{const o=fixture(t);o.observe(row(10000),{live:false});assert.equal(o.pending()[0].baseline,true);assert.equal(o.pending()[0].live,false);o.observe(row(11000),{live:true});assert.equal(o.pending()[1].baseline,false);assert.equal(o.pending()[1].canonicalRequestId,o.pending()[0].canonicalRequestId);});
+test('mirror, child, unknown and repeated aliases cannot invent an award fact',t=>{const o=fixture(t);for(const r of [row(null),row(100,{billable:false}),row(100,{mirror:true}),row(100,{accounting:'child-detail'})])o.observe(r,{live:true});assert.equal(o.pending().length,0);o.observe(row(100),{live:true});o.observe(row(100,{sourceId:'new-alias'}),{live:true});assert.equal(o.pending().length,1);});

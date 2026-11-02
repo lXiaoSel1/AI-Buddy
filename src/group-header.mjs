@@ -5,6 +5,9 @@ import {Switch} from './ui-controls.mjs';
 import {plateVars} from './plate-colors.mjs';
 import {GroupCgGallery,useGroupCg,groupCgLabel,activeGroupCg} from './group-cg-ui.mjs';
 import {GroupEditor,ImageField,characterHead,companionCharacterName,companionImage,GROUP_BUSY_STATUSES} from './companion-ui.mjs';
+import {R95NetButton} from './r95-core-page.mjs';
+import {MoodChip,AutoChip,MoreMenu,useToolbarCollapse} from './chat-r95-ui.mjs';
+import {groupSpeakerState} from './group-stage.mjs';
 const h=React.createElement,F=React.Fragment;
 const button=(text,onClick,props={})=>h('button',{type:'button',className:'whg-btn',onClick,...props},t(text));
 const MODE_NAMES={natural:'自然接话',list:'列表顺序',manual:'手动点名',pool:'轮换池'};
@@ -14,12 +17,11 @@ const portrait=(c,resolveArt)=>c?.builtin?h('img',{className:'buddy-group-thumb'
 export function groupHeaderContext(state){
  const group=state.groups?.find(g=>g.id===state.activeGroupId);if(!group)return null;
  const members=group.memberIds.map(id=>state.characters?.find(c=>c.id===id)).filter(Boolean),runtime=state.groupRuntime||{};
- const running=['queued','generating','running','preparing','awaiting-presentation'].includes(runtime.status);
- const message=runtime.currentMessage?.role==='assistant'?runtime.currentMessage:[...(state.groupMessages||[])].reverse().find(m=>m.role==='assistant'&&m.status!=='pending-presentation');
- const speakerId=running?(runtime.pendingMessage?.characterId||runtime.queue?.[0]):message?.characterId;
- const speaker=members.find(c=>c.id===speakerId),recorded=running?runtime.pendingMessage?.request:message?.request;
+ const identity=groupSpeakerState(runtime,state.groupMessages),{running}=identity,message=identity.displayMessage;
+ const speakerId=running?identity.activeId:identity.failedId?null:identity.displayId;
+ const speaker=members.find(c=>c.id===speakerId),recorded=running?runtime.pendingMessage?.request:identity.failedId?undefined:message?.request;
  const route=speaker?.effectiveConnection;
- return {group,members,running,speaker,recorded,route,model:recorded?.model||route?.model||'',persona:state.personas?.find(p=>p.id===group.personaId)};
+ return {group,members,running,speaker,recorded,route,model:recorded?.model||route?.model||'',speakingSpeaker:members.find(c=>c.id===identity.speakingId),failedSpeaker:members.find(c=>c.id===identity.failedId),displaySpeaker:members.find(c=>c.id===identity.displayId),persona:state.personas?.find(p=>p.id===group.personaId)};
 }
 // Group dialogs share one frame: title and × on top, actions at the bottom right.
 function Modal({title,onClose,small=false,wide=false,children,busy=false,kind,footer}){
@@ -54,7 +56,7 @@ function Background({context,request,resolveArt,onClose}){
   error&&h('p',{className:'buddy-error',role:'alert'},error));
 }
 function Members({context,resolveArt,onBrowse,onClose}){
- const speakerId=context.speaker?.id;
+ const speakerId=context.speakingSpeaker?.id;
  return h(Modal,{title:'在场角色',small:true,onClose,kind:'members',footer:h(F,null,button('回到发言者',()=>{onBrowse(null);onClose();}),h('span',{className:'spacer'}),h('button',{type:'button',className:'whg-btn buddy-primary',onClick:onClose},t('完成')))},
   h('p',{className:'buddy-note'},t('选择成员只切换查看镜头，不改变桌宠或聊天连接。')),
   h('div',{className:'buddy-group-member-list'},...context.members.map(c=>h('div',{className:'buddy-group-member-row'+(speakerId===c.id?' now':''),key:c.id},portrait(c,resolveArt),h('div',null,h('strong',null,companionCharacterName(c)),h('small',null,[speakerId===c.id?t('正在发言'):'',context.group.mutedIds?.includes(c.id)?t('在场 · 静音'):t('在场')].filter(Boolean).join(' · '))),button('查看',()=>{onBrowse(c.id);onClose();},{className:'whg-btn buddy-ghost','aria-label':t('查看')+' '+companionCharacterName(c),'data-group-member-view':c.id})))));
@@ -68,7 +70,7 @@ function Connections({context,request,resolveArt,onClose}){
  return h(Modal,{title:'成员的聊天连接',onClose,busy:!!busy,kind:'connections',footer:h(F,null,h('span',{className:'spacer buddy-note'+(saved?' buddy-ok':''),role:'status'},saved&&Icon('check',{size:14}),saved?savedName+t(' 的连接已保存'):t('选完立即保存。')),h('button',{type:'button',className:'whg-btn buddy-primary',onClick:onClose,disabled:!!busy},t('完成')))},
   h('p',{className:'buddy-note'},t('默认跟随全局连接；专属连接用于该角色之后的私聊和群聊，不改变全局连接。')),
   ...context.members.map(c=>{const route=c.effectiveConnection||{},now=context.speaker?.id===c.id,model=now&&context.recorded?.model?context.recorded.model:route.model;return h('section',{className:'buddy-group-route'+(now?' now':''),key:c.id,'data-group-api-member':c.id},portrait(c,resolveArt),
-   h('div',{className:'spacer'},h('strong',null,companionCharacterName(c),now&&h('span',{className:'ws-tag'},t('正在说话'))),h('small',null,route.error?t(route.error):[t(route.mode==='character'?'角色专属':'跟随全局'),route.name,model].filter(Boolean).join(' · '))),
+   h('div',{className:'spacer'},h('strong',null,companionCharacterName(c),context.speakingSpeaker?.id===c.id&&h('span',{className:'ws-tag'},t('正在说话'))),h('small',null,route.error?t(route.error):[t(route.mode==='character'?'角色专属':'跟随全局'),route.name,model].filter(Boolean).join(' · '))),
    h('select',{className:'buddy-group-input',value:draft[c.id]||'','aria-label':companionCharacterName(c)+' API',disabled:!loaded||!!busy,onChange:e=>void choose(c,e.target.value)},h('option',{value:''},t('跟随全局连接')),draft[c.id]&&!profiles.some(p=>p.id===draft[c.id])&&h('option',{value:draft[c.id],disabled:true},t('原连接已不可用')),...profiles.map(p=>h('option',{key:p.id,value:p.id,disabled:p.enabled===false||p.capabilities?.chat===false},p.name+' · '+p.model))));}),
   error&&h('p',{className:'buddy-error',role:'alert'},error));
 }
@@ -85,10 +87,12 @@ function History({state,context,request,resolveArt,onClose}){
 function Settings({state,request,resolveArt,onClose}){
  const [feedback,setFeedback]=useState('');return h(Modal,{title:'群聊设置',wide:true,onClose,kind:'settings'},h(GroupEditor,{state,request,resolveArt,onClose,setFeedback}),feedback&&h('p',{role:'status'},feedback));
 }
-export function GroupHeader({state,request,resolveArt=()=>null,onBrowse,petEnabled,onPetToggle,panelRequest,loadCg,toolbarRef,chat,onToggleChat}){
+export function GroupHeader({state,request,resolveArt=()=>null,onBrowse,petEnabled,onPetToggle,panelRequest,loadCg,toolbarRef,chat,onToggleChat,r95Action,onOpenSocial}){
  const [panel,setPanel]=useState(null),[cgSelection,setCgSelection]=useState(null),[leaving,setLeaving]=useState(false),[error,setError]=useState(''),context=groupHeaderContext(state),catalog=useGroupCg(context?.group,request);
  useEffect(()=>setPanel(null),[state.activeGroupId]);
  useEffect(()=>{if(panelRequest?.groupId===state.activeGroupId){setPanel(panelRequest.panel);if(panelRequest.panel==='gallery')setCgSelection(panelRequest.cgId||null);}},[panelRequest]);
+ // approved design C6: when the toolbar no longer fits on one line, History / CG / Models go into More
+ const toolsRef=useRef(null),collapsed=useToolbarCollapse(toolsRef,[t('群聊记录'),state.activeGroupId,!!state.r95,state.r95?.auto?.status].join('|'));
  if(!context)return null;
  const latest=catalog.items.find(activeGroupCg)||catalog.items[0],{group,members,speaker,model}=context,close=()=>setPanel(null);
  const actual=speaker?companionCharacterName(speaker)+' · '+(model||t('未配置')):t('按成员配置');
@@ -104,15 +108,20 @@ export function GroupHeader({state,request,resolveArt=()=>null,onBrowse,petEnabl
     h('button',{type:'button',className:'gx-chip','data-group-members':true,title:t('在场角色'),onClick:()=>setPanel('members')},h('span',{className:'buddy-faces','aria-hidden':true},...members.slice(0,4).map(c=>h(F,{key:c.id},face(c,resolveArt)))),h('small',null,t('在场')),h('strong',null,String(members.length))),
     h('button',{type:'button',className:'gx-chip np',title:t('管理群聊'),onClick:()=>setPanel('settings')},h('i',{className:'gx-dot'+(chat&&!chat.enabled?' off':''),'aria-hidden':true}),h('small',null,t('发言方式')),h('strong',null,t(MODE_NAMES[group.mode]||'自然接话'))),
     h('span',{className:'gx-grow'}),
-    chat&&h('div',{className:'gx-net','data-group-net':true},Icon('globe',{size:15}),h('span',null,t('联网群聊')),h(Switch,{checked:!!chat.enabled,label:t('联网群聊'),onChange:()=>onToggleChat?.()}))),
-   h('div',{className:'gx-tools buddy-group-primary',role:'toolbar','aria-label':t('群聊工具栏')},
+    // approved design C6: one 联网 control for online chat and the model's own search, same state as before
+    chat&&(state.r95&&r95Action?h(R95NetButton,{view:state.r95,onAction:r95Action,chat:{enabled:!!chat.enabled,onToggle:()=>onToggleChat?.()}}):h('div',{className:'gx-net','data-group-net':true},Icon('globe',{size:15}),h('span',null,t('联网群聊')),h(Switch,{checked:!!chat.enabled,label:t('联网群聊'),onChange:()=>onToggleChat?.()})))),
+   h('div',{ref:toolsRef,className:'gx-tools buddy-group-primary',role:'toolbar','aria-label':t('群聊工具栏'),'data-fit':collapsed?'more':'full'},
     tool('image','群聊背景',()=>setPanel('background')),
-    tool('clock','群聊记录',()=>setPanel('history')),
-    tool('gallery','CG 图鉴',()=>{setCgSelection(latest?.id||null);setPanel('gallery');},{className:'buddy-cg-chip','data-status':catalog.error?'failed':latest?.status,'data-active':activeGroupCg(latest),title:cgTitle}),
-    tool('link','对话模型',()=>setPanel('connections'),{'data-group-connections':true,title:t('实际对话 · ')+actual}),
+    ...(collapsed?[h(MoreMenu,{key:'more',items:[{key:'history',icon:'clock',label:t('群聊记录'),onClick:()=>setPanel('history')},{key:'gallery',icon:'gallery',label:t('CG 图鉴'),title:cgTitle,onClick:()=>{setCgSelection(latest?.id||null);setPanel('gallery');}},{key:'connections',icon:'link',label:t('对话模型'),title:t('实际对话 · ')+actual,onClick:()=>setPanel('connections')}]})]:[
+     tool('clock','群聊记录',()=>setPanel('history'),{key:'history'}),
+     tool('gallery','CG 图鉴',()=>{setCgSelection(latest?.id||null);setPanel('gallery');},{key:'gallery',className:'buddy-cg-chip','data-status':catalog.error?'failed':latest?.status,'data-active':activeGroupCg(latest),title:cgTitle}),
+     tool('link','对话模型',()=>setPanel('connections'),{key:'connections','data-group-connections':true,title:t('实际对话 · ')+actual})]),
     sep('s1'),
     tool('sliders','管理群聊',()=>setPanel('settings')),
     sep('s2'),
+    // approved design C6: mood and Auto move out of the dialogue box into the toolbar
+    state.r95&&r95Action&&h('div',{key:'chips','data-chat-toolbar':'group',className:'r95-toolbar'},h(MoodChip,{view:state.r95,onAction:r95Action,onOpenSocial}),h(AutoChip,{view:{...state.r95,groupId:state.r95.groupId??group.id},onAction:r95Action,nameOf:id=>companionCharacterName(state.characters?.find(c=>c.id===id))||t('成员'),onOpenSocial})),
+    state.r95&&r95Action&&sep('s3'),
     tool('exit','回到私聊',()=>void leave(),{disabled:busy||leaving}),
     h('div',{ref:toolbarRef,className:'buddy-group-stage-controls'})),
    error&&h('p',{className:'buddy-error',role:'alert'},error)),

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "ai-buddy.kimi-runtime",
+  "name": "Kimi Windows 运行引擎",
+  "description": "发布前必须核对实际运行时文件、版本、许可与重新分发条件；本模板不包含二进制，不能安装。",
+  "version": "1.0.0",
+  "kind": "runtime",
+  "appRange": ">=1.9.2 <2.0.0",
+  "apiRange": "^1.0.0",
+  "platform": "win32",
+  "arch": "x64",
+  "entry": "bin/kimi.exe",
+  "activationEvents": [],
+  "capabilities": [],
+  "dependencies": {}
+}

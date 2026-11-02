@@ -34,7 +34,7 @@ test('on the same connection chat runs before queued background work',async t=>{
 test('the group 110 s limit starts with the model turn, not while it is queued',async t=>{
  let fetchCalls=0;const {router:r,a}=await router(t,async()=>{fetchCalls++;throw Error('no network');});
  const store=memoryStore(await companionFixture()),{engine}=syntheticEngine({getStore:()=>store});
- const service=await createCompanionService({store,engine,provider:r,dataRoot:tmpDir('b03-group',{t}),now:Date.now});t.after(()=>service.close());
+ const service=await createCompanionService({store,engine,provider:r,dataRoot:tmpDir('b03-group',{t,beforeRemove:()=>service.close()}),now:Date.now});t.after(()=>service.close());
  const group=(await service.action('companion-group-save',{name:'测试群',memberIds:['claude','gpt'],mode:'list'})).companion.groups[0];
  await service.action('companion-group-select',{id:group.id,entryCharacterId:'claude'});
  t.mock.timers.enable({apis:['setTimeout']});
@@ -45,7 +45,7 @@ test('the group 110 s limit starts with the model turn, not while it is queued',
  assert.equal(service.viewState().groupRuntime.status,'waiting-model');
  t.mock.timers.tick(110_000);for(let n=0;n<5;n++)await immediate();
  assert.equal(service.viewState().groupRuntime.status,'waiting-model','time spent queued does not count');
- hold.resolve();await background;for(let n=0;n<80;n++)await immediate();
+ hold.resolve();await background;t.mock.timers.reset();for(let n=0;n<200&&!fetchCalls;n++)await new Promise(resolve=>setTimeout(resolve,5));
  assert.ok(fetchCalls>=1,'the queued turn was actually sent');assert.doesNotMatch(service.viewState().groupRuntime.error??'',/超时/);
 });
 
@@ -55,7 +55,7 @@ test('a group message sent during a life save waits and is sent automatically, w
  const {engine}=syntheticEngine({getStore:()=>store,hooks:{async call(action,args,{engineState}){if(action==='companion-life-content'&&hold){hold=false;entered.resolve();await release.promise;return {ok:true,content:structuredClone(engineState[args.characterId])};}}}});
  const provider={enabled:true,currentSelection:()=>({provider:'p1',model:'m'}),resolveConnection:()=>({mode:'global',connectionId:'p1',name:'p1',model:'m',error:null}),resolveContextCapacity:()=>({tokens:128000,source:'fixture',verified:true}),runTurn:async fn=>fn(),
   async *stream(){streamCalls++;yield {type:'text-delta',text:JSON.stringify({text:'大家好呀',emotion:'cheerful',interactionTarget:'group',affectionTarget:'none',affection:0})};yield {type:'finish',reason:{kind:'stop'}};}};
- const service=await createCompanionService({store,engine,provider,dataRoot:tmpDir('b05-group',{t}),now:Date.now});t.after(()=>service.close());
+ const service=await createCompanionService({store,engine,provider,dataRoot:tmpDir('b05-group',{t,beforeRemove:()=>service.close()}),now:Date.now});t.after(()=>service.close());
  const group=(await service.action('companion-group-save',{name:'测试群',memberIds:['claude','gpt'],mode:'list'})).companion.groups[0];
  await service.action('companion-group-select',{id:group.id,entryCharacterId:'claude'});
  const save=service.action('companion-life-save',{characterId:'claude'});await entered.promise;

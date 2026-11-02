@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,readdirSync,symlinkSync,realpathSync,renameSync,statSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,readdirSync,symlinkSync,realpathSync,renameSync,statSync,lstatSync,rmdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,relative} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -12,6 +12,13 @@ const temp=()=>realpathSync.native(mkdtempSync(join(tmpdir(),'buddy-data-import-
 const write=(path,bytes)=>{mkdirSync(join(path,'..'),{recursive:true});writeFileSync(path,bytes);};
 const snapshot=async(path,value)=>createSnapshotStorage(path,{retention:false}).writeText(JSON.stringify(value));
 const until=async fn=>{for(let i=0;i<1000;i++){const v=await fn();if(v)return v;await new Promise(r=>setTimeout(r,5));}throw Error('Import fixture timeout');};
+const removeTestJunction=(link,target)=>{
+ if(!existsSync(link))return;
+ assert.equal(lstatSync(link).isSymbolicLink(),true,'only remove the junction created by this test');
+ assert.equal(realpathSync.native(link),realpathSync.native(target),'junction target must still be the test fixture');
+ rmdirSync(link);
+ assert.equal(existsSync(target),true,'removing the junction must preserve its target');
+};
 async function fixture(options={}){
  const base=temp(),root=join(base,'当前程序 with space'),source=join(base,'旧存档'),dataRoot=join(root,'local/data-v003'),build=join(root,'builds/candidate');
  mkdirSync(dataRoot,{recursive:true});mkdirSync(build,{recursive:true});mkdirSync(source,{recursive:true});
@@ -114,14 +121,14 @@ test('old application folder resolves its actual external data root and refuses 
  }finally{f.close();}
 });
 test('junctions and the active data root are rejected without following or modifying their contents',async()=>{
- const f=await fixture();try{const outside=temp();writeFileSync(join(outside,'precious.txt'),'outside');symlinkSync(outside,join(f.source,'linked'),'junction');await assert.rejects(()=>f.prepare(),/链接/);assert.equal(readFileSync(join(outside,'precious.txt'),'utf8'),'outside');f.setChosen(f.dataRoot);await assert.rejects(()=>f.prepare(),/正在使用/);}finally{f.close();}
+ const f=await fixture(),outside=temp(),link=join(f.source,'linked');try{writeFileSync(join(outside,'precious.txt'),'outside');symlinkSync(outside,link,'junction');await assert.rejects(()=>f.prepare(),/链接/);assert.equal(readFileSync(join(outside,'precious.txt'),'utf8'),'outside');f.setChosen(f.dataRoot);await assert.rejects(()=>f.prepare(),/正在使用/);}finally{f.close();removeTestJunction(link,outside);}
 });
 test('mock commit failure retains an independently verified copy and leaves the old record unchanged',async()=>{
  const f=await fixture({launchCommit:async()=>{throw Error('injected startup verification failure');}});try{const record=readFileSync(join(f.root,'local/installation.json')),p=await f.prepare();await f.service.start({planId:p.planId,sourceClosed:true});const s=await f.finish();assert.equal(s.phase,'failed');assert.match(s.error,/injected startup/);assert.equal(existsSync(p.targetDataRoot),true);assert.deepEqual(readFileSync(join(f.root,'local/installation.json')),record);assert.equal((JSON.parse(readFileSync(join(p.targetDataRoot,IMPORT_GUARD),'utf8'))).active,true);}finally{f.close();}
 });
 test('Windows short-path aliases cannot bypass the active data-root exclusion',async t=>{
  const f=await fixture();try{
-  const alias=f.dataRoot.replace(/^C:\\Users\\Administrator\\/i,'C:\\Users\\ADMINI~1\\');
+  const alias=f.dataRoot.replace(tmpdir(),process.env.AI_BUDDY_TEST_SHORT_TEMP_ROOT??tmpdir());
   if(alias===f.dataRoot||!existsSync(alias)||realpathSync.native(alias)!==f.dataRoot){t.skip('This machine does not provide the expected Windows 8.3 user alias');return;}
   writeFileSync(join(f.dataRoot,'settings.json'),'{}');
   const g=createDataImportService({root:f.root,dataRoot:alias,build:f.build,pipe:'fixture-current',chooseSource:async()=>f.dataRoot});
@@ -129,12 +136,12 @@ test('Windows short-path aliases cannot bypass the active data-root exclusion',a
  }finally{f.close();}
 });
 test('a junction in the destination profile parent cannot cause out-of-root writes',async()=>{
- const f=await fixture();try{const outside=temp();symlinkSync(outside,join(f.root,'local/data-profiles'),'junction');await assert.rejects(()=>f.prepare(),/链接|联接|路径/);assert.equal(f.commits.length,0);assert.deepEqual(readdirSync(outside),[],'must reject before making staging or copying bytes through junction');}finally{f.close();}
+ const f=await fixture(),outside=temp(),link=join(f.root,'local/data-profiles');try{symlinkSync(outside,link,'junction');await assert.rejects(()=>f.prepare(),/链接|联接|路径/);assert.equal(f.commits.length,0);assert.deepEqual(readdirSync(outside),[],'must reject before making staging or copying bytes through junction');}finally{f.close();removeTestJunction(link,outside);}
 });
 test('a source directory replaced by a junction while copying cannot become a committed profile',async()=>{
  let source;const outside=temp(),bytes=Buffer.from([137,80,78,71,0,1,2,3]);write(join(outside,'ready/image.png'),bytes);
  const f=await fixture({copyCheckpoint:async({filesCopied})=>{if(filesCopied===1){renameSync(join(source,'cg-assets'),join(source,'cg-assets-original'));symlinkSync(outside,join(source,'cg-assets'),'junction');}}});source=f.source;
- try{const p=await f.prepare();await f.service.start({planId:p.planId,sourceClosed:true});const s=await f.finish();assert.equal(s.phase,'failed');assert.match(s.error,/链接|变化|校验/);assert.equal(f.commits.length,0);assert.equal(existsSync(p.targetDataRoot),false);assert.deepEqual(readFileSync(join(outside,'ready/image.png')),bytes);}finally{f.close();}
+ try{const p=await f.prepare();await f.service.start({planId:p.planId,sourceClosed:true});const s=await f.finish();assert.equal(s.phase,'failed');assert.match(s.error,/链接|变化|校验/);assert.equal(f.commits.length,0);assert.equal(existsSync(p.targetDataRoot),false);assert.deepEqual(readFileSync(join(outside,'ready/image.png')),bytes);}finally{f.close();removeTestJunction(join(source,'cg-assets'),outside);}
 });
 test('a source file that grows during copy is bounded by the previewed per-file length',async()=>{
  let source,stage,expected;const f=await fixture({copyCheckpoint:async info=>{stage=info.stage;if(info.filesCopied===1)writeFileSync(join(source,'work-tokens.json'),Buffer.alloc(1024*1024,97));}});source=f.source;expected=statSync(join(source,'work-tokens.json')).size;

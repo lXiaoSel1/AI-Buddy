@@ -24,6 +24,14 @@ export function badgeText({snapshot={},interaction=null,demo='',rigPilot=null,la
 
 // Splits the one-line feedback text into who / what happened and a second line.
 // kind: ok | err | say | info | plain. open names the workspace page a click leads to.
+// Approved design C11: the source tag carries the plugin's icon; the second line adds the plugin's own detail
+// (bubble payload `detail`) after "click to open" when it sent one.
+const withoutOpenHint=value=>{let text=bubbleDetail(value),next;do{next=text.replace(/^(?:点一下打开|Click to open)(?:\s*[·•]\s*|\s*$)/i,'').trim();if(next===text)break;text=next;}while(text);return text;};
+const pluginSource=id=>/bilibili/i.test(String(id??''))?['B站陪伴','tv']:/qq/i.test(String(id??''))?['QQ连接','chats']:/work/i.test(String(id??''))?['工作与协作','nav-work']:['插件消息','plug'];
+export const bubbleDetail=value=>typeof value==='string'?value.replace(/[\u0000-\u001f]+/g,' ').trim().slice(0,120):'';
+// Approved design C8: the tag says which kind of line it is and when she said it.
+const SPEECH={proactive:['主动来找你','chats'],selftalk:['自言自语','more'],dream:['梦话','moon']};
+export const bubbleClock=(at,language='zh-CN')=>Number.isFinite(at)&&at>0?new Date(at).toLocaleTimeString(language==='en'?'en-US':'zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false}):'';
 export function bubbleView(value={},{language='zh-CN'}={}){
  const tr=text=>t(text,language),text=String(value.text??'');
  let match=/^(.+?)完成任务啦，辛苦了～$/.exec(text);
@@ -32,6 +40,8 @@ export function bubbleView(value={},{language='zh-CN'}={}){
  if(match)return {kind:'err',icon:'alert',title:tr('{tool} 的日志记录了错误').replace('{tool}',tr(match[1])),link:tr('点我查看 ›'),open:'tokens'};
  if(value.source==='chat-error')return {kind:'err',icon:'alert',title:tr('聊天暂时失败'),detail:tr('稍后再试，或去 Galgame 看原因。')};
  if(value.source==='dialog')return {kind:'say',name:THEME_PALETTES.find(row=>row.id===value.characterId)?.name||'',title:text};
+ if(value.source==='plugin'){const [label,icon]=pluginSource(value.pluginId),detail=withoutOpenHint(value.detail),combined='点一下打开'+(detail?' · '+detail:''),translated=tr(combined);return {kind:'say',name:tr(label),tagIcon:icon,title:text,detail:translated!==combined?translated:tr('点一下打开')+(detail?' · '+detail:'')};}
+ if(value.source==='social-line'){const kind=value.mode==='dream'?'dream':value.mode==='selftalk'?'selftalk':'proactive',[label,icon]=SPEECH[kind];return {kind:'say',speech:kind,tagIcon:icon,name:[tr(label),bubbleClock(value.at,language)].filter(Boolean).join(' · '),title:text};}
  if(value.kind==='badge-hidden')return {kind:'info',icon:'info',title:tr('状态条已隐藏'),detail:tr('右键桌宠，或在通用设置 › 桌宠里重新打开。'),undo:tr('撤销')};
  return {kind:'plain',title:text};
 }

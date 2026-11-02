@@ -393,7 +393,7 @@ export function activitySystemInstruction(activity: HarnessActivity): string {
         : '这项工作最近仍在进行'
   return '\nHarness 近期任务事件：类别是「' + activity.label + '」，' + status + '。'
     + activity.chatHint
-    + ' 本轮必须自然带到一次，但只占一句话的一小部分；先接住主人当前情绪，不要给工作方案。'
+    + ' 本轮自然简短地提及这项活动一次，不限制整条回复的篇幅；先接住主人当前情绪，不要给工作方案。'
     + ' 不要声称看过具体文件、代码或对话，不要提及路径、文件名、密钥、工具调用或内部过程。'
 }
 

@@ -4,7 +4,8 @@ import {motionRenderer,prepareCharacterRenderer,adoptCharacterRenderer} from './
 import {currentPetCharacter,CHARACTER_SEQUENCES} from './frame-sequence.mjs';
 import {resolvePetCharacter} from './pet-characters.mjs';
 import {PetCharacterSwitch} from './pet-character-switch.mjs';
-import {interactionPresentation,interactionPreloads} from './pet-interaction-view.mjs';
+import {interactionPresentation,interactionPreloads,expectedInteractionTransition} from './pet-interaction-view.mjs';
+import {interactionFrameStatus} from './pet-frame-readiness.mjs';
 import {PetGloveController,gloveCursorV2,preloadGloveArtwork} from './pet-glove.mjs';
 import {petPresentation,petActionPresentation} from './pet-presentation.mjs';
 import {APP_NAME} from './app-brand.mjs';
@@ -21,6 +22,7 @@ sprite.style.backgroundImage=`url('${PET_ATLAS.src}')`;sprite.style.backgroundSi
 const controller=new PetActionController({ready:(id,elapsed)=>motionRenderer.isReadyFor?.(id,elapsed,{reducedMotion:reducedMotion.matches})??true});
 controller.holdFeedback=true;
 let presentedBubble=null;
+let pendingSocial=null;
 let pixels=null,mode='idle',row=0,col=0,down=false,lastOpaque=null,bodyOpaque=false,interaction=null,bubbleTimer,frameTimer=null,dialogActive=false,lastCursor=null,lastBackground='',lastState='',lastSnapshot={},badgeHeld=false,badgeKey='',bubbleOpen=null,notice=false;
 let gestureId=null,capturedPointer=null,readySent=null,ownerButton=null,releaseButton=null,chordRequest=null,suppressedButtons=0,observedButtons=0;
 let preloadIds=null,preloadRenderer=null;
@@ -79,6 +81,30 @@ function updateSnapshot(snapshot){
 window.whale.onUpdate(updateSnapshot);
 function compact(n){return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'K':String(n);}
 window.whale.onBubble(text=>{if(!preferences.completionBubbles)return;fillBubble({text});bubble.hidden=false;clearTimeout(bubbleTimer);bubbleTimer=setTimeout(()=>bubble.hidden=true,6500);});
+
+let pluginActivity=null;
+function presentPluginActivity(feedback){
+ if(!pluginActivity||pluginActivity.shown||feedback?.text||pendingSocial||notice||document.hidden||!preferences.completionBubbles)return;
+ const value=pluginActivity;if(value.characterId!==currentPetCharacter()||Date.now()-value.receivedAt>6500){pluginActivity=null;return;}
+ // Status only: no wake event, expression queue, model call or reading receipt.
+ fillBubble({source:'plugin',pluginId:value.pluginId,text:value.title,detail:value.detail?t(value.detail,preferences.language):value.detail});bubbleOpen='social-plugin:'+value.pluginId;value.shown=true;
+ bubble.hidden=false;geometry=null;clearTimeout(bubbleTimer);bubbleTimer=setTimeout(()=>{if(pluginActivity===value){pluginActivity=null;bubble.hidden=true;geometry=null;}},6500);
+}
+
+function presentSocialLine(feedback){
+ if(!pendingSocial||feedback?.text||document.hidden)return;
+ const row=pendingSocial;if(row.scope.characterId!==currentPetCharacter()){pendingSocial=null;return;}
+ if(!row.shown){const kind=row.mode==='dream'?'dream':row.kind==='selftalk'||row.mode==='selfTalk'?'selftalk':'proactive';fillBubble({source:'social-line',mode:kind,text:row.text,messageId:row.messageId,at:row.at??row.receivedAt});bubbleOpen=null;row.shown=true;bubble.hidden=false;geometry=null;clearTimeout(bubbleTimer);
+  // Approved design C8: 回她 / 接一句 open Galgame with the cursor in the reply box (the same line is shown there);
+  // 知道了 / 收起 mark it read.
+  const actions=Object.assign(document.createElement('div'),{className:'bubble-actions'});
+  const make=(label,onClick,primary=false)=>{const b=Object.assign(document.createElement('button'),{type:'button',textContent:label,className:primary?'primary':''});b.addEventListener('pointerdown',event=>event.stopPropagation());b.addEventListener('click',event=>{event.stopPropagation();onClick();});actions.append(b);};
+  const markRead=async()=>{try{await window.whale.game('companion-r95',{action:'speech-read',args:{messageId:row.messageId}});if(pendingSocial===row){pendingSocial=null;bubble.hidden=true;geometry=null;render();}}catch{window.whale.open('social');}};
+  if(kind==='proactive')make(t('回她',preferences.language),()=>window.whale.open('galgame-reply'),true);
+  if(kind==='selftalk')make(t('接一句',preferences.language),()=>window.whale.open('galgame-reply'));
+  make(kind==='proactive'?t('知道了',preferences.language):preferences.language==='en'?'Dismiss':t('收起',preferences.language),()=>void markRead());bubbleBox.append(actions);fitSocialBubble();}
+ if(!row.acknowledged){row.acknowledged=true;requestAnimationFrame(()=>requestAnimationFrame(()=>{if(pendingSocial!==row||document.hidden||bubble.hidden||!bubbleBox.getBoundingClientRect().width){row.acknowledged=false;return;}void window.whale.game('companion-r95',{action:'speech-presented',args:{messageId:row.messageId}}).catch(()=>{row.acknowledged=false;});}));}
+}
 function presentFeedback(value){
   if(!preferences.completionBubbles){if(!notice)bubble.hidden=true;return;}
   if(value?.paused){if(presentedBubble&&!presentedBubble.paused){presentedBubble.remaining=Math.max(0,presentedBubble.until-Date.now());presentedBubble.paused=true;clearTimeout(bubbleTimer);}bubble.hidden=true;geometry=null;return;}
@@ -95,7 +121,13 @@ window.whale.onCursor(point=>{
   controller.drag(!!point.dragging);
 });
 window.whale.onPetAction(value=>{
+  if(value.kind==='social-activity'){
+    if(value.value.clear){if(pluginActivity?.activityId===value.value.activityId){pluginActivity=null;if(bubbleOpen?.startsWith('social-plugin:')){bubble.hidden=true;bubbleOpen=null;geometry=null;}}}
+    else pluginActivity={...value.value,receivedAt:Date.now(),shown:false};
+  }
   if(value.kind==='interaction')interaction=value.value;
+  if(value.kind==='social-line'){pendingSocial={...value.value,acknowledged:false,shown:false,receivedAt:Date.now()};}
+  if(value.kind==='social-line-read'&&pendingSocial?.messageId===value.messageId){pendingSocial=null;/* read elsewhere: close the bubble only if it is showing this line */if(bubble.dataset.social===value.messageId){bubble.hidden=true;geometry=null;}render();}
   if(value.kind==='gesture-reset'&&(!value.gestureId||value.gestureId===gestureId)){
     if(Number.isInteger(value.buttons))suppressedButtons=value.buttons;
     // Native release may beat DOM pointerup. Keep this gesture eligible for
@@ -104,7 +136,7 @@ window.whale.onPetAction(value=>{
   }
   if(value.kind==='feedback'){
     if(value.value?.source==='touch'){updateGlove();gloveState.touch(value.value);}
-    controller.enqueueFeedback(value.value);
+    if(value.value?.source!=='touch'||value.value.playExpression!==false)controller.enqueueFeedback(value.value);
   }
   if(value.kind==='play'){demoRequest={id:value.id,lookIndex:value.lookIndex,durationMs:value.durationMs,characterId:value.characterId??currentPetCharacter()};requestCharacter(demoRequest.characterId);}
   if(value.kind==='auto'){demoRequest=null;demoActive=false;requestCharacter(configuredCharacter);controller.holdFeedback=characterSwitch.target!==characterSwitch.current;controller.automatic();}
@@ -139,16 +171,16 @@ function render(){
   // After draw, so a clip that just started keeps the decoder it was preloaded into.
   const preloads=interaction?.characterId===currentPetCharacter()&&!reducedMotion.matches?interactionPreloads(interaction.motion):interactionPreloads(null);
   if(preloads!==preloadIds||motionRenderer!==preloadRenderer){preloadIds=preloads;preloadRenderer=motionRenderer;motionRenderer.preload?.(preloads.map(id=>motionRenderer.sequences?.[id]).filter(Boolean));}
-  if(interactionView?.animationWaiting&&!state.manual&&interaction.characterId===currentPetCharacter()){
-    const id=interactionView.id,key=[currentPetCharacter(),interactionView.readyScope,interactionView.animationEpoch,id].join(':');
+  const transition=expectedInteractionTransition(interaction);
+  if(transition&&!state.manual&&interaction.characterId===currentPetCharacter()){
+    const {id,scope,epoch}=transition,key=[currentPetCharacter(),scope,epoch,id].join(':');
     motionRenderer.isReadyFor?.(id,0); // Also enforces the bounded decoder timeout.
-    const slot=motionRenderer.targets?.get(surface)?.slot,failed=!!slot?.error;
-    // Ack only a decoded frame actually drawn for this action, never its placeholder.
-    const ready=slot?.ready&&!slot.seekPending&&currentSample.actionId===id;
-    if(readySent!==key&&(ready||failed)){readySent=key;window.whale.interactionReady({characterId:currentPetCharacter(),scope:interactionView.readyScope,epoch:interactionView.animationEpoch,id,failed});}
+    const clip=motionRenderer.sequences?.[id],slot=motionRenderer.targets?.get(surface)?.slot,resource=clip?motionRenderer.resource?.(clip):null;
+    const {ready,failed}=interactionFrameStatus({expected:transition,displayed:currentSample,slot,resource,reducedMotion:reducedMotion.matches});
+    if(readySent!==key&&(ready||failed)){readySent=key;window.whale.interactionReady({characterId:currentPetCharacter(),scope,epoch,id,failed});}
   }
   const registrationChanged=applyCharacterPresentation(currentPetCharacter(),currentSample.actionId);
-  presentFeedback(state.feedback);
+  presentFeedback(state.feedback);presentSocialLine(state.feedback);presentPluginActivity(state.feedback);
   if(characterError&&!state.feedback&&!controller.manual){
     fillBubble({text:characterError});characterError=null;bubble.hidden=false;geometry=null;clearTimeout(bubbleTimer);
     bubbleTimer=setTimeout(()=>{bubble.hidden=true;geometry=null;},6500);
@@ -158,8 +190,8 @@ function render(){
   updateGlove();
   renderBadge(badgeText({snapshot:lastSnapshot,interaction,demo:state.manual?getPetAction(state.id).label:'',rigPilot:motionRenderer.workingRigPilot?Math.round((preferences.animationSpeed??.75)*100):null,language:preferences.language}));
   const label=APP_NAME+' · '+getPetAction(state.id).label;if(sprite.getAttribute('aria-label')!==label)sprite.setAttribute('aria-label',label);
-  window.petActionDiagnostic={...state,...pose,interaction,interactionView,characterId:currentPetCharacter(),targetCharacterId:characterSwitch.target,presentation:appliedPresentation??petPresentation(currentPetCharacter()),renderer:motionRenderer.backend,displayedActionId:currentSample.actionId,sequenceFrame:motionRenderer.sequences?.[state.id]?currentSample.displayedSequenceFrame??null:null,sourceFrameCount:motionRenderer.sequences?.[state.id]?.frames.length??getPetAction(state.id).frames,draws:motionRenderer.draws,rigDraws:motionRenderer.rigDraws??0,rigResizes:motionRenderer.rigResizes??0,canvasSize:[surface.width,surface.height],geometryReads:motionRenderer.geometryReads??0};
-  const report={id:state.id,source:state.source,manual:state.manual,expiresAt:state.expiresAt,characterId:currentPetCharacter()},key=JSON.stringify(report);
+  window.petActionDiagnostic={...state,...pose,interaction,interactionView,characterId:currentPetCharacter(),targetCharacterId:characterSwitch.target,presentation:appliedPresentation??petPresentation(currentPetCharacter()),renderer:motionRenderer.backend,displayedActionId:currentSample.actionId,displayedSource:currentSample.displayedSource??null,displayedResource:currentSample.displayedResource??null,displayedReducedMotion:currentSample.displayedReducedMotion??false,sequenceFrame:motionRenderer.sequences?.[state.id]?currentSample.displayedSequenceFrame??null:null,sourceFrameCount:motionRenderer.sequences?.[state.id]?.frames.length??getPetAction(state.id).frames,draws:motionRenderer.draws,rigDraws:motionRenderer.rigDraws??0,rigResizes:motionRenderer.rigResizes??0,canvasSize:[surface.width,surface.height],geometryReads:motionRenderer.geometryReads??0};
+  const report={socialPresentation:!!pendingSocial,id:state.id,source:state.source,manual:state.manual,expiresAt:state.expiresAt,characterId:currentPetCharacter()},key=JSON.stringify(report);
   if(key!==lastState){lastState=key;window.whale.reportPetState(report);}
 }
 // Dot (or icon) + label + "· detail". Rebuilt only when the wording changes.
@@ -174,16 +206,22 @@ function renderBadge(view){
 // Bold "who / what happened", then a second line; a check or warning icon; the original text stays in data-text.
 function fillBubble(value){
   const view=bubbleView(value,{language:preferences.language}),text=document.createElement('div');text.className='bubble-text';
-  bubbleOpen=view.open??null;bubble.dataset.kind=view.kind;bubble.dataset.text=String(value.text??view.title);
+  bubbleOpen=view.open??null;bubble.dataset.kind=view.kind;bubble.dataset.text=String(value.text??view.title);if(value.source==='social-line'&&value.messageId)bubble.dataset.social=value.messageId;else delete bubble.dataset.social;
   if(view.open)bubble.dataset.open=view.open;else delete bubble.dataset.open;
-  if(view.name)text.append(Object.assign(document.createElement('span'),{className:'bubble-name',textContent:view.name}));
-  const title=document.createElement(['plain','say'].includes(view.kind)?'span':'b');title.textContent=view.title;
+  if(view.speech)bubble.dataset.speech=view.speech;else delete bubble.dataset.speech;delete bubble.dataset.tight;
+  // approved designs C8 / C11: the tag carries the source's icon (kind and time for her own lines)
+  if(view.name){const name=Object.assign(document.createElement('span'),{className:'bubble-name'});if(view.tagIcon)name.append(iconElement(view.tagIcon,{size:12}));name.append(view.name);text.append(name);}
+  const title=document.createElement(['plain','say'].includes(view.kind)?'span':'b');title.textContent=view.title;if(view.kind==='say')title.title=view.title;
   if(view.undo){const undo=Object.assign(document.createElement('button'),{type:'button',className:'bubble-undo',textContent:view.undo});undo.addEventListener('click',restoreBadge);title.append(undo);}
   text.append(title);
   if(view.detail)text.append(Object.assign(document.createElement('small'),{textContent:view.detail}));
   if(view.link)text.append(Object.assign(document.createElement('span'),{className:'bubble-link',textContent:view.link}));
   bubbleBox.replaceChildren(...(view.icon?[iconElement(view.icon,{size:16})]:[]),text);geometry=null;
 }
+// Her line must not cover her head (the Claude theme's hair flower was under 回她): when the bubble reaches the
+// calibrated top of this character, it switches to a tight layout (two lines, buttons beside the text).
+function petHeadTop(){const p=petPresentation(currentPetCharacter()),rect=sprite.getBoundingClientRect();return rect.top+Math.max(0,(p.sourceFeet-p.sourceHeight)/3)/FRAME_SIZE.height*rect.height;}
+function fitSocialBubble(){if(bubble.hidden||!bubble.dataset.social)return;delete bubble.dataset.tight;if(bubbleBox.getBoundingClientRect().bottom>petHeadTop()-2)bubble.dataset.tight='';geometry=null;}
 // Shown once after the bar is closed, whether or not completion bubbles are on.
 function showNotice(value){notice=true;fillBubble(value);bubble.hidden=false;geometry=null;clearTimeout(bubbleTimer);bubbleTimer=setTimeout(()=>{notice=false;bubble.hidden=true;geometry=null;},6500);}
 async function restoreBadge(event){event.preventDefault();event.stopPropagation();try{applySettings(await window.whale.setSettings({showStatusBadge:true}));}catch{}notice=false;bubble.hidden=true;geometry=null;clearTimeout(bubbleTimer);}

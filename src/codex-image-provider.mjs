@@ -20,7 +20,7 @@ export class CodexImageProvider extends CodexProvider{
  constructor(options){super({...options,imageGeneration:true,clientInfo:{name:'whale_companion_cg',version:'1.4.0',title:'鲸鱼娘 CG 绘图'}});}
  async check(){this.setEnabled(true);await this.start();let capabilities;try{capabilities=await this.request('modelProvider/capabilities/read',{},15000);}catch(error){if(/method not found|unknown.*method|unsupported|not supported|unrecognized|invalid request/i.test(error.message))throw Error(t('此 Codex 版本不支持图像能力接口，请更新 Codex 桌面端后重试，或选择外部绘图 API。'));throw error;}if(!capabilities.imageGeneration)throw Error(t('当前 Codex 登录不支持内置图像生成'));return {ok:true,message:t('Codex 图像能力可用'),imageGeneration:true};}
  async models(){await this.check();const result=await this.request('model/list',{limit:100},15000);return (result.data??[]).map(row=>({id:row.model??row.id,name:row.displayName??row.model??row.id})).filter(row=>row.id);}
- async generate(profile,{prompt,references=[],directory,signal,onSubmit=async()=>{}}){
+ async generate(profile,{prompt,references=[],directory,signal,jobId=null,scope=null,onRewardUsage=async()=>{},onSubmit=async()=>{}}){
   await this.check();mkdirSync(directory,{recursive:true});
   const refs=references.map((reference,index)=>{const path=join(directory,'codex-reference-'+index+'.png');copyFileSync(reference.path,path);return {type:'localImage',path};});
   const model=profile.model||this.defaultModel;
@@ -28,8 +28,8 @@ export class CodexImageProvider extends CodexProvider{
   const threadId=thread.thread.id;let turnId=null;
   await onSubmit();
   return new Promise((resolveResult,reject)=>{
-   let finished=false,image=null,imageCalls=0;
-   const done=(error)=>{if(finished)return;finished=true;clearTimeout(timer);this.notifications.delete(listener);signal?.removeEventListener('abort',abort);error?reject(error):resolveResult(image);};
+   let finished=false,image=null,imageCalls=0,usageSignature=null,usageTail=Promise.resolve();
+   const done=(error)=>{if(finished)return;finished=true;clearTimeout(timer);this.notifications.delete(listener);signal?.removeEventListener('abort',abort);usageTail.then(()=>error?reject(error):resolveResult(image),reject);};
    const interrupt=()=>{if(turnId)void this.request('turn/interrupt',{threadId,turnId},3000).catch(()=>{});};
    const abort=()=>{interrupt();done(Error('CG 生成已中断，请手动重试'));};
    const listener=message=>{
@@ -39,7 +39,11 @@ export class CodexImageProvider extends CodexProvider{
      try{image={buffer:codexImageBytes(p.item,directory),revisedPrompt:p.item.revisedPrompt??null};}catch{done(Error(p.item.failure?.type==='usageLimitExceeded'?'Codex 图像额度不足':'Codex 没有返回可用图片'));}
     }
     if(message.method==='item/started'&&['commandExecution','fileChange','mcpToolCall','webSearch','dynamicToolCall'].includes(p.item?.type)){interrupt();done(Error('CG 会话尝试使用绘图之外的工具，已停止'));}
-    if(message.method==='thread/tokenUsage/updated')this.onUsage({provider:'codex',connectionIdentity:connectionIdentity(profile),purpose:'cg',sessionId:threadId,model,usage:p.tokenUsage?.total??{}});
+    if(message.method==='thread/tokenUsage/updated'&&p.threadId===threadId){
+     const usage=p.tokenUsage?.total??p.tokenUsage?.totalTokenUsage??{},signature=JSON.stringify(usage);if(signature===usageSignature)return;usageSignature=signature;
+     const row={provider:'codex',connectionIdentity:connectionIdentity(profile),purpose:'cg',sessionId:threadId,model,usage,...(jobId?{cgJobId:jobId,scope:scope??null,rewardManagedBy:'cg-job',usageReceiptId:'codex:'+threadId,requestId:'codex:'+threadId,mode:'cumulative'}:{})};
+     this.onUsage(row);if(jobId)usageTail=usageTail.then(()=>onRewardUsage(row));
+    }
     if(message.method==='turn/completed')done(p.turn?.status==='failed'?Error('Codex 图像生成失败'):image?null:Error('Codex 没有返回图片，请检查所选模型'));
     if(message.method==='provider/error')done(Error('Codex 绘图进程已结束'));
    };

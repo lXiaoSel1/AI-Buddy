@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "22ddee3792402c3e70ec5f86a63c3e3e895a2f60",
+  "nodeVersion": "24.21.0",
+  "pnpmVersion": "11.28.5",
+  "bytes": 198580207,
+  "sha256": "b2dbb9fdd654099e403075c2cb00c6aaa8f51e35514544c9052591433ae78b12",
+  "manifestSha256": "1c27979fa533f279e0dd027d91845faeacadc896e0585d9ae4cb14003d026e2f",
+  "filename": "ai-buddy-dsh-22ddee379240-node24.21.0-win-x64.tgz",
+  "url": "https://github.com/lXiaoSel1/AI-Buddy-Extensions/releases/download/dsh-component-22ddee379240-node24.21.0/ai-buddy-dsh-22ddee379240-node24.21.0-win-x64.tgz"
+}

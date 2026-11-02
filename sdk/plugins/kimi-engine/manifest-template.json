@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "ai-buddy.kimi-engine",
+  "name": "Kimi 工作引擎",
+  "description": "为角色当前绑定模型提供 Kimi ACP 工作通道。需要单独安装匹配的运行引擎；安装不自动开始任务。",
+  "version": "1.0.0",
+  "kind": "plugin",
+  "appRange": ">=1.9.2 <2.0.0",
+  "apiRange": "^1.0.0",
+  "platform": "win32",
+  "arch": "x64",
+  "entry": "dist/entry.mjs",
+  "activationEvents": ["onHarness:kimi"],
+  "capabilities": ["harness.register"],
+  "dependencies": {"ai-buddy.kimi-runtime": "^1.0.0"},
+  "author": "lXiaoSel1",
+  "license": "Apache-2.0 + Commons Clause",
+  "category": "model-engine",
+  "tags": ["Kimi", "ACP", "工作任务"]
+}

@@ -1,5 +1,5 @@
 import {t} from './i18n.mjs';
-import {THEMES,resolvedTheme} from './appearance.mjs';
+import {THEMES,resolvedTheme,themeAsset} from './appearance.mjs';
 import {Icon} from './ui-icons.mjs';
 import {Segmented,Switch} from './ui-controls.mjs';
 import React,{useEffect,useState} from 'react';
@@ -8,6 +8,7 @@ import {TokenDetectionControl} from './token-settings.mjs';
 import {PET_CHARACTERS,petCharacterName} from './pet-characters.mjs';
 import {frameSequence} from './frame-sequence.mjs';
 import {DataImportSetting,DataImportModal} from './data-import-ui.mjs';
+import {DshPreviewNoticeSetting} from './dsh-preview-notice-ui.mjs';
 const h=React.createElement;
 const providerName=value=>value==='claude'?'Claude Code':value;
 // B2: maxOutputTokens is 'auto' or a whole number from 256 to 65536 (default 8192).
@@ -52,6 +53,14 @@ export function GeneralSettings({view,onSaved,onPage,onManage}){
   // one row per setting: name and note on the left, the control at the right edge
   const row=(key,title,note,control)=>h('div',{className:'ws-srow',key},h('div',null,h('b',null,title),note&&h('small',null,note)),control);
   function toggle(key,title,note){return row(key,title,note,h(Switch,{checked:!!prefs[key],disabled:busy,label:title,'data-setting':key,onChange:value=>{void save({[key]:value});}}));}
+  // Approved design C10: all three styles in view, and a written sample of how the chosen one sounds.
+  function replyStyle(){
+   const value=prefs.replyStyle??'natural',labels={brief:t('简短'),natural:t('自然'),detailed:t('详细')};
+   const sample={brief:t('「回来啦。今天顺利吗？」'),natural:t('「主人回来啦。今天顺利吗？要不要先吃点东西？」'),detailed:t('「主人回来啦！今天看你一直在忙，顺利吗？要是累了就先吃点东西，再慢慢跟我说，我在这儿听着。」')}[value]??'';
+   return h('div',{className:'settings-style',key:'replyStyle'},
+    row('replyStyle',t('回复风格'),t('默认回复风格；QQ会话可单独设置。从下一次回复生效，不改变最多输出 tokens。'),h(Segmented,{value,size:'sm',label:t('回复风格'),'data-setting':'replyStyle',disabled:busy,options:Object.entries(labels),onChange:next=>{void save({replyStyle:next});}})),
+    sample&&h('div',{className:'settings-style-sample'},h('img',{src:'./'+themeAsset(current,'head.webp'),alt:'',draggable:false}),h('p',null,sample),h('small',null,t('「{name}」大概是这样').replace('{name}',labels[value]??value)),h('p',{className:'settings-note'},t(({brief:'先直接回应当前问题，减少铺垫、重复和没有请求的延伸；保留必要信息。',natural:'按话题与角色自然展开，不刻意压短，也不为了篇幅补充内容。',detailed:'需要时说明理由、步骤和相关细节，避免重复或凑字；你的明确篇幅要求优先。'})[value]??''))));
+  }
   function select(key,title,note,options){return row(key,title,note,h('select',{'data-setting':key,'aria-label':title,value:prefs[key],disabled:busy,onChange:e=>{void save({[key]:typeof prefs[key]==='number'?Number(e.target.value):e.target.value});}},...options.map(([value,label])=>h('option',{key:value,value},label))));}
   const current=resolvedTheme(prefs,view.themeCharacter),installed=view.resources?.characters.filter(c=>c.installed).length??11;
   return h('div',{className:'general-settings ws-page'},
@@ -75,7 +84,7 @@ export function GeneralSettings({view,onSaved,onPage,onManage}){
         select('petScale',t("桌宠大小"),t("角色、状态条和提示气泡一起缩放。"),[[0.75,t("75% · 小")],[1,t("100% · 默认")],[1.25,t("125% · 大")],[1.5,t("150% · 更大")]]),
         select('animationSpeed',t("动作播放速度"),t("放慢动作循环；鼠标跟随和拖动仍及时响应。"),[[0.25,t("25% · 很慢")],[0.5,t("50% · 慢")],[0.75,t("75% · 默认")],[1,t("100% · 原速")]]),
         toggle('showStatusBadge',t("显示状态条"),t("显示工作会话数；可点击状态条右侧关闭，在这里重新开启。")),
-        toggle('completionBubbles',t("任务提示气泡"),t("日志明确记录完成或错误时显示提示。"))),
+        toggle('completionBubbles',t("任务提示气泡"),t("日志明确记录完成或错误、插件有新消息时显示提示。"))),
       h('h3',{className:'ws-sub-h'},t("互动")),
       h('div',{className:'ws-two'},
         toggle('clickThrough',t("透明区域点击穿透"),t("开启后可点击角色周围的桌面内容。")),
@@ -95,11 +104,11 @@ export function GeneralSettings({view,onSaved,onPage,onManage}){
         toggle('autoPriceUpdates',t("每日更新价格目录"),t("默认关闭；启用后仅下载公开价格，不发送日志。")),
         h('div',{className:'ws-srow'},h('small',{className:'ws-muted'},t("本地监控不调用模型，在线额度在 API 配置中单独启用。")),h('button',{className:'ui-btn sm','data-action':'refresh',disabled:busy,onClick:()=>{void action('refresh');}},Icon('refresh'),t("立即刷新日志")))),
       h('div',{className:'ws-stack'},
-        h('section',{className:'ws-card ws-set settings-output'},h('h2',{className:'ws-sec'},t('模型输出')),h(OutputLimitSetting,{value:prefs.maxOutputTokens??OUTPUT_LIMIT.fallback,disabled:busy,onSave:patch=>void save(patch)}),h('p',{className:'settings-note ws-muted'},t('回复被截断时，可以在这里调高上限后重试。'))),
+        h('section',{className:'ws-card ws-set settings-output'},h('h2',{className:'ws-sec'},t('模型输出')),replyStyle(),h(OutputLimitSetting,{value:prefs.maxOutputTokens??OUTPUT_LIMIT.fallback,disabled:busy,onSave:patch=>void save(patch)}),h('p',{className:'settings-note ws-muted'},t('回复被截断时，可以在这里调高上限后重试。'))),
         h(TokenDetectionControl,{onManage:()=>onPage('tokens')}),
         h('section',{className:'ws-card ws-set settings-character'},h('h2',{className:'ws-sec'},t("角色与对话")),h('p',{className:'ws-meta'},t("角色、好感度、记忆、立绘和背景在 Galgame 中设置。联网聊天需手动开启，重启后默认关闭。")),h('div',{className:'ws-srow ws-end'},h('span',null),h('button',{className:'ui-btn sm',onClick:()=>onPage('galgame')},t("打开 Galgame →")))))),
     h(DataImportSetting,{onOpen:()=>setImportOpen(true)}),
     h('details',{className:'ws-details settings-install'},h('summary',null,Icon('chevron',{size:16}),t("本地安装"),h('span',{className:'ws-muted'},' · '+t("AI 酱 ")+view.version)),h('dl',{className:'ws-dl settings-info'},h('dt',null,t("版本")),h('dd',null,view.version+' · '+view.build),h('dt',null,t("数据目录")),h('dd',null,view.dataRoot),h('dt',null,t("日志来源")),h('dd',null,...view.logRoots.map((r,i)=>h('div',{key:i},h('span',null,providerName(r.provider)+' '),h('code',null,r.path))))),h('p',{className:'settings-note ws-muted'},t("设置保存为版本快照；旧版本、用量与陪伴历史继续保留。"))),
-    h(AboutCard),
+    h('section',{className:'ws-card ws-set'},h(DshPreviewNoticeSetting)),h(AboutCard),
     h('div',{className:'ws-reset-row settings-footer'},h('div',null,h('b',null,t("恢复默认设置")),h('small',null,t("恢复默认仅调整这些选项，保留位置、用量和 Galgame 存档。"))),h('button',{className:'ui-btn danger','data-action':'defaults',disabled:busy,onClick:()=>{void action('defaults');}},t("恢复默认设置"))),importOpen&&h(DataImportModal,{onClose:()=>setImportOpen(false),onComplete:()=>location.reload()}));
 }

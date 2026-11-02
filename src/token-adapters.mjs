@@ -72,8 +72,17 @@ export function parseTokenRecord(source,row,meta,path,index){
   return [];
  }
  if(source.tool==='companion'){
+  if(row.type==='plugin-usage'){
+   // The recorder owns classification. Native-log/ModelRouter mirrors and child
+   // details remain inspectable receipts, never an additional billable request.
+   if(row.schemaVersion!==1||row.monitorDisposition==='diagnostic')return [];
+   const known=row.monitorDisposition==='count'&&row.billable===true,usage=normalizeTokens(known?row.accountedCounters??{}:{},{cacheIncluded:row.cacheIncluded,reasoningIncluded:row.reasoningIncluded});
+   const sessionId=row.nativeSessionId&&row.engine?'plugin-native:'+hash([row.engine,row.nativeProfileId??'',row.nativeSessionId]):'plugin-context:'+hash([row.pluginId,row.sessionId??row.receiptId]);
+   const requestId=row.idempotencyKey?hash([row.engine??row.pluginId,row.nativeProfileId??'',row.nativeSessionId??row.sessionId,row.nativeRequestId]):'observation:'+row.receiptId;
+   return [event(source,row,meta,path,index,usage,{requestId,sessionId,mode:known&&row.usageMode==='cumulative'?'cumulative':'request',purpose:row.purpose==='work'?'work':'plugin',status:'unknown',workspace:row.workspace??'',model:row.model??'',serviceProvider:row.provider??'',explicitRequestId:!!row.nativeRequestId,qualityNote:known?undefined:(row.qualityReasons??[]).join(', '),pluginId:row.pluginId,nativeEngine:row.engine,nativeSessionId:row.nativeSessionId,usageMode:row.usageMode,usageOrigin:row.origin,accounting:row.accounting,sourceEvidenceId:row.sourceEvidenceId,feedbackEligible:false})];
+  }
   if(!row.usage)return [];
-  return [event(source,row,meta,path,index,normalizeTokens(row.usage),{requestId:row.requestId||hash([row.sessionId,row.timestamp,row.usage]),sessionId:row.sessionId||row.requestId||basename(path),mode:row.provider==='codex'?'cumulative':'request',purpose:row.purpose||source.purpose||'galgame',status:'unknown'})];
+  return [event(source,row,meta,path,index,normalizeTokens(row.usage),{requestId:row.requestId||hash([row.sessionId,row.timestamp,row.usage]),sessionId:row.sessionId||row.requestId||basename(path),mode:row.mode==='cumulative'||row.provider==='codex'?'cumulative':'request',purpose:row.purpose||source.purpose||'galgame',status:'unknown',activityOriginId:row.activityOriginId,scope:row.scope,rewardManagedBy:row.rewardManagedBy,cgJobId:row.cgJobId,usageReceiptId:row.usageReceiptId})];
  }
  return [];
 }

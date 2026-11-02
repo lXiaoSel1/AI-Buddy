@@ -1,0 +1,3 @@
+- insert:
+    - id: ai-buddy-native-tool-page
+      name: '@ai-buddy-examples/native-tool-page'

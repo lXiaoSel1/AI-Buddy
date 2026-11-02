@@ -65,3 +65,5 @@ test('Image check separates unsupported protocol and unavailable capability, sub
 test('Quota discovery errors are classified without spawning a missing command',async()=>{
  await assert.rejects(codexQuota({binary:async()=>{throw Error('Codex missing');},folder:temp()}),error=>error.code==='unsupported'&&error.message==='Codex missing');
 });
+
+test('live search selects a complete colocated runtime and honors explicit pins',async()=>{const o=fixture(),cache=join(o.env.LOCALAPPDATA,'OpenAI/Codex/bin'),complete=file(join(cache,'a','codex.exe'));file(join(dirname(complete),'codex-code-mode-host.exe'));const partial=file(join(cache,'z','codex.exe'));utimesSync(dirname(partial),new Date(),new Date(Date.now()+5000));assert.equal(await resolveCodexBinary({...o,requireSearchHost:true}),complete);await assert.rejects(resolveCodexBinary({...o,explicit:partial,requireSearchHost:true}),{code:'CODEX_SEARCH_HOST_MISSING'});});

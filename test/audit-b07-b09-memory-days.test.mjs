@@ -28,9 +28,10 @@ test('B7: imported times outside the Date range, non-positive, non-numeric or fa
 });
 
 test('B7: a conversation imported with createdAt=9e15 keeps the character usable',async t=>{
- const root=tmpDir('b07-import',{t}),store=memoryStore(await stateWithGpt()),{engine}=syntheticEngine({getStore:()=>store});
+ const store=memoryStore(await stateWithGpt());let service;
+ const root=tmpDir('b07-import',{t,beforeRemove:async()=>{await service?.close();await store.flush();}}),{engine}=syntheticEngine({getStore:()=>store});
  const provider={enabled:false,currentSelection:()=>({provider:'p1',model:'m'}),resolveConnection:()=>({mode:'global',connectionId:'p1',name:'p1',model:'m',error:null}),resolveContextCapacity:capacity,runTurn:async fn=>fn()};
- const service=await createCompanionService({store,engine,provider,dataRoot:root,now:Date.now});t.after(()=>service.close());
+ service=await createCompanionService({store,engine,provider,dataRoot:root,now:Date.now});
  const before=Date.now();
  await service.action('companion-conversation-import',{data:{format:'ai-buddy-conversations',version:1,conversations:[{id:'imported-conv',characterId:'claude',personaId:'default',title:'旧备份',messages:[{id:'imported-msg',role:'user',text:'来自导入文件的一句话',createdAt:BAD}]}]}});
  const persisted=Object.values(store.state.conversations).flatMap(c=>c.messages).find(m=>m.text==='来自导入文件的一句话');
