@@ -21,7 +21,9 @@
 
 ## Online installer (recommended)
 
-[Download the Windows x64 installer](https://github.com/lXiaoSel1/ai-buddy/releases/download/v2.0.3/AI-Buddy-Setup-2.0.3-win-x64.exe) → choose 30fps / 60fps and characters → it downloads, verifies and installs. The same installer adds characters, repairs files and upgrades.
+**Installer revision r1; application version remains 2.0.3.** It fixes the repeated create/import step after installation. Older installers cannot discover this same-version revision automatically; download it once below.
+
+[Download the Windows x64 installer](https://github.com/lXiaoSel1/ai-buddy/releases/download/installer-v2.0.3-r1/AI-Buddy-Setup-2.0.3-r1-win-x64.exe) → choose 30fps / 60fps and characters → it downloads, verifies and installs. The same installer adds characters, repairs files and upgrades.
 
 The installer is about 50 MiB. Every character takes about **1.33 GiB** to download at 30fps or **1.75 GiB** at 60fps; fewer characters download less. For what to do after the first launch, see the [Quick start](#quick-start) below.
 
@@ -51,11 +53,11 @@ AI Buddy (AI 酱) is a Windows desktop app. It only reads your local AI-tool log
 
 Five steps get you from the installer to your first chat. The orange numbers in the pictures mark where to click. The [illustrated quick start](docs/QUICKSTART.en.md) covers each step in more detail, including importing an old save, choosing a model and connecting plugin accounts. Steps 2–5 show the Chinese interface; switch the language under **Settings** in the sidebar, and the buttons sit in the same places.
 
-**1. Run the installer.** Open `AI-Buddy-Setup-2.0.3-win-x64.exe`: ① check the installation folder → ② choose 30fps or 60fps and the initial character → ③ tick the characters to install (more can be added later) → ④ click **Install / Add / Repair**. The installer shows the selected download size and the disk space needed, and verifies every file before installing it.
+**1. Run the installer.** Open `AI-Buddy-Setup-2.0.3-r1-win-x64.exe`: ① check the installation folder → ② choose 30fps or 60fps and the initial character → ③ tick the characters to install (more can be added later) → ④ click **Install / Add / Repair**. The installer shows the selected download size and the disk space needed, and verifies every file before installing it.
 
 <img src="docs/images/en-step-1-installer.webp" width="420" alt="Installer: installation folder, animation edition and initial character, character resources and the Install / Add / Repair button">
 
-**2. First launch: create a new save.** AI Buddy opens when installation finishes and shows "Welcome to AI Buddy". This is first-launch setup, not a second installation. New users pick ① **Create a new save**, then ② **Create a new save and start**. If you used an earlier version and want to bring your chats and memories, choose **Import an old save**; see the [quick start](docs/QUICKSTART.en.md#2-first-launch-create-or-import-a-save).
+**2. Open the app directly.** The r1 installer initializes a fresh local profile automatically and preserves the existing profile during an in-place update. The welcome screen below applies only to a first portable launch. Use the app's import entry when bringing in a different save.
 
 <img src="docs/images/step-2-welcome-new-save.webp" width="620" alt="Welcome page (Chinese interface): Create a new save, Import an old save, and the Create a new save and start button">
 
@@ -255,7 +257,7 @@ Requires Windows 10/11 x64. The installer bundles its runtime; Node.js, Python, 
 
 ### Online installer (recommended)
 
-1. Download `AI-Buddy-Setup-2.0.3-win-x64.exe` (about 50 MiB) from the [v2.0.3 page](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.3).
+1. Download `AI-Buddy-Setup-2.0.3-r1-win-x64.exe` (about 50 MiB) from the [v2.0.3 page](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.3).
 2. Choose the installation folder (default `%LOCALAPPDATA%\Programs\AI Buddy`), 30fps or 60fps, the characters to install and the initial character. The first-run defaults are 30fps, every character and DeepSeek.
 3. Click **Install / Add / Repair**. The installer downloads from the pinned v2.0.3 release and checks SHA-256 for every package and file; every character takes about 1.33 GiB at 30fps or 1.75 GiB at 60fps. If a download is interrupted, run the same installer again with the same folder to resume.
 4. Desktop and Start menu shortcuts are created by default. After installing, the installer starts AI Buddy once to check it; untick "Keep AI Buddy running after verification" and it closes AI Buddy after the check. The installer does not turn on online chat, automatic CG, startup registration or background updates, and it installs no plugins.

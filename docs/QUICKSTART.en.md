@@ -8,7 +8,7 @@ You need a Windows 10/11 x64 PC. To chat, you also need an API key for a model s
 
 ## 1. Download and run the installer
 
-1. Open the [v2.0.3 release page](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.3) and download `AI-Buddy-Setup-2.0.3-win-x64.exe` (about 50 MiB). If Windows reports an unknown publisher, you can check the file against `SHA256SUMS-2.0.3.txt` on the same page before choosing to run it anyway.
+1. Open the [v2.0.3 release page](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.3) and download `AI-Buddy-Setup-2.0.3-r1-win-x64.exe` (about 50 MiB). If Windows reports an unknown publisher, you can check the file against `SHA256SUMS-2.0.3.txt` on the same page before choosing to run it anyway.
 2. In the installer:
    - ① **Installation folder**: `%LOCALAPPDATA%\Programs\AI Buddy` by default; click **Browse…** to change it. When upgrading, choose the existing folder.
    - ② **Animation edition and initial character**: 30fps and 60fps have exactly the same features; 60fps is smoother and a bigger download. The initial character keeps you company on the first launch.
@@ -23,7 +23,7 @@ Offline PC: put `install-manifest-2.0.3.json` and the resource ZIPs for your cha
 
 ## 2. First launch: create or import a save
 
-The first launch shows "Welcome to AI Buddy". This sets up your save; it is not a second installation.
+**With the 2.0.3-r1 installer:** a fresh profile is initialized automatically; in-place updates open the existing profile directly. The welcome steps below apply only to a first portable launch without a save. Use the app's import entry to bring in a different profile.
 
 **New users**: choose ① **Create a new save** and click ② **Create a new save and start**. Nothing is created until you confirm.
 
@@ -41,7 +41,7 @@ The first launch shows "Welcome to AI Buddy". This sets up your save; it is not 
 
 The import copies the data and checks every file; the old save stays as it was. It refuses while the old version is still running, and it does not call any chat or image model.
 
-Upgrading in place with the installer keeps your save where it is, so you normally will not see this page.
+The r1 installer opens the original save after an in-place upgrade. Missing or unrecognized data stops the update instead of creating a replacement profile. Older installers cannot discover this same-version revision automatically; download r1 once from the README.
 
 ## 3. Set up a chat model
 

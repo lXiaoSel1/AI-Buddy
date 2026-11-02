@@ -1,3 +1,9 @@
+## 当前安装器：2.0.3-r1
+
+[下载修订安装器](https://github.com/lXiaoSel1/AI-Buddy/releases/download/installer-v2.0.3-r1/AI-Buddy-Setup-2.0.3-r1-win-x64.exe)。本体仍为2.0.3，使用原v2.0.3清单和资源。首次安装自动初始化；原目录更新保留存档，欢迎页不再算安装成功。旧安装器不能自动发现同版本修订，需要下载一次。原便携及离线压缩包不重打包，离线使用r1时仍选择含原2.0.3清单和所需ZIP的资源目录。
+
+Installer revision r1 installs the unchanged 2.0.3 application and original resources. Fresh profiles initialize automatically; upgrades retain the registered save. Download r1 once because older installers only compare application versions. The sections below retain historical release details.
+
 # AI Buddy 1.9.0 installation and maintenance
 
 [简体中文](#安装) · [English](#installation)
