@@ -3,9 +3,9 @@ namespace AiBuddy.Install;
 
 public sealed record InstallOptions(string Root,string Cache,string Edition,string[] Characters,string InitialCharacter,string? OfflineDirectory=null,bool Shortcuts=true,bool Launch=true,string? DataPath=null,string? Pipe=null,bool KeepCache=false);
 public sealed record StartupStatus(bool SafeMode,JsonElement? StartupFailure,bool Onboarding=false,JsonElement? Components=null);
-public sealed record Installation(int SchemaVersion,string Version,string ManifestSha256,string Edition,string[] Characters,string InitialCharacter,string Build,string Runtime,string Manager,string? DataPath,string? Pipe,DateTimeOffset InstalledAt,Dictionary<string,string> PackageHashes,StartupStatus? Startup=null,bool? DataInitialized=null,string[]? Warnings=null);
+public sealed record Installation(int SchemaVersion,string Version,string ManifestSha256,string Edition,string[] Characters,string InitialCharacter,string Build,string Runtime,string Manager,string? DataPath,string? Pipe,DateTimeOffset InstalledAt,Dictionary<string,string> PackageHashes,StartupStatus? Startup=null,bool? DataInitialized=null,string[]? Warnings=null,string? InstallerRevision=null);
 public sealed record InstallDefaults(string Edition,string[] Characters,string InitialCharacter);
-public sealed record InstallJournal(string Id,string Phase,string ManifestHash,InstallOptions Options,string? PreviousPointer,string? PreviousInstallation,string Build,string Runtime,string[] RootFiles,string[] PreviouslyExistingRootFiles,string? AppVersion=null);
+public sealed record InstallJournal(string Id,string Phase,string ManifestHash,InstallOptions Options,string? PreviousPointer,string? PreviousInstallation,string Build,string Runtime,string[] RootFiles,string[] PreviouslyExistingRootFiles,string? AppVersion=null,string? ProfileAction=null,string? ExpectedDataPath=null,string? InstallerRevision=null);
 public sealed record DiskEstimate(long DownloadBytes,long ExpandedBytes,long CacheAdditionalBytes,long InstallAdditionalBytes,long RetainedBytes);
 public sealed class IncompatibleRollbackException(string message):IOException(message);
 public interface IAppHost {
@@ -13,6 +13,8 @@ public interface IAppHost {
     Task<string?> DiscoverDataPath(string root,string? pipe,CancellationToken cancel)=>Task.FromResult<string?>(null);
     Task Stop(string root,Installation? previous,IProgress<InstallProgress>? progress,CancellationToken cancel);
     Task StartAndVerify(string root,Installation installed,CancellationToken cancel);
+    Task StartFreshAndVerify(string root,Installation installed,CancellationToken cancel)=>StartAndVerify(root,installed,cancel);
+    Task StartInstalledAndVerify(string root,Installation installed,bool initialize,CancellationToken cancel)=>initialize?StartFreshAndVerify(root,installed,cancel):StartAndVerify(root,installed,cancel);
     Task StartImportedAndVerify(string root,Installation installed,string importId,CancellationToken cancel)=>StartAndVerify(root,installed,cancel);
     Task CreateShortcuts(string root,Installation installed,CancellationToken cancel);
     Task RemoveShortcuts(string root,CancellationToken cancel);
@@ -65,10 +67,13 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         var control=SafePaths.Under(root,"local/installer");Directory.CreateDirectory(control);
         await using var installationLock=new FileStream(Path.Combine(control,"install.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
         var journalPath=Path.Combine(control,"transaction.json");
+        var retry=File.Exists(journalPath)?Json.Read<InstallJournal>(journalPath):null;
+        if(retry is not null)ValidateJournal(retry,root);
         await Recover(root,journalPath,progress,cancel);
         var previous=Existing(root);
         var discovered=previous is null&&File.Exists(PointerPath(root))?await host.DiscoverDataPath(root,requested.Pipe,cancel):null;
-        var options=requested with {Root=root,DataPath=previous?.DataPath??discovered??requested.DataPath,Pipe=previous?.Pipe??requested.Pipe};
+        var profile=InstallProfile.Select(root,requested,previous,discovered,retry,File.Exists(PointerPath(root)));
+        var options=requested with {Root=root,DataPath=profile.DataPath,Pipe=profile.Pipe};
         var packages=Manifests.Select(m,options.Edition,options.Characters,options.InitialCharacter);
         Dictionary<string,string>? offline=null;
         if(options.OfflineDirectory is {} folder) {
@@ -82,11 +87,11 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         var estimate=Estimate(options);CheckSpace(root,options.Cache,estimate);
         InstallJournal? journal=File.Exists(journalPath)?Json.Read<InstallJournal>(journalPath):null;
         var currentPointer=File.Exists(PointerPath(root))?await File.ReadAllTextAsync(PointerPath(root),cancel):null;
-        if(journal is null || journal.Phase!="staging" || journal.PreviousPointer!=currentPointer || journal.ManifestHash!=manifestHash || journal.Options.Edition!=options.Edition || !journal.Options.Characters.SequenceEqual(options.Characters)) {
+        if(journal is null || journal.Phase!="staging" || journal.PreviousPointer!=currentPointer || journal.ManifestHash!=manifestHash || journal.Options.Edition!=options.Edition || !journal.Options.Characters.SequenceEqual(options.Characters) || journal.Options.InitialCharacter!=options.InitialCharacter || journal.Options.DataPath!=options.DataPath || journal.Options.Pipe!=options.Pipe || journal.ProfileAction!=profile.Action || journal.ExpectedDataPath!=profile.ExpectedDataPath) {
             var id=Guid.NewGuid().ToString("N");
             var rootFiles=packages.Where(p=>p.Mount=="root").SelectMany(p=>p.Files.Select(f=>f.Path)).ToArray();
             journal=new(id,"staging",manifestHash,options,File.Exists(PointerPath(root))?await File.ReadAllTextAsync(PointerPath(root),cancel):null,File.Exists(RecordPath(root))?await File.ReadAllTextAsync(RecordPath(root),cancel):null,
-                $"builds/v{m.AppVersion}-{options.Edition}-{id}",$"runtime/AI-Buddy-v{m.AppVersion}-{id}",rootFiles,rootFiles.Where(f=>File.Exists(SafePaths.Under(root,f))).ToArray(),m.AppVersion);
+                $"builds/v{m.AppVersion}-{options.Edition}-{id}",$"runtime/AI-Buddy-v{m.AppVersion}-{id}",rootFiles,rootFiles.Where(f=>File.Exists(SafePaths.Under(root,f))).ToArray(),m.AppVersion,profile.Action,profile.ExpectedDataPath,ReleaseIdentity.InstallerRevision);
             Json.Save(journalPath,journal);
         }
         var stage=SafePaths.Under(root,".install-staging/"+journal.Id);Directory.CreateDirectory(stage);
@@ -98,12 +103,16 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         // Recheck the entire assembled tree, including files reused after an interrupted extraction.
         foreach(var p in packages)foreach(var f in p.Files)if(!await Hashing.Matches(SafePaths.Under(stage,p.Mount+"/"+f.Path),f.Bytes,f.Sha256,cancel))throw new InvalidDataException("Assembled file mismatch: "+f.Path);
         var managerRelative=$"maintenance/{m.AppVersion}/AI Buddy Setup.exe";
-        var installed=new Installation(1,m.AppVersion,manifestHash,options.Edition,options.Characters,options.InitialCharacter,journal.Build,journal.Runtime,managerRelative,options.DataPath,options.Pipe,DateTimeOffset.UtcNow,packages.ToDictionary(p=>p.Id,p=>p.Sha256),DataInitialized:previous?.DataInitialized);
+        var installed=new Installation(1,m.AppVersion,manifestHash,options.Edition,options.Characters,options.InitialCharacter,journal.Build,journal.Runtime,managerRelative,options.DataPath,options.Pipe,DateTimeOffset.UtcNow,packages.ToDictionary(p=>p.Id,p=>p.Sha256),DataInitialized:previous?.DataInitialized,InstallerRevision:ReleaseIdentity.InstallerRevision);
         // Root launcher updates are journaled separately from immutable version trees.
         var backup=SafePaths.Under(control,"backups/"+journal.Id);Directory.CreateDirectory(backup);
         foreach(var f in journal.PreviouslyExistingRootFiles){var target=SafePaths.Under(backup,f);Directory.CreateDirectory(Path.GetDirectoryName(target)!);File.Copy(SafePaths.Under(root,f),target,true);}
         if((File.Exists(PointerPath(root))?await File.ReadAllTextAsync(PointerPath(root),cancel):null)!=journal.PreviousPointer)throw new IOException("Launch pointer changed during download; retry against the new current version");
+        var selected=Existing(root);
+        if(previous is not null&&(selected is null||!InstallProfile.SamePath(DataPaths.Registered(root,selected.DataPath,false),profile.ExpectedDataPath)||InstallProfile.NormalizedPipe(selected.Pipe)!=InstallProfile.NormalizedPipe(profile.Pipe)))throw new IOException("Personal-data selection changed during download; retry against the current profile");
+        profile.Verify();
         await host.Stop(root,previous??installed,progress,cancel);cancel.ThrowIfCancellationRequested();
+        profile.Verify();
         journal=journal with {Phase="committing"};Json.Save(journalPath,journal);
         try {
             foreach(var (mount,target) in new[]{("build",journal.Build),("runtime",journal.Runtime)}) {
@@ -118,10 +127,8 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
             Json.Save(RecordPath(root),installed);
             Json.Save(PointerPath(root),new {version=m.AppVersion,appVersion=m.AppVersion,path=journal.Build,runtime=new{path=journal.Runtime,executable=m.Runtime.Executable,sha256=m.Runtime.Sha256},animationProfile=options.Edition,installedAt=installed.InstalledAt});
             checkpoint?.Invoke("pointer");
-            // A first install's explicit custom folder is a creation request.
-            // Never create a missing directory from a prior registered profile.
-            if(previous is null&&requested.DataPath is not null&&options.DataPath==requested.DataPath)Directory.CreateDirectory(DataPaths.Registered(root,options.DataPath,false));
-            await host.StartAndVerify(root,installed,cancel);
+            await host.StartInstalledAndVerify(root,installed,profile.Action=="initialize",cancel);
+            if(host.LastStartup is { } startup&&(startup.Onboarding||startup.SafeMode||startup.StartupFailure is not null))throw new IOException("AI Buddy did not start normally; welcome, safe mode or startup failure cannot complete installation");
             var confirmed=Json.Read<Installation>(RecordPath(root));
             if(confirmed.SchemaVersion!=installed.SchemaVersion||confirmed.Version!=installed.Version||confirmed.Build!=installed.Build||confirmed.ManifestSha256!=installed.ManifestSha256||confirmed.DataPath!=installed.DataPath||confirmed.Pipe!=installed.Pipe||confirmed.Runtime!=installed.Runtime||confirmed.Manager!=installed.Manager||confirmed.Edition!=installed.Edition||!confirmed.Characters.SequenceEqual(installed.Characters))throw new IOException("Installation identity changed during startup; the newer record will not be overwritten");
             // The app confirms real business initialization before reporting ready.
@@ -133,7 +140,7 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
             journal=journal with {Phase="complete"};Json.Save(journalPath,journal);
             if(journal.PreviousPointer is not null)Json.Save(Path.Combine(control,"rollback.json"),journal);
         } catch(Exception failure) {
-            try {await RollbackJournal(root,journal,progress,CancellationToken.None);Json.Save(journalPath,journal with {Phase="rolled-back"});}
+            try {journal=await RollbackJournal(root,journal,progress,CancellationToken.None);Json.Save(journalPath,journal with {Phase="rolled-back"});}
             catch(IncompatibleRollbackException compatibility) {
                 // A first 1.9 launch can create life/media data before reporting readiness.
                 // Never put 1.8 back in charge of those saves. Keep both program trees and
@@ -225,23 +232,26 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
     public static void ValidateSpace(DiskEstimate estimate,long installFree,long cacheFree,bool sameDrive){if(installFree<estimate.InstallAdditionalBytes+(sameDrive?estimate.CacheAdditionalBytes:0)||!sameDrive&&cacheFree<estimate.CacheAdditionalBytes)throw new IOException("Insufficient disk space for download, staging and the retained version");}
     async Task Recover(string root,string path,IProgress<InstallProgress>? progress,CancellationToken cancel) {
         if(!File.Exists(path))return;var journal=Json.Read<InstallJournal>(path);
-        ValidateJournal(journal);
+        ValidateJournal(journal,root);
         if(journal.Phase=="recovery-required"){progress?.Report(new("recovery-required",journal.Id,Detail:"Compatible repair will preserve the retained personal data and program backups"));return;}
         if(journal.Phase=="committing"){
-            try{await RollbackJournal(root,journal,progress,cancel);Json.Save(path,journal with{Phase="rolled-back"});}
+            try{journal=await RollbackJournal(root,journal,progress,cancel);Json.Save(path,journal with{Phase="rolled-back"});}
             catch(IncompatibleRollbackException compatibility){RetainForCompatibleRepair(root,journal,new IOException("Interrupted committing transaction discovered during recovery"),compatibility,progress);}
         }
     }
     string RetainForCompatibleRepair(string root,InstallJournal journal,Exception failure,IncompatibleRollbackException compatibility,IProgress<InstallProgress>? progress){
         var control=SafePaths.Under(root,"local/installer");journal=journal with{Phase="recovery-required"};Json.Save(Path.Combine(control,"transaction.json"),journal);
         var receipt=SafePaths.Under(control,"recovery-required/"+journal.Id+".json");
-        Json.Save(receipt,new{phase=journal.Phase,journal,failedAt=DateTimeOffset.UtcNow,failure=failure.ToString(),compatibility=compatibility.Message,personalDataRetained=true,previousProgramRetained=true,compatibleRepairVersion=m.AppVersion});
+        Json.Save(receipt,new{installerRevision=ReleaseIdentity.InstallerRevision,phase=journal.Phase,journal,failedAt=DateTimeOffset.UtcNow,failure=failure.ToString(),compatibility=compatibility.Message,personalDataRetained=true,previousProgramRetained=true,compatibleRepairVersion=m.AppVersion});
         progress?.Report(new("recovery-required",receipt,Detail:"Personal data and program backups retained; run compatible AI Buddy 1.9 repair"));return receipt;
     }
-    async Task RollbackJournal(string root,InstallJournal journal,IProgress<InstallProgress>? progress,CancellationToken cancel) {
-        ValidateJournal(journal);
+    async Task<InstallJournal> RollbackJournal(string root,InstallJournal journal,IProgress<InstallProgress>? progress,CancellationToken cancel) {
+        ValidateJournal(journal,root);
         var data=PersonalDataProtection.Read(root,journal);
         await host.Stop(root,Existing(root),progress,cancel);
+        // Initialization may finish before readiness or before a power loss. Once
+        // real data exists, every later retry must preserve that same profile.
+        if(journal.ProfileAction=="initialize"&&journal.ExpectedDataPath is {} expected&&InstallProfile.Recognized(expected)){journal=journal with{ProfileAction="preserve"};Json.Save(SafePaths.Under(root,"local/installer/transaction.json"),journal);}
         await GuardDowngrade(root,journal,cancel);
         var backup=SafePaths.Under(root,"local/installer/backups/"+journal.Id);
         foreach(var f in journal.RootFiles){var target=SafePaths.Under(root,f);if(!data.Allows(target,progress))continue;if(journal.PreviouslyExistingRootFiles.Contains(f)){Directory.CreateDirectory(Path.GetDirectoryName(target)!);ReplaceProgramFile(SafePaths.Under(backup,f),target);}else if(File.Exists(target))File.Delete(target);}
@@ -254,12 +264,15 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
             try{data.RemoveTree(SafePaths.Under(root,path),root,progress);}catch(IOException ex){progress?.Report(new("cleanup-pending",path,Detail:ex.Message));}
         }
         progress?.Report(new("rolled-back",journal.Id,Detail:"Program restored; personal data was not replaced"));
+        return journal;
     }
     static void RestoreText(string path,string? value){if(value is null){if(File.Exists(path))File.Delete(path);}else{using var document=JsonDocument.Parse(value);Json.Save(path,document.RootElement);}}
-    static void ValidateJournal(InstallJournal journal){
+    static void ValidateJournal(InstallJournal journal,string? root=null){
         // Old 1.8.0 journals did not store AppVersion. Only their exact owned layout is accepted.
         var version=journal.AppVersion??"1.8.0";
         if(!ReleaseIdentity.KnownTransactionVersion(version) || !System.Text.RegularExpressions.Regex.IsMatch(journal.Id,"^[a-f0-9]{32}$") || journal.Options.Edition is not ("30fps" or "60fps") || journal.Build!=$"builds/v{version}-{journal.Options.Edition}-{journal.Id}" || journal.Runtime!=$"runtime/AI-Buddy-v{version}-{journal.Id}" || journal.RootFiles.Any(p=>!Manifests.RootFileAllowed(p)) || journal.PreviouslyExistingRootFiles.Except(journal.RootFiles).Any())throw new InvalidDataException("Invalid transaction ownership; no recovery files were changed");
+        var active=journal.Phase is "staging" or "committing" or "recovery-required"||journal.Phase=="rolled-back"&&journal.PreviousPointer is null&&journal.PreviousInstallation is null;
+        if(journal.ProfileAction is not null||journal.ExpectedDataPath is not null){if(journal.ProfileAction is not ("initialize" or "preserve")||journal.ExpectedDataPath is null||!Path.IsPathFullyQualified(journal.ExpectedDataPath)||root is not null&&active&&!InstallProfile.SamePath(journal.ExpectedDataPath,DataPaths.Registered(root,journal.Options.DataPath,false)))throw new InvalidDataException("Invalid transaction profile binding; no recovery files were changed");}
     }
     static void ReplaceProgramFile(string source,string target){
         // Replace the directory entry, never mutate an existing hard-linked historical file.
@@ -291,7 +304,7 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         await using var installationLock=new FileStream(Path.Combine(control,"install.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
         var journal=Json.Read<InstallJournal>(Path.Combine(control,"rollback.json"));
         if(journal.PreviousPointer is null)throw new IOException("No previous version is available");
-        await RollbackJournal(root,journal,progress,cancel);Json.Save(Path.Combine(control,"transaction.json"),journal with{Phase="rolled-back"});
+        journal=await RollbackJournal(root,journal,progress,cancel);Json.Save(Path.Combine(control,"transaction.json"),journal with{Phase="rolled-back"});
     }
     public async Task Uninstall(string root,bool deletePersonalData,IProgress<InstallProgress>? progress,CancellationToken cancel,string? cache=null) {
         root=SafePaths.Full(root);var installed=Existing(root)??throw new IOException("Installation record is missing");

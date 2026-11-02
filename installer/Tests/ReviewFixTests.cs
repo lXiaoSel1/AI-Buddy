@@ -11,6 +11,7 @@ static class ReviewFixTests {
  static void Assert(bool condition,string message){if(!condition)throw new Exception(message);}
  static int Trees(string dir)=>Directory.Exists(dir)?Directory.GetDirectories(dir).Length:0;
  static int Files(string dir)=>Directory.Exists(dir)?Directory.EnumerateFiles(dir,"*",SearchOption.AllDirectories).Count():0;
+ static void Profile(string data)=>Json.Save(Path.Combine(data,"settings.json"),new{syntheticInstallerProfile=true});
  // Makes the installed version look like an older release, as for a real upgrade.
  static void MarkPrevious(string target,Installation current,string? version) {
   var path=Path.Combine(target,"local/current-build.json");
@@ -40,7 +41,7 @@ static class ReviewFixTests {
    var target=Path.Combine(root,"review-protect-old-save-"+tree);
    var first=await engine.Install(options with{Root=target},null,default);
    var owned=tree=="build"?first.Build:first.Runtime;
-   var custom=SafePaths.Under(target,owned+"/custom-save");Directory.CreateDirectory(custom);
+   var custom=SafePaths.Under(target,owned+"/custom-save");Directory.CreateDirectory(custom);Profile(custom);
    var marker=Path.Combine(custom,"memory.json");File.WriteAllText(marker,"saved chat, relationships and memories");var before=await Hashing.FileHash(marker);
    Json.Save(InstallEngine.RecordPath(target),first with{DataPath=custom,DataInitialized=true});
    Assert(DataPaths.Registered(target,InstallEngine.Existing(target)!.DataPath)==custom,"nested absolute custom-data path is supported");
@@ -62,7 +63,7 @@ static class ReviewFixTests {
    var target=Path.Combine(root,"review-personal-baseline-"+relative);
    var installed=await engine.Install(options with{Root=target},null,default);
    var selected=relative?"local/data-profiles/import-"+Guid.NewGuid().ToString():null;
-   var personal=selected is null?SafePaths.Under(target,"local/data-v003"):SafePaths.Under(target,selected);Directory.CreateDirectory(personal);
+   var personal=selected is null?SafePaths.Under(target,"local/data-v003"):SafePaths.Under(target,selected);Directory.CreateDirectory(personal);Profile(personal);
    var marker=Path.Combine(personal,"complete-original.bin");File.WriteAllText(marker,"full original and archived provenance");var before=await Hashing.FileHash(marker);
    Json.Save(InstallEngine.RecordPath(target),installed with{DataPath=selected,DataInitialized=true});
    await engine.Install(options with{Root=target,Edition="60fps"},null,default);
@@ -74,6 +75,7 @@ static class ReviewFixTests {
    var target=Path.Combine(root,"review-personal-ancestor");
    var installed=await engine.Install(options with{Root=target},null,default);
    var marker=SafePaths.Under(target,installed.Build+"/personal-original.txt");File.WriteAllText(marker,"save root includes this earlier program tree");var before=await Hashing.FileHash(marker);
+   Profile(target);
    Json.Save(InstallEngine.RecordPath(target),installed with{DataPath=target,DataInitialized=true});
    await engine.Install(options with{Root=target,Edition="60fps"},null,default);
    await engine.Install(options with{Root=target},null,default);
@@ -101,7 +103,7 @@ static class ReviewFixTests {
    Assert(File.Exists(marker)&&await Hashing.FileHash(marker)==before,"recorded previous personal data survives repair and uninstall");
   });
   await test("a cache inside registered personal data is retained through install and uninstall",async()=>{
-   var target=Path.Combine(root,"review-personal-cache");var custom=Path.Combine(target,"local","custom-cache-save");Directory.CreateDirectory(custom);
+   var target=Path.Combine(root,"review-personal-cache");var custom=Path.Combine(target,"local","custom-cache-save");Directory.CreateDirectory(custom);Profile(custom);
    var marker=Path.Combine(custom,new string('b',64)+".zip");File.WriteAllText(marker,"personal archived data, not a download");var before=await Hashing.FileHash(marker);
    await engine.Install(options with{Root=target,Cache=custom,DataPath=custom},null,default);
    await engine.Uninstall(target,false,null,default,custom);
@@ -109,7 +111,7 @@ static class ReviewFixTests {
   });
   await test("abandoned staging cleanup retains a registered personal profile",async()=>{
    var target=Path.Combine(root,"review-personal-stage");var installed=await engine.Install(options with{Root=target},null,default);
-   var custom=SafePaths.Under(target,".install-staging/"+Guid.NewGuid().ToString("N")+"/personal-profile");Directory.CreateDirectory(custom);
+   var custom=SafePaths.Under(target,".install-staging/"+Guid.NewGuid().ToString("N")+"/personal-profile");Directory.CreateDirectory(custom);Profile(custom);
    var marker=Path.Combine(custom,"memories.txt");File.WriteAllText(marker,"personal data stored in a stale staging directory");var before=await Hashing.FileHash(marker);
    Json.Save(InstallEngine.RecordPath(target),installed with{DataPath=custom,DataInitialized=true});
    await engine.Install(options with{Root=target,Edition="60fps"},null,default);await engine.Uninstall(target,false,null,default);
@@ -117,14 +119,14 @@ static class ReviewFixTests {
   });
   await test("custom data comparison ignores Windows path case",async()=>{
    var target=Path.Combine(root,"review-personal-case");var installed=await engine.Install(options with{Root=target},null,default);
-   var custom=SafePaths.Under(target,installed.Runtime+"/Mixed-Case-Save");Directory.CreateDirectory(custom);
+   var custom=SafePaths.Under(target,installed.Runtime+"/Mixed-Case-Save");Directory.CreateDirectory(custom);Profile(custom);
    var marker=Path.Combine(custom,"original.txt");File.WriteAllText(marker,"case insensitive registered data");var before=await Hashing.FileHash(marker);
    Json.Save(InstallEngine.RecordPath(target),installed with{DataPath=custom.ToUpperInvariant(),DataInitialized=true});
    await engine.Install(options with{Root=target,Edition="60fps"},null,default);await engine.Install(options with{Root=target},null,default);
    Assert(File.Exists(marker)&&await Hashing.FileHash(marker)==before,"Windows case variants refer to the same protected profile");
   });
   await test("similarly prefixed cache siblings remain eligible for normal cleanup",async()=>{
-   var target=Path.Combine(root,"review-personal-boundary");var custom=Path.Combine(target,"local","profile");var cache=custom+"-cache";Directory.CreateDirectory(custom);Directory.CreateDirectory(cache);
+   var target=Path.Combine(root,"review-personal-boundary");var custom=Path.Combine(target,"local","profile");var cache=custom+"-cache";Directory.CreateDirectory(custom);Directory.CreateDirectory(cache);Profile(custom);
    var personal=Path.Combine(custom,"original.txt");File.WriteAllText(personal,"retain personal data");var before=await Hashing.FileHash(personal);
    var downloaded=Path.Combine(cache,new string('c',64)+".zip");File.WriteAllText(downloaded,"stale downloaded package");
    await engine.Install(options with{Root=target,Cache=cache,DataPath=custom},null,default);

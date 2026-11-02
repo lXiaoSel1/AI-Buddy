@@ -17,7 +17,7 @@ public sealed class SetupForm:Form {
     CancellationTokenSource? cancellation;bool initializing=true;bool english;bool shown;int estimateRevision;readonly string[] args;UpdateRelease? availableUpdate;string? selectionError;string lastDefaultsRoot="";string? rollbackBlocked;
     string L(string zh,string en)=>english?en:zh;
     public SetupForm(string[] arguments) {
-        args=arguments;Text="AI Buddy "+ReleaseIdentity.Version;Icon=Icon.ExtractAssociatedIcon(Environment.ProcessPath!);ClientSize=new Size(780,850);MinimumSize=new Size(640,740);StartPosition=FormStartPosition.CenterScreen;AutoScaleMode=AutoScaleMode.Dpi;Font=new Font("Segoe UI",10);
+        args=arguments;Text="AI Buddy "+ReleaseIdentity.InstallerVersion;Icon=Icon.ExtractAssociatedIcon(Environment.ProcessPath!);ClientSize=new Size(780,850);MinimumSize=new Size(640,740);StartPosition=FormStartPosition.CenterScreen;AutoScaleMode=AutoScaleMode.Dpi;Font=new Font("Segoe UI",10);
         language.Items.AddRange(["简体中文","English"]);language.SelectedIndex=System.Globalization.CultureInfo.CurrentUICulture.Name.StartsWith("zh")?0:1;english=language.SelectedIndex==1;
         if(Program.Argument(args,"language") is {} locale){if(locale is not ("en" or "zh-CN"))throw new InvalidDataException("Unsupported installer language");language.SelectedIndex=locale=="en"?1:0;english=language.SelectedIndex==1;}
         folder.Text=Program.Argument(args,"root")??Program.DefaultRoot;edition.Items.AddRange(["30fps","60fps"]);edition.SelectedItem="30fps";
@@ -50,7 +50,7 @@ public sealed class SetupForm:Form {
     FlowLayoutPanel Row(params Control[] controls){var row=new FlowLayoutPanel{AutoSize=true,WrapContents=true,Margin=new Padding(0,0,0,6)};row.Controls.AddRange(controls);return row;}
     Button Browse(TextBox target){var b=new Button{Text=L("浏览…","Browse…"),AutoSize=true};browseButtons.Add(b);b.Click+=(_,_)=>{if(cancellation is not null)return;using var picker=new FolderBrowserDialog{UseDescriptionForTitle=true,Description=L("选择文件夹","Choose folder"),SelectedPath=target.Text};if(picker.ShowDialog(this)==DialogResult.OK){target.Text=picker.SelectedPath;if(target==folder)ReadExisting();UpdateEstimate();}};return b;}
     void Render(){layout.SuspendLayout();layout.Controls.Clear();layout.RowStyles.Clear();layout.RowCount=0;browseButtons.Clear();
-        Add(new Label{Text="AI Buddy "+ReleaseIdentity.Version,Font=new Font(Font.FontFamily,23,FontStyle.Bold),AutoSize=true});
+        Add(new Label{Text="AI Buddy "+ReleaseIdentity.InstallerVersion,Font=new Font(Font.FontFamily,23,FontStyle.Bold),AutoSize=true});
         Add(Row(new Label{Text="Language",AutoSize=true,Padding=new Padding(0,7,10,0)},language));
         checkUpdate.Text=L("检查新版本","Check for updates");openUpdate.Text=L("下载并打开新版","Download and open update");Add(Row(checkUpdate,openUpdate));Add(updateStatus);
         Add(Heading(L("安装位置","Installation folder")));Add(Row(folder,Browse(folder)));

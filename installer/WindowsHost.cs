@@ -62,9 +62,13 @@ public sealed class WindowsHost(string? rootsFile=null,TimeSpan? exitTimeout=nul
             return;
         }
     }
-    public Task StartAndVerify(string root,Installation installed,CancellationToken cancel)=>StartCore(root,installed,null,cancel);
-    public Task StartImportedAndVerify(string root,Installation installed,string importId,CancellationToken cancel)=>StartCore(root,installed,importId,cancel);
-    public static StartupStatus? MatchStartup(string root,Installation installed,JsonElement value,bool importVerification=false){
+    // Import recovery can restore a not-yet-created portable profile to its welcome
+    // page. Install completion has its own stricter contract below.
+    public Task StartAndVerify(string root,Installation installed,CancellationToken cancel)=>StartCore(root,installed,null,false,false,cancel);
+    public Task StartFreshAndVerify(string root,Installation installed,CancellationToken cancel)=>StartCore(root,installed,null,true,true,cancel);
+    public Task StartInstalledAndVerify(string root,Installation installed,bool initialize,CancellationToken cancel)=>StartCore(root,installed,null,initialize,true,cancel);
+    public Task StartImportedAndVerify(string root,Installation installed,string importId,CancellationToken cancel)=>StartCore(root,installed,importId,false,true,cancel);
+    public static StartupStatus? MatchStartup(string root,Installation installed,JsonElement value,bool importVerification=false,bool strictInstallation=true){
         var build=SafePaths.Under(root,installed.Build);var data=DataPaths.Registered(root,installed.DataPath);
         if(!value.TryGetProperty("version",out var version)||version.ValueKind!=JsonValueKind.String||version.GetString()!=installed.Version||!value.TryGetProperty("build",out var returned)||returned.ValueKind!=JsonValueKind.String||!string.Equals(SafePaths.Full(returned.GetString()!),build,StringComparison.OrdinalIgnoreCase)||!value.TryGetProperty("dataRoot",out var returnedData)||returnedData.ValueKind!=JsonValueKind.String||!string.Equals(SafePaths.Full(returnedData.GetString()!),data,StringComparison.OrdinalIgnoreCase))return null;
         var ready=value.TryGetProperty("ready",out var r)&&r.ValueKind==JsonValueKind.True;
@@ -73,6 +77,7 @@ public sealed class WindowsHost(string? rootsFile=null,TimeSpan? exitTimeout=nul
         var failure=value.TryGetProperty("startupFailure",out var f)&&f.ValueKind!=JsonValueKind.Null?f.Clone():(JsonElement?)null;
         var components=value.TryGetProperty("components",out var c)&&c.ValueKind==JsonValueKind.Object?c.Clone():(JsonElement?)null;
         if(importVerification&&(onboarding||ready&&(safe||failure is not null)))throw new IOException("Imported profile did not start normally (safe mode or empty welcome); the previous profile will be restored");
+        if(strictInstallation){if(ready&&(safe||failure is not null))throw new IOException("AI Buddy entered safe mode or reported a startup failure; installation was not completed");return ready&&!onboarding?new(false,null,Components:components):null;}
         if(ready&&!onboarding)return new(safe,failure,Components:components);
         // Welcome is deliberately not game-ready: no business save is initialized
         // until the user chooses create/import. It is nevertheless a healthy
@@ -80,17 +85,25 @@ public sealed class WindowsHost(string? rootsFile=null,TimeSpan? exitTimeout=nul
         if(!importVerification&&installed.DataInitialized!=true&&onboarding&&!safe&&failure is null)return new(false,null,true,components);
         return null;
     }
-    async Task StartCore(string root,Installation installed,string? importId,CancellationToken cancel) {
-        LastStartup=null;
+    public static ProcessStartInfo CreateStartInfo(string root,Installation installed,bool initialize,string? importId=null,string? rootsFile=null){
         var executable=SafePaths.Under(root,"AI Buddy.exe");
         var start=new ProcessStartInfo(executable){WorkingDirectory=root,UseShellExecute=false,CreateNoWindow=true};
+        if(initialize)start.ArgumentList.Add("--data="+DataPaths.Registered(root,installed.DataPath,false));
+        // Ordinary startup resolves dataPath from installation.json, so a missing
+        // registered save cannot be bypassed by an explicit --data override.
+        start.ArgumentList.Add("--pipe="+InstallProfile.NormalizedPipe(installed.Pipe));
         if(importId is not null)start.ArgumentList.Add("--data-import-verify="+importId);
         if(rootsFile is not null){var path=Path.GetFullPath(rootsFile);SafePaths.NoLinks(path);using var roots=JsonDocument.Parse(File.ReadAllBytes(path));if(roots.RootElement.ValueKind!=JsonValueKind.Array)throw new InvalidDataException("Validation roots must be a JSON array");start.ArgumentList.Add("--roots="+path);}
+        return start;
+    }
+    async Task StartCore(string root,Installation installed,string? importId,bool initialize,bool strictInstallation,CancellationToken cancel) {
+        LastStartup=null;
+        var start=CreateStartInfo(root,installed,initialize,importId,rootsFile);
         using var child=Process.Start(start)??throw new IOException("Windows could not start AI Buddy");
         var end=DateTime.UtcNow.AddSeconds(90);
         while(DateTime.UtcNow<end) {
             cancel.ThrowIfCancellationRequested();var status=await Request(PipeName(installed),new{command="installation-status"},1500,cancel);
-            if(status is {} s&&MatchStartup(root,installed,s,importId is not null) is {} startup){LastStartup=startup;return;}
+            if(status is {} s&&MatchStartup(root,installed,s,importId is not null,strictInstallation) is {} startup){LastStartup=startup;return;}
             await Task.Delay(800,cancel);
         }
         throw new IOException("AI Buddy did not become ready within 90 seconds; installation recovery will retain personal data");
