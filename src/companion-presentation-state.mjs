@@ -22,11 +22,14 @@ export function createPresentationState(){
  return {
   beginInput:(scope,id)=>begin(scope,'input',id),endInput:(scope,id)=>end(scope,'input',id),
   beginRequest:(scope,id)=>begin(scope,'requests',id),endRequest:(scope,id)=>end(scope,'requests',id),
-  beginPresentation(scope,{id=randomUUID(),hasAudio=false}={}){state(scope).presentations.set(id,{textDone:false,audioDone:!hasAudio});revision++;return id;},
+  beginPresentation(scope,{id=randomUUID(),hasAudio=false,autoRequestId,characterId}={}){const row=state(scope);if(!row.presentations.has(id)){row.presentations.set(id,{textDone:false,audioDone:!hasAudio,autoRequestId,characterId});revision++;}return id;},
+  presentation(scope,id){const value=state(scope).presentations.get(id);return value?{id,...value}:null;},
+  cancelPresentation:(scope,id)=>end(scope,'presentation',id),
+  cancelAutoPresentations(scope,{completed={},retiredRequests={}}={}){const row=state(scope);let changed=false;for(const [id,value]of row.presentations)if(value.autoRequestId&&(Object.hasOwn(completed,value.autoRequestId)||Object.hasOwn(retiredRequests,value.autoRequestId))){row.presentations.delete(id);changed=true;}if(changed)revision++;return changed;},
   finishText(scope,id){const value=state(scope).presentations.get(id);if(!value)return false;value.textDone=true;if(value.audioDone)state(scope).presentations.delete(id);revision++;return true;},
   finishAudio(scope,id){const value=state(scope).presentations.get(id);if(!value)return false;value.audioDone=true;if(value.textDone)state(scope).presentations.delete(id);revision++;return true;},
   setAwaitingUser(scope,value){state(scope).awaitingUser=value===true;revision++;},
-  snapshot(scope){const row=state(scope);return {revision,typing:row.input.size>0,waitingForReply:row.requests.size>0,presenting:row.presentations.size>0,audioPlaying:[...row.presentations.values()].some(x=>!x.audioDone),awaitingUserAnswer:row.awaitingUser,canPresent:!row.input.size&&!row.requests.size&&!row.presentations.size&&!row.awaitingUser};},
+  snapshot(scope){const row=state(scope),first=row.presentations.entries().next().value;return {revision,typing:row.input.size>0,waitingForReply:row.requests.size>0,presenting:row.presentations.size>0,...(first?{messageId:first[0],characterId:first[1].characterId}:{}),audioPlaying:[...row.presentations.values()].some(x=>!x.audioDone),awaitingUserAnswer:row.awaitingUser,canPresent:!row.input.size&&!row.requests.size&&!row.presentations.size&&!row.awaitingUser};},
   invalidate(scope){const deleted=states.delete(socialScopeKey(scope));if(deleted)revision++;return deleted;},
   clear(){states.clear();revision++;}
  };

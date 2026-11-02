@@ -228,6 +228,15 @@ export const CompanionDesignCSS=`
 .buddy-round-arrow{color:var(--buddy-dlg-muted)}
 .buddy-round-end{font-size:var(--buddy-fs-sm);color:var(--buddy-dlg-muted)}
 .buddy-round .buddy-muted{font-size:var(--buddy-fs-sm);color:var(--buddy-dlg-muted)}
+.buddy-progress{min-width:0;max-width:100%;font-size:var(--buddy-fs-sm)}
+.buddy-progress>summary{cursor:pointer;color:var(--buddy-dlg-muted);white-space:nowrap;padding:3px 6px;border-radius:6px}
+.buddy-progress>summary:focus-visible{outline:2px solid var(--buddy-accent-text);outline-offset:2px}
+.buddy-progress-expanded{display:none}.buddy-progress[open]>summary .buddy-progress-collapsed{display:none}.buddy-progress[open]>summary .buddy-progress-expanded{display:inline}
+.buddy-progress[open]{flex:1 0 100%;order:10}.buddy-progress-body{max-height:120px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:6px;min-width:0}
+.buddy-progress-body>section>strong,.buddy-progress-body>details>summary{font-size:var(--buddy-fs-cap);color:var(--buddy-dlg-muted);padding:4px 0}.buddy-progress-body>details>summary{cursor:pointer}
+.buddy-auto-members{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}.buddy-auto-member{display:inline-flex;gap:7px;align-items:center;padding:4px 8px;border-radius:8px;background:color-mix(in srgb,var(--buddy-dlg-text) 7%,transparent);font-size:var(--buddy-fs-cap)}
+.buddy-auto-member>span{color:var(--buddy-dlg-muted)}.buddy-auto-member[data-auto-opportunity-status=failed]>span{color:var(--buddy-err)}
+.buddy-ack-error{position:absolute;left:0;right:0;bottom:0;z-index:6;pointer-events:auto;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;background:var(--buddy-surface);color:var(--buddy-err);font-size:var(--buddy-fs-sm)}
 .buddy-group-panel .gx-ta .whg-input{min-height:44px}
 .buddy-mention-menu{border:0;border-radius:12px;background:var(--buddy-surface);color:var(--buddy-text);box-shadow:0 16px 40px -16px var(--buddy-shadow),0 0 0 1px var(--buddy-border);font:var(--buddy-fs-body)/1.4 var(--buddy-f-ui)}
 .buddy-mention-menu button[aria-selected=true]{background:color-mix(in srgb,var(--buddy-accent) 16%,transparent)}

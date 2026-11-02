@@ -4,7 +4,7 @@ import React,{useEffect,useRef,useState} from 'react';
 import {FullMessageButton,FullMessageCSS,needsFullView} from './full-message-viewer.mjs';
 import {t} from './i18n.mjs';
 import {createR95ActionClient,r95GroupInputPolicy} from './r95-core-page.mjs';
-import {AutoRoundStrip,ChatSpeechLines,MessageSources,sourceView,unreadLines,autoProgress,speechHistory,speechTag,clock} from './chat-r95-ui.mjs';
+import {AutoRoundStrip,AutoEndedSummary,ChatSpeechLines,MessageSources,sourceView,unreadLines,autoProgress,speechHistory,speechTag,clock} from './chat-r95-ui.mjs';
 import {CHARACTER_CATALOG} from './character-catalog.mjs';
 import {GroupMentionInput} from './group-mention-input.mjs';
 import {companionImage} from './companion-image.mjs';
@@ -323,7 +323,8 @@ export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onTo
  const turn=step=>h('span',{key:step.key,className:'buddy-turn'+(step.kind?' '+step.kind:'')},step.kind==='busy'?h('span',{className:'ui-spinner','aria-hidden':true}):face(characterHead(characterOf(step.id)),nameOf(step.id),'buddy-face sm'),step.kind==='next'?t('下一位 ')+nameOf(step.id):step.kind==='busy'?nameOf(step.id)+t(' 正在回复'):nameOf(step.id),step.kind==='done'&&Icon('check',{size:13}));
  const round=(steps.length>0||isRunning||canContinue||canRetry||hasQueue)&&h('div',{className:'buddy-round','data-group-round':true},
   h('span',{className:'buddy-round-k'},t('本轮')),
-  h('div',{className:'buddy-round-steps'},...steps.flatMap((step,i)=>i?[h('span',{key:'a'+i,className:'buddy-round-arrow','aria-hidden':true},'›'),turn(step)]:[turn(step)])),
+  h('span',{className:'buddy-round-current'},current?(isRunning?nameOf(current)+' '+t('正在回复'):canRetry?nameOf(current)+' '+t('回复失败'):t('下一位 ')+nameOf(current)):t('已发言')+' '+spoken.length),
+  h('details',{key:group.id+':'+(log[lastUser]?.id??'round'),className:'buddy-progress','data-group-progress-details':group.id},h('summary',null,h('span',{className:'buddy-progress-collapsed'},t('展开进度')),h('span',{className:'buddy-progress-expanded'},t('收起进度'))),h('div',{className:'buddy-progress-body buddy-round-steps'},...steps.flatMap((step,i)=>i?[h('span',{key:'a'+i,className:'buddy-round-arrow','aria-hidden':true},'›'),turn(step)]:[turn(step)]))),
   isRunning&&h('span',{className:steps.length?'buddy-sr':'buddy-muted',role:'status'},groupStatusText(runtime,nameOf(current))),
   h('span',{className:'spacer'}),
   roundDone?h('span',{className:'buddy-round-end'},t('本轮结束，发新消息开始下一轮')):h(F,null,
@@ -342,6 +343,8 @@ export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onTo
  const send=()=>{if(!text.trim()||sendBlocked)return;const line=speech[0];void perform('companion-group-send',{text,mentionBindings:bindings}).then(sent=>{if(sent&&line?.status==='presented')void r95Client.current('speech-read',{messageId:line.messageId}).catch(e=>setError(e.message));});};
  const focusInput=()=>document.querySelector('#whg-panel[data-companion-group-dialogue] textarea:not(:disabled)')?.focus({preventScroll:true});
  const autoStrip=autoProgress(state.r95?.auto),queued=runtime.queuedUserMessages>0?runtime.queuedUserMessages:0;
+ const ordinaryRuntime=typeof runtime.mode==='string'?runtime.mode!=='auto':!(runtime.pendingMessage?.autoRequestId||runtime.currentMessage?.autoRequestId)&&(canContinue||autoStrip?.status!=='active'&&(isRunning||canRetry||hasQueue));
+ const endedAuto=state.r95?.auto?.status==='ended'?state.r95.auto:null,lastUserMessage=log[lastUser],lastAutoIndex=log.map(m=>!!m.autoRequestId).lastIndexOf(true),newOrdinaryUser=lastUser>=0&&(Number.isFinite(endedAuto?.endedAt)&&Number.isFinite(lastUserMessage?.createdAt)?lastUserMessage.createdAt>endedAuto.endedAt:lastAutoIndex>=0&&lastUser>lastAutoIndex)||!!endedAuto&&state.groupRuntime?.currentMessage?.role==='user'&&(isRunning||hasQueue||canContinue),showEnded=!!endedAuto&&!newOrdinaryUser&&!ordinaryRuntime;
  const partial=!!message?.transient&&!isRunning,speakerName=message?.role==='assistant'?(message.characterName||(member?companionCharacterName(member):'')):'';
  const displayMessageText=visibleCompanionText(message,{messages:state.groupMessages??[]}),fullText=!isRunning&&displayMessageText?displayMessageText:'';
  return h('section',{id:'whg-panel',className:'whg-panel gx-dlg buddy-group-panel','aria-label':t('群聊对话'),'data-companion-group-dialogue':group.id},
@@ -349,13 +352,13 @@ export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onTo
   h('div',{className:'buddy-group-meta'},h('button',{type:'button',className:'gx-gbtn',disabled:locked,title:locked?t('本轮结束后可用'):undefined,onClick:()=>setPhotoOpen(true)},Icon('camera',{size:13}),t('合影 CG')),h('button',{type:'button',className:'gx-gbtn',disabled:locked,title:locked?t('本轮结束后可用'):undefined,onClick:()=>void perform('companion-group-end')},t('结束本次聊天'))),
   // Approved designs C6 / C9: mood and Auto chips are in the toolbar now; while Auto runs, one strip says who is
   // talking, round n / total, who is next and whether your message waits behind hers.
-  h(AutoRoundStrip,{view:state.r95?{...state.r95,groupId:state.r95.groupId??group.id}:null,onAction:r95Client.current,nameOf,busy:isRunning,speaker:isRunning&&member?companionCharacterName(member):'',queued}),
+  h(AutoRoundStrip,{view:state.r95?{...state.r95,groupId:state.r95.groupId??group.id}:null,onAction:r95Client.current,nameOf,busy:isRunning&&!ordinaryRuntime,speaker:isRunning&&!ordinaryRuntime&&member?companionCharacterName(member):'',queued}),
   h('div',{className:'whg-line-now'+(message?'':' narrator'),key:message?.id||group.id,'aria-live':'polite','data-group-message-id':!runtime.streaming?.text?message?.id:undefined,'data-auto-request-id':!runtime.streaming?.text?message?.autoRequestId:undefined},((isRunning||canRetry)&&runtime.streaming?.text)||displayMessageText||t('说点什么，开始这一轮群聊。')),
   h(ChatSpeechLines,{view:state.r95,onAction:r95Client.current,onReply:focusInput}),
   runtime.streaming?.interrupted&&h('p',{className:'buddy-muted',role:'status'},t('上次回复已中断，以下仅为保留的部分正文，未结算。')),
   (sourceView(message)||needsFullView(fullText))&&h('div',{className:'gx-foot'},h(MessageSources,{message}),h('span',{className:'grow'}),fullText&&h(FullMessageButton,{text:fullText,messageId:group.id+':'+message.id,title:message?.characterName||member?.name||message?.personaName,name:speakerName||undefined,at:message?.createdAt??message?.at,interrupted:partial})),
   !message&&!round&&h('p',{className:'buddy-group-hint'},t('发送后第一位会自动回复，后续成员点击“继续”接话。')),
-  alert,autoStrip?.status==='active'?null:round,
+  alert,autoStrip&&!ordinaryRuntime?null:showEnded?h(AutoEndedSummary,{view:state.r95,nameOf}):round,
   queued>0&&!autoStrip&&h('p',{role:'status',className:'r95-queued','data-r95-queued-user':queued},Icon('clock',{size:13}),t('你的消息排在她后面'),' · ',queued),
   h('div',{className:'whg-input-row gx-say',onFocusCapture:()=>setInputActive(true),onBlurCapture:e=>{if(!e.currentTarget.contains(e.relatedTarget))setInputActive(false);}},h('div',{className:'gx-ta'+(inputBlocked?' dis':'')},h(GroupMentionInput,{value:text,bindings,placeholder:autoSession?t('插一句…（Auto 进行中也可以说话）'):placeholder,onChange:(value,nextBindings)=>{setText(value);setBindings(nextBindings);setInputActive(!!value);},members:group.memberIds.map(id=>characterOf(id)).filter(Boolean),disabled:inputBlocked,onSubmit:send}),h('small',{'aria-hidden':true},t('Enter 发送 · Shift+Enter 换行'))),
    h('button',{type:'button',className:'whg-send gx-send',disabled:sendBlocked||!text.trim(),onClick:send},isRunning&&!autoSession?h('span',{className:'ui-spinner','aria-hidden':true}):Icon('send',{size:15}),autoSession?t('插话'):t('发送'))),

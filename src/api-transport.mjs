@@ -4,6 +4,7 @@ import {cleanModelCatalog,effortSupport,validateProfileEffort,effortProtocol} fr
 import {streamNativeSearch} from './native-search-transport.mjs';
 import {checkedImagePart,imageDataUrl} from './model-images.mjs';
 import {createModelSubmission} from './model-submission.mjs';
+import {apiHttpError,readApiHttpError} from './api-http-error.mjs';
 const textOf=value=>typeof value==='string'?value:Array.isArray(value)?value.filter(part=>part.type==='text'||part.type==='input_text'||part.type==='output_text').map(part=>part.text??'').join('\n'):'';
 const messagesOf=options=>(options.messages??[]).map(message=>{const role=message.role==='assistant'?'assistant':'user',mixed=Array.isArray(message.content)&&message.content.some(p=>p.type==='image');if(!mixed)return {role,content:textOf(message.content)};if(role!=='user')throw Error('MODEL_IMAGE_INVALID');return {role,content:message.content.map(p=>p.type==='image'?checkedImagePart(p):p.type==='text'&&typeof p.text==='string'?{type:'text',text:p.text}:(()=>{throw Error('MODEL_IMAGE_INVALID');})())};});
 const partsOf=message=>typeof message.content==='string'?[{type:'text',text:message.content}]:message.content;
@@ -22,7 +23,7 @@ function requestBody(profile,options){
   return {model:profile.model,messages:[...(options.system?[{role:'system',content:options.system}]:[]),...messages.map(m=>Array.isArray(m.content)?{...m,content:wireContent(m,'chat-completions')}:m)],...(budget?{max_tokens:budget}:{}),stream:true,stream_options:{include_usage:true},...(profile.protocol==='chat-completions'&&effort?{reasoning_effort:effort}:{})};
 }
 function headers(profile){return {'Content-Type':'application/json',...(profile.protocol==='gemini'?{'x-goog-api-key':profile.key}:profile.protocol==='anthropic'?{'x-api-key':profile.key,'anthropic-version':'2023-06-01'}:profile.key?{Authorization:'Bearer '+profile.key}:{})};}
-export function apiError(status){return Error(status===401?'API Key 无效，请重新配置':status===403?'当前账户没有该模型的访问权限':status===404?'服务地址或模型 ID 不存在':status===429?'请求受限或额度不足，请稍后重试':status>=500?'模型服务暂时不可用，请稍后重试':'API 请求失败，请检查模型和协议配置');}
+export const apiError=apiHttpError;
 const numeric=value=>Number.isFinite(value)&&value>=0?value:null;
 export function normalizeApiUsage(raw={},protocol){
   const input=numeric(raw.input_tokens??raw.prompt_tokens??raw.promptTokenCount??raw.total_input_tokens),output=numeric(raw.output_tokens??raw.completion_tokens??raw.candidatesTokenCount??raw.total_output_tokens),cached=numeric(raw.input_tokens_details?.cached_tokens??raw.prompt_tokens_details?.cached_tokens??raw.cache_read_input_tokens??raw.cachedContentTokenCount??raw.total_cached_tokens),reasoning=numeric(raw.output_tokens_details?.reasoning_tokens??raw.completion_tokens_details?.reasoning_tokens??raw.thoughtsTokenCount??raw.total_thought_tokens);
@@ -69,11 +70,11 @@ export class ApiTransport{
   async *streamRequest(profile,options,submission){
     if(effortProtocol(profile.protocol))validateProfileEffort(profile);
     if(options.nativeSearch?.allowed===true){yield* streamNativeSearch(profile,options,{fetch:this.fetch,onUsage:this.onUsage,audit:this.audit,requestBody,headers,normalizeUsage:normalizeApiUsage,apiError,parsePayload,submission});return;}
-    const requestId=submission.details.requestId,started=Date.now(),state={usage:null};let finished=false,outputLength=0,status=null;
+    const requestId=submission.details.requestId,started=Date.now(),state={usage:null};let finished=false,outputLength=0,status=null,httpError=null;
     const route=profile.protocol==='gemini'?'/models/'+encodeURIComponent(profile.model.replace(/^models\//,''))+':streamGenerateContent?alt=sse':profile.protocol==='anthropic'?'/messages':profile.protocol==='responses'?'/responses':'/chat/completions';
     try{
       const url=profile.baseUrl+route,init={method:'POST',headers:headers(profile),body:JSON.stringify(requestBody(profile,options)),signal:options.signal,redirect:'error'};
-      await submission.beforeSend();submission.attempt();options.onTiming?.({name:'request-submitted'});const response=await this.fetch(url,init);status=response.status;await submission.confirm({status});options.onTiming?.({name:'response-headers'});if(!response.ok){await response.body?.cancel().catch(()=>{});throw apiError(status);}
+      await submission.beforeSend();submission.attempt();options.onTiming?.({name:'request-submitted'});const response=await this.fetch(url,init);status=response.status;await submission.confirm({status});options.onTiming?.({name:'response-headers'});if(!response.ok){const error=await readApiHttpError(response,{signal:options.signal,secrets:[profile.key]});httpError=error.httpError;throw error;}
       if(response.headers.get('content-type')?.includes('text/event-stream')){
         for await(const raw of events(response)){if(raw==='[DONE]'){finished=true;continue;}let value;try{value=JSON.parse(raw);}catch{throw Error('模型返回了无效数据，请检查协议');}const parsed=parsePayload(value,profile,state);finished||=parsed.done;if(parsed.text){if(!outputLength)options.onTiming?.({name:'first-delta'});outputLength+=parsed.text.length;if(outputLength>1024*1024)throw Error('模型回复过长，请重试');yield {type:'text-delta',text:parsed.text};}}
       }else{const raw=await response.text();if(raw.length>2*1024*1024)throw Error('模型响应过大，请重试');let value;try{value=JSON.parse(raw);}catch{throw Error('模型返回了无效数据，请检查协议');}const parsed=parsePayload(value,profile,state);if(parsed.text){outputLength=parsed.text.length;yield {type:'text-delta',text:parsed.text};}finished=parsed.done;}
@@ -81,11 +82,11 @@ export class ApiTransport{
       if(state.truncated){yield {type:'finish',reason:{kind:'length'}};return;}
       if(!outputLength)throw Error('模型没有返回正文，请重试');yield {type:'finish',reason:{kind:'stop'}};
     }catch(error){if(!submission.attempted)throw error;if(options.signal?.aborted)throw Error('请求已取消或超时',{cause:error});if(error?.message?.startsWith('MODEL_')||error?.message?.startsWith('API')||error?.message?.startsWith('模型')||error?.message?.startsWith('当前账户')||error?.message?.startsWith('服务地址')||error?.message?.startsWith('请求受限'))throw error;throw Error('无法连接模型服务，请检查地址或网络',{cause:error});}
-    finally{if(submission.attempted)this.onUsage({requestId,profileId:profile.id,provider:profile.kind,connectionIdentity:connectionIdentity(profile),model:profile.model,purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId,scope:options.scope,timestamp:new Date().toISOString(),usage:normalizeApiUsage(state.usage||{},profile.protocol)});this.audit({type:'api-request',requestId,provider:profile.kind,connectionIdentity:connectionIdentity(profile),model:profile.model,status,durationMs:Date.now()-started,submitted:submission.attempted,completed:finished});}
+    finally{if(submission.attempted)this.onUsage({requestId,profileId:profile.id,provider:profile.kind,connectionIdentity:connectionIdentity(profile),model:profile.model,purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId,scope:options.scope,timestamp:new Date().toISOString(),usage:normalizeApiUsage(state.usage||{},profile.protocol)});this.audit({type:'api-request',requestId,traceId:options.traceId,provider:profile.kind,connectionIdentity:connectionIdentity(profile),model:profile.model,status,...(httpError?{httpError}:{}),durationMs:Date.now()-started,submitted:submission.attempted,completed:finished});}
   }
   async listModels(profile,signal){
     let response;try{response=await this.fetch(profile.baseUrl+'/models',{headers:headers(profile),signal,redirect:'error'});}catch{throw Error('无法获取模型列表，请检查地址或网络；也可手动填写');}
-    if(!response.ok){await response.body?.cancel().catch(()=>{});throw apiError(response.status);}let data;try{data=await response.json();}catch{throw Error('模型列表格式不兼容，请手动填写模型 ID');}
+    if(!response.ok)throw await readApiHttpError(response,{signal,secrets:[profile.key]});let data;try{data=await response.json();}catch{throw Error('模型列表格式不兼容，请手动填写模型 ID');}
     const rows=profile.protocol==='gemini'?data.models:data.data;
     if(!Array.isArray(rows))throw Error('模型列表格式不兼容，请手动填写模型 ID');
     return cleanModelCatalog(rows.filter(row=>profile.protocol!=='gemini'||!row.supportedGenerationMethods||row.supportedGenerationMethods.includes('generateContent')).map(row=>{

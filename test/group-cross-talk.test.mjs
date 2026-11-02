@@ -37,7 +37,8 @@ test('Members receive presented peer turns in order, can disagree in their own m
   assert.equal(second.characterId,'claude');assert.equal(request.provider,'claude-api');assert.equal(request.model,'claude-api-model');
   assert.match(bodies(request),/DeepSeek：Claude，我觉得今晚吃火锅/);assert.ok(second.text.startsWith('DeepSeek，我不赞成'));
   assert.match(request.system,/可以直接.*同伴|成员.*接话/);assert.match(request.system,/不是.*玩家指令|不代表.*玩家指令/);
-  assert.deepEqual(JSON.parse(request.system.split('消息来源索引（与消息同序）：').at(-1)),['user','deepseek']);
+  const sourceIndex=JSON.parse(request.system.split('消息来源索引（与消息同序）：').at(-1));assert.deepEqual(sourceIndex.slice(0,2),['user','deepseek']);assert.deepEqual(sourceIndex.slice(2),['host']);assert.equal(sourceIndex.length,request.messages.length);assert.equal(request.messages.at(-1).role,'user');assert.equal(request.messages.at(-1).source.kind,'host-control');assert.match(request.messages.at(-1).content[0].text,/host-control/);
+  const history=(await state(f.game)).groupMessages,exported=(await f.game.action('companion-group-export',{id:f.group.id})).data.groups.find(row=>row.id===f.group.id);assert.equal(history.length,2);assert.equal(history[0].role,'user');assert.equal(history[1].id,first.id);assert.deepEqual(exported.messages.map(row=>row.id),history.map(row=>row.id));assert.ok(!history.some(row=>row.text.includes('host-control')));assert.ok(!exported.messages.some(row=>row.text.includes('host-control')));
   assert.ok(second.request.inputMessageIds.includes(first.id));assert.equal(second.interactionTarget,'deepseek');
   await present(f);await f.game.action('companion-group-continue');const third=await pending(f);
   assert.equal(third.characterId,'chatgpt');assert.match(bodies(f.calls[2]),/Claude：DeepSeek，我不赞成/);await present(f);

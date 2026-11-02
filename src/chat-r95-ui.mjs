@@ -83,18 +83,31 @@ export function AutoChip({view,onAction,nameOf,onOpenSocial,initialOpen}){
  if(!view)return null;const progress=autoProgress(view.auto),status=progress?autoRoundText(progress):view.settings?.auto===true?t('未开始'):t('未开启');
  return h(ChatPop,{initialOpen,label:t('群聊 Auto')+' · '+status,className:'r95-auto-pop','data-r95-auto-menu':true,buttonClass:'gx-tb r95-chip'+(progress?' on':''),chip:h(F,null,Icon(progress?.status==='paused'?'pause':'play',{size:16}),h('span',null,'Auto'),h('small',{className:'r95-chip-st'},status))},close=>h(GroupAutoPanel,{view,onAction,nameOf,onOpenSocial:onOpenSocial&&(()=>{close();onOpenSocial();})}));
 }
+function AutoProgressDetails({auto,nameOf,busy=false}){
+ const rows=Object.entries(auto.completed??{}).filter(([,row])=>row&&typeof row==='object').map(([requestId,row])=>({...row,requestId})),indexed=rows.filter(row=>Number.isSafeInteger(row.roundIndex)&&row.roundIndex>=0),unindexed=rows.filter(row=>!Number.isSafeInteger(row.roundIndex)||row.roundIndex<0),done=Number.isSafeInteger(auto.roundIndex)?Math.max(0,auto.roundIndex):0,current=auto.status==='ended'&&auto.endedReason==='round-limit'?Math.max(0,done-1):done,members=Array.isArray(auto.members)?auto.members:[],old=[...new Set(indexed.map(row=>row.roundIndex))].filter(index=>index!==current).sort((a,b)=>a-b);
+ const label=status=>({presented:t('已发言'),silent:t('沉默'),failed:t('回复失败'),unknown:t('待核对'),cancelled:t('已取消'),busy:t('正在回复'),waiting:t('等待'),unrecorded:t('未记录')})[status]??t('未记录');
+ const entry=(id,status,key)=>h('span',{key,className:'buddy-auto-member','data-character-id':id,'data-auto-opportunity-status':status},h('b',null,nameOf(id)),h('span',null,label(status)));
+ const roundRows=index=>indexed.filter(row=>row.roundIndex===index).sort((a,b)=>(a.opportunityIndex??0)-(b.opportunityIndex??0));
+ const currentRows=roundRows(current),currentEntries=members.map((id,index)=>{const row=currentRows.find(row=>row.characterId===id&&(row.opportunityIndex===index||!Number.isSafeInteger(row.opportunityIndex))),pending=auto.pending?.characterId===id&&(auto.pending.roundIndex??done)===current,status=row?.status??(pending?['failed','unknown','cancelled'].includes(auto.pending.status)?auto.pending.status:busy?'busy':'waiting':auto.status==='ended'?'unrecorded':'waiting');return entry(id,status,id+':'+index);});
+ return h('details',{key:auto.id??'auto',className:'buddy-progress','data-auto-progress-details':auto.id??'','data-auto-session':auto.id??''},h('summary',null,h('span',{className:'buddy-progress-collapsed'},t('展开进度')),h('span',{className:'buddy-progress-expanded'},t('收起进度'))),h('div',{className:'buddy-progress-body'},h('section',{'data-auto-round-index':current},h('strong',null,fill(t('第 {n} 轮'),{n:current+1})),h('div',{className:'buddy-auto-members'},...currentEntries)),...old.map(index=>h('details',{key:index,'data-auto-round-index':index},h('summary',null,fill(t('第 {n} 轮'),{n:index+1})),h('div',{className:'buddy-auto-members'},...roundRows(index).map(row=>entry(row.characterId,row.status,row.requestId))))),unindexed.length>0&&h('details',null,h('summary',null,t('未标注轮次的记录')),h('div',{className:'buddy-auto-members'},...unindexed.map(row=>entry(row.characterId,row.status,row.requestId))))));
+}
+export function AutoEndedSummary({view,nameOf=id=>id}){
+ const auto=view?.auto;if(auto?.status!=='ended')return null;const reason=auto.endedReason==='round-limit'?t('达到轮数上限'):auto.endedReason==='topic-ended'?t('话题已结束'):t('已停止');
+ return h('div',{className:'r95-roundstrip buddy-auto-ended','data-auto-ended':auto.id??''},h('span',null,t('Auto 已结束')),h('small',null,fill(t('已完成 {n} 轮'),{n:Number.isSafeInteger(auto.roundIndex)?auto.roundIndex:0})+' · '+reason),h(AutoProgressDetails,{auto,nameOf}));
+}
 // The strip at the top of the group dialogue while Auto runs: who is talking, round n / total, who is next,
 // whether your message waits behind hers, and Pause / Stop (approved designs C6 and C9).
 export function AutoRoundStrip({view,onAction,nameOf=id=>id,busy=false,speaker='',queued=0}){
- const progress=autoProgress(view?.auto),{pending,run}=useRun(onAction);if(!progress)return null;
- const groupId=view.groupId,who=progress.unresolved?'':speaker||(progress.speaking?nameOf(progress.speaking):''),paused=progress.status==='paused',speakingBusy=busy&&!progress.unresolved;
+ const progress=autoProgress(view?.auto),{pending,error,run}=useRun(onAction);if(!progress)return null;
+ const groupId=view.groupId,who=progress.unresolved?'':speaker||(progress.speaking?nameOf(progress.speaking):''),paused=progress.status==='paused',speakingBusy=!!busy&&!progress.unresolved;
+ const wait=({presenting:t('等待上一句显示'),input:t('等待输入结束'),model:t('等待模型回复'),['awaiting-user']:t('等待你的回复'),['not-visible']:t('等待对话窗口可见'),ready:t('准备下一位')})[view.autoWait?.reason];
  const detail=['Auto',autoRoundText(progress),progress.failed&&nameOf(progress.failed)+' · '+t('回复失败'),progress.next&&fill(t('下一位 {name}'),{name:nameOf(progress.next)})].filter(Boolean).join(' · ');
  return h('div',{className:'r95-roundstrip',role:'status','data-auto-strip':groupId??''},
-  h('span',{className:'r95-row'},speakingBusy?h('span',{className:'ui-spinner','aria-hidden':true}):Icon(paused?'pause':'play',{size:14}),speakingBusy&&who?h('span',null,h('b',null,who),' '+t('正在说')):h('span',null,paused?t('Auto 已暂停'):t('Auto 进行中'))),
-  h('small',null,detail),h('span',{className:'grow'}),
+  h('span',{className:'r95-row r95-auto-state'},speakingBusy?h('span',{className:'ui-spinner','aria-hidden':true}):Icon(paused?'pause':'play',{size:14}),speakingBusy?h('span',null,who&&h('b',null,who),who?' '+t('正在说'):t('正在回复')):h('span',null,paused?t('Auto 已暂停'):wait??t('Auto 进行中'))),
+  h('small',{className:'r95-auto-detail'},detail),h(AutoProgressDetails,{auto:view.auto,nameOf,busy:speakingBusy}),h('span',{className:'grow'}),
   queued>0&&h('span',{className:'ws-tag','data-r95-queued-user':queued},t('你的消息排在她后面')),
   paused?h('button',{type:'button',className:'ui-btn sm ghost',disabled:pending||!!view.auto?.pending,onClick:()=>void run('auto-continue',{groupId})},Icon('play',{size:14}),t('继续')):h('button',{type:'button',className:'ui-btn sm ghost',disabled:pending,onClick:()=>void run('auto-pause',{groupId})},Icon('pause',{size:14}),t('暂停')),
-  h('button',{type:'button',className:'ui-btn sm ghost danger',disabled:pending,onClick:()=>void run('auto-stop',{groupId})},Icon('stop',{size:14}),t('停止')));
+  h('button',{type:'button',className:'ui-btn sm ghost danger',disabled:pending,onClick:()=>void run('auto-stop',{groupId})},Icon('stop',{size:14}),t('停止')),error&&h('span',{role:'alert',className:'r95-err'},error));
 }
 
 // The More menu that takes History / CG / Pet when the toolbar does not fit on one line (approved design C6).
@@ -212,6 +225,7 @@ export const ChatR95CSS=`
 .gx-more-item:disabled{opacity:.5;cursor:default}
 .r95-roundstrip{flex:none;flex-wrap:wrap;border-radius:10px;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--buddy-accent) 30%,transparent)}
 .r95-roundstrip small{margin-left:0}
+.r95-roundstrip{min-width:0}.r95-roundstrip .r95-auto-detail{flex:1 1 170px;min-width:0;overflow-wrap:anywhere}.r95-roundstrip>.ui-btn{flex:none;white-space:nowrap}.r95-roundstrip .r95-auto-state{min-width:0}.buddy-auto-ended .buddy-progress{margin-left:auto}
 .r95-roundstrip .ui-btn{height:26px}
 .r95-roundstrip .ui-spinner{color:var(--buddy-accent-text)}
 .gx-foot{display:flex;flex:none;flex-wrap:wrap;align-items:center;gap:8px;min-height:26px}

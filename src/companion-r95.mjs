@@ -9,7 +9,7 @@ import {createAttentionService,attentionAvailability} from './companion-attentio
 import {createMoodService,rebaseMoodSnapshot} from './companion-mood.mjs';
 import {createProactiveService} from './companion-proactive.mjs';
 import {createAutoService} from './companion-auto.mjs';
-import {createPresentationState,assertSocialScope,sameSocialScope} from './companion-presentation-state.mjs';
+import {createPresentationState,assertSocialScope,sameSocialScope,socialScopeKey} from './companion-presentation-state.mjs';
 import {createActivityOriginRegistry} from './activity-origin.mjs';
 import {createFeedingService} from './companion-feeding.mjs';
 import {createSocialHost} from './buddy-plugin-services/social-host.mjs';
@@ -39,7 +39,7 @@ export async function createCompanionR95({store,dataRoot,provider,memory,getCont
  const checkCurrent=(scope,id)=>{assertScope(scope);if(closed||store.state.lifeTransaction?.characterId===scope.characterId||id&&(!origins.resolve(id)||Number.isFinite(origins.resolve(id).finishedAt)))throw Error('当前人生或活动许可已经失效');};
  const authorizedAppSocialScopes=scope=>scope.channel==='app-private'?[...new Set((store.state.lives[scope.characterId].socialExperiences??[]).filter(row=>row.channel==='bilibili'&&row.personaId===scope.personaId&&row.lifeId===scope.lifeId&&row.sourceHash===socialExperienceHash(row)&&row.understandingState==='understood'&&!['failed','cancelled','unknown'].includes(row.stage)).map(socialMemoryScope))]:[];
  const origins=createActivityOriginRegistry({now,validateScope:scope=>{assertScope(scope);return !closed;}});
- const presentation=createPresentationState();
+ const presentation=createPresentationState(),renderedAcks=new Map();
  const attention=createAttentionService({store,now,getActiveContext:activeScope});
  const deliveryKey=scope=>[scope.channel,scope.accountBindingId,scope.bindingGeneration].join('\0');
  const report=error=>audit({type:'r95-error',code:error.code??null,message:String(error.message).slice(0,1000)});
@@ -141,7 +141,12 @@ export async function createCompanionR95({store,dataRoot,provider,memory,getCont
  // Personas the trusted-owner form can pick (id and nickname only). timeZone is the app's statistics time zone.
  const customName=id=>validPetCharacter(id)?undefined:store.state.cards[id]?.name;
  const pageNames=scope=>{const feedingView=feeding.view(),feedingId=feedingView.activeScope?.characterId,name=customName(scope.characterId);return {timeZone:getTimeZone(),personas:Object.entries(store.state.personas??{}).map(([id,row])=>({id,nickname:typeof row?.nickname==='string'?row.nickname:typeof row?.name==='string'?row.name:null})),...(name?{characterName:name}:{}),feeding:{...feedingView,...(feedingId&&customName(feedingId)?{characterName:customName(feedingId)}:{})}};};
- function view(){const scope=activeScope(),groupId=getContext().groupId;return {...pageNames(scope),ownerBindings:owner.list().filter(binding=>binding.personaId===scope.personaId).map(({accountBindingId,actorId,personaId,version})=>({accountBindingId,actorId,personaId,version,route:copy(store.state.r95?.ownerRoutes?.[accountBindingId]??{})})),ownerWorkOptions:work?.ownerWorkOptions?.(scope)??{projects:[],members:[]},language:getLanguage(),scope,mood:mood.view({scope}),availability:attention.view({scope}),settings:copy(store.state.r95?.settings??{}),search:{enabled:store.state.r95?.searchEnabled===true,capability:provider.resolveSearchCapability?.(store.state.cards[scope.characterId].modelBinding)},...(groupId?auto.view({groupId}):{}),lines:copy((store.state.lives[scope.characterId].r95?.lines??[]).filter(row=>row.scope.personaId===scope.personaId&&row.scope.channel===scope.channel&&row.scope.conversationId===scope.conversationId))};}
+ function autoWait(scope,groupId){
+  const session=store.state.groups[groupId]?.auto;if(session?.status!=='active'||session.pending)return null;
+  const state=runtime(scope),tracked=presentation.snapshot(scope),reason=state.presenting||state.audioPlaying?'presenting':state.typing?'input':state.waitingForReply?'model':state.awaitingUserAnswer?'awaiting-user':state.canPresent===false?'not-visible':'ready';
+  return {reason,...(reason==='presenting'?{...(tracked.messageId?{messageId:tracked.messageId}:{}),characterId:tracked.characterId??scope.characterId}:{})};
+ }
+ function view(){const scope=activeScope(),groupId=getContext().groupId;return {...pageNames(scope),ownerBindings:owner.list().filter(binding=>binding.personaId===scope.personaId).map(({accountBindingId,actorId,personaId,version})=>({accountBindingId,actorId,personaId,version,route:copy(store.state.r95?.ownerRoutes?.[accountBindingId]??{})})),ownerWorkOptions:work?.ownerWorkOptions?.(scope)??{projects:[],members:[]},language:getLanguage(),scope,mood:mood.view({scope}),availability:attention.view({scope}),settings:copy(store.state.r95?.settings??{}),search:{enabled:store.state.r95?.searchEnabled===true,capability:provider.resolveSearchCapability?.(store.state.cards[scope.characterId].modelBinding)},...(groupId?auto.view({groupId}):{}),autoWait:groupId?autoWait(scope,groupId):null,lines:copy((store.state.lives[scope.characterId].r95?.lines??[]).filter(row=>row.scope.personaId===scope.personaId&&row.scope.channel===scope.channel&&row.scope.conversationId===scope.conversationId))};}
  async function action(name,args={}){
   const scope=bindActive();if(store.state.lifeTransaction?.characterId===scope.characterId&&(name.startsWith('feeding-')||name.startsWith('auto-')||name.startsWith('speech-')||name==='input'))throw Error('角色人生事务处理中，请等待完成');if(name==='view')return view();
   if(name.startsWith('feeding-'))return feeding.action(name.slice(8),args);
@@ -153,12 +158,23 @@ export async function createCompanionR95({store,dataRoot,provider,memory,getCont
   if(name==='input'){if(args.scope&&!sameSocialScope(args.scope,scope))throw Error('输入范围已变化');if(args.active)presentation.beginInput(scope,'app-draft');else presentation.endInput(scope,'app-draft');return {ok:true};}
   if(name==='speech-presented'){const row=(store.state.lives[scope.characterId].r95?.lines??[]).find(row=>row.messageId===args.messageId);if(!row||!sameSocialScope(row.scope,scope))throw Error('台词范围已变化');if(row.status!=='awaiting-presentation')return {ok:true,alreadyPresented:true};await proactive.presented({candidateId:row.candidateId,messageId:row.messageId});if(row.motive==='busy-check'&&attention.view({scope}).busy)await attention.noteBusyQuestion({scope,eventId:row.candidateId,text:row.text});await store.mutate(state=>{const line=state.lives[scope.characterId].r95.lines.find(line=>line.messageId===args.messageId);/* a read that landed meanwhile stays read */if(line.status==='awaiting-presentation')line.status='presented';line.presentedAt??=now();});return {ok:true};}
   if(name==='speech-read'){presentation.finishText(scope,args.messageId);await store.mutate(state=>{const row=state.lives[scope.characterId].r95?.lines?.find(line=>line.messageId===args.messageId&&line.scope.personaId===scope.personaId&&line.scope.conversationId===scope.conversationId);if(row)row.status='read';});return {ok:true};}
-  if(name==='auto-rendered'){const group=store.state.groups[scope.conversationId],message=group?.messages.find(row=>row.id===args.messageId&&row.status==='presented');if(!message?.autoRequestId)throw Error('Auto台词尚未真实呈现');presentation.finishText(scope,message.id);await flushGroupInput(scope.conversationId);return {ok:true};}
+  if(name==='auto-rendered'){
+   const refused=(reason,retryable=false)=>({ok:true,acknowledged:false,retryable,reason});
+   if(scope.channel!=='app-group'||args.groupId&&args.groupId!==scope.conversationId||args.scope&&!sameSocialScope(args.scope,scope))return refused('stale-scope');
+   const group=store.state.groups[scope.conversationId],message=group?.messages.find(row=>row.id===args.messageId&&row.status==='presented'),pending=group?.pending?.message;
+   if(!message)return pending?.id===args.messageId&&(!args.autoRequestId||pending.autoRequestId===args.autoRequestId)?refused('not-presented',true):refused('stale-message');
+   const life=store.state.lives[message.characterId];if(!message.autoRequestId||message.personaId!==scope.personaId||args.autoRequestId&&args.autoRequestId!==message.autoRequestId||life?.id!==message.lifeId||message.lifeToken&&life.operationId!==message.lifeToken.operationId)return refused('stale-message');
+   const key=JSON.stringify([socialScopeKey(scope),message.id,message.autoRequestId]);if(renderedAcks.has(key))return {ok:true,acknowledged:true,duplicate:true};
+   const barrier=presentation.presentation(scope,message.id);if(!barrier)return refused('not-ready',group.auto?.pending?.requestId===message.autoRequestId);
+   if(barrier.autoRequestId!==message.autoRequestId||!presentation.finishText(scope,message.id))return refused('not-ready',true);
+   renderedAcks.set(key,true);if(renderedAcks.size>128)renderedAcks.delete(renderedAcks.keys().next().value);
+   await flushGroupInput(scope.conversationId);return {ok:true,acknowledged:true};
+  }
   if(name.startsWith('auto-')&&(scope.channel!=='app-group'||args.groupId&&args.groupId!==scope.conversationId))throw Error('当前群聊范围已变化');
   if(name==='auto-start'){const result=await auto.start({...args,groupId:scope.conversationId,scope,authorizationId:args.requestId??randomUUID()});await auto.next({groupId:scope.conversationId});return result;}
   if(name==='auto-pause')return auto.pauseForUser({groupId:scope.conversationId});
   if(name==='auto-continue'){await auto.continue({groupId:scope.conversationId});return auto.next({groupId:scope.conversationId});}
-  if(name==='auto-stop')return auto.stop({groupId:scope.conversationId});
+  if(name==='auto-stop'){const result=await auto.stop({groupId:scope.conversationId});if(sameSocialScope(result.scope,scope))presentation.cancelAutoPresentations(scope,result);return result;}
   // Read-only list for the trusted-owner picker: private QQ senders Core has recorded for one connected account.
   if(name==='owner-contacts'){if(typeof args.accountBindingId!=='string'||!args.accountBindingId||args.accountBindingId.length>300)throw Error('QQ 账号无效');return {contacts:socialHost.privateContacts({accountBindingId:args.accountBindingId})};}
   if(name==='owner-bind'){const result=owner.bindOwner(args);await store.mutate(state=>{state.r95??={};state.r95.ownerRoutes??={};state.r95.ownerRoutes[args.accountBindingId]=copy(args.route??{});});return result;}
@@ -196,6 +212,6 @@ export async function createCompanionR95({store,dataRoot,provider,memory,getCont
   // Only chat purposes may search (nativeSearchPurpose): the emotion tag, reply choices and memory work of the
   // same chat origin, and every background request, never receive the grant.
   searchPolicy:({activityOriginId,purpose})=>{const origin=origins.resolve(activityOriginId);if(!origin||Number.isFinite(origin.finishedAt)||store.state.r95?.searchEnabled!==true||!nativeSearchPurpose(purpose))return false;return {allowed:true,check:()=>{if(!origins.resolve(activityOriginId)||Number.isFinite(origins.resolve(activityOriginId).finishedAt)||store.state.r95?.searchEnabled!==true)throw Error('联网搜索授权已失效');}};},
-  async close(){if(closed)return;closed=true;feeding.pause('close');socialHost.close();await Promise.allSettled([mood.close(),proactive.close(),feeding.close()]);owner.close();deliveryAdapters.clear();origins.close();presentation.clear();},
+  async close(){if(closed)return;closed=true;feeding.pause('close');socialHost.close();await Promise.allSettled([mood.close(),proactive.close(),feeding.close()]);owner.close();deliveryAdapters.clear();origins.close();presentation.clear();renderedAcks.clear();},
  };
 }

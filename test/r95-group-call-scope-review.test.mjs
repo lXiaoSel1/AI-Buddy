@@ -18,7 +18,7 @@ test('R95 captured group-chat excludes all original secrets while delayed B mood
   const output=options.purpose==='mood'?{changed:false}:options.purpose==='group-chat'?{text:reply,affection:0}:options.purpose==='choices'?{positive:'好',neutral:'嗯',negative:'等等'}:'私聊中真正呈现的秘密。';yield {type:'text-delta',text:typeof output==='string'?output:JSON.stringify(output)};yield {type:'finish',reason:{kind:'stop'}};
  }};
  game=await createGalgame({dataRoot:root,provider,model:'fixture'});
- t.after(async()=>{release.resolve();await game.close();writeFileSync(process.env.R95_SCOPE_TRACE_PATH??join(root,'scope-trace.json'),JSON.stringify({level:'real-Galgame-service-Mock-model',calls},null,2)+'\n');rmSync(root,{recursive:true,force:true});});
+ t.after(async()=>{release.resolve();await game.close();writeFileSync(process.env.R95_SCOPE_TRACE_PATH??join(root,'scope-trace.json'),JSON.stringify({level:'real-Galgame-service-Mock-model',calls},null,2)+'\n');if(process.env.R95_SCOPE_CLEANUP_RECEIPT){writeFileSync(process.env.R95_SCOPE_CLEANUP_RECEIPT,JSON.stringify({root,state:'closed-awaiting-parent-cleanup'})+'\n');t.diagnostic('Owned fixture cleanup is deferred to the waiting parent after process exit.');}else rmSync(root,{recursive:true,force:true,maxRetries:3,retryDelay:100});});
  const a=(await game.action('companion-group-save',{name:'原默认群',memberIds:['deepseek','claude','chatgpt'],mode:'list'})).group;
  async function pending(){return until(async()=>{const value=await state(game);assert.notEqual(value.groupRuntime.status,'failed',value.groupRuntime.error);return value.groupRuntime.pendingMessage;});}
  async function present(){const value=await pending();await game.action('companion-group-present',{requestId:value.id});return value;}

@@ -27,8 +27,8 @@ test('GG-C1 historical display, waiting request and failed member remain distinc
  const old={id:'old',role:'assistant',characterId:'claude',emotion:'cheerful'},runtime={status:'waiting-model',queue:['deepseek'],currentMessage:old};let value=groupSpeakerState(runtime);assert.equal(value.activeId,'deepseek');assert.equal(value.displayId,'claude');assert.equal(value.speakingId,null);
  value=groupSpeakerState({...runtime,status:'generating'});assert.equal(value.speakingId,'deepseek');value=groupSpeakerState({...runtime,status:'failed'});assert.equal(value.activeId,null);assert.equal(value.failedId,'deepseek');assert.equal(value.displayId,'claude');assert.equal(value.speakingId,null);
 });
-test('GG-C1 failed and unknown Auto pending do not claim a speaker or the following member',()=>{
- setLocale('zh-CN');for(const status of ['failed','unknown']){const auto={status:'active',mode:'rounds',roundLimit:6,roundIndex:0,opportunityIndex:0,members:['deepseek','gpt'],pending:{characterId:'deepseek',status}},value=autoProgress(auto);assert.equal(value.status,'paused');assert.equal(value.speaking,null);assert.equal(value.next,null);
-  const html=renderToStaticMarkup(React.createElement(AutoRoundStrip,{view:{groupId:'g',auto},onAction(){},busy:true,speaker:'Claude'}));assert.match(html,/Auto 已暂停/);assert.doesNotMatch(html,/Claude|下一位|正在说|ui-spinner/);
+test('GG-C1 unresolved Auto pending overrides global busy and wait hints without claiming a speaker or following member',()=>{
+ setLocale('zh-CN');for(const status of ['failed','unknown','cancelled']){const auto={status:'active',mode:'rounds',roundLimit:6,roundIndex:0,opportunityIndex:0,members:['deepseek','gpt'],pending:{characterId:'deepseek',status}},value=autoProgress(auto);assert.equal(value.status,'paused');assert.equal(value.speaking,null);assert.equal(value.next,null);
+  const html=renderToStaticMarkup(React.createElement(AutoRoundStrip,{view:{groupId:'g',auto,autoWait:{reason:'presenting'}},onAction(){},busy:true,speaker:'Claude'}));assert.match(html,/Auto 已暂停/);assert.doesNotMatch(html,/Claude|下一位|正在说|正在回复|等待上一句显示|ui-spinner/);
  }
 });
