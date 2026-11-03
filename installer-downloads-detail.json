@@ -1,5 +1,5 @@
 {
-  "total": 716,
+  "total": 717,
   "releases": [
     {
       "tag": "v2.0.3",
@@ -11,7 +11,7 @@
     },
     {
       "tag": "installer-v2.0.3-r1",
-      "downloads": 0
+      "downloads": 1
     },
     {
       "tag": "v1.9.2",
