@@ -87,13 +87,13 @@ export class ModelRouter{
       try{if(turn.signal?.aborted)throw Error('主题准备已取消');turn.resolve(await turn.execute());}catch(error){turn.reject(error);}finally{lane.executing=null;this.activeTurns--;this.onChange(this.view());}
     }}finally{lane.running=false;}
   }
-  requestController(signal,timeout=this.timeoutMs){const controller=new AbortController(),abort=()=>controller.abort();if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});const timer=setTimeout(abort,timeout);this.controllers.add(controller);return {controller,dispose:()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);this.controllers.delete(controller);}};}
+  requestController(signal,timeout=this.timeoutMs){const controller=new AbortController(),abort=()=>controller.abort();if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});const timer=timeout===0?null:setTimeout(abort,timeout);this.controllers.add(controller);return {controller,dispose:()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);this.controllers.delete(controller);}};}
   async *stream(options){
     options={...this.requestContext?.getStore(),...options};
-    await this.ready;if(!this.enabled)throw Error('联网聊天已关闭');const profile=this.materialize(this.selected());const request=this.requestController(options.signal);
+    await this.ready;if(!this.enabled)throw Error('联网聊天已关闭');const profile=this.materialize(this.selected());const request=this.requestController(options.signal,options.gameBinding?0:this.timeoutMs);
     const activityId='chat:'+randomUUID(),activity={id:activityId,kind:options.purpose==='cg-theme'?'cg-theme':'chat',purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId};this.onActivity({...activity,active:true});
     try{
-      const selectedPolicy=options.singleSubmission===true?false:await this.searchPolicy({profile:this.publicProfile(profile),purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId}),policy=selectedPolicy===true?{allowed:true}:selectedPolicy&&typeof selectedPolicy==='object'?selectedPolicy:{allowed:false},capability=nativeSearchCapability(profile);
+      const selectedPolicy=(options.singleSubmission===true||options.gameBinding)?false:await this.searchPolicy({profile:this.publicProfile(profile),purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId}),policy=selectedPolicy===true?{allowed:true}:selectedPolicy&&typeof selectedPolicy==='object'?selectedPolicy:{allowed:false},capability=nativeSearchCapability(profile);
       // Only the Core callback grants this lane; serializable caller fields do not. A granted turn's prompt says
       // so plainly and no longer carries the companion rule's blanket tool ban (nativeSearchSystem).
       const allowed=policy.allowed===true&&capability.supported,scoped={...options,nativeSearch:allowed?{allowed:true,check:policy.check}:undefined,...(allowed?{system:nativeSearchSystem(options.system)}:{})};

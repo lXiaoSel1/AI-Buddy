@@ -142,7 +142,8 @@ function App(){
  // after a login, 「去设置」 goes back to that plugin's page and loads it again so it reads the new account
  const openAfterLogin=packageName=>{const target=embedTargetFor(packageName),record=target&&recordOf(target);if(!record?.enabled){toCommunity({tab:'installed',packageName});return;}if(!embedCapable(target,record.exactVersion)){void window.whale.plugins.action({action:'dsh-open-client',packageKey:record.packageKey}).catch(()=>{});return;}setPage(EMBED_TARGETS[target].page);setChosen(null);void window.whale.plugins.embed({op:'reload',target}).catch(()=>{});};
  const communityEmbed=useEmbedState('bilibili'),workEmbed=useEmbedState('work'),embedStateOf=target=>EMBED_TARGETS[target].kind==='work'?workEmbed:communityEmbed,viewOf=target=>embedView(target,recordOf(target),embedStateOf(target));
- const embedTarget=page==='plugin-bilibili'?'bilibili':page==='plugin-qq'?'qq':page==='agent-tasks'&&!settings?.safeMode&&shellStatus.work?.ready?'work':null;
+ const communityTarget=Object.keys(EMBED_TARGETS).find(target=>EMBED_TARGETS[target].kind==='community'&&EMBED_TARGETS[target].page===page);
+ const embedTarget=communityTarget??(page==='agent-tasks'&&!settings?.safeMode&&shellStatus.work?.ready?'work':null);
  const logPath=settings?.dataRoot?String(settings.dataRoot).replace(/[\\/]+$/,'')+'\\runtime-audit.jsonl':null;
  const embedArea=target=>h(EmbedArea,{key:target,target,record:recordOf(target),view:viewOf(target),state:embedStateOf(target),onCommunity:toCommunity,onStatus:reportStatus,logPath});
  // Plugin group (approved design G1): installed, enabled plugins that have their own page, between Companion and System.
@@ -150,7 +151,7 @@ function App(){
  if(pluginNav.length)navGroups.splice(2,0,[nav('插件','Plugins'),pluginNav]);
  // a plugin version that cannot sit in the main window yet keeps opening its own window
  const goTo=id=>{if(id.startsWith('ext:')){const record=pluginRecords.find(value=>value.packageKey===id.slice(4));if(record)void window.whale.plugins.action({action:'dsh-open-client',packageKey:record.packageKey}).catch(()=>{});return;}
-  const target=['bilibili','qq'].find(key=>EMBED_TARGETS[key].page===id),record=target&&recordOf(target);if(record&&!embedCapable(target,record.exactVersion)){void window.whale.plugins.action({action:'dsh-open-client',packageKey:record.packageKey}).catch(()=>{});return;}setPage(id);setChosen(null);};
+  const target=Object.keys(EMBED_TARGETS).find(key=>EMBED_TARGETS[key].kind==='community'&&EMBED_TARGETS[key].page===id),record=target&&recordOf(target);if(record&&!embedCapable(target,record.exactVersion)){void window.whale.plugins.action({action:'dsh-open-client',packageKey:record.packageKey}).catch(()=>{});return;}setPage(id);setChosen(null);};
  // The sidebar avatar, title-bar icon and overview portrait follow the current desktop pet.
  const pet=settings?.effectivePetCharacter||settings?.petCharacterId||'deepseek',head='./'+themeAsset(pet,'head.webp');
  let content;
@@ -161,7 +162,7 @@ function App(){
  else if(page==='api')content=h(ApiSettings,{view:settings,tab:apiTab,onTab:setApiTab});
   else if(page==='agent-tasks')content=settings?.safeMode?h(SafeModePage,{settings,onPage:setPage,time}):h(WorkTasks,{face:head,onStatus:reportStatus,onCommunity:toCommunity,renderEmbedded:()=>embedArea('work')});
  else if(['r95-shop','r95-inventory','r95-social'].includes(page))content=settings?.safeMode?h(SafeModePage,{settings,onPage:setPage,time}):h(R95CorePage,{page:page.slice(4),language:settings?.preferences.language,onPage:setPage,onStatus:reportStatus,timeZone:settings?.preferences.statisticsTimeZone||settings?.preferences.displayTimeZone});
- else if(page==='plugin-bilibili'||page==='plugin-qq')content=embedArea(page==='plugin-qq'?'qq':'bilibili');
+ else if(communityTarget)content=embedArea(communityTarget);
  else if(page==='plugins')content=h(PluginCenter,{onManage:()=>manage('model'),onStatus:reportStatus,onPage:setPage,intent:communityIntent});
  else if(page==='actions')content=h(ActionGallery,{settings});
  else if(page==='safe-mode'||page==='galgame'&&settings?.safeMode)content=h(SafeModePage,{settings,onPage:setPage,time});

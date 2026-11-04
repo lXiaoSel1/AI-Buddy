@@ -171,6 +171,7 @@ export function collectMemoryEvents(state,characterId,timeZone=state.memorySetti
   }
  }
  for(const row of life.personalEvents??[])if(!row.lifeId||row.lifeId===life.id)append({...row,role:row.role??'activity'},{type:'personal',id:row.id},'personal');
+ for(const row of Object.values(life.gameExperiences??{})){if(row.scope?.characterId!==characterId||row.scope?.lifeId!==life.id||!row.scope.personaId||typeof row.text!=='string')continue;append({id:row.id,text:row.text,createdAt:row.at,role:'activity',sourceKind:'personal-activity',experienceId:row.handId,status:'presented'},{type:'card-game',id:row.id,handId:row.handId,knowledge:row.knowledge??'participated'},'persona:'+row.scope.personaId,{personaId:row.scope.personaId});}
  for(const row of life.workExperiences??[]){
   if(row.characterId!==characterId||row.lifeId!==life.id||row.presented!==true||!row.personaId||!row.workspaceId||!row.taskId||row.sourceHash!==workExperienceHash(row))continue;
   // Work is the character's own activity for the existing slow-growth gates;

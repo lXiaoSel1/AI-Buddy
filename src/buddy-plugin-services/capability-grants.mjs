@@ -1,7 +1,7 @@
 import {contextFailure,plain} from './trusted-context.mjs';
 import {SOCIAL_CAPABILITIES} from './social-contract.mjs';
 
-export const BUDDY_PLUGIN_CAPABILITIES=Object.freeze([...new Set(['characters.getContext','models.request','memory.appendEvent','usage.record','notifications.publish','ui.registerPage','lifecycle.register','archive.read','archive.restore','tools.list','tools.invoke','work.host',...SOCIAL_CAPABILITIES])]);
+export const BUDDY_PLUGIN_CAPABILITIES=Object.freeze([...new Set(['characters.getContext','models.request','memory.appendEvent','usage.record','notifications.publish','ui.registerPage','lifecycle.register','archive.read','archive.restore','tools.list','tools.invoke','work.host','voice.capture.request','voice.audio.read','voice.draft.write','games.table','games.models','games.chat','games.replay',...SOCIAL_CAPABILITIES])]);
 const capabilities=new Set(BUDDY_PLUGIN_CAPABILITIES);
 function list(value,name){if(!Array.isArray(value)||value.some(v=>typeof v!=='string'||!capabilities.has(v)))throw contextFailure('Invalid '+name,'BUDDY_GRANT_INVALID');return [...new Set(value)];}
 /** A declaration alone never grants a capability. The context can narrow a host grant again. */

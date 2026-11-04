@@ -34,6 +34,10 @@ const CAPABILITIES={
  'tools.invoke':['terminal',L('使用工具：读写文件、运行命令','Use tools: read and write files, run commands'),'review'],
  'archive.read':['archive',L('读取归档的旧任务','Read archived tasks')],
  'archive.restore':['archive',L('恢复归档的旧任务','Restore archived tasks')],
+ 'games.table':['nav-card-games',L('开牌桌、保存牌局','Open tables and save games')],
+ 'games.models':['sparkle',L('用角色绑定的模型出牌','Play with the character’s bound model'),'model'],
+ 'games.chat':['chats',L('在牌桌上和她们聊天','Chat at the table'),'model'],
+ 'games.replay':['eye',L('查看已结算手牌的回放','Open replays of settled hands')],
 };
 const TAGS={model:L('会用模型','Uses model'),review:L('需要注意','Review')};
 export function capabilityView(id){const row=CAPABILITIES[id];return row?{id,icon:row[0],label:pick(row[1]),tag:row[2]??null,tagLabel:pick(TAGS[row[2]])}:{id,icon:'plug',label:id,tag:null,tagLabel:null};}
@@ -58,8 +62,8 @@ const OFFICIAL={
 // One-line descriptions of the official plugins (design B1/B3 copy, contract C-6).
 const DESCRIPTIONS={'@ai-buddy/bilibili-companion':L('角色陪你看 B站视频，看完聊聊，也可以帮你写评论。','Characters watch Bilibili videos with you, talk about them, and can draft comments.'),'@ai-buddy/qq-connect':L('让角色在 QQ 里回复你允许的人和群。','Lets a character answer the QQ contacts and groups you allow.'),'@ai-buddy/work-collaboration':L('几位角色一起做项目，每一步先给你看计划。','Characters work on your projects together; you approve each plan.')};
 export function officialProfile(packageName){const p=OFFICIAL[packageName];if(!p)return null;const rows=list=>list.map(([icon,a,b])=>({icon,text:pick(a),sub:pick(b)}));return {icon:p.icon,name:pick(p.name),description:pick(DESCRIPTIONS[packageName]),does:rows(p.does),need:rows(p.need),later:rows(p.later),next:pick(p.next),nextAction:p.nextAction};}
-export const pluginIcon=packageName=>OFFICIAL[packageName]?.icon??'plug';
-export const pluginName=(packageName,fallback)=>pick(OFFICIAL[packageName]?.name)??fallback??packageName;
+export const pluginIcon=packageName=>packageName==='@ai-buddy/card-games'?'nav-card-games':OFFICIAL[packageName]?.icon??'plug';
+export const pluginName=(packageName,fallback)=>packageName==='@ai-buddy/card-games'?pick(L('一起玩牌','Card table')):pick(OFFICIAL[packageName]?.name)??fallback??packageName;
 // A catalog work's own text in the current language: official plugins from an official source use the profile above;
 // community works use their optional signed `locales.en` (C-6) and fall back to the original text.
 export function workText(work,{official=false}={}){

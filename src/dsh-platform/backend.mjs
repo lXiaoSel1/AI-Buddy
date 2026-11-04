@@ -1,3 +1,4 @@
+import {importVerifiedGameRules} from '../voice-games/rule-artifact.mjs';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
@@ -75,7 +76,7 @@ function sanitized(value, key = '') {
 }
 
 /** Process-owning adapter over one pinned official DSH Web profile. */
-export function createDshBackend({ runtimeLockPath, dshHome, profileId = 'buddy-community-v1', stateDir, buddyServices, socialServices, resolveToolScope, uiPolicy, hostBridgeSourcePath, workClientMode = false, purpose = 'ui', taskMode, taskBootstrapPath, onProcessStart, onProcessStop, authorizeNativeModel, onNativeModelUsage, stageDiagnostics = process.env.AI_BUDDY_DSH_TRACE_STAGES === '1', handshakeTimeoutMs = 120000, maxPackageBytes = 256 * 1024 * 1024, onEvent = () => {} } = {}) {
+export function createDshBackend({ runtimeLockPath, dshHome, profileId = 'buddy-community-v1', stateDir, buddyServices, socialServices, voiceGamesServices, resolveToolScope, uiPolicy, hostBridgeSourcePath, workClientMode = false, purpose = 'ui', taskMode, taskBootstrapPath, onProcessStart, onProcessStop, authorizeNativeModel, onNativeModelUsage, stageDiagnostics = process.env.AI_BUDDY_DSH_TRACE_STAGES === '1', handshakeTimeoutMs = 120000, maxPackageBytes = 256 * 1024 * 1024, onEvent = () => {} } = {}) {
   if (!runtimeLockPath || !dshHome || !stateDir) throw failure('DSH_CONFIGURATION_REQUIRED', 'runtimeLockPath, dshHome and stateDir are required');
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(profileId) || profileId === 'desktop') throw failure('DSH_INVALID_PROFILE', 'A private non-desktop profile is required');
   const hostUiPolicy = normalizeDshUiPolicy(uiPolicy);
@@ -212,11 +213,27 @@ export function createDshBackend({ runtimeLockPath, dshHome, profileId = 'buddy-
           } else if (message.kind === 'rpc-stage') {
             stage.record(message.method,message.requestId,message.phase,{elapsedMs:message.elapsedMs,parentRequestId:message.parentRequestId});
           } else if (message.kind === 'bootstrap-error') { finish(failure(message.error?.code??'DSH_BOOTSTRAP_FAILED',message.error?.message??'Task bootstrap failed')); }
-          else if (['buddy-request','social-request','native-model-request','native-model-usage'].includes(message.kind)) {
+          else if (['buddy-request','social-request','voice-games-request','native-model-request','native-model-usage'].includes(message.kind)) {
             const requester = child, controller = new AbortController();
             const diagnosticStart=performance.now();stage.record('buddy.invoke',message.id,'buddy-main.begin');
             const operation = Promise.resolve().then(async () => {
-              if (closed&&message.kind!=='native-model-usage'&&!(message.kind==='social-request'&&message.params?.method==='close')) throw failure('DSH_BACKEND_CLOSED', 'Buddy request arrived while the backend was closing');
+              if (closed&&message.kind!=='native-model-usage'&&!(['social-request','voice-games-request'].includes(message.kind)&&message.params?.method==='close')) throw failure('DSH_BACKEND_CLOSED', 'Buddy request arrived while the backend was closing');
+              if(message.kind==='voice-games-request'){
+                if(taskOnly||!voiceGamesServices)throw failure('VOICE_GAMES_UNAVAILABLE','Voice/games services are not connected');
+                const {pluginId,contextToken,method,payload={}}=message.params??{},identity=identities[pluginId];
+                if(!identity||identity.packageName!==pluginId)throw failure('VOICE_GAMES_PACKAGE_REQUIRED','Native package identity required');
+                const origin={runtimeId,profileId,pid:requester.pid};
+                if(method==='open'){
+                  if(identity.packageName==='@ai-buddy/card-games'){
+                    const archiveSha256=identity.sourceDigest.replace(/^sha256:/,''),archivePath=resolve(stateDir,'verified-packages',archiveSha256+'.tgz'),files=new Map();
+                    tarballIdentity(await readFile(archivePath),files);
+                    await verifyInstalledDshArtifact({profileRoot:resolve(dshHome,'profiles',profileId),packageName:identity.packageName,exactVersion:identity.exactVersion,files});
+                    await voiceGamesServices.registerRuleArtifact(await importVerifiedGameRules({archivePath,archiveSha256,cacheRoot:resolve(stateDir,'game-rules')}));
+                  }
+                  return voiceGamesServices.open({identity,origin,contractHash:payload.contractHash,contractVersion:payload.contractVersion});
+                }
+                return voiceGamesServices.dispatch({sessionToken:contextToken,method,payload},origin,{signal:controller.signal});
+              }
               if(message.kind==='social-request'){
                 if(taskOnly||!socialServices)throw failure('BUDDY_SOCIAL_UNAVAILABLE','Social runtime services are not connected');
                 const {pluginId,contextToken,method,payload={}}=message.params??{},identity=identities[pluginId];
@@ -363,7 +380,9 @@ export function createDshBackend({ runtimeLockPath, dshHome, profileId = 'buddy-
       }
     }
     const before = await rpc('bridge.schemaSnapshot');
-    let result = await rpc('management.install', { spec: installSpec, options: { enabled: options.enabled ?? true, ...(options.approvedBuilds ? { approvedBuilds: options.approvedBuilds } : {}) } }, options);
+    const pendingIdentity={packageName:plan.packageRef.packageName,pluginId:plan.packageRef.hostPluginId??plan.packageRef.pluginId??plan.packageRef.packageName,exactVersion:plan.packageRef.exactVersion,sourceDigest:plan.packageRef.sourceDigest};
+    if(pendingIdentity.packageName==='@ai-buddy/card-games')identities[pendingIdentity.packageName]=pendingIdentity;
+    let result;try{result = await rpc('management.install', { spec: installSpec, options: { enabled: options.enabled ?? true, ...(options.approvedBuilds ? { approvedBuilds: options.approvedBuilds } : {}) } }, options);}catch(error){if(previousIdentity)identities[pendingIdentity.packageName]=previousIdentity;else delete identities[pendingIdentity.packageName];throw error;}
     if(result?.error?.code==='already-installed'){
       const originalInstallResult=result,ref=plan.packageRef,known=identities[ref.packageName];
       await audit('install-already-present',{packageRef:ref,result:originalInstallResult});
@@ -376,7 +395,7 @@ export function createDshBackend({ runtimeLockPath, dshHome, profileId = 'buddy-
       result={...selected,bundle:ref.packageName,version:ref.exactVersion,reusedExisting:true,existingArtifactVerification,originalInstallResult};
       await audit('install-existing-artifact-verified',{packageRef:ref,existingArtifactVerification,selectionResult:selected});
     }
-    await requireManagementOutcome(result, plan.packageRef, options.enabled ?? true);
+    try{await requireManagementOutcome(result, plan.packageRef, options.enabled ?? true);}catch(error){if(previousIdentity)identities[pendingIdentity.packageName]=previousIdentity;else delete identities[pendingIdentity.packageName];throw error;}
     if (result.bundle !== plan.packageRef.packageName || result.version !== plan.packageRef.exactVersion) throw failure('DSH_INSTALLED_IDENTITY_MISMATCH', 'The actual package manager result differs from the verified archive');
     const after = await rpc('bridge.schemaSnapshot');
     const previousNames = new Set(before.map(tool => tool.name));

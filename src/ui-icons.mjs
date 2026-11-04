@@ -40,6 +40,7 @@ export const ICONS=Object.freeze({
  "more": "<circle cx=\"6\" cy=\"12\" r=\"1.3\"/><circle cx=\"12\" cy=\"12\" r=\"1.3\"/><circle cx=\"18\" cy=\"12\" r=\"1.3\"/>",
  "nav-actions": "<path d=\"M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.6 2.6M14.9 14.9l2.6 2.6M6.5 17.5l2.6-2.6M14.9 9.1l2.6-2.6\"/>",
  "nav-api": "<path d=\"M5 9h13l-3-3M19 15H6l3 3\"/>",
+ "nav-card-games": "<rect x=\"7\" y=\"4\" width=\"12\" height=\"15\" rx=\"2\"/><path d=\"M6 7l-2 .5a2 2 0 0 0-1.4 2.5l2.3 8.5A2 2 0 0 0 7 20M13 8l2.5 3.5L13 15l-2.5-3.5z\"/>",
  "nav-bag": "<path d=\"M7 8.5h10a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7.5a2 2 0 0 1 2-2z\"/><path d=\"M9 8.5V6.5a3 3 0 0 1 6 0v2M5 13h14M11 13v2h2v-2\"/>",
  "nav-galgame": "<path d=\"M12 19s-7-4.4-7-9.2A3.8 3.8 0 0 1 12 7.6a3.8 3.8 0 0 1 7 2.2C19 14.6 12 19 12 19z\"/>",
  "nav-history": "<circle cx=\"12\" cy=\"12\" r=\"8\"/><path d=\"M12 7.5V12h4\"/>",

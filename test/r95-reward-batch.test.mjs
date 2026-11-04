@@ -30,6 +30,10 @@ function fixture(t,create=createEconomyStore){
 }
 function snapshot(path){const db=new DatabaseSync(path,{readOnly:true});try{return Object.fromEntries(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(({name})=>[name,JSON.parse(JSON.stringify(db.prepare('SELECT * FROM "'+name+'" ORDER BY rowid').all()))]));}finally{db.close();}}
 function schema(path){const db=new DatabaseSync(path,{readOnly:true});try{return db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name").all().map(r=>({...r}));}finally{db.close();}}
+const gameTables=['game_accounts','game_bindings','game_commands','game_events','game_hands','game_holds','game_outbox','game_progress','game_requests','game_settlements','game_tables','game_welfare'];
+function expectedGamesMigration(original){const value=structuredClone(original);value.meta=value.meta.map(row=>row.key==='schemaVersion'?{...row,value:'2'}:row.key==='minimumWriter'?{...row,value:JSON.stringify('voice-games-economy-v1')}:row).sort((a,b)=>a.key.localeCompare(b.key));for(const table of gameTables)value[table]=[];return value;}
+function assertMigratedSnapshot(current,original){const actual=snapshot(current);actual.meta.sort((a,b)=>a.key.localeCompare(b.key));assert.deepEqual(actual,expectedGamesMigration(snapshot(original)));}
+function assertMigratedSchema(current,original){const actual=schema(current),added=actual.filter(row=>row.name.startsWith('game_'));assert.deepEqual(added.map(row=>row.name),gameTables);assert.ok(added.every(row=>row.type==='table'&&/PRIMARY KEY/.test(row.sql)));assert.deepEqual(actual.filter(row=>!row.name.startsWith('game_')),schema(original));}
 function reference(original,rows,options=trusted){return rows.map(row=>original.ingestUsageFact(row,options));}
 function countTransactions(run){
  const original=DatabaseSync.prototype.exec,calls=[];
@@ -43,7 +47,7 @@ test('reward batch preserves frozen per-fact results, complete ledgers, metadata
  assert.deepEqual(store.initializeRewards({facts:initialization,cursor:'original-start'}),old.initializeRewards({facts:initialization,cursor:'original-start'}));
  const rows=[fact('history',25000,3),fact('new-import',100000,1,{baseline:true}),fact('new-import',110000,2),fact('new-live',9999),fact('rounding',1),fact('new-live',9999),fact('new-live',4000,0),fallback('cg:1',8),fact('cg:1',20000,2),fallback('cg:1',10,3),{canonicalRequestId:'official',revision:1,basis:'official-equivalent',origin:'verified-rule',units:3000,ruleRef:'rule-v1',ruleSha256:'a'.repeat(64)},fact('replay',50000,1,{replay:true}),fact('diagnostic',50000,1,{accounting:'child-detail'}),fact('missing',null),{canonicalRequestId:'unverified-equivalence',basis:'official-equivalent',units:100000}];
  const expected=reference(old,rows),actual=store.ingestUsageFacts(rows,trusted);
- assert.deepEqual(actual,expected);assert.deepEqual(snapshot(store.path),snapshot(old.path));assert.deepEqual(schema(store.path),schema(old.path));
+ assert.deepEqual(actual,expected);assertMigratedSnapshot(store.path,old.path);assertMigratedSchema(store.path,old.path);
  assert.notStrictEqual(actual[0].wallet,actual[1].wallet);actual[0].wallet.balance=999;
  assert.equal(actual[1].wallet.balance,expected[1].wallet.balance);assert.deepEqual(store.wallet(),old.wallet());
 });
@@ -52,7 +56,7 @@ test('reward batch without initialization preserves original all-baseline semant
  const store=fixture(t).store,old=fixture(t,createOriginal).store,rows=[fact('h',9999),fact('h',20000,2),fact('second',70000)];
  assert.deepEqual(store.ingestUsageFacts(rows,trusted),reference(old,rows));assert.deepEqual(store.wallet(),{balance:0,remainder:0,debtUnits:0});
  store.initializeRewards({cursor:'baseline-done'});old.initializeRewards({cursor:'baseline-done'});
- assert.deepEqual(store.ingestUsageFacts([fact('h',25000,3)],trusted),reference(old,[fact('h',25000,3)]));assert.deepEqual(snapshot(store.path),snapshot(old.path));
+ assert.deepEqual(store.ingestUsageFacts([fact('h',25000,3)],trusted),reference(old,[fact('h',25000,3)]));assertMigratedSnapshot(store.path,old.path);
 });
 
 test('reward batch preserves downward correction debt and progressive repayments after actual purchases',t=>{
@@ -61,7 +65,7 @@ test('reward batch preserves downward correction debt and progressive repayments
  const rows=[fact('spendable',5000,2),fact('fresh-a',9999),fact('fresh-b',5001),fact('fresh-c',15000),fact('fresh-c',0,2),fact('fresh-d',20000)];
  const actual=store.ingestUsageFacts(rows,trusted),expected=reference(old,rows);
  assert.deepEqual(actual,expected);assert.deepEqual(actual.map(r=>r.wallet.debtUnits),[15000,5001,0,0,0,0]);
- assert.deepEqual(snapshot(store.path),snapshot(old.path));
+ assertMigratedSnapshot(store.path,old.path);
 });
 
 test('second-row injected SQL abort rolls back wallet, facts, ledger and sequence for the whole batch',t=>{

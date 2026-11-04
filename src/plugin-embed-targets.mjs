@@ -3,6 +3,7 @@
 export const EMBED_TARGETS=Object.freeze({
   bilibili:Object.freeze({kind:'community',packageName:'@ai-buddy/bilibili-companion',page:'plugin-bilibili',icon:'tv'}),
   qq:Object.freeze({kind:'community',packageName:'@ai-buddy/qq-connect',page:'plugin-qq',icon:'chats'}),
+  'card-games':Object.freeze({kind:'community',packageName:'@ai-buddy/card-games',page:'plugin-card-games',icon:'nav-card-games'}),
   work:Object.freeze({kind:'work',packageName:'@ai-buddy/work-collaboration',page:'agent-tasks',icon:'nav-work'})});
 /** G1: the sidebar's 插件 group, from what is installed: enabled community plugins with their own page (an embed target, or
  * one that declares ui.registerPage). Embed targets first in their own order (Bilibili, QQ), then the rest by name.
@@ -25,5 +26,5 @@ const version=value=>{const m=/^(\d+)\.(\d+)\.(\d+)(-.*)?$/.exec(String(value??'
 export function embedCapable(target,exactVersion){
   if(!Object.hasOwn(EMBED_TARGETS,target))return false;if(target==='work')return true;
   const v=version(exactVersion);if(!v)return false;
-  for(const [i,min] of [2,0,1,1].entries()){if(v[i]!==min)return v[i]>min;}return true;
+  for(const [i,min] of (target==='card-games'?[0,1,0,0]:[2,0,1,1]).entries()){if(v[i]!==min)return v[i]>min;}return true;
 }

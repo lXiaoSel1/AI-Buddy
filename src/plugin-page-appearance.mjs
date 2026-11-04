@@ -34,10 +34,10 @@ export const EMBEDDED_FRAME_CSS=[
  `html[data-buddy-embedded] ${CENTER}{overflow-y:auto!important;overscroll-behavior:contain}`,
  `html[data-buddy-embedded] ${CENTER}>[data-slot="main"]>*{flex-shrink:0}`].join('');
 // The same stop-gap in a plugin's own window, only while the column holds a Bilibili or QQ page (DSH's own panels keep theirs).
-const SOCIAL_ROOT=':is(.bili,.qq)';
+const COMMUNITY_ROOT=':is(.bili,.qq,[data-card-games])';
 export const WINDOW_PAGE_CSS=[
- `html:not([data-buddy-embedded]) ${FRAME}>:has(>[data-slot="main"]>${SOCIAL_ROOT}){overflow-y:auto!important;overscroll-behavior:contain}`,
- `html:not([data-buddy-embedded]) ${CENTER}>[data-slot="main"]>${SOCIAL_ROOT}{flex-shrink:0}`].join('');
+ `html:not([data-buddy-embedded]) ${FRAME}>:has(>[data-slot="main"]>${COMMUNITY_ROOT}){overflow-y:auto!important;overscroll-behavior:contain}`,
+ `html:not([data-buddy-embedded]) ${CENTER}>[data-slot="main"]>${COMMUNITY_ROOT}{flex-shrink:0}`].join('');
 // C-1: character faces as --buddy-face-<id>: url("data:image/…;base64,…"). These do not pass the theme value filter
 // above: ids and data are checked on their own, and the rule stays bounded.
 export const FACE_ID=/^[a-z0-9][a-z0-9-]{0,39}$/;

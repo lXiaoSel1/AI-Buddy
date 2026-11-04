@@ -87,8 +87,8 @@ test('甲8 / C-3: the scrolling stop-gap is valid Chromium CSS and scoped (verif
  const nested=css=>{for(let i=css.indexOf(':has(');i>=0;i=css.indexOf(':has(',i+1)){let depth=0,j=i+4;for(;j<css.length;j++){if(css[j]==='(')depth++;else if(css[j]===')'&&--depth===0)break;}if(css.slice(i+5,j).includes(':has('))return true;}return false;};
  assert.equal(nested(EMBEDDED_FRAME_CSS),false);assert.equal(nested(WINDOW_PAGE_CSS),false);
  assert.match(EMBEDDED_FRAME_CSS,/html\[data-buddy-embedded\] [^{]*>:has\(>\[data-slot="main"\]\)\{overflow-y:auto!important/);
- // in a separate window only a Bilibili or QQ root makes the column scroll; DSH's own panels and the work page keep theirs
- for(const rule of WINDOW_PAGE_CSS.split('}').filter(Boolean))assert.match(rule,/^html:not\(\[data-buddy-embedded\]\) .*:is\(\.bili,\.qq\)/);
+ // in a separate window only a Bilibili, QQ or card-games root makes the column scroll; DSH's own panels and the work page keep theirs
+ for(const rule of WINDOW_PAGE_CSS.split('}').filter(Boolean))assert.match(rule,/^html:not\(\[data-buddy-embedded\]\) .*:is\(\.bili,\.qq,\[data-card-games\]\)/);
  assert.ok(pluginPageAppearance({},'deepseek').css.includes(WINDOW_PAGE_CSS));assert.ok(!pluginPageAppearance({},'deepseek',{embedded:true}).css.includes(WINDOW_PAGE_CSS));
 });
 

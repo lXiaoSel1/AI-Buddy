@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync} from 'node:fs';
+import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
@@ -10,9 +10,9 @@ import {createEconomyStore as createOld} from './fixtures/reward-pre-batch/compa
 
 const scope={characterId:'deepseek',personaId:'default',lifeId:'life-a',operationId:'operation-a'},trusted={trusted:true};
 const fact=(id,units=10000,revision=1)=>({canonicalRequestId:id,totalTokens:units,revision,origin:'native-ledger'});
-function fixture(t){
+function fixture(t,create=createEconomyStore){
  const root=mkdtempSync(join(tmpdir(),'ledger-cache-')),stores=[],open=(create=createEconomyStore)=>{const s=create(root);stores.push(s);return s;};
- t.after(()=>{for(const s of stores)s.close();rmSync(root,{recursive:true,force:true});});return {root,open,store:open()};
+ t.after(()=>{for(const s of stores)s.close();rmSync(root,{recursive:true,force:true});});return {root,open,store:open(create)};
 }
 function scans(t){
  const prepare=DatabaseSync.prototype.prepare;let calls=0;
@@ -62,15 +62,17 @@ test('external commits and deleted sequence gaps refresh exact totals, uncommitt
 });
 
 test('external insert followed by own insert before a view does not hide the external commit',t=>{
- const count=scans(t),f=fixture(t),s=f.store;s.initializeRewards();assert.equal(s.ledgerPage().total,0);const old=f.open(createOld);
- old.ingestUsageFact(fact('legacy'),trusted);s.ingestUsageFact(fact('new'),trusted);
+ const count=scans(t),f=fixture(t),s=f.store;s.initializeRewards();assert.equal(s.ledgerPage().total,0);const secondWriter=f.open();
+ secondWriter.ingestUsageFact(fact('external'),trusted);s.ingestUsageFact(fact('new'),trusted);
  assert.equal(s.ledgerPage().total,2);assert.equal(actual(s),2);for(let i=0;i<10;i++)assert.equal(s.ledgerPage().total,2);assert.equal(count(),2);
 });
 
-test('current to legacy to current reopening preserves schema, totals, wallet and idempotency',t=>{
- const f=fixture(t),s=f.store;s.initializeRewards();s.ingestUsageFact(fact('first',25000),trusted);assert.equal(s.ledgerPage().total,1);
- const schema=external(s,db=>db.prepare('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').all());s.close();
- const old=f.open(createOld);assert.equal(old.ledgerPage().total,1);old.ingestUsageFact(fact('second',15000),trusted);old.close();
+test('migrate legacy rewards, refuse a stale writer and reopen with exact totals and idempotency',t=>{
+ const f=fixture(t,createOld),old=f.store;old.initializeRewards();old.ingestUsageFact(fact('first',25000),trusted);assert.equal(old.ledgerPage().total,1);old.close();
+ const current=f.open();assert.equal(current.ledgerPage().total,1);current.ingestUsageFact(fact('second',15000),trusted);
+ const schema=external(current,db=>db.prepare('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').all());current.close();
+ const bytes=readFileSync(current.path);
+ assert.throws(()=>f.open(createOld),{code:'ECONOMY_SCHEMA_UNSUPPORTED'});assert.deepEqual(readFileSync(current.path),bytes);
  const next=f.open();assert.equal(next.ledgerPage().total,2);assert.equal(next.wallet().balance,4);next.ingestUsageFact(fact('second',15000),trusted);assert.equal(next.ledgerPage().total,2);
  assert.deepEqual(external(next,db=>db.prepare('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').all()),schema);
 });

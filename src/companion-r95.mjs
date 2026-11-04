@@ -185,8 +185,8 @@ export async function createCompanionR95({store,dataRoot,provider,memory,getCont
   snapshot:scope=>({version:1,characterId:scope.characterId,lifeId:scope.lifeId,feeding:feeding.lifeBridge.snapshot(scope)}),
   validate:(value,{characterId,lifeId})=>{if(value?.version!==1||value.characterId!==characterId||value.lifeId!==lifeId||!value.feeding||!Number.isFinite(value.feeding.satiety)||value.feeding.satiety<0||value.feeding.satiety>100)throw Error('R95人生状态无效');return true;},
   projectLife:({life,savedAt,kind,at})=>{const result=copy(life);if(kind!=='reset'&&Number.isFinite(savedAt))rebaseMoodSnapshot(result,at??now(),savedAt);return result;},
-  initial:scope=>({version:1,characterId:scope.characterId,lifeId:scope.lifeId,feeding:{format:'ai-buddy-feeding-state',version:1,scope,satiety:100,mealEvidence:[],frozenAt:now()}}),
-  prepare:value=>feeding.lifeBridge.prepare({transactionId:value.transactionId,scope:value.beforeScope,target:{scope:value.targetScope,satiety:value.coreState.feeding.satiety,mealEvidence:value.coreState.feeding.mealEvidence??[]}}),
+  initial:scope=>({version:1,characterId:scope.characterId,lifeId:scope.lifeId,feeding:{format:'ai-buddy-feeding-state',version:1,scope,satiety:100,gameBalance:0,mealEvidence:[],frozenAt:now()}}),
+  prepare:value=>feeding.lifeBridge.prepare({transactionId:value.transactionId,scope:value.beforeScope,target:{scope:value.targetScope,satiety:value.coreState.feeding.satiety,gameBalance:value.coreState.feeding.gameBalance??0,mealEvidence:value.coreState.feeding.mealEvidence??[]}}),
   apply:value=>feeding.lifeBridge.apply(value),finalize:value=>feeding.lifeBridge.finalize(value),recover:value=>feeding.lifeBridge.pending().some(row=>row.id===value.transactionId)?feeding.lifeBridge.recover(value):{recovered:false,reason:'not-prepared'},
   activate:scope=>{previousScope=null;if(scope.characterId===getContext().characterId)bindActive();},pending:()=>feeding.lifeBridge.pending(),
  };

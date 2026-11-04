@@ -1,0 +1,15 @@
+export const fail=(code,message)=>Object.assign(new Error(message),{code});
+export const clone=value=>structuredClone(value);
+export function requireId(value,label='id'){if(typeof value!=='string'||!value||value.length>256||['__proto__','prototype','constructor'].includes(value))throw fail('GAME_INVALID_ID',`Invalid ${label}`);return value;}
+export function integer(value,label='amount',minimum=0){if(!Number.isSafeInteger(value)||value<minimum)throw fail('GAME_INVALID_INTEGER',`Invalid ${label}`);return value;}
+export function exactNumber(value,label='amount'){if(value>BigInt(Number.MAX_SAFE_INTEGER)||value<BigInt(Number.MIN_SAFE_INTEGER))throw fail('GAME_PRECISION_UNSUPPORTED',`${label} exceeds exact supported range`);return Number(value);}
+export function sum(values){return exactNumber(values.reduce((a,b)=>a+BigInt(integer(b)),0n));}
+export function validateDeck(deck,size){if(!Array.isArray(deck)||deck.length!==size||new Set(deck).size!==size||deck.some(n=>!Number.isInteger(n)||n<0||n>=size))throw fail('GAME_INVALID_DECK',`A complete ${size}-card deck must be supplied by the host`);return [...deck];}
+export function validatePlayers(players,min,max){if(!Array.isArray(players)||players.length<min||players.length>max)throw fail('GAME_PLAYERS_INVALID','Invalid player count');const ids=players.map(p=>requireId(p?.id,'player'));if(new Set(ids).size!==ids.length)throw fail('GAME_DUPLICATE_PLAYER','Players cannot occupy duplicate seats');return clone(players);}
+export function seatOf(state,id){const at=state.players.findIndex(p=>p.id===id);if(at<0)throw fail('GAME_ACTOR_DENIED','Actor is not seated');return at;}
+export function nextIndex(players,after,predicate=()=>true){for(let n=1;n<=players.length;n++){const i=(after+n+players.length)%players.length;if(predicate(players[i],i))return i;}return -1;}
+export function assertTurn(state,actor){if(state.actorId!==actor)throw fail('GAME_NOT_YOUR_TURN','This player cannot act now');}
+export function canonical(value){if(Array.isArray(value))return '['+value.map(canonical).join(',')+']';if(value&&typeof value==='object')return '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+canonical(value[k])).join(',')+'}';return JSON.stringify(value);}
+export function validateStateIdentity(spec){return {id:requireId(spec.gameId??spec.id??spec.handId,'game'),handId:requireId(spec.handId??spec.gameId??spec.id,'hand'),version:0,paused:false,actionIds:{}};}
+export function cardLabel(card,type){integer(card,'card');if(type==='doudizhu'){if(card===52)return '小王';if(card===53)return '大王';const rank=Math.floor(card/4)+3;return ['♠','♥','♦','♣'][card%4]+({11:'J',12:'Q',13:'K',14:'A',15:'2'}[rank]??rank);}const rank=Math.floor(card/4)+2;return ['♠','♥','♦','♣'][card%4]+({11:'J',12:'Q',13:'K',14:'A'}[rank]??rank);}
+export function publicPlayer(player){return Object.fromEntries(['id','kind','name','characterId','personaId','lifeId','seat','stack','startingStack','committed','streetCommitted','folded','allIn','left'].filter(k=>player[k]!==undefined).map(k=>[k,clone(player[k])]));}

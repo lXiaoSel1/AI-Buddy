@@ -179,6 +179,17 @@ export async function openNativeSocialClient({pluginId,contractHash},invoke){
   });
 }
 
+export async function openNativeVoiceGamesClient({pluginId,contractHash,contractVersion},invoke){
+ const opened=await invoke({pluginId,contextToken:contractHash,method:'open',payload:{contractHash,contractVersion}},{},'voice-games-request');
+ if(!opened?.sessionToken||!opened.dataDirectory)throw new Error('VOICE_GAMES_OPEN_INVALID');let closed=false,closing;
+ const call=(method,payload={},options={})=>{if(closed&&method!=='close')throw Object.assign(Error('Voice/games closed'),{code:'VOICE_GAMES_CLOSED'});return invoke({pluginId,contextToken:opened.sessionToken,method,payload},options,'voice-games-request');};
+ return Object.freeze({dataDirectory:opened.dataDirectory,describe:()=>call('describe'),invoke:call,
+  authorizeRequest(request,{pluginId:claimed,action}){if(claimed!==pluginId||request.method!=='POST')throw new Error('VOICE_GAMES_UI_INVALID');return call('ui.authorize',{action,request:{url:request.url,method:request.method,headers:Object.fromEntries(['cookie','host','origin','sec-fetch-site','content-type'].map(name=>[name,request.headers.get(name)]).filter(([,v])=>v!=null))}});},
+  registerTranscriber(){throw Object.assign(Error('Voice development paused by user'),{code:'VOICE_DEFERRED'});},
+  close(){if(closing)return closing;closed=true;closing=call('close');return closing;}
+ });
+}
+
 /** Ordinary DSH Host plugin; the CLI and Cordis Loader remain upstream. */
 export function apply(ctx, config = {}) {
   if (typeof process.send !== 'function') throw new Error('BUDDY_PLATFORM_IPC_REQUIRED');
@@ -223,7 +234,7 @@ export function apply(ctx, config = {}) {
     },
   });
   ctx.provide('buddyPluginServices', bridge);
-  if(purpose==='ui')ctx.provide('buddySocialServices',Object.freeze({openPlugin:spec=>openNativeSocialClient(spec,invokeBuddy)}));
+  if(purpose==='ui'){ctx.provide('buddySocialServices',Object.freeze({openPlugin:spec=>openNativeSocialClient(spec,invokeBuddy)}));ctx.provide('buddyVoiceGamesServices',Object.freeze({openPlugin:spec=>openNativeVoiceGamesClient(spec,invokeBuddy)}));}
   // All Web profile execution must enter through the host's private IPC map.
   // Approved work roots run in their independently guarded SDK profiles.
   ctx.tools.guard(exec => {

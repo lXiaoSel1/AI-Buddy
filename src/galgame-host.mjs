@@ -51,6 +51,7 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
   ctx.companionProgress=(characterId,personaId)=>companion.progress(characterId,personaId);
   let sequence=0;
   return {
+    get gameEconomy(){return companion.r95?.feeding?.gameEconomy;},viewState:()=>companion.viewState(),cardGamesPortrait:companion.cardGamesPortrait,gameContext:scope=>companion.gameContext(scope),recordGameFact:value=>companion.recordGameFact(value),
     async action(action,args={}) {
       if(action==='cg-daily')throw Object.assign(Error('Daily CG requires host admission'),{code:'DAILY_CG_HOST_ONLY'});
       if(action.startsWith('companion-'))return companion.action(action,args);

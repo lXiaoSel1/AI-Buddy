@@ -15,11 +15,11 @@ const plugins=()=>globalThis.window?.whale?.plugins;
 const embed=request=>plugins()?.embed?.(request)??Promise.resolve(null);
 // buttons: a refused request (e.g. during a data import) must not become an unhandled rejection
 const send=request=>void embed(request).catch(()=>{});
-const NAMES={bilibili:'B站陪伴',qq:'QQ连接',work:'工作与协作'};
+const NAMES={bilibili:'B站陪伴',qq:'QQ连接','card-games':'一起玩牌',work:'工作与协作'};
 export const embedName=target=>t(NAMES[target]);
 // What stops while a plugin is disabled, in its own words (shown on the disabled screen and in the confirm dialog).
-const PAUSED={bilibili:'停用期间不会自己去看视频，也不会发评论。观看记录和设置都还在。',qq:'停用期间不会回复 QQ 消息。聊天记录、允许名单和账号连接都还在。',work:'停用期间不会运行任何任务，记录都保留。'};
-const DISABLE={bilibili:'停用后不会自己去看视频，也不会发评论。观看记录和设置都保留，之后在这里或扩展中心都能重新启用。',qq:'停用后不会再回复 QQ 消息。聊天记录、允许名单和账号连接都保留，之后在这里或扩展中心都能重新启用。',work:'停用后不会运行任何任务。项目和任务记录都保留，之后在这里或扩展中心都能重新启用。'};
+const PAUSED={bilibili:'停用期间不会自己去看视频，也不会发评论。观看记录和设置都还在。',qq:'停用期间不会回复 QQ 消息。聊天记录、允许名单和账号连接都还在。','card-games':'停用期间牌局会暂停，牌局和在桌资金都会保留。',work:'停用期间不会运行任何任务，记录都保留。'};
+const DISABLE={bilibili:'停用后不会自己去看视频，也不会发评论。观看记录和设置都保留，之后在这里或扩展中心都能重新启用。',qq:'停用后不会再回复 QQ 消息。聊天记录、允许名单和账号连接都保留，之后在这里或扩展中心都能重新启用。','card-games':'停用期间牌局会暂停，牌局和在桌资金都会保留。',work:'停用后不会运行任何任务。项目和任务记录都保留，之后在这里或扩展中心都能重新启用。'};
 
 /** The embedded page's state as the main process reports it (one shared page for Bilibili and QQ). */
 export function useEmbedState(target){
@@ -102,7 +102,7 @@ export function EmbedArea({target,record,view,state,onCommunity,onStatus,logPath
     actions:[h('button',{key:'r',type:'button',className:'ui-btn primary',onClick:()=>{setRefused(null);send({op:'reload',target});}},Icon('retry',{size:16}),t('重试')),h('button',{key:'w',type:'button',className:'ui-btn ghost',onClick:()=>send({op:'popout',target})},Icon('external',{size:16}),t('在单独窗口打开'))]});
   else if(view==='none')screen=h(StateCard,{target,title:t('还没装 {name}').replace('{name}',name),text:t('卸载时留下的记录和设置，重新安装后还能接着用。'),actions:[h('button',{key:'i',type:'button',className:'ui-btn primary',onClick:()=>onCommunity?.({install:EMBED_TARGETS[target].packageName})},Icon('download',{size:16}),t('去安装'))]});
   else if(view==='popped')screen=h(StateCard,{target,title:t('{name}已在单独窗口打开').replace('{name}',name),text:t('关掉那个窗口，或者点「放回这里」，就回到主窗口。'),actions:[h('button',{key:'d',type:'button',className:'ui-btn primary',onClick:()=>send({op:'dock',target})},t('放回这里'))]});
-  else if(view==='unsupported')screen=h(StateCard,{target,title:t('这个版本的{name}还不能放进主窗口').replace('{name}',name),text:t('插件更新到 2.0.1 以后就能在这里打开。现在可以先在单独窗口里用。'),actions:[h('button',{key:'w',type:'button',className:'ui-btn primary',onClick:()=>void plugins().action({action:'dsh-open-client',packageKey:record.packageKey}).catch(()=>{})},Icon('external',{size:16}),t('在单独窗口打开'))]});
+  else if(view==='unsupported')screen=h(StateCard,{target,title:t('这个版本的{name}还不能放进主窗口').replace('{name}',name),text:t(target==='card-games'?'更新到支持嵌入的版本后，就能在这里打开。':'插件更新到 2.0.1 以后就能在这里打开。现在可以先在单独窗口里用。'),actions:[h('button',{key:'w',type:'button',className:'ui-btn primary',onClick:()=>void plugins().action({action:'dsh-open-client',packageKey:record.packageKey}).catch(()=>{})},Icon('external',{size:16}),t('在单独窗口打开'))]});
   return h('div',{className:'embed-area',ref:area,'data-embed-target':target},screen,view==='run'&&snap&&h('img',{className:'embed-snap',src:snap,alt:''}));
 }
 const OVERLAYS='dialog[open],.ui-menu,.side-status-pop';

@@ -92,7 +92,7 @@ test('C03 active Persona retry survives an older pending Persona, restart and li
  assert.deepEqual(store.pendingMeals({...current,operationId:'stale'}),[]);
  const settled=[];service=createFeedingService({store,now:()=>10000,monotonicNow:()=>0,evaluateMeal:async()=>({manualEquivalentAffection:1}),settleAffection:async value=>{settled.push(value);}});service.activeScope(current);
  await service.tick();await service.tick();assert.deepEqual(settled.map(x=>x.mealId),['current-meal']);
- assert.deepEqual(store.wallet(),before.wallet);assert.deepEqual(store.view(current).inventory,before.inventory);assert.equal(store.getMeal('old-meal').attempts,1);assert.equal(store.getMeal('current-meal').affectionState,'settled');
+ const {held,available,...beforeWallet}=before.wallet;assert.equal(held,0);assert.equal(available,beforeWallet.balance);assert.deepEqual(store.wallet(),beforeWallet);assert.deepEqual(store.view(current).inventory,before.inventory);assert.equal(store.getMeal('old-meal').attempts,1);assert.equal(store.getMeal('current-meal').affectionState,'settled');
 });
 
 const openai={kind:'openai',protocol:'responses',baseUrl:'https://api.openai.com/v1',model:'gpt-6.1-sol',reasoningEffort:null};
