@@ -3,14 +3,15 @@
 export const EMBED_TARGETS=Object.freeze({
   bilibili:Object.freeze({kind:'community',packageName:'@ai-buddy/bilibili-companion',page:'plugin-bilibili',icon:'tv'}),
   qq:Object.freeze({kind:'community',packageName:'@ai-buddy/qq-connect',page:'plugin-qq',icon:'chats'}),
-  'card-games':Object.freeze({kind:'community',packageName:'@ai-buddy/card-games',page:'plugin-card-games',icon:'nav-card-games'}),
+  'card-games':Object.freeze({kind:'card',packageName:'@ai-buddy/card-games',page:'plugin-card-games',icon:'nav-card-games'}),
   work:Object.freeze({kind:'work',packageName:'@ai-buddy/work-collaboration',page:'agent-tasks',icon:'nav-work'})});
 /** G1: the sidebar's 插件 group, from what is installed: enabled community plugins with their own page (an embed target, or
  * one that declares ui.registerPage). Embed targets first in their own order (Bilibili, QQ), then the rest by name.
  * Returns [pageId, icon, record]; pages that cannot sit in the main window get an "ext:<packageKey>" id (own window). */
 export function pluginPageEntries(records=[],nameOf=record=>record.packageName){
+  const pageTarget=record=>EMBED_TARGETS[embedTargetFor(record.packageName)];
   const order=Object.keys(EMBED_TARGETS),rank=record=>{const i=order.indexOf(embedTargetFor(record.packageName));return i<0?order.length:i;};
-  return records.filter(record=>record?.enabled===true&&typeof record.packageName==='string'&&(EMBED_TARGETS[embedTargetFor(record.packageName)]?.kind==='community'||!embedTargetFor(record.packageName)&&record.backend!=='legacy'&&(record.declaredCapabilities??[]).includes('ui.registerPage')))
+  return records.filter(record=>record?.enabled===true&&typeof record.packageName==='string'&&(pageTarget(record)&&pageTarget(record).kind!=='work'||!embedTargetFor(record.packageName)&&record.backend!=='legacy'&&(record.declaredCapabilities??[]).includes('ui.registerPage')))
     .sort((a,b)=>rank(a)-rank(b)||String(nameOf(a)).localeCompare(String(nameOf(b))))
     .map(record=>{const target=embedTargetFor(record.packageName);return target?[EMBED_TARGETS[target].page,EMBED_TARGETS[target].icon,record]:['ext:'+record.packageKey,'nav-plugins',record];});
 }

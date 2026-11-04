@@ -486,13 +486,13 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
     return h("article", { className: "ws-card ext-irow", key: record.packageKey, "data-dsh-record": record.packageKey },
       h(PluginLogo, { packageName: record.packageName, size: 44 }),
       h("div", { className: "ext-ir-main" },
-        h("div", { className: "ext-row" }, h("b", null, pluginName(record.packageName)), h("span", { className: "ext-cap" }, record.exactVersion), working ? h(StatusPill, { tone: "busy" }, t(job.operation === "install" ? "正在安装" : "正在维护")) : h(CommunityInstallationStatus, { record, compact: true }), update && h("button", { type: "button", className: "ws-tag ext-tagbtn", onClick: () => setTab("updates") }, t("有更新 {v}").replace("{v}", update.to))),
+        h("div", { className: "ext-row" }, h("b", null, pluginName(record.packageName)), h("span", { className: "ext-cap" }, record.exactVersion), record.localBundled && h("span", { className: "ext-cap" }, L("本地随附", "Bundled locally")), working ? h(StatusPill, { tone: "busy" }, t(job.operation === "install" ? "正在安装" : "正在维护")) : h(CommunityInstallationStatus, { record, compact: true }), update && h("button", { type: "button", className: "ws-tag ext-tagbtn", onClick: () => setTab("updates") }, t("有更新 {v}").replace("{v}", update.to))),
         h("small", { className: "ext-cap", "data-installed-situation": true }, installedSituation(record, { jobs: workStatus ? (workStatus.jobs ?? []).length : null, accounts })),
         label === "加载失败" && record.runtimeFailure && h("details", { className: "ext-tech" }, h("summary", null, t("技术详情")), h("code", null, record.runtimeFailure.code + "\n" + record.runtimeFailure.message))),
       h("div", { className: "ext-row" },
         h("span", { className: "ext-cap" }, L("启用", "Enabled")), h(Switch, { checked: !!record.enabled, disabled: busy, label: t(record.enabled ? "停用" : "启用") + " · " + pluginName(record.packageName), onChange: () => void run(() => record.enabled ? call({action:"dsh-disable",packageKey:record.packageKey}) : enableRecord(record)) }),
         h("button", { type: "button", className: "ui-btn", disabled: !record.enabled || busy, onClick: () => openPage(record) }, Icon("external", { size: 16 }), t("打开")),
-        h("div", { className: "ext-menuwrap" }, h("button", { type: "button", className: "ui-icon-btn", "aria-haspopup": "menu", "aria-expanded": open, "aria-label": t("更多") + " · " + pluginName(record.packageName), title: t("更多"), onClick: () => setMenuFor(open ? null : record.packageKey) }, Icon("more", { size: 16 })),
+        !record.localBundled && h("div", { className: "ext-menuwrap" }, h("button", { type: "button", className: "ui-icon-btn", "aria-haspopup": "menu", "aria-expanded": open, "aria-label": t("更多") + " · " + pluginName(record.packageName), title: t("更多"), onClick: () => setMenuFor(open ? null : record.packageKey) }, Icon("more", { size: 16 })),
           open && h(Menu, { label: t("更多"), className: "ext-menu-r", onClose: () => setMenuFor(null), items }))));
   }
   // B4 keep: an installed 1.9-era extension is listed as it is (Kimi 1.0.0 stays 「不兼容」 and is managed under Sources).

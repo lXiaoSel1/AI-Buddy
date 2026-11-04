@@ -34,7 +34,7 @@ function normalizeSpec(input, packageRef) {
   if (input.kind === 'tarball') return input.value;
   throw failure('DSH_INVALID_INSTALL_SPEC', 'Unsupported DSH install source');
 }
-function tarballIdentity(bytes, files) {
+export function tarballIdentity(bytes, files) {
   const tar = gunzipSync(bytes, { maxOutputLength: 512 * 1024 * 1024 });
   let identity; const members = new Set();
   for (let offset = 0; offset + 512 <= tar.length;) {

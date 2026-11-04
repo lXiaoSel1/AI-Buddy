@@ -73,7 +73,7 @@ export function EmbedArea({target,record,view,state,onCommunity,onStatus,logPath
   useEffect(()=>{onStatus?.({embed:{target,view}});},[target,view]);
   useEffect(()=>{const on=()=>setShown(document.visibilityState!=='hidden');document.addEventListener('visibilitychange',on);return()=>document.removeEventListener('visibilitychange',on);},[]);
   // ask for the page whenever it should exist here and does not yet; never while the window is hidden
-  useEffect(()=>{if(shown&&live&&!refused&&(!state||state.state==='idle'||state.target!==target&&EMBED_TARGETS[target].kind==='community'))void embed({op:'open',target}).catch(e=>setRefused(e?.code??'PLUGIN_EMBED_FAILED'));},[target,live,shown,refused,state?.state,state?.target]);
+  useEffect(()=>{if(shown&&live&&!refused&&(!state||state.state==='idle'||state.target!==target&&EMBED_TARGETS[target].kind!=='work'))void embed({op:'open',target}).catch(e=>setRefused(e?.code??'PLUGIN_EMBED_FAILED'));},[target,live,shown,refused,state?.state,state?.target]);
   // report where the page goes while it is starting or showing; null otherwise, so a disabled or failed page never
   // stays over its own screen. Reported again whenever this changes or the window comes back.
   const waiting=view==='waiting';

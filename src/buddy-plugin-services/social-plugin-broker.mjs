@@ -17,7 +17,7 @@ export const SOCIAL_RUNTIME_METHODS=Object.freeze(['social.context.read','activi
 
 /** Adapt native plugin requests to the existing Core authority. This module
  * observes transport/model results itself: plugin claims never mint evidence. */
-export function createSocialPluginBroker({dataRoot,accounts,transport,bridge,getR95,getProvider,onBubble=async()=>{},onEvent=()=>{},onSetup=null,verifyBilibiliAccount=null,biliVision=null,requireBiliMedia=null,onReadingOpen=async()=>({opened:false}),now=Date.now}={}){
+export function createSocialPluginBroker({dataRoot,accounts,transport,bridge,getR95,getProvider,onBubble=async()=>{},onEvent=()=>{},onSetup=null,verifyBilibiliAccount=null,biliVision=null,requireBiliMedia=null,onReadingOpen=async()=>({opened:false}),automaticWorkAllowed=()=>true,now=Date.now}={}){
  const journal=createSocialRuntimeJournal({dataRoot});
   const offers=new Map(),deliveryAdapters=new Map(),candidateAdmissions=new Map(),coreCalls=new WeakMap(),deferredEvidenceReleases=new WeakMap(),activityAttempts=new WeakMap(),activityAdmissions=new WeakMap(),pendingAdmissions=new Set();
  const contexts=new Map(),management=new Map(),operators=new Map(),operatorBindings=new Map(),qqReplyObservations=new Map();let closed=false;
@@ -68,7 +68,7 @@ export function createSocialPluginBroker({dataRoot,accounts,transport,bridge,get
   }
   if(batch.length)journal.advanceLegacyCursor(batch.at(-1).cursor);
  }
- function scheduleMemory(delay=0){if(memoryClosing||closed||typeof transport.qqMemoryList!=='function')return;clearTimeout(memoryTimer);memoryTimer=setTimeout(()=>{memoryTimer=null;recoverQqMemory().catch(()=>{});},Math.min(300000,Math.max(0,delay)));memoryTimer.unref?.();}
+ function scheduleMemory(delay=0){if(memoryClosing||closed||typeof transport.qqMemoryList!=='function')return;clearTimeout(memoryTimer);memoryTimer=setTimeout(()=>{memoryTimer=null;if(!automaticWorkAllowed()){scheduleMemory(10000);return;}recoverQqMemory().catch(()=>{});},Math.min(300000,Math.max(0,delay)));memoryTimer.unref?.();}
  async function appendMemoryIntent(intent){
   const proof=intent.proof;if(hash(proof)!==intent.proof_digest||proof.version!==1||!proof.requestId||!proof.messageId||typeof proof.text!=='string'||!Number.isFinite(proof.occurredAt)||proof.accountRef!==proof.context?.account?.ref)throw fail('QQ_MEMORY_PROOF_INVALID');
   verifyMemoryContext(proof.context);const identity={pluginId:proof.context.pluginId,packageName:proof.context.packageName},token=proof.context.persistedToken??proof.context.contextToken,saved=journal.context(token);

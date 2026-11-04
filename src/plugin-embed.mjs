@@ -10,7 +10,7 @@ import {EMBED_TARGETS,embedCapable,embedTargetFor,panelScript,PANEL_CHECK} from 
 export const EMBED_CHANNEL='plugins:embed';
 export const EMBED_EVENT='plugins:embed-state';
 export {EMBED_TARGETS,embedCapable,embedTargetFor};
-const KINDS=['community','work'],OPS=new Set(['open','slot','capture','cover','popout','dock','reload','state']);
+const KINDS=['community','card','work'],OPS=new Set(['open','slot','capture','cover','popout','dock','reload','state']);
 const fail=(message,code='PLUGIN_EMBED_DENIED')=>Object.assign(Error(message),{code});
 /** A placeholder rect in window content coordinates (the panel's page zoom is locked to 1). */
 export function validEmbedRect(rect,bounds){
@@ -95,7 +95,7 @@ export function createPluginEmbed({WebContentsView,getPanel,open,openWindow,admi
       };
       view.webContents.once?.('destroyed',()=>surface.destroy());
       // every document of the shared community page must be told which plugin to show
-      if(slot.kind==='community')view.webContents.on('did-finish-load',()=>{if(slot.surface===surface&&slot.target)void settle(slot);});
+      if(slot.kind!=='work')view.webContents.on('did-finish-load',()=>{if(slot.surface===surface&&slot.target)void settle(slot);});
       slot.surface=surface;slot.view=view;slot.loaded=false;slot.ready=false;made?.(surface);
       return surface;
     };
@@ -107,7 +107,7 @@ export function createPluginEmbed({WebContentsView,getPanel,open,openWindow,admi
    */
   async function settle(slot){
     const surface=slot.surface,target=slot.target;if(!surface||!target||slot.state==='popped'||slot.admitting)return;
-    const token=++slot.token,pluginId=EMBED_TARGETS[target].packageName,community=slot.kind==='community',deadline=now()+(community?firstLoadTimeoutMs:markTimeoutMs);
+    const token=++slot.token,pluginId=EMBED_TARGETS[target].packageName,community=slot.kind!=='work',deadline=now()+(community?firstLoadTimeoutMs:markTimeoutMs);
     slot.ready=false;setState(slot,'start');apply();
     for(let round=0;;round++){
       if(slot.token!==token||slot.surface!==surface||surface.isDestroyed())return;
@@ -155,14 +155,14 @@ export function createPluginEmbed({WebContentsView,getPanel,open,openWindow,admi
   async function openTarget(slot,target){
     const changed=slot.target!==target;slot.target=target;
     if(slot.state==='popped')return describe(slot);
-    if(slot.kind==='community'){
+    if(slot.kind!=='work'){
       const epoch=slot.epoch,intent=++slot.intent,surface=slot.surface,current=()=>!closed&&slot.epoch===epoch&&slot.intent===intent&&slot.target===target;
       slot.admitting=true;slot.token++;slot.ready=false;setState(slot,'start');apply();
       try{await deadline(Promise.resolve().then(()=>admit(target)),openTimeoutMs);}catch(error){if(!current())return describe(slot);cancel(slot);retire(slot,slot.surface);const code=codeOf(error),idle=['PLUGIN_EMBED_NOT_ENABLED','PLUGIN_EMBED_UNSUPPORTED'].includes(code);setState(slot,idle?'idle':'err',idle?null:code);apply();return describe(slot);}
       if(!current())return describe(slot);slot.admitting=false;
       if(slot.state==='popped'||surface&&(slot.surface!==surface||surface.isDestroyed()))return describe(slot);
     }
-    if(slot.surface&&!slot.surface.isDestroyed()){if(slot.kind==='community'&&(changed||!slot.ready)&&slot.loaded)void settle(slot);apply();return describe(slot);}
+    if(slot.surface&&!slot.surface.isDestroyed()){if(slot.kind!=='work'&&(changed||!slot.ready)&&slot.loaded)void settle(slot);apply();return describe(slot);}
     await start(slot,target);return describe(slot);
   }
   async function handle(request){

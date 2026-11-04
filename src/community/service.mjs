@@ -36,7 +36,7 @@ const pluginIdentity = ref => 'dsh.' + communityDigest({sourceId: ref.sourceId, 
 function publicInstallation(record, verified = false) { if (!record) return null; const value = copy(omit(record, ['sourceProof', 'backendPlan', 'previous'])); value.previous = record.previous ? {version: record.previous.packageRef.exactVersion} : null; value.runtimeVerified = verified; value.enabledIntent = record.enabled === true; value.runtimeState = record.runtimeFailure && !verified ? 'failed' : record.enabled ? verified ? 'loaded' : 'pending-load' : 'disabled'; value.phase = value.runtimeState; return value; }
 const publicJob = job => Object.fromEntries(['id', 'packageKey', 'operation', 'state', 'createdAt', 'updatedAt'].map(key => [key, job[key]]));
 
-export async function createCommunityService({root, dataRoot, legacyManager, dshBackend, hostDependencies = null, bridgeCompatibilityVersion = BUDDY_BRIDGE_COMPATIBILITY_VERSION, busy = async () => false, onUpdate = () => {}, onPackageState = async () => {}, onOpenClient, onOpenExternal, fetchImpl = globalThis.fetch, now = Date.now, pollMs = 5000, minimumWatermarks = COMMUNITY_MINIMUM_WATERMARKS, officialFingerprints = officialScopeFingerprints()} = {}) {
+export async function createCommunityService({root, dataRoot, legacyManager, dshBackend, hostDependencies = null, bridgeCompatibilityVersion = BUDDY_BRIDGE_COMPATIBILITY_VERSION, busy = async () => false, onUpdate = () => {}, onPackageState = async () => {}, onOpenClient, onOpenExternal, fetchImpl = globalThis.fetch, now = Date.now, pollMs = 5000, automaticWorkAllowed = () => true, minimumWatermarks = COMMUNITY_MINIMUM_WATERMARKS, officialFingerprints = officialScopeFingerprints()} = {}) {
   if (!legacyManager?.action || !legacyManager?.snapshot) throw Error('Existing signed plugin manager is required');
   const control = join(resolve(root), 'local/community'), preferencesDirectory = join(resolve(dataRoot), 'community');
   await assertPluginTreeNoLinks(control); await assertPluginTreeNoLinks(preferencesDirectory); await mkdir(control, {recursive: true}); await mkdir(preferencesDirectory, {recursive: true});
@@ -481,7 +481,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     if (event.kind === 'runtime-verification' || event.kind === 'install-state' || event.kind === 'platform-progress') { if (typeof event.phase === 'string' && nativeState.phase !== event.phase) { nativeState = {...nativeState, phase: event.phase}; update(); } }
     else if (event.kind === 'tools-changed' && nativeState.phase === 'verifying-component') { nativeState = {...nativeState, phase: 'checking-plugin'}; update(); }
   });
-  if (pollMs > 0) { timer = setInterval(() => { void queue.drain().catch(() => {}); }, pollMs); timer.unref?.(); }
+  if (pollMs > 0) { timer = setInterval(() => { if(automaticWorkAllowed())void queue.drain().catch(() => {}); }, pollMs); timer.unref?.(); }
   function close() {
     if (closePromise) return closePromise; closed = true; clearInterval(timer); offNativeEvents?.(); for (const controller of metadataRequests.keys()) controller.abort(Object.assign(Error('Community is closed'), {code: 'COMMUNITY_CLOSED'}));
     closePromise = (async () => {
