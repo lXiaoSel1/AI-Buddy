@@ -9,10 +9,12 @@ import {ApiTransport} from './api-transport.mjs';
 import {profileEffort,validateProfileEffort,cleanModelCatalog} from './reasoning-settings.mjs';
 import {nativeSearchCapability,nativeSearchSystem} from './native-search.mjs';
 import {imageInputCapability} from './model-images.mjs';
+const turnCancelled=()=>Object.assign(Error('对话已取消'),{code:'ABORT_ERR'});
 export class ModelRouter{
   get supportsSubmissionLifecycle(){return true;}
-  constructor({codex,dataRoot,crypto,legacy=false,onChange=()=>{},onUsage=()=>{},onActivity=()=>{},audit=()=>{},fetchImpl,timeoutMs=110000,storeName='model-connections.json',presets=MODEL_PRESETS,protocols=API_PROTOCOLS,outputLimit=()=>8192,searchPolicy=()=>false,onNativeSearch=()=>{}}){
-    Object.assign(this,{codex,dataRoot,crypto,onChange,onActivity,audit,timeoutMs,presets,protocols,outputLimit,searchPolicy,onNativeSearch});this.store=createSnapshotStorage(join(dataRoot,storeName));this.enabled=false;this.activeTurns=0;this.controllers=new Set();this.context=new AsyncLocalStorage();this.tail=Promise.resolve();this.transport=new ApiTransport({fetchImpl,onUsage,audit});
+  constructor({codex,dataRoot,crypto,legacy=false,onChange=()=>{},onUsage=()=>{},onActivity=()=>{},audit=()=>{},fetchImpl,timeoutMs=110000,gameIdleTimeoutMs=120000,storeName='model-connections.json',presets=MODEL_PRESETS,protocols=API_PROTOCOLS,outputLimit=()=>8192,searchPolicy=()=>false,onNativeSearch=()=>{}}){
+    if(!Number.isSafeInteger(gameIdleTimeoutMs)||gameIdleTimeoutMs<1||gameIdleTimeoutMs>2147483647)throw RangeError('Invalid game model idle timeout');
+    Object.assign(this,{codex,dataRoot,crypto,onChange,onActivity,audit,timeoutMs,gameIdleTimeoutMs,presets,protocols,outputLimit,searchPolicy,onNativeSearch});this.store=createSnapshotStorage(join(dataRoot,storeName));this.enabled=false;this.activeTurns=0;this.controllers=new Set();this.context=new AsyncLocalStorage();this.tail=Promise.resolve();this.transport=new ApiTransport({fetchImpl,onUsage,audit});
     this.ready=readJson(this.store,null).then(async value=>{this.state=value??{version:1,activeId:legacy?'codex':null,profiles:legacy?[{id:'codex',kind:'codex',name:'本机 Codex 登录',protocol:'codex',baseUrl:'',model:codex.defaultModel,models:[]}]:[]};if(!value)await this.store.writeText(JSON.stringify(this.state));return this;});
   }
   selected(){return this.context.getStore()?.profile??this.state?.profiles.find(profile=>profile.id===this.state.activeId)??null;}
@@ -72,6 +74,7 @@ export class ModelRouter{
   // delays chat on another, and chat (priority 0) runs before queued
   // background work (priority 1) on the same connection.
   scheduleTurn(profile,fn,priority,signal){
+    if(signal?.aborted)return Promise.reject(turnCancelled());
     const captured=structuredClone(profile);this.materialize(captured);
     this.lanes??=new Map();const key=captured.id??captured.kind??'default';let lane=this.lanes.get(key);if(!lane)this.lanes.set(key,lane={queue:[],running:false,executing:null});
     this.activeTurns++;this.onChange(this.view());
@@ -79,27 +82,42 @@ export class ModelRouter{
     // frozen connection inside that context. The lane pump belongs to whichever
     // request started it and must not lend that request's scope to queued work.
     const execute=AsyncLocalStorage.bind(()=>this.context.run({profile:this.materialize(captured)},fn));
-    return new Promise((resolve,reject)=>{lane.queue.push({profile:captured,execute,priority,signal,resolve,reject});queueMicrotask(()=>this.pumpTurns(lane));});
+    return new Promise((resolve,reject)=>{
+      const turn={profile:captured,execute,priority,signal,resolve,reject,abort:()=>{
+        const index=lane.queue.indexOf(turn);if(index<0)return;
+        lane.queue.splice(index,1);signal?.removeEventListener('abort',turn.abort);this.activeTurns--;reject(turnCancelled());this.onChange(this.view());
+      }};
+      lane.queue.push(turn);signal?.addEventListener('abort',turn.abort,{once:true});
+      if(signal?.aborted)turn.abort();
+      queueMicrotask(()=>this.pumpTurns(lane));
+    });
   }
   async pumpTurns(lane){
     if(lane.running)return;lane.running=true;
-    try{while(lane.queue.length){lane.queue.sort((a,b)=>a.priority-b.priority);const turn=lane.queue.shift();lane.executing=turn.profile.id;
-      try{if(turn.signal?.aborted)throw Error('主题准备已取消');turn.resolve(await turn.execute());}catch(error){turn.reject(error);}finally{lane.executing=null;this.activeTurns--;this.onChange(this.view());}
+    try{while(lane.queue.length){lane.queue.sort((a,b)=>a.priority-b.priority);const turn=lane.queue.shift();turn.signal?.removeEventListener('abort',turn.abort);lane.executing=turn.profile.id;
+      try{if(turn.signal?.aborted)throw turnCancelled();turn.resolve(await turn.execute());}catch(error){turn.reject(error);}finally{lane.executing=null;this.activeTurns--;this.onChange(this.view());}
     }}finally{lane.running=false;}
   }
-  requestController(signal,timeout=this.timeoutMs){const controller=new AbortController(),abort=()=>controller.abort();if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});const timer=timeout===0?null:setTimeout(abort,timeout);this.controllers.add(controller);return {controller,dispose:()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);this.controllers.delete(controller);}};}
+  requestController(signal,timeout=this.timeoutMs,{idle=false}={}){
+    const controller=new AbortController(),abort=()=>controller.abort(signal?.reason);let timer;
+    const reset=()=>{clearTimeout(timer);if(timeout>0&&!controller.signal.aborted)timer=setTimeout(()=>controller.abort(idle?Object.assign(Error('模型长时间未返回数据'),{code:'GAME_MODEL_TIMEOUT'}):undefined),timeout);};
+    if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});reset();this.controllers.add(controller);
+    return {controller,reset,dispose:()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);this.controllers.delete(controller);}};
+  }
   async *stream(options){
     options={...this.requestContext?.getStore(),...options};
-    await this.ready;if(!this.enabled)throw Error('联网聊天已关闭');const profile=this.materialize(this.selected());const request=this.requestController(options.signal,options.gameBinding?0:this.timeoutMs);
+    await this.ready;if(!this.enabled)throw Error('联网聊天已关闭');const profile=this.materialize(this.selected());const idle=!!options.gameBinding,request=this.requestController(options.signal,idle?this.gameIdleTimeoutMs:this.timeoutMs,{idle});
     const activityId='chat:'+randomUUID(),activity={id:activityId,kind:options.purpose==='cg-theme'?'cg-theme':'chat',purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId};this.onActivity({...activity,active:true});
     try{
       const selectedPolicy=(options.singleSubmission===true||options.gameBinding)?false:await this.searchPolicy({profile:this.publicProfile(profile),purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId}),policy=selectedPolicy===true?{allowed:true}:selectedPolicy&&typeof selectedPolicy==='object'?selectedPolicy:{allowed:false},capability=nativeSearchCapability(profile);
       // Only the Core callback grants this lane; serializable caller fields do not. A granted turn's prompt says
       // so plainly and no longer carries the companion rule's blanket tool ban (nativeSearchSystem).
-      const allowed=policy.allowed===true&&capability.supported,scoped={...options,nativeSearch:allowed?{allowed:true,check:policy.check}:undefined,...(allowed?{system:nativeSearchSystem(options.system)}:{})};
+      const allowed=policy.allowed===true&&capability.supported,scoped={...options,nativeSearch:allowed?{allowed:true,check:policy.check}:undefined,...(allowed?{system:nativeSearchSystem(options.system)}:{}),...idle&&{onStreamActivity:request.reset}};
       if(policy.allowed===true&&!capability.supported){yield {type:'native-search-status',status:'unavailable',capability,reason:capability.reason};if(policy.required)throw Object.assign(Error(capability.reason),{code:'NATIVE_SEARCH_UNAVAILABLE'});scoped.system=(options.system??'')+'\n当前连接的原生联网能力尚未可用。本次不能声称已经联网核实；需要时明确说明未完成核验。';}
       if(profile.kind==='codex'){this.codex.setEnabled(true);const args={...scoped,connectionIdentity:connectionIdentity(profile),model:profile.model,reasoningEffort:profileEffort(profile),signal:request.controller.signal};yield* this.observeNativeSearch(this.codex.streamForConnection?this.codex.streamForConnection(profile.id,args):this.codex.stream(args),scoped);}else yield* this.observeNativeSearch(this.streamWithRetry(profile,scoped,request.controller.signal),scoped);
-    }finally{request.controller.abort();request.dispose();this.onActivity({...activity,active:false});}
+      request.controller.signal.throwIfAborted();
+    }catch(error){const reason=request.controller.signal.reason;if(idle&&reason?.code==='GAME_MODEL_TIMEOUT')throw reason;throw error;}
+    finally{request.controller.abort();request.dispose();this.onActivity({...activity,active:false});}
   }
   withRequestContext(metadata,fn){this.requestContext??=new AsyncLocalStorage();return this.requestContext.run(metadata,fn);}
   withFrozenBudget({outputLimit,contextTokens},fn){if(outputLimit!=='auto'&&(!Number.isSafeInteger(outputLimit)||outputLimit<256||outputLimit>65536)||!Number.isSafeInteger(contextTokens)||contextTokens<2048||contextTokens>2000000)throw Error('Invalid captured request budget');this.budgetContext??=new AsyncLocalStorage();return this.budgetContext.run(Object.freeze({outputLimit,contextTokens}),fn);}

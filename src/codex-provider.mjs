@@ -96,7 +96,7 @@ export class CodexProvider extends EventEmitter {
   async completeRequest(options,submission) {
     if(options.signal?.aborted)throw cancelled();
     const model=options.model || this.defaultModel,effort=this.reasoningEffort(model,options.reasoningEffort);
-    const timings=new Set(),mark=name=>{if(timings.has(name))return;timings.add(name);try{options.onTiming?.({name});}catch{}};
+    const timings=new Set(),mark=name=>{if(timings.has(name))return;timings.add(name);options.onStreamActivity?.();try{options.onTiming?.({name});}catch{}};
     await this.start(options.nativeSearch?.allowed===true);mark('process-ready');if(options.signal?.aborted)throw cancelled();
     const cwd=join(tmpdir(),'ai-buddy-chat',createHash('sha256').update(this.dataRoot).digest('hex').slice(0,24));mkdirSync(cwd,{recursive:true});
     const searchAllowed=options.nativeSearch?.allowed===true;if(searchAllowed)await checkNativeSearch(options);
@@ -158,6 +158,7 @@ export class CodexProvider extends EventEmitter {
       const listener=message=>{
         if(finished)return;const p=message.params??{};if(message.method==='provider/error'){done(new Error(p.message));return;}if(p.threadId!==id)return;
         try{
+          const messageTurn=eventTurn(message);if(!turnId||messageTurn===turnId||!messageTurn&&message.method==='thread/tokenUsage/updated')options.onStreamActivity?.();
           if(message.method==='turn/completed'||message.method==='item/completed'&&p.item?.type==='agentMessage'){
             const bytes=Buffer.byteLength(JSON.stringify(message));if(evidenceBytes+bytes>8*1024*1024||terminalEvents.length>=4096){evidenceOverflow=true;done(Object.assign(new Error('Codex 完整回执超过保留上限'),{code:'CODEX_STREAM_OVERFLOW'}));stopUnknown(new Error('Codex 回执超过保留上限'));return;}evidenceBytes+=bytes;terminalEvents.push(structuredClone(message));
           }

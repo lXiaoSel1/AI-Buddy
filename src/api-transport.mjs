@@ -30,12 +30,18 @@ export function normalizeApiUsage(raw={},protocol){
   const cacheWrite=numeric(raw.cache_creation_input_tokens);
   return {input,output,cacheRead:cached,cacheWrite,reasoning,total:numeric(raw.total_tokens??raw.totalTokenCount)??(input!==null&&output!==null?input+output+(protocol==='anthropic'?(cached??0)+(cacheWrite??0):0)+(protocol==='gemini'?(reasoning??0)+(numeric(raw.toolUsePromptTokenCount??raw.total_tool_use_tokens)??0):0):null)};
 }
-async function* events(response){
+async function* events(response,onActivity){
   const decoder=new TextDecoder();let buffer='',data=[],bytes=0;
-  for await(const chunk of response.body){bytes+=chunk.byteLength;if(bytes>16*1024*1024)throw Error('模型响应过大，请重试');buffer+=decoder.decode(chunk,{stream:true});
+  for await(const chunk of response.body){if(chunk.byteLength)onActivity?.();bytes+=chunk.byteLength;if(bytes>16*1024*1024)throw Error('模型响应过大，请重试');buffer+=decoder.decode(chunk,{stream:true});
     let newline;while((newline=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,newline).replace(/\r$/,'');buffer=buffer.slice(newline+1);if(!line){if(data.length){yield data.join('\n');data=[];}}else if(line.startsWith('data:'))data.push(line.slice(5).trimStart());}
   }
   buffer+=decoder.decode();if(buffer.startsWith('data:'))data.push(buffer.slice(5).trim());if(data.length)yield data.join('\n');
+}
+async function responseText(response,onActivity){
+  if(!onActivity||!response.body)return response.text();
+  const decoder=new TextDecoder();let text='',bytes=0;
+  for await(const chunk of response.body){if(chunk.byteLength)onActivity();bytes+=chunk.byteLength;if(bytes>2*1024*1024)throw Error('模型响应过大，请重试');text+=decoder.decode(chunk,{stream:true});}
+  return text+decoder.decode();
 }
 function parsePayload(value,profile,state){
   let text='',done=false;
@@ -74,10 +80,10 @@ export class ApiTransport{
     const route=profile.protocol==='gemini'?'/models/'+encodeURIComponent(profile.model.replace(/^models\//,''))+':streamGenerateContent?alt=sse':profile.protocol==='anthropic'?'/messages':profile.protocol==='responses'?'/responses':'/chat/completions';
     try{
       const url=profile.baseUrl+route,init={method:'POST',headers:headers(profile),body:JSON.stringify(requestBody(profile,options)),signal:options.signal,redirect:'error'};
-      await submission.beforeSend();submission.attempt();options.onTiming?.({name:'request-submitted'});const response=await this.fetch(url,init);status=response.status;await submission.confirm({status});options.onTiming?.({name:'response-headers'});if(!response.ok){const error=await readApiHttpError(response,{signal:options.signal,secrets:[profile.key]});httpError=error.httpError;throw error;}
+      await submission.beforeSend();submission.attempt();options.onTiming?.({name:'request-submitted'});const response=await this.fetch(url,init);options.onStreamActivity?.();status=response.status;await submission.confirm({status});options.onTiming?.({name:'response-headers'});if(!response.ok){const error=await readApiHttpError(response,{signal:options.signal,secrets:[profile.key]});httpError=error.httpError;throw error;}
       if(response.headers.get('content-type')?.includes('text/event-stream')){
-        for await(const raw of events(response)){if(raw==='[DONE]'){finished=true;continue;}let value;try{value=JSON.parse(raw);}catch{throw Error('模型返回了无效数据，请检查协议');}const parsed=parsePayload(value,profile,state);finished||=parsed.done;if(parsed.text){if(!outputLength)options.onTiming?.({name:'first-delta'});outputLength+=parsed.text.length;if(outputLength>1024*1024)throw Error('模型回复过长，请重试');yield {type:'text-delta',text:parsed.text};}}
-      }else{const raw=await response.text();if(raw.length>2*1024*1024)throw Error('模型响应过大，请重试');let value;try{value=JSON.parse(raw);}catch{throw Error('模型返回了无效数据，请检查协议');}const parsed=parsePayload(value,profile,state);if(parsed.text){outputLength=parsed.text.length;yield {type:'text-delta',text:parsed.text};}finished=parsed.done;}
+        for await(const raw of events(response,options.onStreamActivity)){if(raw==='[DONE]'){finished=true;continue;}let value;try{value=JSON.parse(raw);}catch{throw Error('模型返回了无效数据，请检查协议');}const parsed=parsePayload(value,profile,state);finished||=parsed.done;if(parsed.text){if(!outputLength)options.onTiming?.({name:'first-delta'});outputLength+=parsed.text.length;if(outputLength>1024*1024)throw Error('模型回复过长，请重试');yield {type:'text-delta',text:parsed.text};}}
+      }else{const raw=await responseText(response,options.onStreamActivity);if(raw.length>2*1024*1024)throw Error('模型响应过大，请重试');let value;try{value=JSON.parse(raw);}catch{throw Error('模型返回了无效数据，请检查协议');}const parsed=parsePayload(value,profile,state);if(parsed.text){outputLength=parsed.text.length;yield {type:'text-delta',text:parsed.text};}finished=parsed.done;}
       if(!finished)throw Error('模型连接中断，请重试');options.onTiming?.({name:'model-complete'});
       if(state.truncated){yield {type:'finish',reason:{kind:'length'}};return;}
       if(!outputLength)throw Error('模型没有返回正文，请重试');yield {type:'finish',reason:{kind:'stop'}};
