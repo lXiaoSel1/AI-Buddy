@@ -49,6 +49,20 @@ export function settledShowdown(state){
  return pairs.length>1?Object.fromEntries(pairs):null;
 }
 
+export function settledHands(state){
+ if(state.type!=='doudizhu'||state.phase!=='settled'||state.settlement?.completed!==true)return null;
+ const remaining=state.players.map(({id})=>[id,state.hands?.[id]]);
+ const seen=new Set();
+ for(const [,cards] of remaining){
+  if(!Array.isArray(cards)||cards.length>20)return null;
+  for(const card of cards){
+   if(!Number.isInteger(card)||card<0||card>53||seen.has(card))return null;
+   seen.add(card);
+  }
+ }
+ return Object.fromEntries(remaining.map(([id,cards])=>[id,[...cards]]));
+}
+
 export function recordActionPresentation(table,previous,action,decoration,at){
  const next=table.state;
  const id=table.id+':presentation:'+table.version;

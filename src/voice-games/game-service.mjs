@@ -1,7 +1,7 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {actionPrompt,parseActionResponse,publicChatPrompt,reviewPrompt} from './prompts.mjs';
 import {createGameModelBindings} from './model-bindings.mjs';
-import {settledShowdown} from './game-presentation.mjs';
+import {settledHands,settledShowdown} from './game-presentation.mjs';
 const copy=v=>structuredClone(v),digest=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const fail=(code,message=code)=>Object.assign(Error(message),{code});
 const allowedActionKeys=new Set(['type','cards','raiseTo','factor','pattern','bodyRanks','moveId']);
@@ -22,7 +22,7 @@ export function createCardGameService({getGame,getProvider,now=Date.now}){
   const game=getGame(),{characterId=null,personaId}=game.context();
   const scope=characterId&&game.hasCharacter(characterId)?game.pluginScope(characterId,personaId):null;
   const progress=type=>{const {completed,remainder,next}=economy.relationshipProgress(type,scope);return {completed,remainder,next};};
-  return {tables:economy.list().filter(t=>t.players.find(p=>p.kind==='user')?.personaId===personaId).map(t=>({tableId:t.id,type:t.type,status:t.status,version:t.version})),
+  return {tables:economy.list().filter(t=>t.players.find(p=>p.kind==='user')?.personaId===personaId).map(t=>({tableId:t.id,type:t.type,status:t.status,version:t.version,hand:t.hand,characterIds:t.players.flatMap(p=>p.characterId?[p.characterId]:[])})),
    charactersAvailable:characters({includeEntry:true}),currentCharacterId:characterId,
    currentCharacterProgress:scope?{doudizhu:progress('doudizhu'),texas:progress('texas')}:null,wallet:economy.account('user')};
  }
@@ -32,7 +32,7 @@ export function createCardGameService({getGame,getProvider,now=Date.now}){
  }
  function view(t){
   const user=t.players.find(p=>p.kind==='user'),turn=pendingTurn(t)?.turn,fault=faults.get(t.id);
-  const topups={};
+  const topups={},remainingHands=settledHands(t.state);
   if(t.type==='texas'&&t.status==='completed')for(const p of t.players){
    const stack=t.state.settlement?.endingStacks?.[p.id];
    const amount=Number.isSafeInteger(stack)?economy.tableHold(t.id,p)-stack:0;
@@ -41,7 +41,7 @@ export function createCardGameService({getGame,getProvider,now=Date.now}){
   return {tableId:t.id,version:t.version,status:t.status,type:t.type,hand:t.hand,userSeatId:user.id,leaveAfter:t.leaveAfter===true,currentCharacterId:getGame().context().characterId??null,pendingSeats:t.pendingSeats?.map(({id,kind,characterId})=>({id,kind,characterId}))??null,topups,
    modelTurn:turn?copy(turn):null,
    modelStatus:t.status==='paused'&&fault?.version===t.version?copy(fault.status):null,
-   presentation:{...copy(t.presentation??{emotions:{},lastSpeech:null,events:[]}),showdown:settledShowdown(t.state)},relationshipProgress:Object.fromEntries(t.players.filter(p=>p.kind==='ai'&&economy.relationshipProgress).map(p=>[p.id,economy.relationshipProgress(t.type,p,t.state.handId)])),actorKind:t.players.find(p=>p.id===t.state.actorId)?.kind??null,projection:ready().project(t,{actorId:user.id,channel:'user'}),accounts:t.players.map(p=>({playerId:p.id,...economy.account(p)})),history:copy(t.history),charactersAvailable:characters(),pendingAiAiFacts:economy.pendingRelationshipFacts().filter(f=>f.tableId===t.id).length,outboxPending:economy.outbox().filter(o=>t.history.includes(o.handId)).length};
+   presentation:{...copy(t.presentation??{emotions:{},lastSpeech:null,events:[]}),showdown:settledShowdown(t.state),...remainingHands&&{remainingHands}},relationshipProgress:Object.fromEntries(t.players.filter(p=>p.kind==='ai'&&economy.relationshipProgress).map(p=>[p.id,economy.relationshipProgress(t.type,p,t.state.handId)])),actorKind:t.players.find(p=>p.id===t.state.actorId)?.kind??null,projection:ready().project(t,{actorId:user.id,channel:'user'}),accounts:t.players.map(p=>({playerId:p.id,...economy.account(p)})),history:copy(t.history),charactersAvailable:characters(),pendingAiAiFacts:economy.pendingRelationshipFacts().filter(f=>f.tableId===t.id).length,outboxPending:economy.outbox().filter(o=>t.history.includes(o.handId)).length};
  }
  function resolvePlayers(selected){if(!Array.isArray(selected)||selected.filter(p=>p.kind==='user').length!==1||new Set(selected.filter(p=>p.kind!=='user').map(p=>p.characterId)).size!==selected.filter(p=>p.kind!=='user').length)throw fail('GAME_PLAYERS_INVALID');const pid=persona();return selected.map(p=>{if(p.kind==='user')return {id:'user',kind:'user',personaId:pid};if(!p.characterId||!getGame().hasCharacter(p.characterId))throw fail('GAME_CHARACTER_MISSING');const scope=getGame().pluginScope(p.characterId,pid);return {id:'ai-'+p.characterId,kind:'ai',...Object.fromEntries(['characterId','personaId','lifeId','operationId'].map(k=>[k,scope[k]]))};});}
  async function prepareBindings(players,handId){const values=[];for(const p of players.filter(p=>p.kind!=='user')){const context=await getGame().gameContext(p);values.push(models.prepare({id:handId+':'+p.id,scope:p,modelBinding:context.modelBinding}));}return values;}
