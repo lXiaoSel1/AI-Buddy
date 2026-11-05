@@ -1,11 +1,11 @@
-# Build AI Buddy 2.0.6
+# Build AI Buddy 2.0.7
 
-This guide describes the formal 2.0.6 binary. Development requires Windows x64 and Node.js24. The distributed application does not require a user-installed Node. Use the exact package-lock.json dependency versions.
+This guide describes the formal 2.0.7 binary. Development requires Windows x64 and Node.js24. The distributed application does not require a user-installed Node. Use the exact package-lock.json dependency versions.
 
 ## Application
 
 1. Run npm ci in this repository. Electron44.6.0 and esbuild0.28.2 are pinned.
-2. Extract the approved 2.0.5 release resources for the desired 30fps/60fps edition into an isolated staging root. Reuse immutable asset bytes; do not regenerate animation. Create independent package.json and assets/install-resource-index.json files with application version2.0.6, retaining every asset entry/hash. Never rewrite linked metadata or the original resource tree.
+2. Extract the approved 2.0.5 release resources for the desired 30fps/60fps edition into an isolated staging root. Reuse immutable asset bytes; do not regenerate animation. Create independent package.json and assets/install-resource-index.json files with application version2.0.7, retaining every asset entry/hash. Never rewrite linked metadata or the original resource tree.
 3. Run node scripts/build-public.mjs --resources=<absolute resource root> --out=development --link-assets --public-evidence --bili-ffmpeg-upstream using the published full-index resources. Local production evidence and user data are never published.
 4. npm start opens the compiled development app. npm test runs the source test selection. TEST-SCOPE.json records any private Work-plugin or sibling-social integration tests excluded from the public source; their exclusion is not a pass.
 
@@ -13,7 +13,7 @@ Assets are immutable when hard-linked. Never edit a linked output in place. Use 
 
 ## Public distribution
 
-The complete approved inventory is scripts/media-baselines/public-204-assets.json. It pins every distributed resource, its edition/owner, the original media/approval hashes and generated manifest bytes; it contains no private chat or machine path. Application2.0.6, compatible resource release2.0.5 and original media base1.9.2 are separate identities. The public-evidence gate requires application2.0.6 package/index headers in the staging root; resourceBaseVersion does not bypass that gate. The inventory differs from the v2.0.5 source inventory only in applicationVersion. Original approval files are not rewritten.
+The complete approved inventory is scripts/media-baselines/public-204-assets.json. It pins every distributed resource, its edition/owner, the original media/approval hashes and generated manifest bytes; it contains no private chat or machine path. Application2.0.7, compatible resource release2.0.5 and original media base1.9.2 are separate identities. The public-evidence gate requires application2.0.7 package/index headers in the staging root; resourceBaseVersion does not bypass that gate. The inventory differs from the v2.0.5 source inventory only in applicationVersion. Original approval files are not rewritten.
 
 After both candidates are built, run scripts/build-distribution-202.mjs with --baseline30=<absolute30fpscandidate> --baseline60=<absolute60fpscandidate> --runtime=<absoluteElectronruntime> --out=<freshdisjointoutput> --rcedit=<pinnedrcedit> --public-evidence --link-assets. The runtime is copied before version stamping. Public evidence and private --media-baseline/--media-approval modes cannot be mixed.
 
