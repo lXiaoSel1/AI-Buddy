@@ -2,6 +2,10 @@
   "total": 826,
   "releases": [
     {
+      "tag": "v2.0.4",
+      "downloads": 0
+    },
+    {
       "tag": "v2.0.3",
       "downloads": 10
     },
