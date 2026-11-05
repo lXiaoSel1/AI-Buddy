@@ -20,8 +20,55 @@ async function generate(path,{vfr=false,signal}={}){
  try{const result=await closed;if(spawnError)throw spawnError;if(timedOut)throw Error('Local fixture generation exceeded 10 seconds');signal?.throwIfAborted();if(result.code!==0)throw Error('Fixture generation failed: '+errors);}
  finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);if(!exited)child.kill();await closed;}
 }
-async function fixture(t,{vfr=false}={}){const directory=mkdtempSync(join(tmpdir(),'bili-full-real-')),path=join(directory,'local-only.mp4'),ranges=[];await generate(path,{vfr,signal:t.signal});const length=statSync(path).size;const server=createServer((req,res)=>{assert.equal(req.url,'/fixture.mp4');const m=/^bytes=(\d+)-(\d*)$/.exec(req.headers.range??'');if(!m){res.writeHead(416);res.end();return;}const from=Number(m[1]),to=Math.min(length-1,m[2]?Number(m[2]):length-1);ranges.push({from,to,requested:req.headers.range});if(from>=length){res.writeHead(416);res.end();return;}res.writeHead(206,{'content-type':'video/mp4','content-range':`bytes ${from}-${to}/${length}`,'content-length':to-from+1,'accept-ranges':'bytes'});createReadStream(path,{start:from,end:to}).pipe(res);});await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});const origin=`http://127.0.0.1:${server.address().port}`,duration=vfr?3.1:6.1,config={sampleSeconds:.5,windowSeconds:6},sheets=fullReadingSheets({cid:123,duration},config);let playbackCalls=0;const acquire=createBiliFullMedia({tools:dirname(executable),playback:async()=>{playbackCalls++;return {timelength:duration*1000,is_preview:false,dash:{video:[{baseUrl:origin+'/fixture.mp4',bandwidth:1000}]}};},validateUrl:raw=>{const u=new URL(raw);assert.equal(u.origin,origin,'only the owned local fixture origin is permitted');assert.equal(u.pathname,'/fixture.mp4');return u.href;}});t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));rmSync(directory,{recursive:true,force:true});});return {acquire,sheets,config,duration,ranges,get playbackCalls(){return playbackCalls;}};}
+async function fixture(t,{vfr=false,mcdnRangeBehavior=false}={}){
+ const directory=mkdtempSync(join(tmpdir(),'bili-full-real-'));
+ const path=join(directory,'local-only.mp4'),ranges=[];
+ await generate(path,{vfr,signal:t.signal});
+ const length=statSync(path).size;
+ const server=createServer((req,res)=>{
+   assert.equal(req.url,'/fixture.mp4');
+   const match=/^bytes=(\d+)-(\d*)$/.exec(req.headers.range??'');
+   if(!match){res.writeHead(416);res.end();return;}
+   const from=Number(match[1]),requestedEnd=match[2]?Number(match[2]):length-1;
+   if(from>=length){res.writeHead(416);res.end();return;}
+   const to=Math.min(length-1,requestedEnd);
+   const status=mcdnRangeBehavior&&from===0&&requestedEnd>=length?200:206;
+   ranges.push({from,to,status,requested:req.headers.range,requestedEnd});
+   res.writeHead(status,{
+     'content-type':'video/mp4',
+     'content-range':`bytes ${from}-${to}/${length}`,
+     'content-length':to-from+1,
+     'accept-ranges':'bytes',
+   });
+   const stream=createReadStream(path,{start:from,end:to});
+   res.once('close',()=>stream.destroy());
+   stream.pipe(res);
+ });
+ await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
+ const origin=`http://127.0.0.1:${server.address().port}`,duration=vfr?3.1:6.1;
+ const config={sampleSeconds:.5,windowSeconds:6},sheets=fullReadingSheets({cid:123,duration},config);
+ let playbackCalls=0;
+ const acquire=createBiliFullMedia({
+   tools:dirname(executable),
+   playback:async()=>{
+     playbackCalls++;
+     return {timelength:duration*1000,is_preview:false,dash:{video:[{baseUrl:origin+'/fixture.mp4',bandwidth:1000}]}};
+   },
+   validateUrl:raw=>{
+     const u=new URL(raw);
+     assert.equal(u.origin,origin,'only the owned local fixture origin is permitted');
+     assert.equal(u.pathname,'/fixture.mp4');
+     return u.href;
+   },
+ });
+ t.after(async()=>{
+   server.closeAllConnections();
+   await new Promise(resolve=>server.close(resolve));
+   rmSync(directory,{recursive:true,force:true});
+ });
+ return {acquire,sheets,config,duration,ranges,length,get playbackCalls(){return playbackCalls;}};
+}
 function decodePng(bytes){assert.equal(bytes.readUInt32BE(16),1009);assert.equal(bytes.readUInt32BE(20),620);const idat=[];for(let at=8;at<bytes.length;){const n=bytes.readUInt32BE(at),name=bytes.toString('ascii',at+4,at+8);if(name==='IDAT')idat.push(bytes.subarray(at+8,at+8+n));at+=n+12;}const raw=inflateSync(Buffer.concat(idat));assert.equal(raw.length,(1009*4+1)*620);return {raw,pixel(x,y){return [...raw.subarray(y*(1009*4+1)+1+x*4,y*(1009*4+1)+1+x*4+4)];}};}
-test('actual local ffmpeg decodes a 30fps MP4 through real HTTP Range into complete fixed-grid PNG sheets',{skip:!available,timeout:45000},async t=>{const f=await fixture(t),output=[];await f.acquire({scope:{},video:{videoId:'BV12345678',cid:123,duration:f.duration},signal:t.signal,config:f.config,sheets:f.sheets,onSheet:async sheet=>{output.push(sheet);await new Promise(resolve=>setTimeout(resolve,10));}});assert.equal(f.playbackCalls,1);assert.equal(output.length,2);assert.deepEqual(output.map(s=>s.frames.length),[12,1]);const frames=output.flatMap(s=>s.frames);assert.deepEqual(frames.map(x=>x.time),Array.from({length:13},(_,i)=>i*.5));assert.ok(frames.every(x=>Number.isFinite(x.decodedPTS)&&x.decodedPTS>=0&&x.decodedPTS<f.duration));assert.ok(output.every(s=>s.png.length<4*1024*1024));for(const s of output)decodePng(s.png);assert.deepEqual(decodePng(output[1].png).pixel(280,60),[255,255,255,255],'tail slot two stays empty rather than duplicating a last frame');assert.ok(f.ranges.length>0);assert.ok(f.ranges.every(r=>r.to-r.from+1<=8*1024*1024));t.diagnostic(JSON.stringify({source:'local fixture HTTP Range',frames:frames.length,sheets:output.length,rangeRequests:f.ranges.length,sourcePTS:frames.map(f=>f.decodedPTS)}));});
+test('actual local ffmpeg completes sampling when the CDN returns 200 for oversized initial ranges',{skip:!available,timeout:45000},async t=>{const f=await fixture(t,{mcdnRangeBehavior:true}),output=[];await f.acquire({scope:{},video:{videoId:'BV12345678',cid:123,duration:f.duration},signal:t.signal,config:f.config,sheets:f.sheets,onSheet:async sheet=>{output.push(sheet);await new Promise(resolve=>setTimeout(resolve,10));}});assert.equal(f.playbackCalls,1);assert.equal(output.length,2);assert.deepEqual(output.map(s=>s.frames.length),[12,1]);const frames=output.flatMap(s=>s.frames);assert.deepEqual(frames.map(x=>x.time),Array.from({length:13},(_,i)=>i*.5));assert.ok(frames.every(x=>Number.isFinite(x.decodedPTS)&&x.decodedPTS>=0&&x.decodedPTS<f.duration));assert.ok(output.every(s=>s.png.length<4*1024*1024));for(const s of output)decodePng(s.png);assert.deepEqual(decodePng(output[1].png).pixel(280,60),[255,255,255,255],'tail slot two stays empty rather than duplicating a last frame');assert.ok(f.length<8*1024*1024);assert.equal(f.ranges[0].requested,'bytes=0-0');assert.ok(f.ranges.some(r=>r.from===0&&r.requestedEnd===f.length-1));assert.ok(f.ranges.every(r=>r.status===206&&r.requestedEnd<f.length&&r.to-r.from+1<=8*1024*1024));t.diagnostic(JSON.stringify({source:'local fixture HTTP Range',frames:frames.length,sheets:output.length,rangeRequests:f.ranges.length,sourcePTS:frames.map(f=>f.decodedPTS)}));});
 test('actual sparse VFR frames retain every global sample with truthful repeated source PTS',{skip:!available,timeout:45000},async t=>{const f=await fixture(t,{vfr:true}),output=[];await f.acquire({scope:{},video:{videoId:'BV12345678',cid:123,duration:f.duration},signal:t.signal,config:f.config,sheets:f.sheets,onSheet:async sheet=>output.push(sheet)});const frames=output.flatMap(s=>s.frames);assert.equal(frames.length,7);assert.deepEqual(frames.map(f=>f.time),[0,.5,1,1.5,2,2.5,3]);assert.deepEqual(frames.slice(0,6).map(f=>f.decodedPTS),[0,0,0,0,0,0]);assert.ok(Math.abs(frames.at(-1).decodedPTS-3)<.04);assert.equal(output[0].slots,12);assert.deepEqual(decodePng(output[0].png).pixel(790,450),[255,255,255,255]);t.diagnostic(JSON.stringify({source:'local sparse VFR fixture',samples:frames.map(f=>({time:f.time,decodedPTS:f.decodedPTS}))}));});
 test('actual decoder cancellation drains its owned worker before a fresh sampling call starts',{skip:!available,timeout:45000},async t=>{const f=await fixture(t),controller=new AbortController(),reason=Object.assign(Error('Fixture pause'),{code:'TEST_BILI_PAUSE'});let first=0;await assert.rejects(f.acquire({scope:{},video:{videoId:'BV12345678',cid:123,duration:f.duration},signal:AbortSignal.any([t.signal,controller.signal]),config:f.config,sheets:f.sheets,onSheet:async()=>{first++;controller.abort(reason);}}),{code:'TEST_BILI_PAUSE'});assert.equal(first,1);const output=[];await f.acquire({scope:{},video:{videoId:'BV12345678',cid:123,duration:f.duration},signal:t.signal,config:f.config,sheets:f.sheets,onSheet:async sheet=>output.push(sheet)});assert.equal(output.length,2);assert.equal(f.playbackCalls,2);});

@@ -5,14 +5,12 @@ import {join} from 'node:path';
 import {Readable,Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {createBiliFullMedia} from './bili-full-media.mjs';
+import {mediaCandidates,mediaUrl} from './bili-media-addresses.mjs';
+
+export {mediaUrl} from './bili-media-addresses.mjs';
 
 const MiB=1024*1024, agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36';
 const failure=code=>Object.assign(Error(code),{code});
-export function mediaUrl(raw){
-  const u=new URL(raw);
-  if(u.protocol!=='https:'||u.username||u.password||u.port||u.hash||(!/(^|\.)(bilivideo\.com|bilivideo\.cn|hdslb\.com)$/.test(u.hostname)&&u.hostname!=='upos-hz-mirrorakam.akamaized.net'))throw failure('BILI_MEDIA_ORIGIN');
-  return u.href;
-}
 async function streamTo(url,dest,limit,signal){
   const r=await fetch(mediaUrl(url),{headers:{range:'bytes=0-',referer:'https://www.bilibili.com/','user-agent':agent},redirect:'error',signal:AbortSignal.any([signal,AbortSignal.timeout(65000)])});
   const range=/^bytes 0-(\d+)\/(\d+)$/.exec(r.headers.get('content-range')??''),length=Number(r.headers.get('content-length'));
@@ -55,7 +53,7 @@ async function retireExitedJobs(root){
   if(files.every(f=>f.isFile()&&!f.isSymbolicLink()&&['audio.m4a','video.mp4','speech.wav','speech.json'].includes(f.name)))await rm(folder,{recursive:true,force:true,maxRetries:2});
  }
 }
-export function createBiliMedia({tools,tempRoot,playback,download=streamTo,workerPath,resolveVerifiedExecutable}){
+export function createBiliMedia({tools,tempRoot,playback,download=streamTo,workerPath,resolveVerifiedExecutable,emitDiagnostic}){
  let busy=false;
  const acquire=async function acquire({scope,video,windows,hasSubtitles,signal:incoming,check,renderSheet}){
   if(busy)throw failure('BILI_MEDIA_BUSY');
@@ -67,12 +65,12 @@ export function createBiliMedia({tools,tempRoot,playback,download=streamTo,worke
    const d=await playback({scope,video,signal});if(!d||d.is_preview||!(d.timelength>0)||Math.abs(d.timelength/1000-video.duration)>4)throw failure('BILI_MEDIA_PLAYBACK_UNAVAILABLE');
    const choose=(list,key)=>[...(list??[])].filter(t=>t.baseUrl||t.base_url).sort((a,b)=>a[key]-b[key])[0];
    const v=choose(d.dash?.video,'bandwidth'),a=choose(d.dash?.audio,'bandwidth');
-   const mux=d.durl?.length===1&&/mp4/i.test(d.format??'')?d.durl[0].url:null;
+   const mux=d.durl?.length===1&&/mp4/i.test(d.format??'')&&d.durl[0]?.url?d.durl[0]:null;
    const vf=join(temp,'video.mp4'),af=join(temp,'audio.m4a'),wav=join(temp,'speech.wav'),prefix=join(temp,'speech');
-   async function downloadTrack(track,muxUrl,dest,limit){
+   async function downloadTrack(track,dest,limit){
      let last=failure('BILI_MEDIA_ORIGIN');
-     for(const candidate of [...new Set([track?.baseUrl??track?.base_url??muxUrl,...(track?.backupUrl??track?.backup_url??[])])].slice(0,3)){
-       await guard();try{await download(mediaUrl(candidate),dest,limit,signal);return;}catch(e){last=e;await rm(dest,{force:true});}
+     for(const {url} of mediaCandidates(track)){
+       await guard();try{await download(url,dest,limit,signal);return;}catch(e){last=e;await rm(dest,{force:true});}
      }throw last;
    }
    const ff=async(args,options={})=>{await guard();const current=resolveVerifiedExecutable?await resolveVerifiedExecutable({signal}):verified;await guard();if(current.executable!==verified.executable)throw failure('FFMPEG_COMPONENT_CHANGED');return runMediaTool(current.executable,args,{signal,...options});};
@@ -80,7 +78,7 @@ export function createBiliMedia({tools,tempRoot,playback,download=streamTo,worke
    let videoReady=false;
    try{
     if(!v&&!mux)throw failure('BILI_MEDIA_VIDEO_MISSING');
-    await downloadTrack(v,mux,vf,192*MiB);videoReady=true;await guard();
+    await downloadTrack(v??mux,vf,192*MiB);videoReady=true;await guard();
     const raw=await ff([...localInput,'-i',vf,'-an','-sn','-vf',"scale=64:36,select='isnan(prev_selected_t)+gte(t-prev_selected_t,0.5)+gt(scene,0.22)',metadata=mode=print:key=lavfi.scene_score:file=-",'-f','null','-'],{limit:12*MiB});
     const points=sceneTimes(raw.toString(),video.duration);if(!points.length)throw failure('BILI_MEDIA_NO_FRAMES');
     result.candidateCount=points.length;
@@ -94,7 +92,7 @@ export function createBiliMedia({tools,tempRoot,playback,download=streamTo,worke
     if(result.sheets.length)result.visual='video-scenes';
    }catch(e){await guard();if(e.code?.startsWith('FFMPEG_COMPONENT_'))throw e;result.videoIssue=e.code?.startsWith('BILI_')?e.code:'BILI_MEDIA_DECODE';}
    if(!hasSubtitles&&verified.localSpeechRecognition!==false)try{
-    let input=vf;if(a){await downloadTrack(a,null,af,48*MiB);input=af;}else if(!(mux&&videoReady&&!v))throw failure('BILI_MEDIA_AUDIO_MISSING');
+    let input=vf;if(a){await downloadTrack(a,af,48*MiB);input=af;}else if(!(mux&&videoReady&&!v))throw failure('BILI_MEDIA_AUDIO_MISSING');
     await guard();await ff([...localInput,'-i',input,'-vn','-sn','-t',String(video.duration),'-ac','1','-ar','16000','-c:a','pcm_s16le',wav]);
     await runMediaTool(join(tools,'whisper-cli.exe'),['-m',join(tools,'ggml-base.bin'),'-f',wav,'-l','auto','-t','4','-ng','-oj','-of',prefix],{signal,timeout:9*60000});
     result.transcript=transcriptRows(JSON.parse(await readFile(prefix+'.json','utf8')),video.duration);result.audio=result.transcript.length?'local-asr':'no-speech';
@@ -102,7 +100,7 @@ export function createBiliMedia({tools,tempRoot,playback,download=streamTo,worke
    await guard();return result;
   }finally{try{if(temp)await rm(temp,{recursive:true,force:true,maxRetries:3});}finally{busy=false;}}
  };
- acquire.fullSampling=createBiliFullMedia({tools,playback,validateUrl:mediaUrl,workerPath,resolveVerifiedExecutable});return acquire;
+ acquire.fullSampling=createBiliFullMedia({tools,playback,workerPath,resolveVerifiedExecutable,emitDiagnostic});return acquire;
 }
 export async function biliPlayback({scope,video,signal},accounts){
  const account=accounts.get(scope.accountRef);if(!account?.enabled||account.platform!=='bilibili'||account.generation!==scope.generation||account.accountId!==scope.accountId)throw failure('BILI_MEDIA_ACCOUNT_CHANGED');
