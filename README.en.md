@@ -14,16 +14,16 @@
 
 [简体中文](README.md) · **English**
 
-**AI Buddy app** (this repository) · [Bilibili Companion plugin](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ Connect plugin](https://github.com/lXiaoSel1/AI-Buddy-QQ)
+**AI Buddy app** (this repository) · [Bilibili Companion plugin](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ Connect plugin](https://github.com/lXiaoSel1/AI-Buddy-QQ) · [Card Games plugin](https://github.com/lXiaoSel1/AI-Buddy-Card-Games)
 
 <!-- ai-buddy-source-version: 2.0.5 -->
-**Current release: [v2.0.4](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.4)** · 2.0 added the Extensions center with two official plugins (Bilibili Companion and QQ Connect), points with a shop, backpack and feeding, and Social & mood; group chat can now run in Auto, with the characters taking turns on their own. 2.0.3 fixes group Auto stopping after the first line. The 30fps and 60fps editions have the same features. See the [2.0.3 release notes](docs/RELEASE-2.0.3.md).
+**Current release: [v2.0.5](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.5)** · 2.0 added the Extensions center with official plugins, points with a shop, backpack and feeding, and Social & mood; group chat can now run in Auto, with the characters taking turns on their own. 2.0.4 added the table service, so you can install Card Games from Extensions and play Dou Dizhu and Texas Hold'em with your characters. 2.0.5 fixes that page sticking on "Starting" when you switch from the Bilibili or QQ page. The 30fps and 60fps editions have the same features. See the [2.0.5 release notes](docs/RELEASE-2.0.5.en.md).
 
 ## Online installer (recommended)
 
-**Application version 2.0.4.** This version supports Card Games 1.0.0 from Extensions.
+**Application version 2.0.5.** This version supports Card Games 1.0.0 from Extensions.
 
-[Download the Windows x64 installer](https://github.com/lXiaoSel1/ai-buddy/releases/download/v2.0.4/AI-Buddy-Setup-2.0.4-win-x64.exe) → choose 30fps / 60fps and characters → it downloads, verifies and installs. The same installer adds characters, repairs files and upgrades.
+[Download the Windows x64 installer](https://github.com/lXiaoSel1/ai-buddy/releases/download/v2.0.5/AI-Buddy-Setup-2.0.5-win-x64.exe) → choose 30fps / 60fps and characters → it downloads, verifies and installs. The same installer adds characters, repairs files and upgrades.
 
 The installer is about 50 MiB. Every character takes about **1.33 GiB** to download at 30fps or **1.75 GiB** at 60fps; fewer characters download less. For what to do after the first launch, see the [Quick start](#quick-start) below.
 
@@ -46,14 +46,14 @@ AI Buddy (AI 酱) is a Windows desktop app. It only reads your local AI-tool log
 - **Social & mood**: characters have a mood that changes with real interaction. Proactive chat, talking to herself and group Auto are all off by default; turn them on if you want them. When you are busy, you can ask her not to disturb you.
 - **More work, closer bonds**: while AI Buddy runs, new work tokens slowly turn into affection for the current character, and a level-up can produce a commemorative CG.
 - **A transparent desktop pet for each of the 11 characters**: 24 actions each, at 30fps or 60fps. Pat her and she makes a face, she falls asleep after 5 quiet minutes, left-drag walks her along and right-drag throws her. She jumps when a task finishes and reacts when one fails.
-- **Extensions and official plugins**: install [Bilibili Companion](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) (watch Bilibili videos with a character) or [QQ Connect](https://github.com/lXiaoSel1/AI-Buddy-QQ) (let a character answer the QQ friends and groups you allow) from the Extensions center. Installed plugins are not enabled automatically, and they never sign in, post or call a model on their own.
+- **Extensions and official plugins**: install [Bilibili Companion](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) (watch Bilibili videos with a character) or [QQ Connect](https://github.com/lXiaoSel1/AI-Buddy-QQ) (let a character answer the QQ friends and groups you allow) or [Card Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) (play Dou Dizhu and Texas Hold'em with your characters) from the Extensions center. Installed plugins are not enabled automatically, and they never sign in, post or call a model on their own.
 - **11 character themes, Chinese and English**: colors, backgrounds and ornaments come from each portrait, 5 dark and 6 light. Keep one fixed or let it follow the current character.
 
 ## Quick start
 
 Five steps get you from the installer to your first chat. The orange numbers in the pictures mark where to click. The [illustrated quick start](docs/QUICKSTART.en.md) covers each step in more detail, including importing an old save, choosing a model and connecting plugin accounts. Steps 2–5 show the Chinese interface; switch the language under **Settings** in the sidebar, and the buttons sit in the same places.
 
-**1. Run the installer.** Open `AI-Buddy-Setup-2.0.4-win-x64.exe`: ① check the installation folder → ② choose 30fps or 60fps and the initial character → ③ tick the characters to install (more can be added later) → ④ click **Install / Add / Repair**. The installer shows the selected download size and the disk space needed, and verifies every file before installing it.
+**1. Run the installer.** Open `AI-Buddy-Setup-2.0.5-win-x64.exe`: ① check the installation folder → ② choose 30fps or 60fps and the initial character → ③ tick the characters to install (more can be added later) → ④ click **Install / Add / Repair**. The installer shows the selected download size and the disk space needed, and verifies every file before installing it.
 
 <img src="docs/images/en-step-1-installer.webp" width="420" alt="Installer: installation folder, animation edition and initial character, character resources and the Install / Add / Repair button">
 
@@ -69,7 +69,7 @@ Five steps get you from the installer to your first chat. The orange numbers in 
 
 ![The "online chat is off" notice in the Galgame dialogue box and the Enable online chat button (Chinese interface)](docs/images/step-4-turn-on-online-chat.webp)
 
-**5. (Optional) Install a plugin.** In the sidebar open ① **Extensions** → ② **Discover**, click ③ **Install…** next to Bilibili Companion or QQ Connect, and tick the permissions you want to grant. AI Buddy prepares the components a plugin needs during installation or when you connect; you do not install Node or enter ports. To connect your Bilibili or QQ account afterwards, see each plugin's guide: [Bilibili Companion](https://github.com/lXiaoSel1/AI-Buddy-Bilibili#english) · [QQ Connect](https://github.com/lXiaoSel1/AI-Buddy-QQ#english).
+**5. (Optional) Install a plugin.** In the sidebar open ① **Extensions** → ② **Discover**, click ③ **Install…** next to Bilibili Companion, QQ Connect or Card Games, and tick the permissions you want to grant. AI Buddy prepares the components a plugin needs during installation or when you connect; you do not install Node or enter ports. To connect your Bilibili or QQ account afterwards, see each plugin's guide: [Bilibili Companion](https://github.com/lXiaoSel1/AI-Buddy-Bilibili#english) · [QQ Connect](https://github.com/lXiaoSel1/AI-Buddy-QQ#english).
 
 <img src="docs/images/step-5-extension-center.webp" width="620" alt="Extensions center, Discover tab (Chinese interface): the official Bilibili Companion 2.0.11 and QQ Connect 2.0.6 plugins with their Install buttons">
 
@@ -257,18 +257,18 @@ Requires Windows 10/11 x64. The installer bundles its runtime; Node.js, Python, 
 
 ### Online installer (recommended)
 
-1. Download `AI-Buddy-Setup-2.0.4-win-x64.exe` (about 50 MiB) from the [v2.0.4 page](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.4).
+1. Download `AI-Buddy-Setup-2.0.5-win-x64.exe` (about 50 MiB) from the [v2.0.5 page](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.5).
 2. Choose the installation folder (default `%LOCALAPPDATA%\Programs\AI Buddy`), 30fps or 60fps, the characters to install and the initial character. The first-run defaults are 30fps, every character and DeepSeek.
-3. Click **Install / Add / Repair**. The installer downloads from the pinned v2.0.4 release and checks SHA-256 for every package and file; every character takes about 1.33 GiB at 30fps or 1.75 GiB at 60fps. If a download is interrupted, run the same installer again with the same folder to resume.
+3. Click **Install / Add / Repair**. The installer downloads from the pinned v2.0.5 release and checks SHA-256 for every package and file; every character takes about 1.33 GiB at 30fps or 1.75 GiB at 60fps. If a download is interrupted, run the same installer again with the same folder to resume.
 4. Desktop and Start menu shortcuts are created by default. After installing, the installer starts AI Buddy once to check it; untick "Keep AI Buddy running after verification" and it closes AI Buddy after the check. The installer does not turn on online chat, automatic CG, startup registration or background updates, and it installs no plugins.
 
-**Offline install**: from the same release page, download `install-manifest-2.0.4.json` and the resource ZIPs you need into one folder, then choose that folder as the installer's "Offline resource folder". Every file is still verified. 2.0.4 uses the same installer for offline installation.
+**Offline install**: from the same release page, download `install-manifest-2.0.5.json` and the resource ZIPs you need into one folder, then choose that folder as the installer's "Offline resource folder". Every file is still verified. 2.0.5 uses the same installer for offline installation.
 
-**Upgrading from an earlier version**: run the 2.0.4 installer and choose the existing installation folder. It waits for chat and CG to finish, closes AI Buddy normally, and keeps your personal data, chat connections, character settings and the previous program version. If you installed to a new folder, the first launch shows the welcome page: quit the old version normally from its tray menu, then choose **Import an old save** and point it at the old program folder or data folder. The import copies the data and checks every file; the old save stays as it was. Do not copy an old profile over the new folder by hand.
+**Upgrading from an earlier version**: run the 2.0.5 installer and choose the existing installation folder. Coming from 2.0.3 or earlier, the wallet moves to a new format the first time your data opens, and older versions can no longer write to that data, so back it up first. It waits for chat and CG to finish, closes AI Buddy normally, and keeps your personal data, chat connections, character settings and the previous program version. If you installed to a new folder, the first launch shows the welcome page: quit the old version normally from its tray menu, then choose **Import an old save** and point it at the old program folder or data folder. The import copies the data and checks every file; the old save stays as it was. Do not copy an old profile over the new folder by hand.
 
 Notes:
 
-- Neither the installer nor the app is commercially code-signed, so Windows may report an unknown publisher. Check the files against `SHA256SUMS-2.0.4.txt` on the same page first if you like.
+- Neither the installer nor the app is commercially code-signed, so Windows may report an unknown publisher. Check the files against `SHA256SUMS-2.0.5.txt` on the same page first if you like.
 - On first launch it looks for common log folders under the current user. No AI tools installed? The companion features still work offline.
 - The automatic GitHub **Source code** archives are source-only and do not run.
 - This repository and official releases are public. Release packages exclude the developer's saves, connection secrets and local logs.
@@ -459,11 +459,15 @@ The Extensions center (sidebar **System → Extensions**) has Discover, Installe
 |---|---|---|
 | Bilibili Companion 2.0.11 | Watch Bilibili videos with a character: review the full reading plan first, and after you confirm she reads the sampled frames and the platform subtitles and writes viewing notes. Viewing can be scheduled. Posting comments needs separate permission | [AI-Buddy-Bilibili](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) |
 | QQ Connect 2.0.6 | Choose a character to take over your QQ account and answer only the friends and groups you allow; in groups she speaks only when @-mentioned or replied to, by default | [AI-Buddy-QQ](https://github.com/lXiaoSel1/AI-Buddy-QQ) |
+| Card Games 1.0.0 | Play Dou Dizhu and Texas Hold'em (2 to 10 players) with your characters. They use their own bound models, points use the app wallet, and every 3 games add 1 affection. Requires the app at 2.0.4 or later | [AI-Buddy-Card-Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) |
 
 - The video component Bilibili Companion needs (FFmpeg) is prepared by AI Buddy from a pinned upstream release when you install the plugin, with its source, size and progress shown; a copy that has already been verified is not downloaded again.
 - The third-party connection component QQ Connect needs (NapCat) is prepared from upstream only when you click Connect; neither this repository nor the plugin bundles it.
 - Both plugins connect their accounts by scanning a QR code under **Extensions → Accounts**. Credentials are encrypted by the system on this computer, and a plugin only receives a reference, never the password or cookie itself.
 - Installing, updating or scanning never starts watching, commenting, sending QQ messages or calling a model.
+- Each AI move in Card Games is one model request, sent only when you click "Ask X to play" or turn on AI auto. Rules and settlement live in the app: a model can only propose a move, and an illegal one is never played.
+
+<img src="docs/images/card-games-table.webp" width="720" alt="A ten-seat Card Games Hold'em table: portraits along the top row, round portraits at both ends and the board, with an end-seat character appearing at the lower right on her turn (demo data)">
 
 ## Data and privacy
 
@@ -506,6 +510,7 @@ Release packages contain no developer profile, keys, chats, personal CGs, logs o
 - Whether a model can read images, how long its context is and how good its replies are depend on the service and model you connect; AI Buddy does not guarantee results.
 - The 2.0.3 group Auto fix was checked in the real app with synthetic model replies, not accepted against a real model provider. During diagnosis DeepSeek once returned HTTP 400; which request field it rejected has not been established.
 - The **Work tasks** page and the "Work and collaboration" plugin in the Extensions center are still being polished; this release does not publish their source or packages. Existing local task records are kept on upgrade.
+- Card Games has been run in a real window with a synthetic model, including official installation and full games. Real-model playing strength, lines and waiting times have not had a full review.
 - The app is not commercially code-signed.
 
 ## Development
@@ -537,7 +542,7 @@ AI Buddy's code, Galgame UI implementation and documentation are copyright **lXi
 
 **Artwork has its own terms**: the 21 default images inherited from upstream are [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/), and the upstream pet atlas remains MIT; terms for the ten new portraits and backgrounds, the motion videos and the 1.9.0 interface art are described under "Bundled default art" above. The attribution chain, per-file boundaries and license texts are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [`licenses/`](licenses/). Confirm each source before a public or commercial release.
 
-Third-party components used by the plugins are not distributed with the app: Bilibili Companion's FFmpeg is downloaded by AI Buddy from a pinned Gyan release (GPLv3), and QQ Connect's NapCat is prepared from its upstream under NapCat's own license. See the two plugin repositories' third-party notices.
+Third-party components used by the plugins are not distributed with the app: Bilibili Companion's FFmpeg is downloaded by AI Buddy from a pinned Gyan release (GPLv3), and QQ Connect's NapCat is prepared from its upstream under NapCat's own license. See the two plugin repositories' third-party notices. Card Games character cards use existing characters as references, and the terms for that artwork apply; see its third-party notices.
 
 Thanks to these creators and projects:
 
