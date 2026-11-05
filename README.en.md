@@ -264,7 +264,7 @@ Requires Windows 10/11 x64. The installer bundles its runtime; Node.js, Python, 
 
 **Offline install**: download `install-manifest-2.0.7.json` and the resource ZIPs you need from the [v2.0.7 release](https://github.com/lXiaoSel1/AI-Buddy/releases/tag/v2.0.7) into one folder, then select it as the "Offline resource folder" in the installer. Every file is still verified.
 
-**Upgrading from an earlier version**: run the 2.0.7 installer and choose the existing installation folder. Coming from 2.0.3 or earlier, the wallet moves to a new format the first time your data opens, and older versions can no longer write to that data, so back it up first. It waits for chat and CG to finish, closes AI Buddy normally, and keeps your personal data, chat connections, character settings and the previous program version. If you installed to a new folder, the first launch shows the welcome page: quit the old version normally from its tray menu, then choose **Import an old save** and point it at the old program folder or data folder. The import copies the data and checks every file; the old save stays as it was. Do not copy an old profile over the new folder by hand.
+**Upgrading from an earlier version**: run the 2.0.7 installer and choose the existing installation folder. An older installer also finds it through **Check for updates**. If an upgrade from 2.0.2 froze before downloading, retry with this installer: it stays responsive and can be cancelled while it verifies your old profile. Coming from 2.0.3 or earlier, the wallet moves to a new format the first time your data opens, and older versions can no longer write to that data, so back it up first. It waits for chat and CG to finish, closes AI Buddy normally, and keeps your personal data, chat connections, character settings and the previous program version. If you installed to a new folder, the first launch shows the welcome page: quit the old version normally from its tray menu, then choose **Import an old save** and point it at the old program folder or data folder. The import copies the data and checks every file; the old save stays as it was. Do not copy an old profile over the new folder by hand.
 
 Notes:
 
@@ -462,6 +462,7 @@ The Extensions center (sidebar **System → Extensions**) has Discover, Installe
 | Card Games 1.0.0 | Play Dou Dizhu and Texas Hold'em (2 to 10 players) with your characters. They use their own bound models, points use the app wallet, and every 3 games add 1 affection. Requires the app at 2.0.4 or later | [AI-Buddy-Card-Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) |
 
 - The video component Bilibili Companion needs (FFmpeg) is prepared by AI Buddy from a pinned upstream release when you install the plugin, with its source, size and progress shown; a copy that has already been verified is not downloaded again.
+- Use app 2.0.7 for Bilibili Companion's complete reading: earlier versions can fail to get the storyboard from the original video on some CDN routes. Failed viewing records stay. After updating, choose **Watch now** for a new attempt, then review the storyboard and confirm the plan. Media-address, connection and range errors appear under **Technical details**.
 - The third-party connection component QQ Connect needs (NapCat) is prepared from upstream only when you click Connect; neither this repository nor the plugin bundles it.
 - Both plugins connect their accounts by scanning a QR code under **Extensions → Accounts**. Credentials are encrypted by the system on this computer, and a plugin only receives a reference, never the password or cookie itself.
 - Installing, updating or scanning never starts watching, commenting, sending QQ messages or calling a model.
@@ -511,6 +512,7 @@ Release packages contain no developer profile, keys, chats, personal CGs, logs o
 - The 2.0.3 group Auto fix was checked in the real app with synthetic model replies, not accepted against a real model provider. During diagnosis DeepSeek once returned HTTP 400; which request field it rejected has not been established.
 - The **Work tasks** page and the "Work and collaboration" plugin in the Extensions center are still being polished; this release does not publish their source or packages. Existing local task records are kept on upgrade.
 - Card Games has been run in a real window with a synthetic model, including official installation and full games. Real-model playing strength, lines and waiting times have not had a full review.
+- The 2.0.7 Bilibili route fix was checked in a real window with the official plugin, a local CDN stub and real FFmpeg. It has not yet been retested on the network where the problem was reported.
 - The app is not commercially code-signed.
 
 ## Development
@@ -526,7 +528,7 @@ Development needs Windows x64 and Node.js 24. `npm test` covers pure logic with 
 
 The "installer downloads" badge under the title is updated every 6 hours by [`.github/workflows/installer-download-badge.yml`](.github/workflows/installer-download-badge.yml). It counts only downloads of each version's `AI-Buddy-Setup-*-win-x64.exe`, summed over all versions, and writes the result to the `badges` branch rather than committing to `main`. GitHub does not tell downloaders apart, so test downloads during development count too.
 
-Do not commit `local/`, generated `builds/`, keys, personal CGs or logs. Release notes: [2.0.3](docs/RELEASE-2.0.3.md), [2.0.2](docs/RELEASE-2.0.2.md), [1.9.2](docs/RELEASE-1.9.2.md), [1.9.0](docs/RELEASE-1.9.0.md). Validation records for earlier versions are also in [`docs/`](docs/).
+Do not commit `local/`, generated `builds/`, keys, personal CGs or logs. Release notes: [2.0.7](docs/RELEASE-2.0.7.en.md), [2.0.6](docs/RELEASE-2.0.6.en.md), [2.0.5](docs/RELEASE-2.0.5.en.md), [2.0.4](docs/RELEASE-2.0.4.en.md), [2.0.3](docs/RELEASE-2.0.3.md), [2.0.2](docs/RELEASE-2.0.2.md), [1.9.2](docs/RELEASE-1.9.2.md), [1.9.0](docs/RELEASE-1.9.0.md). Validation records for earlier versions are also in [`docs/`](docs/).
 
 ## License and credits
 
