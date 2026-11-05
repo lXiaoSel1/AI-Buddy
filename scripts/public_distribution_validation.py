@@ -8,11 +8,11 @@ import stat
 import shutil
 from uuid import uuid4
 
-APPLICATION_VERSION = '2.0.5'
+APPLICATION_VERSION = '2.0.6'
 MEDIA_BASE_VERSION = '1.9.2'
 BASELINE_SHA256 = '12ac599d424e678acb1c7f964c65551fdc48dc40ac31ea47facb253256a7b871'
 APPROVAL_SHA256 = '30f610d52dc03aee82baaddd31e1f081abd2be22758c3e66e7a74235e30428fb'
-INVENTORY_SHA256 = '97a22c9b4da4c8f64497472a8dfef6fbfb7eb7d5d470bd405fc9d0138eea6a10'
+INVENTORY_SHA256 = 'e18af938aebfdddc72310f71ee370c4ea67336e6e6fb85470c666dc127ba4220'
 CHARACTERS = ('deepseek', 'claude', 'grok', 'seed', 'kimi', 'qwen', 'minimax', 'chatgpt', 'gemini', 'glm', 'hunyuan')
 
 

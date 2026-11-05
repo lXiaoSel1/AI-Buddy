@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "version": "2.0.5",
+  "version": "2.0.6",
   "stage": "published",
-  "publishedVersion": "2.0.5",
-  "resourceBaseVersion": "2.0.4",
-  "installerVersion": "2.0.5"
+  "publishedVersion": "2.0.6",
+  "resourceBaseVersion": "2.0.5",
+  "installerVersion": "2.0.6"
 }
