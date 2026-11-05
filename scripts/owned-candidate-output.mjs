@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {assertFreshCandidateOutput} from './media-baseline-validation.mjs';
 
 const assert=(ok,message)=>{if(!ok)throw Error(message);};
-const RENAME_RETRY_MS=[0,50,150,300,600];
+const RENAME_RETRY_MS=process.platform==='win32'?[0,50,150,300,600,1200,2400,4000]:[0,50,150,300,600];
 const same=(a,b)=>a.dev===b.dev&&a.ino===b.ino;
 const inside=(root,path)=>{const rel=relative(root,path);return rel&&rel!=='..'&&!rel.startsWith('../')&&!rel.startsWith('..\\')&&!isAbsolute(rel);};
 function inspectTree(root){
