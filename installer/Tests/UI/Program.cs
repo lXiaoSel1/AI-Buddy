@@ -3,7 +3,7 @@ using System.Reflection;
 using System.Net;
 using System.Text.Json;
 namespace AiBuddy.Setup;
-internal static class Program {
+internal static partial class Program {
  public static InstallManifest Manifest=null!;
  public static byte[] ManifestBytes=[];
  public static UpdateDiscovery Updates=null!;
@@ -85,6 +85,7 @@ internal static class Program {
     var badRoot=Path.Combine(output,"preflight failure "+malformed);using var form=new SetupForm(["--skip-update-check","--language=en","--root="+badRoot]);form.Show();Settled(form);var pointer=Path.Combine(badRoot,"local","current-build.json");Directory.CreateDirectory(Path.GetDirectoryName(pointer)!);File.WriteAllText(pointer,malformed=="bad-json"?"{broken":"{\"version\":\"bad-version\"}");
     Check("install preflight safely rejects "+malformed,()=>{var task=(Task)Invoke(form,"Run","install")!;Pump(()=>task.IsCompleted,"invalid pointer preflight");task.GetAwaiter().GetResult();Assert(Field<Label>(form,"status").Text.StartsWith("Cannot confirm the installed version;")&&!form.IsDisposed&&host.Calls==0&&!Directory.Exists(Path.Combine(badRoot,"local","installer")),"Malformed version must not crash or start installation");});Shot(form,Path.Combine(output,"installer-ui-"+malformed+".png"));form.Close();
    }
+   CheckSnapshotUpgrades(output);
    Json.Save(Path.Combine(output,"installer-ui.json"),new{ok=true,total=results.Count,tests=results,locales=2,roles=11,defaultEdition="30fps",defaultInitial="DeepSeek",httpMode="in-memory mock only",realNetworkRequests=0,appHostCalls=host.Calls,actualApplicationOrInstallerLaunched=false,at=DateTimeOffset.UtcNow});Console.WriteLine($"PASS {results.Count}/{results.Count}; mock HTTP only; no app or installer launched");return 0;
   }catch(Exception ex){Json.Save(Path.Combine(output,"installer-ui.json"),new{ok=false,total=results.Count,tests=results,error=ex.ToString(),appHostCalls=host.Calls,at=DateTimeOffset.UtcNow});Console.Error.WriteLine(ex);return 1;}
  }

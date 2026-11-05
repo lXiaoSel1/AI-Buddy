@@ -4,7 +4,7 @@ namespace AiBuddy.Install;
 // their own verified installer instead of feeding future manifests to this engine.
 public static class ReleaseIdentity {
     public const string Version="2.0.5";
-    public const string InstallerRevision="r1";
+    public const string InstallerRevision="r2";
     public static string InstallerVersion=>Version+"-"+InstallerRevision;
     // Public key that signs release tags (GitHub: "AI Buddy release signing").
     public const string SigningKey="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFLmFoAgOaffTLAwNJ+U1v0MK4iaTHbMZ+BjaidVla05";

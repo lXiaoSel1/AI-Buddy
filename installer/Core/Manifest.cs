@@ -36,8 +36,10 @@ public static class Hashing {
     public static string Bytes(ReadOnlySpan<byte> bytes)=>Convert.ToHexStringLower(SHA256.HashData(bytes));
     public static async Task<string> FileHash(string path,CancellationToken cancel=default) {
         await using var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read,1024*1024,FileOptions.Asynchronous|FileOptions.SequentialScan);
-        return Convert.ToHexStringLower(await SHA256.HashDataAsync(stream,cancel));
+        return await FileHash(stream,cancel);
     }
+    internal static async Task<string> FileHash(Stream stream,CancellationToken cancel) =>
+        Convert.ToHexStringLower(await SHA256.HashDataAsync(stream,cancel));
     public static async Task<bool> Matches(string path,long bytes,string hash,CancellationToken cancel=default) =>
         System.IO.File.Exists(path) && new FileInfo(path).Length==bytes && await FileHash(path,cancel)==hash;
 }

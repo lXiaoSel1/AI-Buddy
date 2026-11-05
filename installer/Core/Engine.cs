@@ -19,8 +19,9 @@ public interface IAppHost {
     Task CreateShortcuts(string root,Installation installed,CancellationToken cancel);
     Task RemoveShortcuts(string root,CancellationToken cancel);
 }
-public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,string manifestHash,Downloader downloader,IAppHost host,string selfExe,Func<Package,Uri>? source=null,Action<string>? checkpoint=null) {
+public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,string manifestHash,Downloader downloader,IAppHost host,string selfExe,Func<Package,Uri>? source=null,Action<string>? checkpoint=null,Func<string,CancellationToken,Task<string>>? profileHash=null) {
     readonly InstallManifest m=manifest;
+    readonly Func<string,CancellationToken,Task<string>> hashProfileFile=profileHash??Hashing.FileHash;
     public static string RecordPath(string root)=>SafePaths.Under(root,"local/installation.json");
     static string PointerPath(string root)=>SafePaths.Under(root,"local/current-build.json");
     public static Installation? Existing(string root)=>DataPaths.Effective(root);
@@ -72,7 +73,8 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         await Recover(root,journalPath,progress,cancel);
         var previous=Existing(root);
         var discovered=previous is null&&File.Exists(PointerPath(root))?await host.DiscoverDataPath(root,requested.Pipe,cancel):null;
-        var profile=InstallProfile.Select(root,requested,previous,discovered,retry,File.Exists(PointerPath(root)));
+        var profile=await InstallProfile.SelectAsync(root,requested,previous,discovered,retry,File.Exists(PointerPath(root)),hashProfileFile,cancel);
+        cancel.ThrowIfCancellationRequested();
         var options=requested with {Root=root,DataPath=profile.DataPath,Pipe=profile.Pipe};
         var packages=Manifests.Select(m,options.Edition,options.Characters,options.InitialCharacter);
         Dictionary<string,string>? offline=null;
@@ -110,9 +112,11 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         if((File.Exists(PointerPath(root))?await File.ReadAllTextAsync(PointerPath(root),cancel):null)!=journal.PreviousPointer)throw new IOException("Launch pointer changed during download; retry against the new current version");
         var selected=Existing(root);
         if(previous is not null&&(selected is null||!InstallProfile.SamePath(DataPaths.Registered(root,selected.DataPath,false),profile.ExpectedDataPath)||InstallProfile.NormalizedPipe(selected.Pipe)!=InstallProfile.NormalizedPipe(profile.Pipe)))throw new IOException("Personal-data selection changed during download; retry against the current profile");
-        profile.Verify();
+        await profile.VerifyAsync(hashProfileFile,cancel);
+        cancel.ThrowIfCancellationRequested();
         await host.Stop(root,previous??installed,progress,cancel);cancel.ThrowIfCancellationRequested();
-        profile.Verify();
+        await profile.VerifyAsync(hashProfileFile,cancel);
+        cancel.ThrowIfCancellationRequested();
         journal=journal with {Phase="committing"};Json.Save(journalPath,journal);
         try {
             foreach(var (mount,target) in new[]{("build",journal.Build),("runtime",journal.Runtime)}) {
@@ -249,8 +253,12 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         await host.Stop(root,Existing(root),progress,cancel);
         // Initialization may finish before readiness or before a power loss. Once
         // real data exists, every later retry must preserve that same profile.
-        if(journal.ProfileAction=="initialize"&&journal.ExpectedDataPath is {} expected&&InstallProfile.Recognized(expected)){journal=journal with{ProfileAction="preserve"};Json.Save(SafePaths.Under(root,"local/installer/transaction.json"),journal);}
+        if(journal.ProfileAction=="initialize"&&journal.ExpectedDataPath is {} expected&&await InstallProfile.RecognizedAsync(expected,hashProfileFile,cancel)){
+            cancel.ThrowIfCancellationRequested();
+            journal=journal with{ProfileAction="preserve"};Json.Save(SafePaths.Under(root,"local/installer/transaction.json"),journal);
+        }
         await GuardDowngrade(root,journal,cancel);
+        cancel.ThrowIfCancellationRequested();
         var backup=SafePaths.Under(root,"local/installer/backups/"+journal.Id);
         foreach(var f in journal.RootFiles){var target=SafePaths.Under(root,f);if(!data.Allows(target,progress))continue;if(journal.PreviouslyExistingRootFiles.Contains(f)){Directory.CreateDirectory(Path.GetDirectoryName(target)!);ReplaceProgramFile(SafePaths.Under(backup,f),target);}else if(File.Exists(target))File.Delete(target);}
         var selectedData=Existing(root)?.DataPath;var selectedPipe=Existing(root)?.Pipe;var initialized=Existing(root)?.DataInitialized;
