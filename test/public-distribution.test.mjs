@@ -14,11 +14,11 @@ test('private, deferred and aliased paths cannot enter a public application pack
 const repo=fileURLToPath(new URL('..',import.meta.url));
 function mediaCheck(f,options={}){return validateMediaBuild({resources:f.roots[30],legacyLockPath:f.legacyLockPath,baselinePath:f.baselinePath,approvalPath:f.approvalPath,...options});}
 const versions={applicationVersion:APPLICATION_VERSION,mediaBaseVersion:MEDIA_BASE_VERSION};
-test('real package/index manifest inputs separate application2.0.3 from media1.9.2; legacy defaults still reject the mismatch',t=>{
- const f=mediaFixture(t);assert.equal(read(path.join(f.roots[30],'package.json')).version,'2.0.3');assert.equal(read(path.join(f.roots[30],'assets/install-resource-index.json')).appVersion,'1.9.2');
- assert.throws(()=>mediaCheck(f),/application version differs/);const result=mediaCheck(f,versions);assert.equal(result.version,'2.0.3');assert.equal(result.mediaBaseVersion,'1.9.2');assert.equal(result.videos,1);
- assert.throws(()=>mediaCheck(f,{applicationVersion:'2.0.3'}),/supplied together/);assert.throws(()=>mediaCheck(f,{...versions,mediaBaseVersion:'2.0.3'}),/media base version differs/);assert.throws(()=>mediaCheck(f,{...versions,applicationVersion:'9.9.9'}),/application version differs/);
- const indexPath=path.join(f.roots[30],'assets/install-resource-index.json'),index=read(indexPath);save(indexPath,{...index,appVersion:'2.0.3'});assert.equal(mediaCheck(f,versions).version,'2.0.3');save(indexPath,{...index,appVersion:'9.9.9'});assert.throws(()=>mediaCheck(f,versions),/resource index header changed/);save(indexPath,index);
+test('real package/index manifest inputs separate application from its media baseline; legacy defaults still reject the mismatch',t=>{
+ const f=mediaFixture(t);assert.equal(read(path.join(f.roots[30],'package.json')).version,APPLICATION_VERSION);assert.equal(read(path.join(f.roots[30],'assets/install-resource-index.json')).appVersion,'1.9.2');
+ assert.throws(()=>mediaCheck(f),/application version differs/);const result=mediaCheck(f,versions);assert.equal(result.version,APPLICATION_VERSION);assert.equal(result.mediaBaseVersion,'1.9.2');assert.equal(result.videos,1);
+ assert.throws(()=>mediaCheck(f,{applicationVersion:APPLICATION_VERSION}),/supplied together/);assert.throws(()=>mediaCheck(f,{...versions,mediaBaseVersion:APPLICATION_VERSION}),/media base version differs/);assert.throws(()=>mediaCheck(f,{...versions,applicationVersion:'9.9.9'}),/application version differs/);
+ const indexPath=path.join(f.roots[30],'assets/install-resource-index.json'),index=read(indexPath);save(indexPath,{...index,appVersion:APPLICATION_VERSION});assert.equal(mediaCheck(f,versions).version,APPLICATION_VERSION);save(indexPath,{...index,appVersion:'9.9.9'});assert.throws(()=>mediaCheck(f,versions),/resource index header changed/);save(indexPath,index);
  save(path.join(f.roots[30],'package.json'),{version:'1.9.2',animationProfile:'30fps'});assert.equal(mediaCheck(f).version,'1.9.2');
 });
 test('public source-build evidence is explicit and cannot mix a private or supplied approval object',t=>{
@@ -35,7 +35,7 @@ test('extra physical asset and internally rehashed static replacement remain RED
  save(path.join(root,'assets/still.webp'),'unauthorized-but-indexed');const index=read(path.join(root,'assets/install-resource-index.json'));index.shared[0]=fileRow(root,'assets/still.webp');save(path.join(root,'assets/install-resource-index.json'),index);assert.throws(()=>mediaCheck(f,options),/approved asset differs/);
 });
 test('bundled public inventory contains complete two-edition media and no private receipt paths/chat',()=>{
- const inventory=loadPublicAssetInventory(repo);assert.deepEqual(inventory.editions.map(e=>[e.fps,e.assets.length,e.videos.length]),[[30,4543,264],[60,4543,264]]);assert.equal(inventory.sourceAssets.filter(row=>row.path.startsWith('assets/food/')).length,21);assert.doesNotMatch(JSON.stringify(inventory),/receiptPath|approvalPath|[A-Z]:\\|decisionSource|用户在本轮/);
+ const inventory=loadPublicAssetInventory(repo);assert.deepEqual(inventory.editions.map(e=>[e.fps,e.assets.length,e.videos.length]),[[30,4676,264],[60,4676,264]]);assert.equal(inventory.sourceAssets.filter(row=>row.path.startsWith('assets/food/')).length,21);assert.doesNotMatch(JSON.stringify(inventory),/receiptPath|approvalPath|[A-Z]:\\|decisionSource|用户在本轮/);
 });
 function assemblyPaths(t){const dir=temporary(t),values={};for(const name of ['baseline30','baseline60','runtime']){values[name]=path.join(dir,name);fs.mkdirSync(values[name]);}values.rcedit=path.join(dir,'stamp.exe');save(values.rcedit,'fixture-only');values.out=path.join(dir,'output');values.publicEvidence=true;return{dir,...values};}
 test('actual assembler rejects nested/equal/inverse input-output trees before copying',t=>{
