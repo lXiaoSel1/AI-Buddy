@@ -16,7 +16,7 @@
 
 **AI Buddy app** (this repository) · [Bilibili Companion plugin](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ Connect plugin](https://github.com/lXiaoSel1/AI-Buddy-QQ)
 
-<!-- ai-buddy-source-version: 2.0.3 -->
+<!-- ai-buddy-source-version: 2.0.4 -->
 **Current release: [v2.0.3](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.3)** · 2.0 added the Extensions center with two official plugins (Bilibili Companion and QQ Connect), points with a shop, backpack and feeding, and Social & mood; group chat can now run in Auto, with the characters taking turns on their own. 2.0.3 fixes group Auto stopping after the first line. The 30fps and 60fps editions have the same features. See the [2.0.3 release notes](docs/RELEASE-2.0.3.md).
 
 ## Online installer (recommended)

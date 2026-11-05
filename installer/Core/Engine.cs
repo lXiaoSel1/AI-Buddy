@@ -5,7 +5,7 @@ public sealed record InstallOptions(string Root,string Cache,string Edition,stri
 public sealed record StartupStatus(bool SafeMode,JsonElement? StartupFailure,bool Onboarding=false,JsonElement? Components=null);
 public sealed record Installation(int SchemaVersion,string Version,string ManifestSha256,string Edition,string[] Characters,string InitialCharacter,string Build,string Runtime,string Manager,string? DataPath,string? Pipe,DateTimeOffset InstalledAt,Dictionary<string,string> PackageHashes,StartupStatus? Startup=null,bool? DataInitialized=null,string[]? Warnings=null,string? InstallerRevision=null);
 public sealed record InstallDefaults(string Edition,string[] Characters,string InitialCharacter);
-public sealed record InstallJournal(string Id,string Phase,string ManifestHash,InstallOptions Options,string? PreviousPointer,string? PreviousInstallation,string Build,string Runtime,string[] RootFiles,string[] PreviouslyExistingRootFiles,string? AppVersion=null,string? ProfileAction=null,string? ExpectedDataPath=null,string? InstallerRevision=null);
+public sealed record InstallJournal(string Id,string Phase,string ManifestHash,InstallOptions Options,string? PreviousPointer,string? PreviousInstallation,string Build,string Runtime,string[] RootFiles,string[] PreviouslyExistingRootFiles,string? AppVersion=null,string? ProfileAction=null,string? ExpectedDataPath=null,string? InstallerRevision=null,bool StartupAttempted=false);
 public sealed record DiskEstimate(long DownloadBytes,long ExpandedBytes,long CacheAdditionalBytes,long InstallAdditionalBytes,long RetainedBytes);
 public sealed class IncompatibleRollbackException(string message):IOException(message);
 public interface IAppHost {
@@ -127,6 +127,7 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
             Json.Save(RecordPath(root),installed);
             Json.Save(PointerPath(root),new {version=m.AppVersion,appVersion=m.AppVersion,path=journal.Build,runtime=new{path=journal.Runtime,executable=m.Runtime.Executable,sha256=m.Runtime.Sha256},animationProfile=options.Edition,installedAt=installed.InstalledAt});
             checkpoint?.Invoke("pointer");
+            journal=journal with {StartupAttempted=true};Json.Save(journalPath,journal);
             await host.StartInstalledAndVerify(root,installed,profile.Action=="initialize",cancel);
             if(host.LastStartup is { } startup&&(startup.Onboarding||startup.SafeMode||startup.StartupFailure is not null))throw new IOException("AI Buddy did not start normally; welcome, safe mode or startup failure cannot complete installation");
             var confirmed=Json.Read<Installation>(RecordPath(root));
@@ -142,11 +143,8 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         } catch(Exception failure) {
             try {journal=await RollbackJournal(root,journal,progress,CancellationToken.None);Json.Save(journalPath,journal with {Phase="rolled-back"});}
             catch(IncompatibleRollbackException compatibility) {
-                // A first 1.9 launch can create life/media data before reporting readiness.
-                // Never put 1.8 back in charge of those saves. Keep both program trees and
-                // record a compatible-repair state instead of repeatedly attempting downgrade.
                 var receipt=RetainForCompatibleRepair(root,journal,failure,compatibility,progress);
-                throw new IOException("AI Buddy did not finish installation. New life/media data prevents an automatic rollback to the older program. Personal data and both program versions were retained; run this 1.9 installer again for compatible repair. Recovery receipt: "+receipt+" / 安装未完成；新人生/媒体数据阻止自动降级，已保留数据及两版程序，请重运行 1.9 安装器修复。",new AggregateException(failure,compatibility));
+                throw new IOException("AI Buddy did not finish installation. "+compatibility.Message+" Run this installer again for compatible repair. / 安装未完成，请重运行本安装器修复。 Recovery receipt: "+receipt,new AggregateException(failure,compatibility));
             }
             throw;
         }
@@ -284,9 +282,19 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         if(journal.PreviousPointer is null)return;
         using var previous=JsonDocument.Parse(journal.PreviousPointer);
         var p=previous.RootElement;var version=p.TryGetProperty("appVersion",out var av)?av.GetString():p.TryGetProperty("version",out var v)?v.GetString():null;
+        var previousVersion=System.Version.TryParse(version,out var parsed)?parsed:null;
+        var installed=Existing(root);
+        var data=DataPaths.Registered(root,installed is null?journal.Options.DataPath:installed.DataPath);
+        var walletVersion=new System.Version(2,0,4);
+        if((previousVersion is null||previousVersion<walletVersion)&&journal.StartupAttempted&&System.Version.TryParse(journal.AppVersion,out var attempted)&&attempted>=walletVersion){
+            // Wallet migration can commit before startup reports readiness.
+            var wallet=Path.Combine(data,"companion-economy-v1","economy.sqlite");
+            SafePaths.NoLinks(wallet);
+            if(File.Exists(wallet)||File.Exists(wallet+"-wal"))throw new IncompatibleRollbackException("The wallet may already use schema 2. Personal data and both program versions were retained. / 钱包可能已升级到格式 2，已保留资料和两版程序，请使用兼容版本。");
+        }
         // Only 1.9.0 and later read 1.9 media and life data; older or unknown versions are checked.
-        if(version is not null&&System.Text.RegularExpressions.Regex.IsMatch(version,@"\A(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z")&&System.Version.Parse(version)>=new System.Version(1,9,0))return;
-        var data=DataPaths.Registered(root,Existing(root)?.DataPath??journal.Options.DataPath);SafePaths.NoLinks(data);
+        if(previousVersion is not null&&version is not null&&System.Text.RegularExpressions.Regex.IsMatch(version,@"\A(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z")&&previousVersion>=new System.Version(1,9,0))return;
+        SafePaths.NoLinks(data);
         var galgame=Path.Combine(data,"galgame");
         if(Directory.Exists(Path.Combine(galgame,"media"))&&Directory.EnumerateFiles(Path.Combine(galgame,"media")).Any() || Directory.Exists(Path.Combine(galgame,"life-archives"))&&Directory.EnumerateFiles(Path.Combine(galgame,"life-archives")).Any())throw new IncompatibleRollbackException("Rollback to this older program requires media/life compatibility review. Personal data was retained; no media-revert or maintenance apply was executed. / 旧版无法识别新媒体或人生数据；请先确认兼容与 media-revert planId，未修改个人数据。");
         var snapshots=Path.Combine(galgame,"companion.json.snapshots");var commits=Path.Combine(snapshots,"commits.jsonl");if(!File.Exists(commits))return;

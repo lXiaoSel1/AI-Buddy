@@ -16,7 +16,7 @@
 
 **AI 酱本体**（本仓库） · [B站陪伴插件](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ连接插件](https://github.com/lXiaoSel1/AI-Buddy-QQ)
 
-<!-- ai-buddy-source-version: 2.0.3 -->
+<!-- ai-buddy-source-version: 2.0.4 -->
 **当前版本：[v2.0.3](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.3)** · 2.0 加入了扩展中心和两款官方插件（B站陪伴、QQ连接），还有积分、商店与背包、投喂，以及社交与心情；群聊可以开 Auto，让角色们自己轮流接话。2.0.3 修好了群聊 Auto 在第一句之后停住的问题。30fps 和 60fps 两版功能相同。见 [2.0.3 更新说明](docs/RELEASE-2.0.3.md)。
 
 ## 在线安装（推荐）

@@ -241,6 +241,30 @@ sealed class Suite {
    var failing=new InstallEngine(m,bytes,hash,new Downloader(unusedHttp),host,Path.Combine(root,"root.zip"),checkpoint:phase=>{if(phase!="pointer")return;Directory.CreateDirectory(snapshots);File.WriteAllBytes(Path.Combine(snapshots,"first-start.json"),payload);File.WriteAllText(Path.Combine(snapshots,"commits.jsonl"),JsonSerializer.Serialize(new{file="first-start.json",sha256=Hashing.Bytes(payload)}));throw new IOException("injected first-start failure after life snapshot");});
    await Reject(()=>failing.Install(options with{Root=target,Edition="60fps"},null,default));var journal=Json.Read<InstallJournal>(Path.Combine(target,"local/installer/transaction.json"));Assert(journal.Phase=="recovery-required"&&InstallEngine.Existing(target)!.Version==ReleaseIdentity.Version,"never hand new data to old 1.8; explicit controlled recovery");Assert(Directory.Exists(Path.Combine(target,prior.Build))&&Directory.Exists(Path.Combine(target,journal.Build)),"both program versions retained");Assert(File.Exists(Path.Combine(target,"local/installer/recovery-required",journal.Id+".json")),"recoverable receipt retained");Assert(File.ReadAllBytes(Path.Combine(snapshots,"first-start.json")).SequenceEqual(payload),"new life data unchanged");await engine.Install(options with{Root=target,Edition="60fps"},null,default);Assert(Json.Read<InstallJournal>(Path.Combine(target,"local/installer/transaction.json")).Phase=="complete"&&File.ReadAllBytes(Path.Combine(snapshots,"first-start.json")).SequenceEqual(payload),"compatible repair proceeds without downgrade or data replacement");
   });
+  await Test("wallet-capable launch cannot roll back to the old writer",async()=>{
+   foreach(var startupFails in new[]{false,true}){
+    var target=Path.Combine(root,startupFails?"wallet-failed-start":"wallet-manual-rollback");
+    var prior=await engine.Install(options with{Root=target},null,default);
+    var pointer=Path.Combine(target,"local/current-build.json");
+    Json.Save(pointer,new{version="2.0.3",appVersion="2.0.3",path=prior.Build,animationProfile=prior.Edition});
+    Json.Save(InstallEngine.RecordPath(target),prior with{Version="2.0.3"});
+    var wallet=Path.Combine(DataPaths.Registered(target,prior.DataPath,false),"companion-economy-v1","economy.sqlite");
+    var candidate=new FakeHost{FailStart=startupFails,OnStart=(_,_)=>{
+     var journal=Json.Read<InstallJournal>(Path.Combine(target,"local/installer/transaction.json"));
+     Assert(journal.StartupAttempted,"startup boundary was persisted");
+     Directory.CreateDirectory(Path.GetDirectoryName(wallet)!);File.WriteAllText(wallet,"wallet migration fixture");
+    }};
+    var installer=new InstallEngine(m,bytes,hash,new Downloader(unusedHttp),candidate,Path.Combine(root,"root.zip"));
+    var upgrade=options with{Root=target,Edition="60fps"};
+    if(startupFails)await Reject(()=>installer.Install(upgrade,null,default));
+    else{await installer.Install(upgrade,null,default);Assert(await installer.RollbackBlocker(target,default) is not null,"manual rollback is blocked");await Reject(()=>installer.Rollback(target,null,default));}
+    var installed=InstallEngine.Existing(target)!;
+    Assert(installed.Version==ReleaseIdentity.Version&&installed.Build!=prior.Build&&Directory.Exists(Path.Combine(target,prior.Build)),"both builds kept");
+    Assert(File.ReadAllText(wallet)=="wallet migration fixture","wallet retained");
+    var state=Json.Read<InstallJournal>(Path.Combine(target,"local/installer/transaction.json"));
+    Assert(state.Phase==(startupFails?"recovery-required":"complete"),"transaction state");
+   }
+  });
   await Test("persisted committing crash with new life data proceeds through compatible repair",async()=>{
    var target=Path.Combine(root,"interrupted-first-upgrade");var prior=await engine.Install(options with{Root=target},null,default);var pointer=Path.Combine(target,"local/current-build.json");using(var doc=JsonDocument.Parse(File.ReadAllBytes(pointer))){var old=doc.RootElement.Deserialize<Dictionary<string,JsonElement>>(Json.Options)!;old["appVersion"]=JsonSerializer.SerializeToElement("1.8.0");old["version"]=JsonSerializer.SerializeToElement("1.8.0");Json.Save(pointer,old);}var oldPointer=File.ReadAllText(pointer);var oldRecord=JsonSerializer.Serialize(prior with{Version="1.8.0"},Json.Options);
    var id=Guid.NewGuid().ToString("N");var failedBuild=$"builds/v1.9.0-60fps-{id}";var failedRuntime=$"runtime/AI-Buddy-v1.9.0-{id}";Directory.CreateDirectory(Path.Combine(target,failedBuild));Directory.CreateDirectory(Path.Combine(target,failedRuntime));File.WriteAllText(Path.Combine(target,failedBuild,"main.cjs"),"interrupted new build");var crash=new InstallJournal(id,"committing",hash,options with{Root=target,Edition="60fps"},oldPointer,oldRecord,failedBuild,failedRuntime,["AI Buddy.exe"],["AI Buddy.exe"],"1.9.0");

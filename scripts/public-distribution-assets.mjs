@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 
-export const APPLICATION_VERSION='2.0.3',MEDIA_BASE_VERSION='1.9.2';
+export const APPLICATION_VERSION='2.0.4',MEDIA_BASE_VERSION='1.9.2';
 export const APPROVED_BASELINE_SHA256='12ac599d424e678acb1c7f964c65551fdc48dc40ac31ea47facb253256a7b871';
 export const APPROVED_APPROVAL_SHA256='30f610d52dc03aee82baaddd31e1f081abd2be22758c3e66e7a74235e30428fb';
-export const PUBLIC_ASSET_INVENTORY_SHA256='37cf3c62ea5dfa62a64817b3551d7ef6960f8c2a3f56110596702b4917815816';
+export const PUBLIC_ASSET_INVENTORY_SHA256='1898c90b4483ed234d41a7db4bc55c80c9b885fce178b76bef3281d42a32604d';
 export const CHARACTER_IDS=Object.freeze(['deepseek','claude','grok','seed','kimi','qwen','minimax','chatgpt','gemini','glm','hunyuan']);
 export const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
 const fail=message=>{throw Error('Distribution validation: '+message);};
@@ -33,7 +33,7 @@ export function inventoryMap(rows,{owners=false}={}){
 export function validatePublicAssetInventory(value){
  if(value?.schemaVersion!==1||value.kind!=='ai-buddy-public-distribution-assets'||value.applicationVersion!==APPLICATION_VERSION||value.mediaBaseVersion!==MEDIA_BASE_VERSION||value.basis?.optimizedBaselineSha256!==APPROVED_BASELINE_SHA256||value.basis?.approvalSha256!==APPROVED_APPROVAL_SHA256||!Array.isArray(value.editions)||value.editions.length!==2)fail('unsupported approved asset inventory');
  const source=inventoryMap(value.sourceAssets,{owners:true});
- for(const row of source.values())if(row.owner!=='shared'||!/^assets\/(?:group-thumbnails|group-scene|food|pet-glove-v2|theme|pet-glove-tint)\//.test(row.path))fail('unapproved source UI scope');
+ for(const row of source.values())if(row.owner!=='shared'||!/^assets\/(?:group-thumbnails|group-scene|card-games|food|pet-glove-v2|theme|pet-glove-tint)\//.test(row.path))fail('unapproved source UI scope');
  const editions=new Set();
  for(const edition of value.editions){if(![30,60].includes(edition.fps)||edition.profile!==edition.fps+'fps'||editions.has(edition.fps))fail('duplicate or unknown edition');editions.add(edition.fps);const assets=inventoryMap(edition.assets,{owners:true}),videos=inventoryMap(edition.videos),identities=new Set();if(videos.size!==264||edition.videos.length!==264)fail('complete approved video coverage required');
   for(const video of edition.videos){const asset=assets.get(video.path),identity=video.characterId+'/'+video.actionId;if(!CHARACTER_IDS.includes(video.characterId)||video.key!==identity||video.fps!==edition.fps||identities.has(identity)||!/^[a-f0-9]{64}$/.test(video.metadataSha256??'')||!asset||asset.owner!==video.characterId||asset.sha256!==video.sha256||asset.bytes!==video.bytes)fail('approved video identity differs');identities.add(identity);}
@@ -44,7 +44,7 @@ export function validatePublicAssetInventory(value){
  return value;
 }
 export function loadPublicAssetInventory(repo){
- const file=path.join(repo,'scripts/media-baselines/public-203-assets.json');assertNoLinkedAncestors(file);const raw=fs.readFileSync(file);if(sha256(raw)!==PUBLIC_ASSET_INVENTORY_SHA256)fail('bundled approved asset inventory changed');return validatePublicAssetInventory(JSON.parse(raw));
+ const file=path.join(repo,'scripts/media-baselines/public-204-assets.json');assertNoLinkedAncestors(file);const raw=fs.readFileSync(file);if(sha256(raw)!==PUBLIC_ASSET_INVENTORY_SHA256)fail('bundled approved asset inventory changed');return validatePublicAssetInventory(JSON.parse(raw));
 }
 export function assertSourceAssetBindings(repo,inventory){
  for(const row of inventory.sourceAssets){const file=path.join(repo,row.path);assertNoLinkedAncestors(file);const bytes=fs.readFileSync(file);if(bytes.length!==row.bytes||sha256(bytes)!==row.sha256)fail('source UI resource changed: '+row.path);}

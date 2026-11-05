@@ -25,6 +25,10 @@ The interface art added in 1.9.0 contains no characters and is not taken from an
 
 README screenshots are captures of the actual application with an independent test profile: usage figures are synthetic and chat replies come from a local test service. The CGs shown in them were generated in that test profile through the app's own "Codex built-in image" connection with the developer's local Codex. They are not screenshots of the developer's personal conversations or monitored work.
 
+## Card Games assets
+
+The host's `assets/card-games/` contains project-generated card-table art, props and character illustrations used by the optional Card Games plugin. The portrait and character illustration derivatives follow the character provenance above, including the upstream DeepSeek artwork's CC BY-NC-SA 4.0 terms where applicable. The plugin carries a separate notice for its bundled card art and fonts.
+
 ## Monitoring and prices
 
 - [ccusage](https://github.com/ccusage/ccusage), MIT, pinned `b4507e731b318c5a954c448db6602dc8241b7571`: parsing boundaries, report organization and development cross-checks. Not a runtime dependency.

@@ -22,7 +22,7 @@ export function checkReleaseVersion(root){
   if(state){
    const markers=[...text.matchAll(/<!--\s*ai-buddy-source-version:\s*([^\s]+)\s*-->/g)].map(m=>m[1]);
    if(markers.length!==1||markers[0]!==v)throw Error(file+' source-version marker differs from package.json');
-   downloads.push(...[...text.matchAll(/AI-Buddy-Setup-(\d+\.\d+\.\d+)-win-x64\.exe/g)].map(m=>m[1]));
+   downloads.push(...[...text.matchAll(/AI-Buddy-Setup-(\d+\.\d+\.\d+)(?:-r[1-9]\d*)?-win-x64\.exe/g)].map(m=>m[1]));
    const urls=[...text.matchAll(/https:\/\/github\.com\/lXiaoSel1\/ai-buddy\/releases\/download\/v(\d+\.\d+\.\d+)\//gi)].map(m=>m[1]);
    if(urls.some(version=>version!==publishedVersion))throw Error(file+' download URL differs from publishedVersion');
    if(state.stage!=='published'&&v!==publishedVersion&&new RegExp('https://github\\.com/lXiaoSel1/ai-buddy/releases/tag/v'+v.replaceAll('.','\\.')+'(?=[)\\s/#?]|$)','i').test(text))throw Error(file+' links to an unpublished source release');
