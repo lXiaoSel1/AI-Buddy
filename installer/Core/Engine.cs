@@ -241,7 +241,7 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         var control=SafePaths.Under(root,"local/installer");journal=journal with{Phase="recovery-required"};Json.Save(Path.Combine(control,"transaction.json"),journal);
         var receipt=SafePaths.Under(control,"recovery-required/"+journal.Id+".json");
         Json.Save(receipt,new{installerRevision=ReleaseIdentity.InstallerRevision,phase=journal.Phase,journal,failedAt=DateTimeOffset.UtcNow,failure=failure.ToString(),compatibility=compatibility.Message,personalDataRetained=true,previousProgramRetained=true,compatibleRepairVersion=m.AppVersion});
-        progress?.Report(new("recovery-required",receipt,Detail:"Personal data and program backups retained; run compatible AI Buddy 1.9 repair"));return receipt;
+        progress?.Report(new("recovery-required",receipt,Detail:$"Personal data and program backups retained; run this AI Buddy {m.AppVersion} installer again for compatible repair"));return receipt;
     }
     async Task<InstallJournal> RollbackJournal(string root,InstallJournal journal,IProgress<InstallProgress>? progress,CancellationToken cancel) {
         ValidateJournal(journal,root);
