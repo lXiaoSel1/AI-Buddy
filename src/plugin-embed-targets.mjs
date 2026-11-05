@@ -3,7 +3,7 @@
 export const EMBED_TARGETS=Object.freeze({
   bilibili:Object.freeze({kind:'community',packageName:'@ai-buddy/bilibili-companion',page:'plugin-bilibili',icon:'tv'}),
   qq:Object.freeze({kind:'community',packageName:'@ai-buddy/qq-connect',page:'plugin-qq',icon:'chats'}),
-  'card-games':Object.freeze({kind:'card',packageName:'@ai-buddy/card-games',page:'plugin-card-games',icon:'nav-card-games'}),
+  'card-games':Object.freeze({kind:'community',packageName:'@ai-buddy/card-games',page:'plugin-card-games',icon:'nav-card-games'}),
   work:Object.freeze({kind:'work',packageName:'@ai-buddy/work-collaboration',page:'agent-tasks',icon:'nav-work'})});
 /** G1: the sidebar's 插件 group, from what is installed: enabled community plugins with their own page (an embed target, or
  * one that declares ui.registerPage). Embed targets first in their own order (Bilibili, QQ), then the rest by name.
@@ -16,7 +16,9 @@ export function pluginPageEntries(records=[],nameOf=record=>record.packageName){
     .map(record=>{const target=embedTargetFor(record.packageName);return target?[EMBED_TARGETS[target].page,EMBED_TARGETS[target].icon,record]:['ext:'+record.packageKey,'nav-plugins',record];});
 }
 export const embedTargetFor=packageName=>Object.keys(EMBED_TARGETS).find(key=>EMBED_TARGETS[key].packageName===packageName)??null;
-// Bilibili and QQ share one DSH page that opens on DSH's own panel; only plugin code can switch it. The host names the
+// The bundled card package owns a private DSH runtime; the official package uses the community runtime.
+export const embedSlotKind=(target,record)=>target==='card-games'&&record?.localBundled===true?'card':EMBED_TARGETS[target].kind;
+// Community plugins share one DSH page that opens on DSH's own panel; only plugin code can switch it. The host names the
 // plugin on <html> (data-buddy-open-plugin) and fires "ai-buddy:open-plugin-page"; the plugin answers with data-buddy-panel.
 // Both scripts answer "<data-buddy-embedded>|<data-buddy-panel>". Used for the main window and for separate windows.
 export const PANEL_PLUGIN=/^@[a-z0-9][a-z0-9-]{0,80}\/[a-z0-9][a-z0-9-]{0,80}$/;

@@ -2,10 +2,10 @@
 // in a WebContentsView placed over a placeholder the renderer reports. The page keeps the exact security of its
 // own-window form because the plugin hosts (client-host.mjs, work-client-host.mjs) build it: separate partition,
 // all permissions denied, navigation/new-window/download blocked, no Buddy preload (work: only its scoped one).
-// This module owns only where and when the view shows. Bilibili and QQ share one DSH page ("community"), so the
+// This module owns only where and when the view shows. Community plugins share one DSH page, so the
 // host asks the page to switch panel and waits for the plugin's data-buddy-panel answer before revealing it.
 import {EventEmitter} from 'node:events';
-import {EMBED_TARGETS,embedCapable,embedTargetFor,panelScript,PANEL_CHECK} from './plugin-embed-targets.mjs';
+import {EMBED_TARGETS,embedCapable,embedTargetFor,embedSlotKind,panelScript,PANEL_CHECK} from './plugin-embed-targets.mjs';
 
 export const EMBED_CHANNEL='plugins:embed';
 export const EMBED_EVENT='plugins:embed-state';
@@ -35,7 +35,7 @@ const PANEL_SCRIPT=panelScript;
  * open(target, surface) / openWindow(target): host callbacks that ask the plugin hosts to show the page in the
  * given surface or in its own window. getPanel() returns the main window. onState(value) publishes to the renderer.
  */
-export function createPluginEmbed({WebContentsView,getPanel,open,openWindow,admit=()=>{},onState=()=>{},backgroundColor=()=>null,firstLoadTimeoutMs=20000,openTimeoutMs=180000,markTimeoutMs=3000,callTimeoutMs=3000,pollMs=150,sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),now=()=>Date.now()}={}){
+export function createPluginEmbed({WebContentsView,getPanel,open,openWindow,recordFor=()=>null,admit=()=>{},onState=()=>{},backgroundColor=()=>null,firstLoadTimeoutMs=20000,openTimeoutMs=180000,markTimeoutMs=3000,callTimeoutMs=3000,pollMs=150,sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),now=()=>Date.now()}={}){
   if(typeof WebContentsView!=='function'||typeof getPanel!=='function'||typeof open!=='function'||typeof openWindow!=='function'||typeof admit!=='function')throw TypeError('Plugin embed host dependencies are required');
   // token: one readiness check at a time; epoch: one open at a time (release() moves both on, so late results are dropped);
   // quiet: the host's reports about a page this module is closing on purpose are not failures.
@@ -139,6 +139,7 @@ export function createPluginEmbed({WebContentsView,getPanel,open,openWindow,admi
         if(window){await deadline(openWindow(target),openTimeoutMs);return;}
         const result=await deadline(open(target,surfaceFor(slot,epoch,surface=>{mine=surface;})),openTimeoutMs);
         if(slot.epoch!==epoch){retire(slot,mine);return;}
+        if(!mine)throw fail('The runtime did not attach the requested surface','PLUGIN_EMBED_SURFACE_MISSING');
         apply();return result;
       }catch(error){
         if(slot.epoch!==epoch||closed)return;
@@ -154,20 +155,20 @@ export function createPluginEmbed({WebContentsView,getPanel,open,openWindow,admi
   }
   async function openTarget(slot,target){
     const changed=slot.target!==target;slot.target=target;
-    if(slot.state==='popped')return describe(slot);
+    if(slot.state==='popped'&&!changed)return describe(slot);
     if(slot.kind!=='work'){
       const epoch=slot.epoch,intent=++slot.intent,surface=slot.surface,current=()=>!closed&&slot.epoch===epoch&&slot.intent===intent&&slot.target===target;
       slot.admitting=true;slot.token++;slot.ready=false;setState(slot,'start');apply();
       try{await deadline(Promise.resolve().then(()=>admit(target)),openTimeoutMs);}catch(error){if(!current())return describe(slot);cancel(slot);retire(slot,slot.surface);const code=codeOf(error),idle=['PLUGIN_EMBED_NOT_ENABLED','PLUGIN_EMBED_UNSUPPORTED'].includes(code);setState(slot,idle?'idle':'err',idle?null:code);apply();return describe(slot);}
       if(!current())return describe(slot);slot.admitting=false;
-      if(slot.state==='popped'||surface&&(slot.surface!==surface||surface.isDestroyed()))return describe(slot);
+      if(slot.state==='popped'&&!changed||surface&&(slot.surface!==surface||surface.isDestroyed()))return describe(slot);
     }
     if(slot.surface&&!slot.surface.isDestroyed()){if(slot.kind!=='work'&&(changed||!slot.ready)&&slot.loaded)void settle(slot);apply();return describe(slot);}
     await start(slot,target);return describe(slot);
   }
   async function handle(request){
     if(closed)throw fail('Plugin embedding has stopped','PLUGIN_EMBED_CLOSED');
-    const {op,target,rect,covered:cover}=validEmbedRequest(request),slot=target?slots[EMBED_TARGETS[target].kind]:null;
+    const {op,target,rect,covered:cover}=validEmbedRequest(request),slot=target?slots[embedSlotKind(target,recordFor(target))]:null;
     if(op==='state')return KINDS.map(kind=>describe(slots[kind]));
     // nothing starts behind a hidden window (release() gave the pages back); resume() picks it up when shown
     if(op==='open'){if(!panelShown()){if(slot.target!==target&&slot.surface)slot.ready=false;slot.target=target;slot.pending=true;return describe(slot);}return openTarget(slot,target);}
@@ -217,7 +218,7 @@ export function createPluginEmbed({WebContentsView,getPanel,open,openWindow,admi
   function recordsChanged(installed=[]){
     for(const slot of Object.values(slots)){
       if(!slot.target)continue;const record=installed.find(value=>value?.packageName===EMBED_TARGETS[slot.target].packageName);
-      if(record?.enabled===true)continue;
+      if(record?.enabled===true&&embedSlotKind(slot.target,record)===slot.kind)continue;
       cancel(slot);retire(slot,slot.surface,'close');
       if(!slot.surface&&slot.state!=='popped')setState(slot,'idle');
     }

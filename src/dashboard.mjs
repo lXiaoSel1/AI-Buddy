@@ -22,7 +22,7 @@ import {pluginClientResult} from './plugin-client-result.mjs';
 import {pluginResult} from './plugin-center-helpers.mjs';
 import {petCharacterName} from './pet-characters.mjs';
 import {EmbedBar,EmbedArea,useEmbedState,embedView,embedName,embedPill,startEmbedCover} from './plugin-embed-page.mjs';
-import {EMBED_TARGETS,embedCapable,embedTargetFor,pluginPageEntries} from './plugin-embed-targets.mjs';
+import {EMBED_TARGETS,embedCapable,embedTargetFor,embedSlotKind,pluginPageEntries} from './plugin-embed-targets.mjs';
 import {SocialLoginRequest} from './social-login-ui.mjs';
 import {createSocialLoginRequests} from './social-login-requests.mjs';
 import {PageBoundary} from './page-boundary.mjs';
@@ -141,7 +141,7 @@ function App(){
  const recordOf=target=>pluginRecords.find(record=>record.packageName===EMBED_TARGETS[target].packageName);
  // after a login, 「去设置」 goes back to that plugin's page and loads it again so it reads the new account
  const openAfterLogin=packageName=>{const target=embedTargetFor(packageName),record=target&&recordOf(target);if(!record?.enabled){toCommunity({tab:'installed',packageName});return;}if(!embedCapable(target,record.exactVersion)){void window.whale.plugins.action({action:'dsh-open-client',packageKey:record.packageKey}).catch(()=>{});return;}setPage(EMBED_TARGETS[target].page);setChosen(null);void window.whale.plugins.embed({op:'reload',target}).catch(()=>{});};
- const communityEmbed=useEmbedState('bilibili'),workEmbed=useEmbedState('work'),cardEmbed=useEmbedState('card-games'),embedStateOf=target=>EMBED_TARGETS[target].kind==='work'?workEmbed:target==='card-games'?cardEmbed:communityEmbed,viewOf=target=>embedView(target,recordOf(target),embedStateOf(target));
+ const embedStates={community:useEmbedState('community'),work:useEmbedState('work'),card:useEmbedState('card')},embedStateOf=target=>embedStates[embedSlotKind(target,recordOf(target))],viewOf=target=>embedView(target,recordOf(target),embedStateOf(target));
  const pluginTargetForPage=id=>Object.keys(EMBED_TARGETS).find(target=>EMBED_TARGETS[target].kind!=='work'&&EMBED_TARGETS[target].page===id);
  const pluginTarget=pluginTargetForPage(page);
  const embedTarget=pluginTarget??(page==='agent-tasks'&&!settings?.safeMode&&shellStatus.work?.ready?'work':null);

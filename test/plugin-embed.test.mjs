@@ -16,17 +16,17 @@ class Contents extends EventEmitter{
   // answers like the real page: "<data-buddy-embedded>|<data-buddy-panel>"
   executeJavaScript(code){this.js.push(code);if(this.hang)return new Promise(()=>{});const m=/id=("[^"]+")/.exec(code);if(m&&this.answer)this.panel=this.answer(JSON.parse(m[1]))??this.panel;return Promise.resolve((this.embedded?'1':'')+'|'+this.panel);}
   isDestroyed(){return this.dead;}close(){if(this.dead)return;this.dead=true;this.emit('destroyed');}isFocused(){return this.focused;}focus(){this.focused=true;}
-  async loadURL(){}reload(){this.reloaded=true;}setWindowOpenHandler(){}send(){}
+  async loadURL(){this.emit('did-finish-load');}reload(){this.reloaded=true;}setWindowOpenHandler(){}send(){}
   async capturePage(){return {isEmpty:()=>false,toJPEG:()=>Buffer.from('picture')};}
 }
-function rig({panelVisible=true,answer=id=>id,options={},gate=null}={}){
+function rig({panelVisible=true,answer=id=>id,options={},gate=null,openClient=null}={}){
   const views=[];
   class View{constructor({webPreferences}){this.webPreferences=webPreferences;this.webContents=new Contents();this.webContents.answer=answer;this.visible=null;this.bounds=null;views.push(this);}setVisible(v){this.visible=v;}setBounds(b){this.bounds=b;}setBackgroundColor(c){this.color=c;}}
   const panel={dead:false,visible:panelVisible,minimized:false,focused:true,isDestroyed(){return this.dead;},isVisible(){return this.visible;},isMinimized(){return this.minimized;},isFocused(){return this.focused;},getContentSize:()=>[1180,820],
     contentView:{children:[],addChildView(view){this.children.push(view);},removeChildView(view){this.children=this.children.filter(v=>v!==view);}}};
   const states=[],windows=[],surfaces=[];
   // a stand-in for the plugin hosts: load the page in the surface it was handed
-  const open=async(target,surface)=>{if(gate)await gate();const s=surface({webPreferences:{sandbox:true,contextIsolation:true}});surfaces.push(s);s.on('closed',()=>embed.hostState({kind:target==='work'?'work':'community',state:'closed',surface:'embedded'}));await s.loadURL('http://127.0.0.1:4567/');s.webContents.emit('did-finish-load');s.show();return {state:'page-loaded'};};
+  const open=async(target,surface)=>{if(openClient)return openClient(target,surface);if(gate)await gate();const s=surface({webPreferences:{sandbox:true,contextIsolation:true}});surfaces.push(s);s.on('closed',()=>embed.hostState({kind:target==='work'?'work':'community',state:'closed',surface:'embedded'}));await s.loadURL('http://127.0.0.1:4567/');s.show();return {state:'page-loaded'};};
   const embed=createPluginEmbed({WebContentsView:View,getPanel:()=>panel,open,openWindow:async target=>{windows.push(target);},onState:value=>states.push(value),backgroundColor:()=>'#101010',sleep:()=>new Promise(r=>setImmediate(r)),pollMs:0,...options});
   return {embed,views,panel,states,windows,surfaces};
 }
@@ -155,6 +155,65 @@ test('main accepts embed requests only from the main window page, and wires the 
 
 // Review round 1 (findings 1, 3, 4, 6, 7, 8, 11): each scenario below failed before the fix.
 const RECT={x:200,y:86,width:980,height:734};
+for(const sequence of [['bilibili','card-games','qq','card-games','bilibili'],['card-games','bilibili','qq']]){
+ test('a reused community runtime shows the selected panel: '+sequence.join(' → '),async()=>{
+  const session={fromPartition:()=>Object.assign(new EventEmitter(),{setPermissionRequestHandler(){},async clearStorageData(){}})};
+  const host=createDshClientHost({BrowserWindow:class {},session});
+  const descriptor={runtimeId:'r',profileId:'buddy-community-v1',webOrigin:'http://127.0.0.1:4567',url:'http://127.0.0.1:4567/'};
+  const {embed,views}=rig({openClient:(_target,surface)=>host.open(descriptor,{surface})});
+  const packages={bilibili:'@ai-buddy/bilibili-companion',qq:'@ai-buddy/qq-connect','card-games':'@ai-buddy/card-games'};
+  try{
+   for(const [index,target] of sequence.entries()){
+    if(index)await embed.handle({op:'slot',target:sequence[index-1],rect:null});
+    await embed.handle({op:'slot',target,rect:RECT});
+    await embed.handle({op:'open',target});
+    await settle();
+    assert.equal(embed.snapshot().find(row=>row.target===target)?.state,'run',target);
+    assert.equal(views.length,1);
+    assert.equal(views[0].webContents.panel,packages[target]);
+    assert.equal(views[0].visible,true);
+    assert.equal(host.snapshot().length,1);
+   }
+  }finally{embed.close();await host.close();}
+ });
+}
+test('bundled cards retain their own embedded slot alongside community panels',async()=>{
+ const {embed,views}=rig({options:{recordFor:target=>target==='card-games'?{localBundled:true}:null}});
+ try{
+  await embed.handle({op:'slot',target:'bilibili',rect:RECT});
+  await embed.handle({op:'open',target:'bilibili'});
+  await settle();
+  await embed.handle({op:'slot',target:'bilibili',rect:null});
+  await embed.handle({op:'slot',target:'card-games',rect:RECT});
+  await embed.handle({op:'open',target:'card-games'});
+  await settle();
+  assert.deepEqual(embed.snapshot().filter(row=>row.state==='run').map(row=>[row.kind,row.target]),[['community','bilibili'],['card','card-games']]);
+  assert.equal(views.length,2);
+  assert.equal(views[0].visible,false);
+  assert.equal(views[1].visible,true);
+ }finally{embed.close();}
+});
+test('a popped-out card page does not appear as a popped-out Bilibili page',async()=>{
+ const {embed,views}=rig();
+ try{
+  const popped=await embed.handle({op:'popout',target:'card-games'});
+  assert.equal(popped.state,'popped');
+  assert.equal(embedView('bilibili',{enabled:true,exactVersion:'2.0.11'},popped),'start');
+  await embed.handle({op:'slot',target:'bilibili',rect:RECT});
+  await embed.handle({op:'open',target:'bilibili'});
+  await settle();
+  assert.equal(views[0].webContents.panel,'@ai-buddy/bilibili-companion');
+  assert.equal(views[0].visible,true);
+ }finally{embed.close();}
+});
+test('a resolved open without its surface reports an error instead of waiting indefinitely',async()=>{
+ const {embed}=rig({openClient:async()=>({state:'page-loaded',surface:'embedded'})});
+ try{
+  const state=await embed.handle({op:'open',target:'card-games'});
+  assert.equal(state.state,'err');
+  assert.equal(state.code,'PLUGIN_EMBED_SURFACE_MISSING');
+ }finally{embed.close();}
+});
 test('the actual reading-open host callback preserves the embedded surface and explicit popout remains available',async()=>{
  const main=await read('src/main.mjs'),callback=main.match(/onReadingOpen:(async\(\)=>\{[\s\S]*?\}),\r?\n    hostServices:/)?.[1];assert.ok(callback,'the native reading-open callback must be wired');const {embed,views,windows}=rig();await embed.handle({op:'slot',target:'bilibili',rect:RECT});await embed.handle({op:'open',target:'bilibili'});await settle();const original=views[0],open=runInNewContext('('+callback+')',{assertImportIdle(){},pluginEmbed:embed});await open();await settle();assert.equal(windows.length,0,'opening a reading must not pop out');assert.equal(views.length,1);assert.equal(original.webContents.dead,false);assert.equal(original.visible,true);await embed.handle({op:'popout',target:'bilibili'});assert.deepEqual(windows,['bilibili']);
 });

@@ -627,7 +627,7 @@ app.whenReady().then(async()=>{
   });
   plugins.setWorkClientOpener(()=>agents.open());
   const embedRecord=target=>plugins.snapshot().dsh.installed.find(value=>value.packageName===EMBED_TARGETS[target].packageName);
-  pluginEmbed=createPluginEmbed({WebContentsView,getPanel:()=>panel,backgroundColor:()=>windowBackground(resolvedTheme(settings.preferences,themeCharacter)),
+  pluginEmbed=createPluginEmbed({WebContentsView,getPanel:()=>panel,recordFor:embedRecord,backgroundColor:()=>windowBackground(resolvedTheme(settings.preferences,themeCharacter)),
     onState:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send(EMBED_EVENT,value);},
     admit:async target=>{if(target==='work')return;const record=embedRecord(target);if(!record?.enabled)throw Object.assign(Error('插件没有启用'),{code:'PLUGIN_EMBED_NOT_ENABLED'});if(!embedCapable(target,record.exactVersion))throw Object.assign(Error('这个版本的插件还不能放进主窗口'),{code:'PLUGIN_EMBED_UNSUPPORTED'});await plugins.activateInstalled(record.packageKey);},
     open:async(target,surface)=>{

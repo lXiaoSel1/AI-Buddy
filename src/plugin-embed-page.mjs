@@ -21,21 +21,21 @@ export const embedName=target=>t(NAMES[target]);
 const PAUSED={bilibili:'停用期间不会自己去看视频，也不会发评论。观看记录和设置都还在。',qq:'停用期间不会回复 QQ 消息。聊天记录、允许名单和账号连接都还在。','card-games':'停用期间牌局会暂停，牌局和在桌资金都会保留。',work:'停用期间不会运行任何任务，记录都保留。'};
 const DISABLE={bilibili:'停用后不会自己去看视频，也不会发评论。观看记录和设置都保留，之后在这里或扩展中心都能重新启用。',qq:'停用后不会再回复 QQ 消息。聊天记录、允许名单和账号连接都保留，之后在这里或扩展中心都能重新启用。','card-games':'停用期间牌局会暂停，牌局和在桌资金都会保留。',work:'停用后不会运行任何任务。项目和任务记录都保留，之后在这里或扩展中心都能重新启用。'};
 
-/** The embedded page's state as the main process reports it (one shared page for Bilibili and QQ). */
-export function useEmbedState(target){
+/** The embedded slot's state as the main process reports it. */
+export function useEmbedState(kind){
   const [value,setValue]=useState(null);
   useEffect(()=>{
-    if(!target)return;let alive=true;const kind=EMBED_TARGETS[target].kind;
+    let alive=true;
     const off=plugins()?.onEmbed?.(next=>{if(alive&&next?.kind===kind)setValue(next);});
     embed({op:'state'}).then(list=>{const next=Array.isArray(list)?list.find(row=>row.kind===kind):null;if(alive&&next)setValue(next);}).catch(()=>{});
     return()=>{alive=false;off?.();};
-  },[target]);
+  },[kind]);
   return value;
 }
 /** none / off / unsupported come from the installed record; start / run / err / popped from the page itself. */
 export function embedView(target,record,state){
   if(!record)return 'none';if(!record.enabled)return 'off';if(!embedCapable(target,record.exactVersion))return 'unsupported';
-  if(state?.state==='popped')return 'popped';if(state?.state==='err'&&state.target===target)return state.code==='PLUGIN_BUSY'?'waiting':'err';
+  if(state?.state==='popped'&&state.target===target)return 'popped';if(state?.state==='err'&&state.target===target)return state.code==='PLUGIN_BUSY'?'waiting':'err';
   return state?.state==='run'&&state.target===target?'run':'start';
 }
 const PILL={waiting:['busy','等待插件空闲'],run:['ok','运行中'],start:['busy','启动中'],off:['idle','已停用'],err:['err','打不开'],none:['idle','未安装'],popped:['info','在单独窗口里'],unsupported:['warn','需要更新']};
