@@ -8,7 +8,7 @@ You need a Windows 10/11 x64 PC. To chat, you also need an API key for a model s
 
 ## 1. Download and run the installer
 
-1. Open the [v2.0.3 release page](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.3) and download `AI-Buddy-Setup-2.0.3-r1-win-x64.exe` (about 50 MiB). If Windows reports an unknown publisher, you can check the file against `SHA256SUMS-2.0.3.txt` on the same page before choosing to run it anyway.
+1. Open the [v2.0.7 release page](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.7) and download `AI-Buddy-Setup-2.0.7-win-x64.exe` (about 50 MiB). If Windows reports an unknown publisher, you can check the file against `SHA256SUMS-2.0.7.txt` on the same page before choosing to run it anyway.
 2. In the installer:
    - ① **Installation folder**: `%LOCALAPPDATA%\Programs\AI Buddy` by default; click **Browse…** to change it. When upgrading, choose the existing folder.
    - ② **Animation edition and initial character**: 30fps and 60fps have exactly the same features; 60fps is smoother and a bigger download. The initial character keeps you company on the first launch.
@@ -19,11 +19,11 @@ You need a Windows 10/11 x64 PC. To chat, you also need an API key for a model s
 
 The installer downloads the resources from GitHub, checks each SHA-256 and then installs them. If a download is interrupted, run the installer again with the same folder and it resumes. After installing, it starts AI Buddy once to check it, and leaves it running by default.
 
-Offline PC: put `install-manifest-2.0.3.json` and the resource ZIPs for your characters and edition from the release page into one folder, then choose it as the installer's "Offline resource folder". If files are missing, the installer lists them.
+Offline PC: put `install-manifest-2.0.7.json` and the resource ZIPs for your characters and edition from the release page into one folder, then choose it as the installer's "Offline resource folder". If files are missing, the installer lists them.
 
 ## 2. First launch: create or import a save
 
-**With the 2.0.3-r1 installer:** a fresh profile is initialized automatically; in-place updates open the existing profile directly. The welcome steps below apply only to a first portable launch without a save. Use the app's import entry to bring in a different profile.
+**With the 2.0.3-r1 installer or later:** a fresh profile is initialized automatically; in-place updates open the existing profile directly. The welcome steps below apply only to a first portable launch without a save. Use the app's import entry to bring in a different profile.
 
 **New users**: choose ① **Create a new save** and click ② **Create a new save and start**. Nothing is created until you confirm.
 
@@ -77,7 +77,7 @@ After saving, the connection is marked **Active** in the list. Keys are encrypte
 
 The toolbar also has Background, Portrait, Manage characters, My personas, Dialogue history, CG gallery, Desktop pet, Mood and Group chat. For group chat and Auto, see [Group chat in the README](../README.en.md#group-chat).
 
-## 5. (Optional) Install Bilibili Companion or QQ Connect
+## 5. (Optional) Install a plugin
 
 1. In the sidebar open ① **Extensions** and find the plugin on the ② **Discover** tab.
 2. Click ③ **Install…**. The install page lists every permission the plugin asks for and grants only the ones you tick. Installed plugins are not enabled automatically: click **Enable and connect** or **Enable and sign in** on the install page, or turn on the switch on the **Installed** tab.
@@ -89,6 +89,7 @@ To connect your account, choose a character and set the scope afterwards, see:
 
 - [Bilibili Companion guide](https://github.com/lXiaoSel1/AI-Buddy-Bilibili#english)
 - [QQ Connect guide](https://github.com/lXiaoSel1/AI-Buddy-QQ#english)
+- [Card Games guide](https://github.com/lXiaoSel1/AI-Buddy-Card-Games#english)
 
 ## FAQ
 
