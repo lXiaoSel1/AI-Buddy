@@ -72,7 +72,7 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
   async function resumeLive(){
     const session=live;
     if(!session?.waiting||closed||stopping||!matches(session.scope)||session.epoch!==epoch||turns.size)return;
-    session.waiting=false;
+    session.waiting=false;session.pending=null;
     try{await serialCapture(()=>beginCapture('live',session));}
     catch(error){if(live===session)live=null;emit({type:'error',code:error.code??'VOICE_CAPTURE_FAILED',message:String(error.message)});}
   }
@@ -168,8 +168,18 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
       void pump();return true;
     }catch(error){emit({type:'segment',state:'rejected',envelope,code:error.code??'VOICE_SEGMENT_INVALID'});return false;}
   }
-  async function finish({requestId,failed=false}={}){
-    const turn=turns.get(requestId);if(!turn)return;
+  async function finish({requestId,failed=false,scope,submissionId,reason='reply-failed'}={}){
+    const turn=turns.get(requestId);
+    if(!turn){
+      const session=live,pending=session?.pending;
+      if(!failed||!session?.waiting||session.epoch!==epoch||!matches(session.scope)||!sameVoiceScope(scope,session.scope)||
+         !pending||pending.submissionId!==submissionId||typeof requestId!=='string'||!requestId||pending.requestId&&pending.requestId!==requestId)return;
+      live=null;
+      captureState('idle',null,{reason,requestId,submissionId,submitted:true});
+      emit({type:'status',state:'reply-unavailable',code:'VOICE_REPLY_UNAVAILABLE',message:'消息已保存，本次语音回复未能开始；请检查语音设置或聊天连接。'});
+      try{await serialCapture(()=>runtime.cancelCapture?.());}catch(error){throw sealCleanup(error);}
+      return;
+    }
     turn.finished=true;
     emit({type:'turn',state:'generated',requestId,failed});
     if(failed){
@@ -237,9 +247,10 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
       // Disable capture before submitting: repeated endpoint callbacks cannot resubmit this ID.
       const session=live;
       if(!session||session.epoch!==epoch||!matches(row.scope))throw fault('Live 已停止','VOICE_STALE_CAPTURE');
-      session.waiting=true;
+      session.waiting=true;session.pending={submissionId:row.id,requestId:null};
       captureState('waiting-playback',row);
       const accepted=await submit({scope:copy(row.scope),text,submissionId:row.id});
+      if(live===session&&session.pending?.submissionId===row.id)session.pending.requestId=accepted?.requestId??null;
       return {submitted:true,text,accepted};
     }catch(error){await retireCapture(row);throw error;}
   }

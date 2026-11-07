@@ -49,7 +49,7 @@ async function fixture(t){
     ipcMain:{handle:(channel,callback)=>{assert.equal(channel,'voice:action');handler=callback;}},
   };
   const guard=main.split(/\r?\n/).find(line=>line.startsWith('function updateGuard('));assert(guard);
-  const cardConfig=slice('voice:{quiesce:()=>voiceHost.quiesce()',',voiceTestFingerprint:');
+  const cardConfig=slice('voice:{quiesce:()=>voiceHost.quiesce()',',pageAppearance:');
   vm.runInNewContext(slice('const updateReservation=','const bootstrapUrl=')+'\n'+guard+'\n'+
     slice("ipcMain.handle('voice:action',","ipcMain.handle('plugins:action',")+
     '\nglobalThis.reservation=updateReservation;globalThis.cardVoice=({'+cardConfig+'}).voice;',context);

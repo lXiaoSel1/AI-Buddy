@@ -18,9 +18,9 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 5 -subj /CN=127.0.0.1 -addext su
 node scripts/serve-voice-candidates.mjs <输出目录> <TLS目录>/cert.pem <TLS目录>/key.pem
 ```
 
-在新终端将 `NODE_EXTRA_CA_CERTS` 指向隔离的 `cert.pem`。在启动隔离宿主前读取 `RECEIPT.json` 的 `fingerprint`，由宿主在校验了独立资料目录及管道后接受这项测试指纹。TLS 证书只在当前测试进程的环境里使用，系统证书库无需变更。
+在新终端将 `NODE_EXTRA_CA_CERTS` 指向隔离的 `cert.pem`。测试指纹只能由使用独立资料目录的隔离测试程序读取 `RECEIPT.json` 后，直接传给 `createPluginMaintenanceClient` 和 `createPluginPlatform` 的 `voiceTestFingerprint` 参数。正常宿主入口不接受命令行测试指纹，继续使用默认正式信任；不能靠启动参数安装候选测试签名包。TLS 证书只在当前测试进程的环境里使用，系统证书库无需变更。
 
-在扩展中心添加 `RECEIPT.json` 的 `sourceUrl`，核对指纹。以该来源添加 `communityUrl`，在语音分类分别安装、启用两款插件。陪伴页负责设备权限、声音档案和运行资产准备。
+在上述隔离测试程序所创建的扩展中心添加 `RECEIPT.json` 的 `sourceUrl`，核对指纹。以该来源添加 `communityUrl`，在语音分类分别安装、启用两款插件。陪伴页负责设备权限、声音档案和运行资产准备。正式宿主只安装默认正式信任认可的签名包。
 
 停用或撤销来源时宿主先结束活动语音，再变更登记。卸载保留独立资料，仍被其他引擎使用的共享依赖会由现有安装器保护。隔离产物签名私钥只存在于打包进程内存。
 

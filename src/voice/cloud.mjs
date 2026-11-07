@@ -149,7 +149,7 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
       return state;
     } catch (error) {if (error.code==='ENOENT') return {schemaVersion:1,scopes:{}};throw fail('CLOUD_BINDINGS','云端声音绑定资料不可读取');}
   }
-  async function persist(state) {await assertPluginTreeNoLinks(root);await mkdir(root,{recursive:true});await assertPluginTreeNoLinks(indexPath);writeAtomic(indexPath,JSON.stringify(state));}
+  async function persist(state,signal) {await assertPluginTreeNoLinks(root);await mkdir(root,{recursive:true});await assertPluginTreeNoLinks(indexPath);signal?.throwIfAborted();writeAtomic(indexPath,JSON.stringify(state));}
   function bindingFor(ctx,state) {
     const rows=state.scopes[ctx.connection.accountScope]??{};
     const saved=rows[ctx.bindingKey];
@@ -190,6 +190,7 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
       else if (row.type==='stage') await onEvent(row);
       else throw fail('CLOUD_PROTOCOL','云配音返回无效结果');
     }
+    token.controller.signal.throwIfAborted();
     if (!answer) throw fail('CLOUD_INCOMPLETE','云配音没有确认完整结果');
     return answer;
   }
@@ -218,7 +219,7 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
       if (!voices.some(row=>row.voiceId===params.voiceId)) throw fail('CLOUD_VOICE','该音色不在当前账号的可用列表中');
       token.controller.signal.throwIfAborted();
       const binding={characterId:ctx.request.characterId,profileId:ctx.request.profileId,profileVersion:ctx.request.profileVersion,voiceId:params.voiceId,provider:ctx.connection.provider,provenance:'account-voice-pending-audition',boundAt:new Date().toISOString()};
-      rows[ctx.bindingKey]=binding;state.scopes[ctx.connection.accountScope]=rows;await persist(state);
+      rows[ctx.bindingKey]=binding;state.scopes[ctx.connection.accountScope]=rows;await persist(state,token.controller.signal);
       return {...binding,state:'ready'};
     } finally {await finish(token);}
   }
@@ -254,6 +255,7 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
       const voiceId='buddy-'+randomUUID().replaceAll('-','');
       receipt={schemaVersion:1,receiptId:randomUUID(),...plan,voiceId,createdAt:new Date().toISOString(),stages:[],status:'preparing'};
       const receiptRoot=join(root,'receipts');await assertPluginTreeNoLinks(receiptRoot);await mkdir(receiptRoot,{recursive:true});
+      token.controller.signal.throwIfAborted();
       receiptPath=join(receiptRoot,receipt.receiptId+'.json');saveReceipt();
       const answer=await result(token,ctx,'clone',{voiceId,audio:bytes.toString('base64'),...(reference.text.length>0 && reference.text.length<=200?{textValidation:reference.text}:{})},async row=>{
         if (!['uploaded','clone-request-submitted'].includes(row.stage)) throw fail('CLOUD_PROTOCOL','云端克隆阶段无效');
@@ -264,7 +266,7 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
       const state=await load(),rows=state.scopes[ctx.connection.accountScope]??{};
       const binding={characterId:ctx.request.characterId,profileId:ctx.request.profileId,profileVersion:ctx.request.profileVersion,
         voiceId,provider:ctx.connection.provider,sourceSHA:reference.sha256,provenance:'approved-reference-clone-pending-audition',receiptId:receipt.receiptId,preparedAt:new Date().toISOString()};
-      rows[ctx.bindingKey]=binding;state.scopes[ctx.connection.accountScope]=rows;await persist(state);
+      rows[ctx.bindingKey]=binding;state.scopes[ctx.connection.accountScope]=rows;await persist(state,token.controller.signal);
       receipt.status='prepared-awaiting-first-synthesis-and-listening';saveReceipt();
       return {...binding,state:'ready',cloudListeningAcceptance:'pending'};
     } catch (error) {

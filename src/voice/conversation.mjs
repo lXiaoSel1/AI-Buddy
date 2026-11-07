@@ -39,8 +39,12 @@ export function createVoiceConversation({voice,current,valid,persist,beginPresen
     if (terminal.has(status)) segment.terminal=true;
     return receipt;
   }
-  function finish(turn,failed=false) {
-    if (!turn || turn.closed || turn.finished && !failed) return;
+  function finish(turn,failed=false,unadmitted=null) {
+    if (!turn) {
+      if(failed&&unadmitted)void invoke(()=>voice.finish({...unadmitted,failed:true})).catch(report);
+      return;
+    }
+    if (turn.closed || turn.finished && !failed) return;
     turn.finished=true;
     turn.closed=failed;
     if (failed) {

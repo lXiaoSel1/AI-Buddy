@@ -75,7 +75,7 @@ test('channel stops preserve the other owner while ordinary stop and maintenance
     const before=f.stops.length,beforeCancel=f.cancelled();await operation();
     assert.ok(f.stops.slice(before).includes('chat'));assert.ok(f.stops.slice(before).includes('card-table'));assert.ok(f.cancelled()>beforeCancel);
   }
-  assert.equal(f.stops.includes('all'),false);
+  assert.equal(f.stops.includes('all'),true,'global stop also drains cloud operations without a speech owner');
 });
 
 test('global disable and an unusable package reject card admission before synthesis',async t=>{

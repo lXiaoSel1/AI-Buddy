@@ -36,7 +36,8 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
   });
   const runtime=components.runtime??createSpeechRuntime({local,cloud});
   const chatRuntime=runtime.channel?.('chat')??runtime,cardRuntime=runtime.channel?.('card-table')??runtime;
-  let microphone=false,closed=false,cardEpoch=0,cardAdmissions=0,cardTail=Promise.resolve();
+  let microphone=false,closed=false,cardEpoch=0,cardAdmissions=0,cardTail=Promise.resolve(),voiceEpoch=0,stopping=null,stopFailure;
+  const cloudOperations=new Set();
   const tableHands=new Map();
   const publish=value=>{if(value.type==='capture')microphone=['recording','listening'].includes(value.state);if(value.type==='invalidate'){microphone=false;getGame()?.voiceCancel?.();if(value.reason==='scope-changed')void cards.reconcile?.().catch(error=>audit({type:'card-voice',code:error.code}));}send(value);};
   const controller=components.controller??createVoiceController({getScope:()=>getGame()?.voiceScope(),submit:args=>getGame().voiceSubmit(args),send:publish,
@@ -67,12 +68,31 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
     },
   });
   async function stopCards(reason){cardEpoch++;await cards.invalidate(reason);await cardRuntime.stopEngine?.();}
-  async function stopAll(reason){
-    microphone=false;cardEpoch++;getGame()?.voiceCancel?.();
-    const results=await Promise.allSettled([controller.invalidate(reason),stopCards(reason)]);
-    const failed=results.find(value=>value.status==='rejected');if(failed)throw failed.reason;
+  function assertVoiceOpen(generation=voiceEpoch){
+    if(closed)throw fault('语音服务已关闭','VOICE_HOST_CLOSED');
+    if(stopFailure)throw stopFailure;
+    if(stopping)throw fault('语音正在停止','VOICE_STOPPING');
+    if(generation!==voiceEpoch)throw fault('旧语音操作已撤销','VOICE_ACTION_REVOKED');
+  }
+  function trackCloud(generation,ctx,run){
+    const task=Promise.resolve().then(()=>{assertVoiceOpen(generation);assertCurrent(ctx);return run();});
+    cloudOperations.add(task);void task.finally(()=>cloudOperations.delete(task)).catch(()=>{});return task;
+  }
+  function stopAll(reason){
+    voiceEpoch++;microphone=false;cardEpoch++;getGame()?.voiceCancel?.();
+    if(stopping)return stopping;
+    const pending=[...cloudOperations];
+    const task=(async()=>{
+      // Cloud preparation/list/binding has no speech owner. Stop the shared root too.
+      const results=await Promise.allSettled([controller.invalidate(reason),stopCards(reason),runtime.stopEngine?.()]);
+      // The operation writes its failure receipt before maintenance may change registry state.
+      await Promise.allSettled(pending);
+      const failed=results.find(value=>value.status==='rejected');if(failed){stopFailure=failed.reason;throw stopFailure;}
+    })();
+    stopping=task;void task.finally(()=>{if(stopping===task)stopping=null;}).catch(()=>{});return task;
   }
   function cardEvent(request){
+    if(request?.type!=='scope-update')try{assertVoiceOpen();}catch(error){return Promise.reject(error);}
     const generation=cardEpoch;cardAdmissions++;
     const job=cardTail.then(async()=>{
       if(closed||generation!==cardEpoch)return {accepted:false,reason:'revoked'};
@@ -101,15 +121,23 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
     return {...scope,packageId,engine,profileId:profile.id,profileVersion:profile.version};
   }
   function assertCurrent(scope){if(!sameVoiceScope(scope,getGame()?.voiceScope()))throw fault('角色或会话已切换，旧操作未应用','VOICE_SCOPE_CHANGED');}
-  async function mirrorBinding(ctx,result){
+  async function mirrorBinding(ctx,result,generation){
     if(!result?.voiceId)return result;
-    const first=await profiles.resolve(ctx),otherId=ids.find(id=>id!==ctx.packageId),engine=engineFor(otherId);
-    const other=await profiles.current({characterId:ctx.characterId,engine});
-    if(!other)return result;
-    const request={...ctx,packageId:otherId,engine,profileId:other.id,profileVersion:other.version};
-    const ref=await profiles.resolve(request);
-    if(first.cloudReference.sha256!==ref.cloudReference.sha256)return result;
-    try{await resolvePackage(otherId,{provider:'minimax'});await cloud.bindVoice({...request,voiceId:result.voiceId});return {...result,sharedWithOtherPlugin:true};}
+    try{
+      // The first binding already committed; cancellation fences only the optional mirror.
+      assertVoiceOpen(generation);assertCurrent(ctx);
+      const first=await profiles.resolve(ctx),otherId=ids.find(id=>id!==ctx.packageId),engine=engineFor(otherId);
+      assertVoiceOpen(generation);assertCurrent(ctx);
+      const other=await profiles.current({characterId:ctx.characterId,engine});
+      assertVoiceOpen(generation);assertCurrent(ctx);
+      if(!other)return result;
+      const request={...ctx,packageId:otherId,engine,profileId:other.id,profileVersion:other.version};
+      const ref=await profiles.resolve(request);
+      assertVoiceOpen(generation);assertCurrent(ctx);
+      if(first.cloudReference.sha256!==ref.cloudReference.sha256)return result;
+      await resolvePackage(otherId,{provider:'minimax'});assertVoiceOpen(generation);assertCurrent(ctx);
+      await cloud.bindVoice({...request,voiceId:result.voiceId});return {...result,sharedWithOtherPlugin:true};
+    }
     catch(error){return {...result,sharedWithOtherPlugin:false,otherPluginCode:error.code??'VOICE_CLOUD_BIND_PENDING'};}
   }
   async function action(op,payload={}){
@@ -134,6 +162,7 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
       if(value.speechProvider==='minimax'&&scope&&profile)cloudState=await cloud.status({...scope,engine,packageId:value.selectedPackageId,profileId:profile.id,profileVersion:profile.version});
       return {...value,profile,cloud:cloudState};
     }
+    assertVoiceOpen();
     if(op==='save-key'){
       await stopAll('credential-changed');
       const saved=await credentials.save(payload.key);
@@ -158,23 +187,27 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
       return profiles.importProfile({characterId:scope.characterId,engine,label:payload.label||'我的声音',references:{calm:{...reference,text:payload.text,language:'zh'}}});
     }
     if(op==='cloud-status'||op==='cloud-voices'||op==='cloud-bind'||op==='cloud-prepare'||op==='cloud-prepare-preview'){
-      const ctx=await context();assertCurrent(ctx);
+      let generation=voiceEpoch;
+      const ctx=await context();assertVoiceOpen(generation);assertCurrent(ctx);
       if(op==='cloud-status')return cloud.status(ctx);
-      if(op==='cloud-voices')return cloud.listVoices(ctx);
+      if(op==='cloud-voices')return trackCloud(generation,ctx,async()=>{const result=await cloud.listVoices(ctx);assertVoiceOpen(generation);assertCurrent(ctx);return result;});
       if(op==='cloud-prepare-preview')return cloud.previewPlan(ctx);
-      await stopAll('cloud-voice-changing');assertCurrent(ctx);
+      generation++;
+      await stopAll('cloud-voice-changing');assertVoiceOpen(generation);assertCurrent(ctx);
       if(op==='cloud-prepare'&&payload.consentUpload!==true)throw fault('上传参考音前需要你主动确认','CLOUD_UPLOAD_CONSENT');
-      const result=op==='cloud-bind'?await cloud.bindVoice({...ctx,voiceId:payload.voiceId}):await cloud.prepareVoice({...ctx,consentUpload:true});
-      assertCurrent(ctx);return mirrorBinding(ctx,result);
+      return trackCloud(generation,ctx,async()=>{
+        const result=op==='cloud-bind'?await cloud.bindVoice({...ctx,voiceId:payload.voiceId}):await cloud.prepareVoice({...ctx,consentUpload:true});
+        assertCurrent(ctx);return mirrorBinding(ctx,result,generation);
+      });
     }
     if(op==='configure'||op==='profile-select')await stopCards(op==='configure'?'configuration-changed':'profile-changed');
     return controller.action(op,payload);
   }
   return {action,controller,assets,profiles,settings,runtime,cloud,cardEvent,
-    busy:()=>cardAdmissions>0||cards.busy()||controller.busy?.()===true,
+    busy:()=>!!stopping||!!stopFailure||cloudOperations.size>0||cardAdmissions>0||cards.busy()||controller.busy?.()===true,
     microphoneAllowed:()=>microphone,
     snapshot:()=>({microphoneAuthorized:microphone,cardSpeechBusy:cards.busy()}),
     quiesce:()=>stopAll('package-maintenance'),
-    async close(){closed=true;microphone=false;cardEpoch++;await cardTail;const results=await Promise.allSettled([cards.close(),controller.close()]);const failed=results.find(value=>value.status==='rejected');if(failed)throw failed.reason;await runtime.close?.();await supervisor.close();},
+    async close(){closed=true;voiceEpoch++;microphone=false;cardEpoch++;await runtime.stopEngine?.();await Promise.allSettled([...cloudOperations]);await cardTail;const results=await Promise.allSettled([cards.close(),controller.close()]);const failed=results.find(value=>value.status==='rejected');if(failed)throw failed.reason;await runtime.close?.();await supervisor.close();},
   };
 }
