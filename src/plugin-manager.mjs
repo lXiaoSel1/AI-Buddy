@@ -6,6 +6,7 @@ import {writeAtomic} from './atomic-write.mjs';
 import {canonicalPluginJson, PLUGIN_API_VERSION, pluginId, parsePluginVersion, satisfiesVersionRange} from './plugin-manifest.mjs';
 import {verifyPluginCatalog, resolvePluginInstallPlan, catalogPackages} from './plugin-catalog.mjs';
 import {assertPluginTreeNoLinks, extractPluginArchive, inspectPluginArchive, verifyInstalledPlugin} from './plugin-archive.mjs';
+import {OFFICIAL_SOURCE_CATALOG_URL} from './plugin-sources.mjs';
 import {PLUGIN_SOURCE_BACKEND, createPluginSourceManager} from './plugin-source-manager.mjs';
 import {renamePluginPath as rename} from './plugin-files.mjs';
 
@@ -15,9 +16,9 @@ const json = async (file, fallback) => { try { return JSON.parse(await readFile(
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
 async function fileHash(file) { const hash = createHash('sha256'); for await (const bytes of createReadStream(file)) hash.update(bytes); return hash.digest('hex'); }
 
-/** Official trusted packages only. No public catalog URL is assumed before publication. */
+/** Official trusted packages only. The default URL is pinned to the public official catalog. */
 async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion = PLUGIN_API_VERSION, fetchImpl = globalThis.fetch,
-  trustedKeys, catalogUrl = null, host = null, busy = async () => false, onUpdate = () => {}, withMaintenanceLock = null,
+  trustedKeys, catalogUrl = OFFICIAL_SOURCE_CATALOG_URL, host = null, busy = async () => false, onUpdate = () => {}, withMaintenanceLock = null,
   startupRetryMs = null, startupRetryLimitMs = 120000,
   availableBytes = async path => { const s = await statfs(path); return Number(s.bavail) * Number(s.bsize); }} = {}) {
   root = resolve(root); dataRoot = resolve(dataRoot); parsePluginVersion(appVersion);
@@ -40,9 +41,11 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
   function setService(state, values = {}) { service = {...service, state, usable: state === 'ready', retryable: state === 'waiting-installation' || state === 'failed', ...values}; update(); }
   function assertReady() { if (closing) fail('扩展服务已关闭', 'PLUGIN_CLOSED'); if (!service.usable) fail('扩展服务尚未就绪', 'PLUGIN_SERVICE_NOT_READY'); }
   async function persist(next) { await assertPluginTreeNoLinks(control); writeAtomic(registryFile, JSON.stringify(next)); registry = next; update(); }
-  async function setCatalog(envelope, {persist: save = true} = {}) {
+  async function setCatalog(envelope, {persist: save = true, strictWatermark = false} = {}) {
     const parsed = verifyPluginCatalog(envelope, {trustedKeys});
     if (catalog && Date.parse(parsed.generatedAt) < Date.parse(catalog.generatedAt)) fail('An older catalog cannot replace the verified cache', 'PLUGIN_CATALOG_ROLLBACK');
+    if (strictWatermark && catalog && Date.parse(parsed.generatedAt) === Date.parse(catalog.generatedAt) && parsed.verified.payloadSha256 !== catalog.verified.payloadSha256)
+      fail('Catalog timestamp refers to different signed content', 'PLUGIN_CATALOG_EQUIVOCATION');
     if (save) {
       const encoded = typeof envelope === 'string' ? envelope : JSON.stringify(envelope);
       writeAtomic(join(control, 'catalogs', parsed.verified.payloadSha256 + '.json'), encoded);
@@ -67,7 +70,7 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
       if (!response.ok) fail('Catalog request failed: ' + response.status);
       const chunks = []; let size = 0;
       for await (const chunk of response.body) { size += chunk.length; if (size > 17 * 1024 * 1024) fail('Catalog exceeds size limit'); chunks.push(Buffer.from(chunk)); }
-      return await loadCatalog(Buffer.concat(chunks).toString('utf8'));
+      return await mutation(() => setCatalog(Buffer.concat(chunks).toString('utf8'), {strictWatermark: true}));
     } catch (error) { if (!closing) { catalogError = error.message; update(); } return snapshot(); }
     finally { catalogRequests.delete(controller); }
   }
@@ -104,10 +107,16 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
   function checkDependencies(manifest, state = registry) {
     for (const [id, range] of Object.entries(manifest.dependencies)) { const dependency = state.packages[id]; if (!dependency || !satisfiesVersionRange(dependency.current, range)) fail('Installed dependency is missing or incompatible: ' + id, 'PLUGIN_DEPENDENCY_ERROR'); }
   }
-  async function verifySaved(item) {
+  async function savedProof(item) {
     if (!/^[a-f0-9]{64}$/.test(item.catalogSha256 ?? '')) fail('Installed extension has no signed publication proof');
-    const proof = verifyPluginCatalog(await readFile(join(control, 'catalogs', item.catalogSha256 + '.json'), 'utf8'), {trustedKeys});
+    const file = join(control, 'catalogs', item.catalogSha256 + '.json');
+    await assertPluginTreeNoLinks(file);
+    const proof = verifyPluginCatalog(await readFile(file, 'utf8'), {trustedKeys});
     if (proof.verified.payloadSha256 !== item.catalogSha256 || !proof.packages.some(row => canonicalPluginJson(row.manifest) === canonicalPluginJson(item.manifest) && canonicalPluginJson(row.archive) === canonicalPluginJson(item.archive))) fail('Installed extension does not match its signed publication proof');
+    return proof;
+  }
+  async function verifySaved(item) {
+    await savedProof(item);
     return verifyInstalledPlugin(under(item.directory), item.manifest);
   }
   async function inUse(id) {
@@ -138,10 +147,11 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
     if (count !== item.archive.bytes || await fileHash(partial) !== item.archive.sha256) { if (count === item.archive.bytes) await rm(partial, {force: true}); fail('Downloaded extension size or hash differs from signed metadata'); }
     await rename(partial, complete); return complete;
   }
-  async function install({planId, offlineArchives = {}} = {}) {
+  async function install({planId, offlineArchives = {}, updateCheck} = {}) {
     const selected = plans.get(planId); if (!selected) fail('Installation plan is missing or expired');
     return mutation(async () => {
       await packageGuard(selected.packages);
+      if (updateCheck) await updateCheck();
       const controller = new AbortController(), id = randomUUID(), stage = join(control, 'staging', id), journal = join(control, 'transactions', id + '.json');
       active = {id, phase: 'preparing', controller}; update();
       const next = structuredClone(registry), prepared = [];
@@ -170,7 +180,9 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
           prepared.push({item, staged, saved: {manifest: item.manifest, archive: item.archive, directory, catalogSha256: selected.catalogSha256, installedAt: new Date().toISOString()}});
         }
         for (const {item} of prepared) if (registry.packages[item.manifest.id]?.current !== item.manifest.version && await inUse(item.manifest.id)) fail('Extension is in use; stop its task before updating', 'PLUGIN_BUSY');
-        await packageGuard(prepared.map(row => row.item)); checkAbort(controller.signal); active.phase = 'committing'; update();
+        await packageGuard(prepared.map(row => row.item));
+        if (updateCheck) await updateCheck();
+        checkAbort(controller.signal); active.phase = 'committing'; update();
         writeAtomic(journal, JSON.stringify({id, phase: 'prepared', stage: relative(control, stage), packages: prepared.map(({saved}) => saved.directory), planId}));
         for (const {item, staged, saved} of prepared) {
           const target = under(saved.directory);
@@ -277,7 +289,11 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
   // transaction-owned staging recovery needs the shared installation lock.
   recoveryStarted = Date.now(); await startRecovery();
   return {snapshot, loadCatalog, refreshCatalog, plan, install, enable, disable, activate, resolveInstalled, rollback, uninstall, importOffline, prepareOffline, installOffline, cancel, close, action,
-    [PLUGIN_SOURCE_BACKEND]: {mutation, fetchImpl, availableBytes, busy, host, setPackageGuard: value => { packageGuard = value; }}};
+    [PLUGIN_SOURCE_BACKEND]: {mutation, fetchImpl, availableBytes, busy, host, catalogDigest: () => catalog?.verified.payloadSha256, async assertCatalogPublisher(prior) {
+      const proof = await savedProof(prior);
+      if (proof.verified.keyId !== catalog?.verified.keyId)
+        fail('Installed plugin publisher differs from the verified catalog', 'PLUGIN_SOURCE_CHANGED');
+    }, setPackageGuard: value => { packageGuard = value; }}};
 }
 
 /** The legacy registry remains byte-compatible. New source trust and packages

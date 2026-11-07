@@ -7,7 +7,8 @@ using System.Text.RegularExpressions;
 namespace AiBuddy.Install;
 
 public sealed record UpdateRelease(string Version,string Tag,string ReleaseUrl,string InstallerUrl,string InstallerName,
-    long Bytes,string InstallerSha256,string ManifestSha256,string SourceCommit,string TagObjectSha);
+    long Bytes,string InstallerSha256,string ManifestSha256,string SourceCommit,string TagObjectSha,
+    string? SignedPayload=null,string? Signature=null);
 
 // Discovery selects an installer once, not a resource manifest. The selected installer
 // retains its own embedded manifest pin and all existing transactional install checks.
@@ -55,23 +56,34 @@ public sealed class UpdateDiscovery(HttpClient http,TimeSpan? idleTimeout=null,F
         if(!Bool(verification,"verified")||String(verification,"reason")!="valid")throw Invalid("GitHub did not verify the release tag signature");
         var signature=String(verification,"signature");
         // Releases are signed with the SSH release key only.
-        if(!signature.StartsWith("-----BEGIN SSH SIGNATURE-----\n",StringComparison.Ordinal))throw Invalid("Missing SSH release tag signature");
         var payload=String(verification,"payload");
-        if(!verify(payload,signature))throw Invalid("Release tag is not signed by the pinned AI Buddy release key");
+        var separator=payload.IndexOf("\n\n",StringComparison.Ordinal);
+        if(separator<0||String(t,"message")!=payload[(separator+2)..]+signature)throw Invalid("Tag message is not the verified signed payload");
+        var selected=new UpdateRelease(version,tag,Web+"/releases/tag/"+tag,installer.Url,name,installer.Bytes,installer.Hash,manifest.Hash,source,tagSha,payload,signature);
+        VerifySelected(selected);
+        return selected;
+    }
+
+    // Persist the signed proof with the selection so prepare/apply never look up
+    // latest again, and a prepared update can be applied offline.
+    public bool VerifySelected(UpdateRelease release) {
+        Validate(release);
+        var payload=release.SignedPayload;var signature=release.Signature;
+        if(payload is null||payload.Length>ApiLimit||signature is null||signature.Length>16384||
+            !signature.StartsWith("-----BEGIN SSH SIGNATURE-----\n",StringComparison.Ordinal)||!verify(payload,signature))
+            throw Invalid("Release tag is not signed by the pinned AI Buddy release key");
         var separator=payload.IndexOf("\n\n",StringComparison.Ordinal);
         if(separator<0)throw Invalid("Invalid signed tag payload");
         var headers=UniqueLines(payload[..separator]," ");
-        if(!headers.TryGetValue("object",out var signedSource)||signedSource!=source||
+        if(!headers.TryGetValue("object",out var signedSource)||signedSource!=release.SourceCommit||
             !headers.TryGetValue("type",out var signedType)||signedType!="commit"||
-            !headers.TryGetValue("tag",out var signedTag)||signedTag!=tag)throw Invalid("Signed tag payload identity differs");
-        var body=payload[(separator+2)..];
-        if(String(t,"message")!=body+signature)throw Invalid("Tag message is not the verified signed payload");
-        var bindings=UniqueLines(body,": ");
-        if(!bindings.TryGetValue("Source",out var boundSource)||boundSource!=source||
-            !bindings.TryGetValue("Installer SHA-256",out var installerSha)||installerSha!=installer.Hash||
-            !bindings.TryGetValue("Manifest SHA-256",out var manifestSha)||manifestSha!=manifest.Hash)
+            !headers.TryGetValue("tag",out var signedTag)||signedTag!=release.Tag)throw Invalid("Signed tag payload identity differs");
+        var bindings=UniqueLines(payload[(separator+2)..],": ");
+        if(!bindings.TryGetValue("Source",out var boundSource)||boundSource!=release.SourceCommit||
+            !bindings.TryGetValue("Installer SHA-256",out var installerSha)||installerSha!=release.InstallerSha256||
+            !bindings.TryGetValue("Manifest SHA-256",out var manifestSha)||manifestSha!=release.ManifestSha256)
             throw Invalid("Signed release hashes or source differ from release assets");
-        return new(version,tag,Web+"/releases/tag/"+tag,installer.Url,name,installer.Bytes,installer.Hash,manifest.Hash,source,tagSha);
+        return bindings.TryGetValue("App Update Protocol",out var protocol)&&protocol=="1";
     }
 
     public async Task<string> Download(UpdateRelease release,string cache,IProgress<InstallProgress>? progress,CancellationToken cancel) {

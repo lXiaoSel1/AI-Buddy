@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {CHARACTER_EXPRESSIONS} from '../src/character-expressions.generated.mjs';
 import {checkReleaseVersion,checkResourceVersion} from './check-release-version.mjs';
 import {readInteractionResources} from './interaction-resources.mjs';
-import {buildPetButtons} from './build-pet-buttons.mjs';
+import {buildPetButtons,buildPetFullscreen} from './build-pet-buttons.mjs';
 import {validateMediaBuild,assertFreshCandidateOutput} from './media-baseline-validation.mjs';
 import {buildManagedProcessGuard} from './build-managed-process-guard.mjs';
 import {createOwnedCandidateOutput} from './owned-candidate-output.mjs';
@@ -72,6 +72,7 @@ function copyAssets(from,to,prefix='assets'){
 }
 copyAssets(join(source,'assets'),join(out,'assets'));
 buildPetButtons(root,out);
+buildPetFullscreen(root,out);
 buildManagedProcessGuard(root,out);
 if(existsSync(join(root,'assets/group-thumbnails')))copyAssets(join(root,'assets/group-thumbnails'),join(out,'assets/group-thumbnails'),'assets/group-thumbnails');
 if(existsSync(join(root,'assets/group-scene')))copyAssets(join(root,'assets/group-scene'),join(out,'assets/group-scene'),'assets/group-scene');

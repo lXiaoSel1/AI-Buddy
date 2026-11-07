@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+if(args is ["--owned-test-ack-loss",var testPipe,var testRoot]) {await AckLossFixture.Run(testPipe,testRoot);return;}
 var suite=new Suite();await suite.Run();
 
 sealed class Suite {
@@ -99,6 +100,14 @@ sealed class Suite {
    Assert(calls.Count(x=>x.EndsWith("/latest"))==1,"download retains fixed selected release");
   });
   await Test("cached update is rehashed and tamper is redownloaded",async()=>{var calls=new List<string>();using var http=Client(Fixture(),calls);var updater=Discovery(http);var update=(await updater.Check("1.9.0",default))!;var cache=Path.Combine(root,"update-cache");var file=await updater.Download(update,cache,null,default);int first=calls.Count;await updater.Download(update,cache,null,default);Assert(calls.Count==first,"verified cache avoids network");File.WriteAllBytes(file,binary.Select(x=>(byte)(x^1)).ToArray());await updater.Download(update,cache,null,default);Assert(calls.Count==first+1&&await Hashing.FileHash(file)==sha,"same-length cached tamper rejected");});
+  await Test("prepared update proof remains verifiable offline and binds the downloaded manifest",async()=>{
+   using var http=Client(Fixture(),[]);var updater=Discovery(http);
+   var selected=(await updater.Check("1.9.0",default))!;
+   using var offlineHttp=new HttpClient(new Handler((_,_)=>throw new Exception("no network after discovery")));
+   var offline=Discovery(offlineHttp);
+   Assert(!offline.VerifySelected(selected),"existing signed tag requires installer bootstrap");
+   await Reject(()=>{offline.VerifySelected(selected with{ManifestSha256=new string('9',64)});return Task.CompletedTask;});
+  });
   await Test("update selection cannot inject an arbitrary executable URL",async()=>{using var http=Client(Fixture(),[]);var updater=Discovery(http);var update=(await updater.Check("1.9.0",default))!;await Reject(()=>updater.Download(update with{InstallerUrl="https://evil.invalid/setup.exe"},Path.Combine(root,"injected-update"),null,default));});
   await Test("restarting update replaces only the partial hardlink entry",async()=>{using var http=Client(Fixture(),[]);var updater=Discovery(http);var update=(await updater.Check("1.9.0",default))!;var cache=Path.Combine(root,"update-partial-hardlink");Directory.CreateDirectory(cache);var original=Path.Combine(root,"keep-original-update-partial.bin");File.WriteAllText(original,"important original");var partial=Path.Combine(cache,update.InstallerSha256+"-"+update.InstallerName+".partial");Assert(CreateHardLink(@"\\?\"+partial,@"\\?\"+original,IntPtr.Zero),"create partial fixture hardlink");await updater.Download(update,cache,null,default);Assert(File.ReadAllText(original)=="important original","old source inode not truncated");});
   await Test("future compatible journal accepts previous stable installer versions only",()=>{Assert(ReleaseIdentity.KnownTransactionVersion("1.8.0","1.9.1")&&ReleaseIdentity.KnownTransactionVersion("1.9.0","1.9.1")&&ReleaseIdentity.KnownTransactionVersion("1.9.1","1.9.2"),"past contract-one journal accepted");foreach(var version in new[]{"1.9.2","1.7.10","latest","1.09.0","1.9.0-beta","1.9","2.0.0"})Assert(!ReleaseIdentity.KnownTransactionVersion(version,"1.9.1"),"unknown/future journal refused: "+version);return Task.CompletedTask;});
@@ -111,6 +120,47 @@ sealed class Suite {
    using var server=new System.IO.Pipes.NamedPipeServerStream(name,System.IO.Pipes.PipeDirection.InOut,1,System.IO.Pipes.PipeTransmissionMode.Byte,System.IO.Pipes.PipeOptions.Asynchronous);
    var serving=Task.Run(async()=>{await server.WaitForConnectionAsync();using var reader=new StreamReader(server,Encoding.UTF8,false,1024,true);var line=await reader.ReadLineAsync();using var doc=JsonDocument.Parse(line!);Assert(doc.RootElement.GetProperty("command").GetString()=="installation-status","JSONL command");await server.WriteAsync("{\"ready\":true}\n"u8.ToArray());await server.FlushAsync();server.Disconnect();});
    var reply=await AiBuddy.Setup.WindowsHost.Request(name,new{command="installation-status"},5000,default);await serving;Assert(reply?.GetProperty("ready").GetBoolean()==true,"pipe response");
+  });
+  await Test("app update reserves the exact running build, waits for data, and releases on cancel",async()=>{
+   var target=Path.Combine(root,"application-reservation");Directory.CreateDirectory(target);
+   var data=Path.Combine(target,"local","data-v003");Directory.CreateDirectory(data);
+   var build=Path.Combine(target,"builds","current");Directory.CreateDirectory(build);
+   var name="ai-buddy-app-update-test-"+Guid.NewGuid().ToString("N");
+   var nonce=new string('a',64);var pid=Environment.ProcessId;using var cancel=new CancellationTokenSource(TimeSpan.FromSeconds(10));
+   var previous=new Installation(1,"2.0.6",new string('1',64),"30fps",["deepseek"],"deepseek","builds/current","runtime/current","maintenance/setup.exe",null,name,DateTimeOffset.UtcNow,new());
+   var received=new List<string>();
+   var server=Task.Run(async()=>{for(var i=0;i<4;i++){
+    using var pipe=new System.IO.Pipes.NamedPipeServerStream(name,System.IO.Pipes.PipeDirection.InOut,1,System.IO.Pipes.PipeTransmissionMode.Byte,System.IO.Pipes.PipeOptions.Asynchronous);
+    await pipe.WaitForConnectionAsync(cancel.Token);
+    using var reader=new StreamReader(pipe,Encoding.UTF8,false,1024,true);
+    using var request=JsonDocument.Parse((await reader.ReadLineAsync())!);var fields=request.RootElement;
+    var command=fields.GetProperty("command").GetString()!;received.Add(command);
+    if(command!="installation-status")Assert(fields.GetProperty("expectedBuild").GetString()==build&&fields.GetProperty("expectedProcessId").GetInt32()==pid&&fields.GetProperty("reservationId").GetString()==nonce,"reservation binds exact build, process and nonce");
+    var response=command=="installation-status"?(object)new{ready=true,version=previous.Version,build,dataRoot=data,processId=pid,busy=false,updateBusy=new{busy=true,reasons=new[]{new{capability="data"}}}}:new{ok=true};
+    await pipe.WriteAsync(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(response)+"\n"));
+    await pipe.FlushAsync();
+   }});
+   var windows=new AiBuddy.Setup.WindowsHost(appUpdate:new(build,data,previous.Version,pid,nonce));
+   using var operationCancel=new CancellationTokenSource(TimeSpan.FromSeconds(8));
+   var progress=new InlineProgress(p=>{Assert(p.Phase=="waiting-safe-point"&&p.Reasons!.SequenceEqual(["data"]),"import busy reason is surfaced");operationCancel.Cancel();});
+   try{await windows.Stop(target,previous,progress,operationCancel.Token);throw new Exception("Expected cancelled reservation");}
+   catch(OperationCanceledException)when(operationCancel.IsCancellationRequested){}
+   await server;
+   Assert(received.SequenceEqual(new[]{"installation-status","installation-reserve","installation-status","installation-release"})&&!windows.UpdateProcessStopped,"cancel releases only its own reservation and never sends quit");
+  });
+  await Test("lost application update quit acknowledgement observes only the owned stopped process",async()=>{
+   var target=Path.Combine(root,"lost-application-update-ack");Directory.CreateDirectory(target);
+   var data=Path.Combine(target,"local","data-v003");Directory.CreateDirectory(data);
+   var build=Path.Combine(target,"builds","current");Directory.CreateDirectory(build);
+   var pipe="ai-buddy-ack-loss-test-"+Guid.NewGuid().ToString("N");
+   var command=new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!){UseShellExecute=false,CreateNoWindow=true};
+   if(Path.GetFileNameWithoutExtension(Environment.ProcessPath)=="dotnet")command.ArgumentList.Add(typeof(Suite).Assembly.Location);
+   foreach(var argument in new[]{"--owned-test-ack-loss",pipe,target})command.ArgumentList.Add(argument);
+   using var child=System.Diagnostics.Process.Start(command)??throw new Exception("Test process did not start");
+   var previous=new Installation(1,"2.0.6",new string('1',64),"30fps",["deepseek"],"deepseek","builds/current","runtime/current","maintenance/setup.exe",null,pipe,DateTimeOffset.UtcNow,new());
+   var windows=new AiBuddy.Setup.WindowsHost(exitTimeout:TimeSpan.FromSeconds(6),appUpdate:new(build,data,previous.Version,child.Id,new string('b',64)));
+   await Reject(()=>windows.Stop(target,previous,null,default));
+   Assert(windows.UpdateProcessStopped&&child.HasExited&&child.ExitCode==0,"lost acknowledgement prevents commit and confirms exact previous process may be recovered");
   });
   await Test("Windows short user-profile aliases normalize consistently",()=>{var longPath=Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);var buffer=new System.Text.StringBuilder(32768);var count=GetShortPathName(longPath,buffer,(uint)buffer.Capacity);if(count>0&&count<buffer.Capacity)Assert(SafePaths.Full(buffer.ToString())==SafePaths.Full(longPath),"short path identity");return Task.CompletedTask;});
   await Test("atomic metadata replacement waits for a short sharing lock",async()=>{
@@ -169,6 +219,33 @@ sealed class Suite {
   using var unusedHttp=new HttpClient(new Handler((_,_)=>throw new Exception("offline must not request network")));
   var host=new FakeHost();var engine=new InstallEngine(m,bytes,hash,new Downloader(unusedHttp),host,Path.Combine(root,"root.zip"));var installRoot=Path.Combine(root,"中文 安装");
   var options=new InstallOptions(installRoot,Path.Combine(root,"cache"),"30fps",["deepseek"],"deepseek",root,false,true);
+  await Test("application update prepares without stopping, revalidates stage, and applies without network",async()=>{
+   var target=Path.Combine(root,"application update");var appHost=new FakeHost();
+   var appEngine=new InstallEngine(m,bytes,hash,new Downloader(unusedHttp),appHost,Path.Combine(root,"root.zip"));
+   var appOptions=options with{Root=target};
+   var original=await appEngine.Install(appOptions,null,default);
+   var pointer=Path.Combine(target,"local/current-build.json");var before=await File.ReadAllTextAsync(pointer);
+   var selected=new string('7',64);
+   var prepared=await appEngine.PrepareUpdate(appOptions with{Edition="60fps"},selected,null,default);
+   Assert(await File.ReadAllTextAsync(pointer)==before&&appHost.Starts==1&&appHost.Stops==1,"prepare does not stop or start the app");
+   var staged=Path.Combine(target,".install-staging",prepared.TransactionId,"build","main.cjs");
+   var originalStage=await File.ReadAllBytesAsync(staged);await File.WriteAllTextAsync(staged,"tamper");
+   await Reject(()=>appEngine.ApplyUpdate(appOptions with{Edition="60fps"},selected,null,default));
+   Assert(await File.ReadAllTextAsync(pointer)==before&&appHost.Starts==1&&appHost.Stops==1,"tamper blocked before quit");
+   await File.WriteAllBytesAsync(staged,originalStage);
+   await Reject(()=>appEngine.ApplyUpdate(appOptions with{Edition="60fps"},new string('8',64),null,default));
+   Assert(await File.ReadAllTextAsync(pointer)==before&&appHost.Starts==1&&appHost.Stops==1,"another selection cannot consume the stage");
+   using var lockOwner=new FileStream(Path.Combine(target,"local/installer/install.lock"),FileMode.Open,FileAccess.ReadWrite,FileShare.None);
+   var waited=false;
+   var progress=new InlineProgress(p=>{
+    if(p.Phase!="waiting-safe-point")return;
+    Assert(p.Reasons!.SequenceEqual(["storage"])&&File.ReadAllText(pointer)==before&&appHost.Stops==1,"no program changes before another lock owner finishes");
+    waited=true;lockOwner.Dispose();
+   });
+   var installed=await appEngine.ApplyUpdate(appOptions with{Edition="60fps",OfflineDirectory=null},selected,progress,default);
+   Assert(waited&&installed.Edition=="60fps"&&appHost.Starts==2&&installed.Build!=original.Build,"verified staged update applied");
+   Assert(installed.ManagerProtocol==1&&installed.ManagerSha256==await Hashing.FileHash(Path.Combine(root,"root.zip")),"updated installation manager pinned");
+  });
   await Test("space estimate reserves staging, root backup and manager",()=>{var e=engine.Estimate(options);var selected=Manifests.Select(m,"30fps",["deepseek"],"deepseek");Assert(e.InstallAdditionalBytes>e.ExpandedBytes+2*selected.Where(x=>x.Mount=="root").Sum(x=>x.UnpackedBytes)+new FileInfo(Path.Combine(root,"root.zip")).Length+bytes.Length,"all simultaneous copies reserved");return Task.CompletedTask;});
   await Test("offline install, zero network, verified startup",async()=>{var record=await engine.Install(options,null,default);Assert(record.Edition=="30fps"&&host.Starts==1,"offline installation");});
   var data=Path.Combine(installRoot,"local/data-v003/keep.json");Directory.CreateDirectory(Path.GetDirectoryName(data)!);await File.WriteAllTextAsync(data,"original save");
@@ -321,11 +398,11 @@ sealed class UnknownLengthContent(byte[] bytes):HttpContent {
  protected override Task SerializeToStreamAsync(Stream stream,TransportContext? context)=>stream.WriteAsync(bytes).AsTask();
 }
 sealed class FakeHost:IAppHost {
- public int Starts;public bool FailStart;
+ public int Starts,Stops;public bool FailStart;
  public StartupStatus? Startup;public StartupStatus? LastStartup=>Startup;
  public string? DiscoveredData,DiscoveryPipe,LastStoppedPipe;
  public Task<string?> DiscoverDataPath(string root,string? pipe,CancellationToken cancel){DiscoveryPipe=pipe;return Task.FromResult(DiscoveredData);}
- public Task Stop(string root,Installation? previous,IProgress<InstallProgress>? progress,CancellationToken cancel){LastStoppedPipe=previous?.Pipe;return Task.CompletedTask;}
+ public Task Stop(string root,Installation? previous,IProgress<InstallProgress>? progress,CancellationToken cancel){Stops++;LastStoppedPipe=previous?.Pipe;return Task.CompletedTask;}
  public Action<string,Installation>? OnStart;
  public Task StartFreshAndVerify(string root,Installation installed,CancellationToken cancel){var data=DataPaths.Registered(root,installed.DataPath,false);Json.Save(Path.Combine(data,"settings.json"),new{syntheticInstallerProfile=true});Json.Save(InstallEngine.RecordPath(root),installed with{DataInitialized=true});return StartAndVerify(root,installed,cancel);}
  public Task StartAndVerify(string root,Installation installed,CancellationToken cancel){Starts++;OnStart?.Invoke(root,installed);if(FailStart)throw new IOException("simulated start failure");return Task.CompletedTask;}
@@ -339,4 +416,28 @@ sealed class ImportHost:IAppHost{
  public Task StartImportedAndVerify(string root,Installation installed,string importId,CancellationToken cancel){Starts++;VerifyId=importId;if(FailImported)throw new IOException("simulated imported startup failure");LastStartup=new(SafeImported,null);return Task.CompletedTask;}
  public Task CreateShortcuts(string root,Installation installed,CancellationToken cancel)=>Task.CompletedTask;
  public Task RemoveShortcuts(string root,CancellationToken cancel)=>Task.CompletedTask;
+}
+
+sealed class InlineProgress(Action<InstallProgress> report):IProgress<InstallProgress> {public void Report(InstallProgress value)=>report(value);}
+
+
+static class AckLossFixture {
+ public static async Task Run(string pipeName,string root){
+  var build=Path.Combine(root,"builds","current");var data=Path.Combine(root,"local","data-v003");
+  using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(15));
+  foreach(var expected in new[]{"installation-status","installation-reserve","installation-status","installation-quit"}) {
+   using var pipe=new System.IO.Pipes.NamedPipeServerStream(pipeName,System.IO.Pipes.PipeDirection.InOut,1,System.IO.Pipes.PipeTransmissionMode.Byte,System.IO.Pipes.PipeOptions.Asynchronous);
+   await pipe.WaitForConnectionAsync(deadline.Token);
+   using var reader=new StreamReader(pipe,Encoding.UTF8,false,1024,true);
+   using var request=JsonDocument.Parse((await reader.ReadLineAsync(deadline.Token))!);
+   if(request.RootElement.GetProperty("command").GetString()!=expected)throw new InvalidDataException("Unexpected acknowledgement fixture command");
+   var response=expected switch{
+    "installation-status"=>JsonSerializer.Serialize(new{ready=true,version="2.0.6",build,dataRoot=data,processId=Environment.ProcessId,busy=false}),
+    "installation-reserve"=>"{\"ok\":true}",
+    _=>"not a JSON acknowledgement"
+   };
+   await pipe.WriteAsync(Encoding.UTF8.GetBytes(response+"\n"),deadline.Token);
+   await pipe.FlushAsync(deadline.Token);
+  }
+ }
 }

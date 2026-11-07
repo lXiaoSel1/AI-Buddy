@@ -72,6 +72,23 @@ test('vertical seams are traversable for a complete body, while vertical gaps re
  displays[0]={x:0,y:-1180,width:1920,height:1080};motion.recover({x:400,y:0,width:270,height:280});motion.mode='flying';motion.velocity={x:0,y:-1000};now=56;motion.tick();assert.ok(motion.bounds.y>=0);assert.ok(motion.velocity.y>0);
 });
 
+test('drag traverses the internal taskbar and releases into the target work area before flying',()=>{
+ let now=0;const lower={bounds:{x:0,y:0,width:1000,height:1000},workArea:{x:0,y:0,width:1000,height:960},scaleFactor:1.25},upper={bounds:{x:-100,y:-1000,width:1000,height:1000},workArea:{x:-100,y:-1000,width:1000,height:952},scaleFactor:1.5};
+ const displays=[lower,upper],motion=new PetMotion({now:()=>now,bounds:{x:400,y:100,width:270,height:280},collisionInsets:{top:20,bottom:40},displays:()=>displays});
+ motion.begin({x:450,y:150});now=20;motion.move({x:450,y:-20});assert.equal(motion.bounds.y,-70);
+ assert.equal(motion.release({x:450,y:-20}).flying,true);assert.equal(motion.bounds.y,-288);assert.ok(motion.velocity.y<0);
+ motion.recover({x:400,y:-450,width:270,height:280});motion.begin({x:450,y:-400},{button:0});now=40;motion.move({x:450,y:20});assert.equal(motion.bounds.y,-30);
+ motion.release({x:450,y:20});assert.equal(motion.bounds.y,-20);assert.equal(motion.mode,'rest');
+ motion.begin({x:450,y:30});now=60;motion.move({x:450,y:-150});assert.equal(motion.right({x:450,y:-150}),true);motion.move({x:650,y:-50});motion.cancel();assert.equal(motion.mode,'rest');assert.equal(motion.allowed(motion.bounds.x,motion.bounds.y),true);
+ motion.begin({x:450,y:-150});now=80;motion.move({x:450,y:50});displays.shift();motion.recover(motion.bounds);assert.equal(motion.mode,'rest');assert.equal(motion.allowed(motion.bounds.x,motion.bounds.y),true);
+});
+
+test('drag can follow the pointer through a corner without letting it cross a real gap',()=>{
+ let now=0;const displays=[{x:0,y:0,width:1000,height:1000},{x:1000,y:1000,width:1000,height:1000}],motion=new PetMotion({now:()=>now,bounds:{x:700,y:700,width:270,height:280},displays:()=>displays});
+ motion.begin({x:800,y:800},{button:0});now=20;motion.move({x:1050,y:1050});assert.deepEqual({x:motion.bounds.x,y:motion.bounds.y},{x:1000,y:1000});
+ motion.cancel();displays[1]={x:1100,y:1000,width:1000,height:1000};motion.recover({x:700,y:700,width:270,height:280});motion.begin({x:800,y:800},{button:0});now=40;motion.move({x:1200,y:1200});motion.move({x:1300,y:1300});assert.ok(motion.bounds.x<1000);
+});
+
 test('offset adjacent displays allow their shared corridor but not uncovered corner space',()=>{
  let now=0;const motion=new PetMotion({now:()=>now,bounds:{x:700,y:450,width:270,height:280},displays:()=>[{x:0,y:0,width:1000,height:1000},{x:1000,y:400,width:1000,height:1000}]});
  motion.begin({x:750,y:500});now=20;motion.move({x:1000,y:500});assert.equal(motion.bounds.x,950);assert.equal(motion.allowed(950,450),true);

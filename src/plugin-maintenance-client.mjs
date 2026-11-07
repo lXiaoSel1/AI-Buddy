@@ -1,3 +1,4 @@
+export const PLUGIN_MAINTENANCE_BUSY = Symbol('host-only extension maintenance status');
 // The facade survives failed starts and process restarts. Consumers (including
 // Harness factories) retain one stable identity for the entire app lifetime.
 export async function createPluginMaintenanceClient({runnerPath, root, dataRoot, appVersion, busy = () => false, onUpdate = () => {},
@@ -114,7 +115,7 @@ export async function createPluginMaintenanceClient({runnerPath, root, dataRoot,
     })();
     return closePromise;
   }
-  const facade = {snapshot, action: value => value?.action === 'status' ? Promise.resolve(snapshot()) : value?.action === 'retry' ? retry() : readyRequest('action', value),
+  const facade = {snapshot, [PLUGIN_MAINTENANCE_BUSY]: () => cache.operation !== null, action: value => value?.action === 'status' ? Promise.resolve(snapshot()) : value?.action === 'retry' ? retry() : readyRequest('action', value),
     prepareOffline: (directory, requests) => readyRequest('prepareOffline', {directory, requests}), resolveInstalled: (id, options) => readyRequest('resolveInstalled', {id, options}), resolveTrustedSource: sourceId => readyRequest('resolveTrustedSource', {sourceId}), close};
   await start();
   return facade;

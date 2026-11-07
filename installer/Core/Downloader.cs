@@ -3,7 +3,7 @@ using System.Net.Http.Headers;
 namespace AiBuddy.Install;
 
 public sealed record DownloadState(string PackageId,string Tag,long Bytes,string Sha256,long SavedBytes,string? ETag,string? LastModified);
-public sealed record InstallProgress(string Phase,string Item,long Completed=0,long Total=0,string? Detail=null);
+public sealed record InstallProgress(string Phase,string Item,long Completed=0,long Total=0,string? Detail=null,string[]? Reasons=null);
 public sealed class DownloadException(string message,bool retryable,TimeSpan? wait=null):IOException(message) {
     public bool Retryable{get;}=retryable;public TimeSpan? Wait{get;}=wait;
 }

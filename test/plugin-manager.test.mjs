@@ -6,6 +6,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {canonicalPluginJson} from '../src/plugin-manifest.mjs';
 import {buildPluginArchive, extractPluginArchive, inspectPluginArchive} from '../src/plugin-archive.mjs';
+import {createCommunityService} from '../src/community/service.mjs';
 import {createPluginManager} from '../src/plugin-manager.mjs';
 
 test('AF1 legacy rollback validates installed reverse dependencies before changing the pointer',async t=>{
@@ -144,4 +145,51 @@ test('incompatible plugin data blocks update and survives uninstall and reinstal
   await manager.uninstall('official.fixture');
   await assert.rejects(offlineInstall(manager, [v2], {id: 'official.fixture', version: '1.1.0'}), {code: 'PLUGIN_DATA_MIGRATION_REQUIRED'});
   assert.equal(await readFile(file, 'utf8'), '{"important":"keep"}');
+});
+
+test('signed legacy ZIP updates through the community review flow and retains prior code and data', async t => {
+  const before = packageFixture(), after = packageFixture('1.0.1');
+  const {manager, root, dataRoot} = await setup(t, {fetchImpl: async url => {
+    assert.equal(String(url), after.item.archive.url);
+    return new Response(after.bytes);
+  }});
+  await offlineInstall(manager, [before]);
+  await manager.loadCatalog(envelope([before, after]));
+  const userData = join(dataRoot, 'plugins/official.fixture/user.json');
+  await writeFile(userData, '{"kept":true}');
+  const service = await createCommunityService({root, dataRoot, legacyManager: manager, pollMs: 0});
+  try {
+    const {updates: [row]} = await service.action({action:'community-check-updates'});
+    assert.deepEqual([row.sourceId, row.from, row.to, row.policy], ['legacy', '1.0.0', '1.0.1', 'manual']);
+    const {planId, downloadBytes} = await service.action({action:'community-plan-update', ...row});
+    assert.equal(downloadBytes, after.bytes.length);
+    await service.action({action:'community-install-update', ...row, planId});
+    assert.deepEqual([manager.snapshot().installed['official.fixture'].current, manager.snapshot().installed['official.fixture'].enabled], ['1.0.1', false]);
+    assert.equal(await readFile(userData, 'utf8'), '{"kept":true}');
+    await manager.rollback('official.fixture');
+    assert.equal(manager.snapshot().installed['official.fixture'].current, '1.0.0');
+  } finally { await service.close(); }
+});
+
+test('signed legacy automatic updates install the newest eligible patch when a newer minor is offered', async t => {
+  const before = packageFixture(), earlier = packageFixture('1.0.1'), patch = packageFixture('1.0.2'), minor = packageFixture('1.1.0');
+  const {manager, root, dataRoot} = await setup(t, {fetchImpl: async url => {
+    assert.equal(String(url), patch.item.archive.url);
+    return new Response(patch.bytes);
+  }});
+  await offlineInstall(manager, [before]);
+  await manager.loadCatalog(envelope([before, earlier, patch, minor]));
+  const service = await createCommunityService({root, dataRoot, legacyManager: manager, pollMs: 0});
+  try {
+    const {updates: [row]} = await service.action({action: 'community-check-updates'});
+    assert.equal(row.to, '1.1.0');
+    await service.action({action: 'community-set-update-policy', packageKey: row.packageKey, policy: 'auto'});
+    const {updates: [selected]} = await service.runAutomaticUpdates({refresh: false});
+    assert.equal(selected.to, '1.0.2');
+    assert.equal(selected.digest, patch.item.archive.sha256);
+    const installed = manager.snapshot().installed['official.fixture'];
+    assert.equal(installed.current, '1.0.2');
+    assert.equal(installed.versions[installed.current].archive.sha256, patch.item.archive.sha256);
+    assert.equal((await service.action({action: 'community-check-updates'})).updates[0].to, '1.1.0');
+  } finally { await service.close(); }
 });

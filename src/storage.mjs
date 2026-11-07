@@ -2,6 +2,7 @@ import { mkdirSync, readdirSync, readFileSync, readSync, openSync, writeSync, fs
 import { readFile, readdir, unlink, open, stat as statAsync } from 'node:fs/promises';
 import { dirname, basename, join, resolve } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
+import {measureDesktopDiagnostic} from './desktop-diagnostics.mjs';
 
 // Snapshot publication: completed snapshots are committed in a journal. A
 // retention pass keeps the newest commits plus one per local day; snapshots
@@ -72,10 +73,10 @@ export function createSnapshotStorage(logicalPath, {retainText=true, compactRece
     mkdirSync(root, { recursive:true });
     const file = new Date().toISOString().replaceAll(':','-') + '-' + randomUUID() + '.json';
     const fd = openSync(join(root,file),'wx');
-    try { writeSync(fd,content,null,'utf8'); fsyncSync(fd); } finally { closeSync(fd); }
+    try { measureDesktopDiagnostic('snapshot-write',()=>{writeSync(fd,content,null,'utf8');fsyncSync(fd);}); } finally { closeSync(fd); }
     const record = { file, sha256:digest, timestamp:new Date().toISOString() };
     const log = openSync(journal,'a');
-    try { writeSync(log,'\n' + JSON.stringify(record) + '\n',null,'utf8'); fsyncSync(log); } finally { closeSync(log); }
+    try { measureDesktopDiagnostic('snapshot-journal',()=>{writeSync(log,'\n' + JSON.stringify(record) + '\n',null,'utf8');fsyncSync(log);}); } finally { closeSync(log); }
     const operation=cached?'update':'create',previous=compactReceipt?undefined:cached?(retainText?cached.content:readFileSync(join(root,cached.version),'utf8')):null;
     cached = { content:retainText?content:undefined, sha256:digest, version:file, size };
     return compactReceipt?{operation,version:file}:{ operation, version:file, before:previous, after:content };

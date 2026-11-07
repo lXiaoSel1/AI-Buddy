@@ -21,11 +21,13 @@ internal static class Program {
             Http=new HttpClient(new SocketsHttpHandler{AllowAutoRedirect=true,MaxAutomaticRedirections=8,AutomaticDecompression=System.Net.DecompressionMethods.None,ConnectTimeout=TimeSpan.FromSeconds(30)}){Timeout=Timeout.InfiniteTimeSpan};
             Http.DefaultRequestHeaders.UserAgent.ParseAdd("AI-Buddy-Setup/"+ReleaseIdentity.InstallerVersion);
             Updates=new(Http);
+            if(AppUpdate.Requested(args))return Task.Run(()=>AppUpdate.Run(args,Http,Updates,Manifest,ManifestBytes,BuildIdentity.ManifestSha256,Self)).GetAwaiter().GetResult();
             Engine=new(Manifest,ManifestBytes,BuildIdentity.ManifestSha256,new Downloader(Http),new WindowsHost(Argument(args,"roots")),Self);
             if(headlessAction is not null)return Task.Run(()=>RunHeadless(args,headlessAction)).GetAwaiter().GetResult();
             UpdateHandoff.GetLaunchIdentity(args,Manifest.AppVersion,BuildIdentity.ManifestSha256);
             Application.Run(new SetupForm(args));return 0;
         } catch(Exception ex) {
+            if(AppUpdate.Requested(args))return 1;
             var error=Path.Combine(Path.GetTempPath(),"AI-Buddy-Setup-error.txt");File.WriteAllText(error,ex.ToString());
             if(args.Contains("--headless")&&Argument(args,"receipt") is {} receipt)Json.Save(receipt,new{ok=false,installerRevision=ReleaseIdentity.InstallerRevision,error=ex.Message,events=Array.Empty<InstallProgress>()});
             // The parent manager reports handoff failures and remains available.

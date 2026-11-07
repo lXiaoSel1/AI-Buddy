@@ -13,7 +13,7 @@ const MAX_JOBS = 10000;
 
 /** Queue ownership is one host service. Waiting for work never holds the installer lock.
  * An interrupted side effect is never blindly replayed after a crash. */
-export async function createMaintenanceQueue({directory, execute, revalidate = async () => true, isBusy = async () => false, now = Date.now, onChange = () => {}, write = writeAtomicAsync}) {
+export async function createMaintenanceQueue({directory, execute, revalidate = async () => true, isBusy = async () => false, canStart = () => true, now = Date.now, onChange = () => {}, write = writeAtomicAsync}) {
   if (typeof execute !== 'function') throw Error('Maintenance executor is required');
   await assertPluginTreeNoLinks(directory); await mkdir(directory, {recursive: true});
   const file = join(directory, 'maintenance-queue-v1.json'); let state;
@@ -24,7 +24,7 @@ export async function createMaintenanceQueue({directory, execute, revalidate = a
     if (!job?.id || ids.has(job.id) || !operations.has(job.operation) || !job.packageKey || !['queued', 'running', 'completed', 'failed', 'cancelled', 'needs-user', 'interrupted-needs-user'].includes(job.state) || job.intentDigest !== communityDigest(job.intent)) throw fault('Maintenance queue entry is invalid; evidence retained', 'COMMUNITY_QUEUE_INVALID');
     ids.add(job.id);
   }
-  let closed = false, draining = null, serial = Promise.resolve();
+  let closed = false, executing = false, draining = null, serial = Promise.resolve();
   const recoveryOnly = state.jobs.length > MAX_JOBS;
   const snapshot = () => copy({...state, capacity: {limit: MAX_JOBS, count: state.jobs.length, recoveryOnly}});
   // The previous durable snapshot remains authoritative until the candidate has
@@ -82,7 +82,7 @@ export async function createMaintenanceQueue({directory, execute, revalidate = a
       // meanwhile, so the earlier busy probes no longer authorize execution.
       let finalBusy = false, finalFailure = null;
       if (!closed) { try { finalBusy = await isBusy(copy(claimed)); } catch (cause) { finalFailure = failed(cause); } }
-      if (closed || finalFailure || finalBusy) {
+      if (closed || finalFailure || finalBusy || !canStart()) {
         await updateJob(id, ['running'], job => {
           // Recheck inside the serial lane too: close may have arrived after
           // the probe returned but before this candidate could be committed.
@@ -94,8 +94,10 @@ export async function createMaintenanceQueue({directory, execute, revalidate = a
         continue;
       }
       let result;
+      executing = true;
       try { result = await execute(copy(claimed)); }
       catch (cause) { await updateJob(id, ['running'], job => { job.state = 'failed'; job.updatedAt = new Date(now()).toISOString(); job.error = failed(cause); }, {allowClosed: true}); continue; }
+      finally { executing = false; }
       // Completion shares the same serial lane as enqueue/cancel. If this write
       // fails, running remains durable and execute is never automatically replayed.
       await updateJob(id, ['running'], job => { job.state = 'completed'; job.result = result ?? null; job.updatedAt = new Date(now()).toISOString(); }, {allowClosed: true});
@@ -103,5 +105,5 @@ export async function createMaintenanceQueue({directory, execute, revalidate = a
     return snapshot();
   }
   const drain = () => { if (!draining) draining = runDrain().finally(() => { draining = null; }); return draining; };
-  return {snapshot, enqueue, cancel, drain, close: async () => { closed = true; await serial; await draining; }, isRunning: () => !!draining};
+  return {snapshot, enqueue, cancel, drain, close: async () => { closed = true; await serial; await draining; }, isRunning: () => !!draining, isExecuting: () => executing};
 }

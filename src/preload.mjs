@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('whale',{
   onSources:callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on('tokens:update',listener);return()=>ipcRenderer.removeListener('tokens:update',listener);},
   onUpdate:callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on('monitor:update',listener);return()=>ipcRenderer.removeListener('monitor:update',listener);},
   settings:()=>ipcRenderer.invoke('settings:get'),
+  updates:{action:(command,value)=>modelRequest('updates:action',command,value),onUpdate:callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on('updates:state',listener);return()=>ipcRenderer.removeListener('updates:state',listener);}},
   setSettings:patch=>ipcRenderer.invoke('settings:set',patch),
   settingsAction:action=>ipcRenderer.invoke('settings:action',action),
   onSettings:callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on('settings:update',listener);return()=>ipcRenderer.removeListener('settings:update',listener);},

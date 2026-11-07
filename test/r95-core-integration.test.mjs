@@ -5,15 +5,16 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {createCompanionR95} from '../src/companion-r95.mjs';
+import {openCompanionStore,restoreCompanionExport} from '../src/companion-store.mjs';
 import {TokenMonitor} from '../src/token-monitor.mjs';
 import {companionFixture,memoryStore} from './support/audit-harness.mjs';
 
 async function setup(t,options={}){
- const dataRoot=mkdtempSync(join(tmpdir(),'r95-core-')),store=memoryStore(await companionFixture());
+ const dataRoot=mkdtempSync(join(tmpdir(),'r95-core-')),store=options.store??memoryStore(await companionFixture());
  const ctx=new AsyncLocalStorage(),calls=[];let runtime={sleepPhase:'awake',sleepIntentVersion:1,canPresent:true};
  const provider={enabled:true,resolveSearchCapability:()=>({supported:true}),captureConnection:()=>({id:'fixture',model:'fixture-model',kind:'custom',contextTokens:272000}),withRequestContext:(value,fn)=>ctx.run(value,fn),runCaptured:(_profile,fn)=>fn(),
   async *stream(options){calls.push({...options,context:ctx.getStore()});yield {type:'text-delta',text:options.purpose==='meal'?'{"manualEquivalentAffection":1.5}':'{"changed":false}'};yield {type:'finish',reason:{kind:'stop'}};}};
- const relationships=[];const service=await createCompanionR95({...options,store,dataRoot,provider,getContext:()=>({characterId:store.state.activeCharacterId,personaId:store.state.activePersonaId,conversationId:store.state.activeConversationId}),memory:{context:async()=>({text:''})},getRuntimeState:()=>runtime,delta:(...args)=>relationships.push(args),audit:()=>{}});
+ const relationships=[];const service=await createCompanionR95({...options,store,dataRoot,provider,getContext:()=>({characterId:store.state.activeCharacterId,personaId:store.state.activePersonaId,conversationId:store.state.activeConversationId}),memory:{context:async()=>({text:''})},getRuntimeState:()=>runtime,delta:(...args)=>relationships.push(args),audit:options.audit??(()=>{})});
  t.after(async()=>{await service.close();await store.flush();rmSync(dataRoot,{recursive:true,force:true});});
  return {store,service,provider,calls,relationships,setRuntime:value=>runtime={...runtime,...value}};
 }
@@ -36,10 +37,27 @@ test('Core keeps attention independent from tokens and never delays a chat on mo
  assert.equal(calls[0].context.scope.characterId,'claude');assert.ok(calls[0].activityOriginId);
  assert.equal(store.state.lives.claude.r95.moodEvaluations['actual-user'].status,'committed');
 });
-test('Core native search is opt-in and an in-flight grant is invalidated by disabling',async t=>{
- const {service}=await setup(t),scope=service.activeScope();
- await service.withOrigin(scope,'chat',async id=>{assert.equal(service.searchPolicy({activityOriginId:id}),false);await service.action('search-settings',{enabled:true});const policy=service.searchPolicy({activityOriginId:id});assert.equal(policy.allowed,true);policy.check();await service.action('search-settings',{enabled:false});assert.throws(policy.check,/失效/);});
+test('Core defaults missing native search to enabled and invalidates an in-flight grant by disabling',async t=>{
+ const events=[],{service,store}=await setup(t,{audit:event=>events.push(event)}),scope=service.activeScope();
+ assert.equal(service.view().search.enabled,true);
+ await service.withOrigin(scope,'chat',async id=>{const policy=service.searchPolicy({activityOriginId:id});assert.equal(policy.allowed,true);policy.check();assert.equal(service.searchPolicy({activityOriginId:id,purpose:'mood'}),false);await service.action('search-settings',{enabled:false});assert.equal(service.view().search.enabled,false);assert.throws(policy.check,/失效/);await service.action('search-settings',{enabled:true});assert.equal(service.searchPolicy({activityOriginId:id}).allowed,true);await store.mutate(state=>{state.r95.searchEnabled='true';});assert.equal(service.view().search.enabled,false);assert.equal(service.searchPolicy({activityOriginId:id}),false);});
  assert.equal(service.searchPolicy({activityOriginId:'forged'}),false);
+ assert.deepEqual(events.filter(event=>event.type==='r95-search-setting-invalid'),[{type:'r95-search-setting-invalid',reason:'invalid-setting-type'}]);
+});
+test('an explicit search disable survives conversation restore and disk reopening',async t=>{
+ const path=mkdtempSync(join(tmpdir(),'r95-search-store-'));
+ t.after(()=>rmSync(path,{recursive:true,force:true}));
+ const store=await openCompanionStore(path),{schema,...fixture}=await companionFixture();
+ await store.mutate(state=>Object.assign(state,fixture));
+ const {service}=await setup(t,{store});
+ assert.equal(service.view().search.enabled,true);
+ await service.action('search-settings',{enabled:false});
+ await store.mutate(state=>restoreCompanionExport(state,{format:'ai-buddy-conversations',version:1,conversations:[{...fixture.conversations.conversation,id:'restored'}],r95:{searchEnabled:true}}));
+ assert.equal(service.view().search.enabled,false);
+ await service.close();await store.flush();
+ const reopened=await openCompanionStore(path),restored=await setup(t,{store:reopened});
+ assert.ok(reopened.state.conversations.restored);
+ assert.equal(restored.service.view().search.enabled,false);
 });
 test('Core wallet receives only private canonical facts, shared across Persona and isolated from life facets',async t=>{
  const {service,store}=await setup(t);

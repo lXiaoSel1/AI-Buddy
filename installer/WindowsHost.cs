@@ -6,17 +6,23 @@ using System.Runtime.InteropServices;
 using AiBuddy.Install;
 namespace AiBuddy.Setup;
 
-public sealed class WindowsHost(string? rootsFile=null,TimeSpan? exitTimeout=null,TimeSpan? busyLimit=null) : IAppHost {
+public sealed record AppUpdateHost(string Build,string DataRoot,string Version,int ProcessId,string Nonce);
+
+public sealed class WindowsHost(string? rootsFile=null,TimeSpan? exitTimeout=null,TimeSpan? busyLimit=null,AppUpdateHost? appUpdate=null) : IAppHost {
+    public bool UpdateProcessStopped {get;private set;}
     public StartupStatus? LastStartup {get;private set;}
     public static string PipeName(Installation? installed)=>installed?.Pipe??"whale-companion-v001";
+    [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetNamedPipeServerProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe,out uint processId);
     [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool WaitNamedPipe(string name,uint timeout);
     static bool PipeExists(string pipe)=>WaitNamedPipe(@"\\.\pipe\"+pipe.Replace(@"\\.\pipe\",""),0)||Marshal.GetLastWin32Error()!=2;
-    public static async Task<JsonElement?> Request(string pipe,object request,int milliseconds,CancellationToken cancel,bool requireReply=false) {
+    public static async Task<JsonElement?> Request(string pipe,object request,int milliseconds,CancellationToken cancel,bool requireReply=false,int? expectedProcessId=null) {
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancel);timeout.CancelAfter(milliseconds);
         using var client=new NamedPipeClientStream(".",pipe.Replace(@"\\.\pipe\",""),PipeDirection.InOut,PipeOptions.Asynchronous);
         bool connected=false;
         try {
             await client.ConnectAsync(timeout.Token);connected=true;
+            if(expectedProcessId is int expected&&(!GetNamedPipeServerProcessId(client.SafePipeHandle,out var actual)||actual!=(uint)expected))
+                throw new InvalidDataException("Application control pipe belongs to a different process");
             // The app control protocol is JSONL: indentation would split one request into invalid fragments.
             var bytes=Encoding.UTF8.GetBytes(JsonSerializer.Serialize(request,new JsonSerializerOptions(Json.Options){WriteIndented=false})+"\n");await client.WriteAsync(bytes,timeout.Token);await client.FlushAsync(timeout.Token);
             using var result=new MemoryStream();var buffer=new byte[16384];
@@ -36,6 +42,9 @@ public sealed class WindowsHost(string? rootsFile=null,TimeSpan? exitTimeout=nul
         return null;
     }
     public async Task Stop(string root,Installation? previous,IProgress<InstallProgress>? progress,CancellationToken cancel) {
+        if(!UpdateProcessStopped&&appUpdate is {} update&&previous is not null&&InstallProfile.SamePath(SafePaths.Under(root,previous.Build),update.Build)) {
+            await StopForAppUpdate(root,previous,update,progress,cancel);return;
+        }
         var pipe=PipeName(previous);var busySince=DateTime.UtcNow;var limit=busyLimit??TimeSpan.FromMinutes(10);var exitWait=exitTimeout??TimeSpan.FromSeconds(45);
         while(true) {
             cancel.ThrowIfCancellationRequested();var existed=PipeExists(pipe);var status=await Request(pipe,new{command="installation-status"},1800,cancel,true);
@@ -60,6 +69,90 @@ public sealed class WindowsHost(string? rootsFile=null,TimeSpan? exitTimeout=nul
             // Not exiting in time is not a user cancellation.
             catch(OperationCanceledException) when(!cancel.IsCancellationRequested){throw new IOException($"AI Buddy acknowledged the exit request but was still running after {exitWait.TotalSeconds:0} seconds; no program files were replaced. Quit it from the tray and retry. / AI 酱已确认退出，但 {exitWait.TotalSeconds:0} 秒后仍在运行；未替换程序文件，请从托盘退出后重试。");}
             return;
+        }
+    }
+    internal static bool IsTrue(JsonElement value,string name)=>value.TryGetProperty(name,out var property)&&property.ValueKind==JsonValueKind.True;
+    internal static bool IsInstance(JsonElement status,string root,AppUpdateHost update) =>
+        Belongs(status,root)&&InstallProfile.SamePath(status.GetProperty("build").GetString()!,update.Build)&&
+        status.TryGetProperty("dataRoot",out var data)&&data.ValueKind==JsonValueKind.String&&InstallProfile.SamePath(data.GetString()!,update.DataRoot)&&
+        status.TryGetProperty("version",out var version)&&version.ValueKind==JsonValueKind.String&&version.GetString()==update.Version&&
+        status.TryGetProperty("processId",out var pid)&&pid.TryGetInt32(out var value)&&value==update.ProcessId&&
+        IsTrue(status,"ready")&&!IsTrue(status,"onboarding")&&!IsTrue(status,"safeMode")&&
+        (!status.TryGetProperty("startupFailure",out var startupFailure)||startupFailure.ValueKind==JsonValueKind.Null);
+
+    internal static async Task<JsonElement> RequireUpdateInstance(string root,Installation previous,AppUpdateHost update,CancellationToken cancel) {
+        var status=await Request(PipeName(previous),new{command="installation-status"},4000,cancel,true,update.ProcessId);
+        if(status is not {} running||!IsInstance(running,root,update))throw new InvalidOperationException("Current app instance changed or did not become ready");
+        return running;
+    }
+
+    static JsonElement UpdateActivity(JsonElement status)=>status.TryGetProperty("updateBusy",out var value)&&value.ValueKind==JsonValueKind.Object?value:status;
+    static string[] BusyReasons(JsonElement activity)=>activity.TryGetProperty("reasons",out var values)&&values.ValueKind==JsonValueKind.Array?
+        values.EnumerateArray().Take(24).Select(reason=>reason.ValueKind==JsonValueKind.String?reason.GetString():
+            reason.ValueKind==JsonValueKind.Object&&reason.TryGetProperty("capability",out var capability)&&capability.ValueKind==JsonValueKind.String?capability.GetString():null)
+        .OfType<string>().Where(reason=>reason.Length is >0 and <=64&&reason.All(ch=>char.IsAsciiLetterOrDigit(ch)||ch is '-' or '_')).ToArray():[];
+
+    public async Task ReportUpdateLockBusy(string root,IProgress<InstallProgress>? progress,CancellationToken cancel) {
+        var reasons=appUpdate is {} update&&InstallEngine.Existing(root) is {} installation
+            ?BusyReasons(UpdateActivity(await RequireUpdateInstance(root,installation,update,cancel))):[];
+        progress?.Report(new("waiting-safe-point","",Reasons:reasons.Length>0?reasons:["storage"]));
+    }
+
+    async Task<bool> ConfirmProcessExit(Process process) {
+        using var timeout=new CancellationTokenSource(exitTimeout??TimeSpan.FromSeconds(45));
+        try{await process.WaitForExitAsync(timeout.Token);return true;}
+        catch(OperationCanceledException)when(timeout.IsCancellationRequested){return false;}
+    }
+
+    async Task StopForAppUpdate(string root,Installation previous,AppUpdateHost update,IProgress<InstallProgress>? progress,CancellationToken cancel) {
+        var pipe=PipeName(previous);var deadline=DateTime.UtcNow+(busyLimit??TimeSpan.FromMinutes(10));bool reservationAttempted=false,reserved=false,quitAccepted=false;
+        var exactBuild=update.Build;
+        object Command(string command)=>new{command,expectedBuild=exactBuild,expectedProcessId=update.ProcessId,reservationId=update.Nonce};
+        using var process=Process.GetProcessById(update.ProcessId);
+        _=process.SafeHandle;
+        try {
+            while(DateTime.UtcNow<deadline) {
+                cancel.ThrowIfCancellationRequested();
+                var status=await RequireUpdateInstance(root,previous,update,cancel);
+                exactBuild=status.GetProperty("build").GetString()!;
+                if(!reserved) {
+                    reservationAttempted=true;
+                    var answer=await Request(pipe,Command("installation-reserve"),4000,cancel,true,update.ProcessId);
+                    if(answer is not {} reply||!IsTrue(reply,"ok"))throw new IOException("The current application did not accept the update reservation");
+                    reserved=true;
+                    // Get a fresh status only after the app has closed admission.
+                    status=await RequireUpdateInstance(root,previous,update,cancel);
+                }
+                var activity=UpdateActivity(status);
+                if(!activity.TryGetProperty("busy",out var busy)||busy.ValueKind is not(JsonValueKind.False or JsonValueKind.True))
+                    throw new InvalidDataException("Application did not report its update activity");
+                if(busy.ValueKind==JsonValueKind.True) {
+                    progress?.Report(new("waiting-safe-point","",Reasons:BusyReasons(activity)));await Task.Delay(1000,cancel);continue;
+                }
+                cancel.ThrowIfCancellationRequested();
+                progress?.Report(new("committing",""));
+                // Once the quit request is sent, do not abandon the verified
+                // process merely because the old app lost its UI or stdin.
+                JsonElement? quit=null;
+                try {quit=await Request(pipe,Command("installation-quit"),4000,CancellationToken.None,true,update.ProcessId);}
+                catch(Exception error) when(error is IOException or JsonException) {
+                    UpdateProcessStopped=await ConfirmProcessExit(process);
+                    throw new IOException("The exact application quit acknowledgement was lost; no program files were changed",error);
+                }
+                if(quit is not {} acknowledgement||acknowledgement.ValueKind!=JsonValueKind.Object) {
+                    UpdateProcessStopped=await ConfirmProcessExit(process);
+                    throw new IOException("The exact application quit acknowledgement was lost; no program files were changed");
+                }
+                if(!IsTrue(acknowledgement,"ok"))throw new IOException("The current application did not acknowledge the reserved exit");
+                quitAccepted=true;
+                if(!await ConfirmProcessExit(process))throw new IOException("The verified application did not exit before the deadline");
+                UpdateProcessStopped=true;return;
+            }
+            throw new IOException("The application remained busy until the update reservation expired");
+        } finally {
+            if(reservationAttempted&&!quitAccepted&&!UpdateProcessStopped)
+                try{await Request(pipe,Command("installation-release"),2000,CancellationToken.None,expectedProcessId:update.ProcessId);}
+                catch(Exception error)when(error is IOException or InvalidDataException or JsonException){}
         }
     }
     // Import recovery can restore a not-yet-created portable profile to its welcome

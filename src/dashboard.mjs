@@ -158,7 +158,7 @@ function App(){
  let content;
  if(['overview','history','projects'].includes(page))content=h(AnalyticsPage,{page,settings,revision:data?.usageRevision,onManage:manage,onSaved:setSettings,monitor:data,onPage:setPage,onAttribution:id=>{setAttributionSource(id);setPage('tokens');}});
  else if(page==='data-import')content=h(DataImportPanel,{onComplete:()=>location.reload(),onClose:()=>setPage('settings')});
- else if(page==='settings')content=settings?h(GeneralSettings,{view:settings,onSaved:setSettings,onPage:setPage,onManage:manage}):h('p',{className:'settings-error',role:'alert'},settingsError||t("正在读取设置…"));
+ else if(page==='settings')content=settings?h(GeneralSettings,{view:settings,onSaved:setSettings,onPage:setPage,onManage:manage,onPlugins:()=>toCommunity({tab:'installed'})}):h('p',{className:'settings-error',role:'alert'},settingsError||t("正在读取设置…"));
  else if(page==='tokens')content=h(TokenSettings,{sourceId:attributionSource,timeZone:settings?.preferences.statisticsTimeZone});
  else if(page==='api')content=h(ApiSettings,{view:settings,tab:apiTab,onTab:setApiTab});
   else if(page==='agent-tasks')content=settings?.safeMode?h(SafeModePage,{settings,onPage:setPage,time}):h(WorkTasks,{face:head,onStatus:reportStatus,onCommunity:toCommunity,renderEmbedded:()=>embedArea('work')});

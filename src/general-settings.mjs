@@ -9,6 +9,7 @@ import {PET_CHARACTERS,petCharacterName} from './pet-characters.mjs';
 import {frameSequence} from './frame-sequence.mjs';
 import {DataImportSetting,DataImportModal} from './data-import-ui.mjs';
 import {DshPreviewNoticeSetting} from './dsh-preview-notice-ui.mjs';
+import {UpdateSettings} from './update-settings.mjs';
 const h=React.createElement;
 const providerName=value=>value==='claude'?'Claude Code':value;
 // B2: maxOutputTokens is 'auto' or a whole number from 256 to 65536 (default 8192).
@@ -32,7 +33,7 @@ export function AboutCard(){
     h('p',{className:'settings-note'},t('许可全文和第三方声明见安装目录里的 LICENSE.md 和 THIRD_PARTY_NOTICES.md。')),
     h('p',{className:'settings-note'},t('本软件按“原样”提供，不提供任何担保。')));
 }
-export function GeneralSettings({view,onSaved,onPage,onManage}){
+export function GeneralSettings({view,onSaved,onPage,onManage,onPlugins}){
   const [busy,setBusy]=useState(false),[status,setStatus]=useState(t("修改会立即生效并自动保存")),[error,setError]=useState('');
   const [importOpen,setImportOpen]=useState(false);
   if(!view)return h('p',null,t("正在读取本地设置…"));
@@ -80,6 +81,7 @@ export function GeneralSettings({view,onSaved,onPage,onManage}){
       h('h3',{className:'ws-sub-h'},t("显示")),
       h('div',{className:'ws-two'},
         toggle('petVisible',t("显示桌宠"),t("隐藏后可从托盘重新显示。")),
+        toggle('petHideOnFullscreen',t('同屏全屏时隐藏桌宠'),t('其他应用在桌宠所在屏幕全屏时，暂时隐藏桌宠和气泡。')),
         toggle('alwaysOnTop',t("保持置顶"),t("显示在其他窗口上方。")),
         select('petScale',t("桌宠大小"),t("角色、状态条和提示气泡一起缩放。"),[[0.75,t("75% · 小")],[1,t("100% · 默认")],[1.25,t("125% · 大")],[1.5,t("150% · 更大")]]),
         select('animationSpeed',t("动作播放速度"),t("放慢动作循环；鼠标跟随和拖动仍及时响应。"),[[0.25,t("25% · 很慢")],[0.5,t("50% · 慢")],[0.75,t("75% · 默认")],[1,t("100% · 原速")]]),
@@ -108,7 +110,7 @@ export function GeneralSettings({view,onSaved,onPage,onManage}){
         h(TokenDetectionControl,{onManage:()=>onPage('tokens')}),
         h('section',{className:'ws-card ws-set settings-character'},h('h2',{className:'ws-sec'},t("角色与对话")),h('p',{className:'ws-meta'},t("角色、好感度、记忆、立绘和背景在 Galgame 中设置。联网聊天需手动开启，重启后默认关闭。")),h('div',{className:'ws-srow ws-end'},h('span',null),h('button',{className:'ui-btn sm',onClick:()=>onPage('galgame')},t("打开 Galgame →")))))),
     h(DataImportSetting,{onOpen:()=>setImportOpen(true)}),
-    h('details',{className:'ws-details settings-install'},h('summary',null,Icon('chevron',{size:16}),t("本地安装"),h('span',{className:'ws-muted'},' · '+t("AI 酱 ")+view.version)),h('dl',{className:'ws-dl settings-info'},h('dt',null,t("版本")),h('dd',null,view.version+' · '+view.build),h('dt',null,t("数据目录")),h('dd',null,view.dataRoot),h('dt',null,t("日志来源")),h('dd',null,...view.logRoots.map((r,i)=>h('div',{key:i},h('span',null,providerName(r.provider)+' '),h('code',null,r.path))))),h('p',{className:'settings-note ws-muted'},t("设置保存为版本快照；旧版本、用量与陪伴历史继续保留。"))),
+    h('details',{className:'ws-details settings-install'},h('summary',null,Icon('chevron',{size:16}),t("本地安装"),h('span',{className:'ws-muted'},' · '+t("AI 酱 ")+view.version)),h(UpdateSettings,{version:view.version,onPlugins:onPlugins??(()=>onPage('plugins'))}),h('dl',{className:'ws-dl settings-info'},h('dt',null,t("版本")),h('dd',null,view.version+' · '+view.build),h('dt',null,t("数据目录")),h('dd',null,view.dataRoot),h('dt',null,t("日志来源")),h('dd',null,...view.logRoots.map((r,i)=>h('div',{key:i},h('span',null,providerName(r.provider)+' '),h('code',null,r.path))))),h('p',{className:'settings-note ws-muted'},t("设置保存为版本快照；旧版本、用量与陪伴历史继续保留。"))),
     h('section',{className:'ws-card ws-set'},h(DshPreviewNoticeSetting)),h(AboutCard),
     h('div',{className:'ws-reset-row settings-footer'},h('div',null,h('b',null,t("恢复默认设置")),h('small',null,t("恢复默认仅调整这些选项，保留位置、用量和 Galgame 存档。"))),h('button',{className:'ui-btn danger','data-action':'defaults',disabled:busy,onClick:()=>{void action('defaults');}},t("恢复默认设置"))),importOpen&&h(DataImportModal,{onClose:()=>setImportOpen(false),onComplete:()=>location.reload()}));
 }

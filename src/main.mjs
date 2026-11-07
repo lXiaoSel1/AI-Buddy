@@ -14,6 +14,11 @@ import {createPluginUsageRecorder} from './plugin-usage-recorder.mjs';
 import {extensionComponentStatus,extensionOperationBusy} from './installation-components.mjs';
 import {createInstalledResources} from './installed-resources.mjs';
 import {spawn,spawnSync} from 'node:child_process';
+import {createAppUpdateBackend} from './update-backend-client.mjs';
+import {createUpdateService} from './update-service.mjs';
+import {createUpdateReservation,updateError} from './update-reservation.mjs';
+import {startDesktopSample,stopDesktopSample,measureDesktopDiagnostic} from './desktop-diagnostics.mjs';
+import {readPetFullscreenSnapshot} from './pet-fullscreen.mjs';
 import {resolveInstallation,commitInstallation,markInstallationInitialized} from './installation-record.mjs';
 import {createDataImportService,hasBusinessData} from './data-import.mjs';
 import {setLocale,t,localizedTitle} from './i18n.mjs';
@@ -46,6 +51,7 @@ import {createCgCodec} from './cg-images.mjs';
 import { clampToDisplays } from './window-position.mjs';
 import { petBounds,petSize,petWindowOptions,positionPet,applyPetTopmost } from './pet-window.mjs';
 import {createPetWindowDiagnostics} from './pet-window-diagnostics.mjs';
+import {createPetFullscreenObserver,createPetFullscreenPolicy,petVisibility} from './pet-fullscreen.mjs';
 import {PET_RENDERER_DIAGNOSTIC_SCRIPT} from './pet-renderer-diagnostics.mjs';
 import {petCollisionInsets} from './pet-presentation.mjs';
 import { createLocalControlServer,requestLocalControl } from './local-control.mjs';
@@ -78,7 +84,7 @@ const arg=name=>process.argv.find(x=>x.startsWith('--'+name+'='))?.slice(name.le
 const localCardBuild=typeof __AI_BUDDY_LOCAL_CARD_BUNDLE_SHA256__==='string';
 const cardRehearsal=localCardBuild&&arg('local-card-rehearsal')==='1';
 let cardQuiet=localCardBuild&&arg('local-card-quiet')==='1';
-const automaticWorkAllowed=()=>!cardQuiet&&!importBarrier&&dataImport.automaticWorkAllowed();
+const automaticWorkAllowed=()=>!cardQuiet&&!importBarrier&&!updateReservation.active()&&dataImport.automaticWorkAllowed();
 function handoffCardVerification(){
  if(!cardQuiet||cardRehearsal||quitting||!game)return;
  cardQuiet=false;cg?.start();quotas?.start();audit({type:'local-card-handoff'});
@@ -116,11 +122,22 @@ const audit=value=>appendFileSync(auditPath,JSON.stringify({timestamp:new Date()
 const pipe=installationResolution?.pipe || '\\\\.\\pipe\\whale-companion-v001';
 let dataImport=null,importBarrier=false,onboarding=false;
 let buttonObserver=null,nativeButtons=0;
+let fullscreenObserver=null,fullscreenHidden=false;
+const fullscreenPolicy=createPetFullscreenPolicy({onChange:hidden=>{fullscreenHidden=hidden;applyPetVisibility(false);}});
 let dailyCgScheduler;
 let pet,panel,tray,worker,game,provider,snapshot={indexing:true,sessions:[],active:[],todayUsage:{codex:{total:0},claude:{total:0}},workTotal:0},settings={},drag=null,lastWork=null,quitting=false,gestureMode=false,lastPetHit=false,ignoringMouse=true,petAssetsReady=false;
 const settingsStore=createSnapshotStorage(join(dataRoot,'settings.json'));
-let cg,quotas,agents,plugins,petDiagnostics,pluginUsage,pluginEmbed;
-const extraBusy=()=>!!(agents?.busy()||plugins?.busy?.()||extensionOperationBusy(plugins?.snapshot()));
+let cg,quotas,agents,plugins,petDiagnostics,pluginUsage,pluginEmbed,appUpdates;
+const updateReservation=createUpdateReservation({external:()=>[
+  ...(gameRequests||provider?.status().busy||activityClock.busy.size||game?.r95?.busy?.()?['chat']:[]),
+  ...(cg?.status().busy?['cg']:[]),...(agents?.busy()?['work']:[]),
+  ...(plugins?.busy?.()||extensionOperationBusy(plugins?.snapshot())?['plugin']:[]),...(importBarrier?['data']:[]),
+]});
+const bootstrapUrl='https://github.com/lXiaoSel1/AI-Buddy/releases/latest';
+const updateCommands=new Set(['status','check','download','apply','cancel','automatic','bootstrap']);
+const gameReads=new Set(['view','settings-get','companion-state','companion-memory-view','companion-life-list','cg-gallery','cg-data','cg-thumbnail','sprite-data','bg-data']);
+const gameStops=new Set(['companion-chat-cancel','companion-group-stop','companion-group-auto-pause','companion-group-auto-stop','cg-cancel']);
+function updateGuard(capability,run){return updateReservation.run(capability,run);}
 const stateBefore=new Map();const rendererErrors=[];
 // Set when startup could not bring up the companion features (or the app);
 // the app keeps running in safe mode instead of exiting on every launch.
@@ -241,6 +258,23 @@ function updateTray(){
   if(!tray)return;
   tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate({language:settings.preferences.language,petVisible:settings.preferences.petVisible,gestureMode,open:page=>openPanel(page),setPetVisible:value=>savePreference({petVisible:value}),setGestureMode:value=>{setGestureMode(value);updateTray();},quit:()=>{void shutdown();}})));
 }
+function petVisibilityState(){return petVisibility({userVisible:settings.preferences?.petVisible,assetsReady:petAssetsReady,fullscreen:fullscreenHidden,quitting});}
+function applyPetVisibility(greet=true){
+ if(!pet||pet.isDestroyed())return;
+ const {visible,hiddenReasons}=petVisibilityState();
+ if(visible===pet.isVisible())return;
+ petDiagnostics?.reason(visible?'visibility-restore':hiddenReasons[0]);
+ if(visible){pet.showInactive();if(greet)triggerPet('wave','show');void deliverKeptLine();}
+ else{if(!fullscreenHidden)petAuto();pet.hide();}
+}
+function closePetFullscreen(){fullscreenObserver?.close();fullscreenObserver=null;fullscreenPolicy.reset();}
+function syncPetFullscreenObserver(){
+ if(process.platform!=='win32'||!settings.preferences?.petHideOnFullscreen){closePetFullscreen();return;}
+ if(fullscreenObserver||!pet||pet.isDestroyed())return;
+ const handle=petDiagnostics.snapshot().nativeHandle;
+ if(!handle)return;
+ fullscreenObserver=createPetFullscreenObserver({path:join(build,'pet-fullscreen.exe'),handle,onSample:fullscreenPolicy.observe,onError:()=>{fullscreenPolicy.reset();audit({type:'pet-fullscreen-observer-unavailable'});}});
+}
 function applyPetPreferences(resize=false){
   if(!pet||pet.isDestroyed())return;
   if(resize){
@@ -253,7 +287,7 @@ function applyPetPreferences(resize=false){
   }
   applyPetTopmost(pet,settings.preferences.alwaysOnTop);
   configurePetInteractions();
-  if(settings.preferences.petVisible&&petAssetsReady){const wasVisible=pet.isVisible();pet.showInactive();if(!wasVisible){triggerPet('wave','show');void deliverKeptLine();}}else{cancelGesture('hidden');petAuto();pet.hide();}
+  syncPetFullscreenObserver();applyPetVisibility();
   setGestureMode(gestureMode);updateTray();
 }
 // Approved design C8: a line kept while neither the pet nor the main window could show it appears on the pet once
@@ -343,8 +377,20 @@ ipcMain.handle('tokens:import',async()=>{const result=await dialog.showOpenDialo
 ipcMain.handle('quotas:action',(_,action,args)=>quotas.action(action,args));
 ipcMain.handle('statistics:export',async(_,args)=>{const format=args?.format==='csv'?'csv':'json';const text=await tokenAction('statistics-export',{...args,format});const result=await dialog.showSaveDialog(panel,{defaultPath:'AI 酱-统计.'+format,filters:[{name:format.toUpperCase(),extensions:[format]}]});if(result.canceled)return false;writeFileSync(result.filePath,text,'utf8');return true;});
 ipcMain.handle('settings:get',()=>settingsView());
-ipcMain.handle('settings:set',(_,patch)=>setPreferences(patch));
-ipcMain.handle('settings:action',(_,action)=>settingsAction(action));
+ipcMain.handle('settings:set',(_,patch)=>updateGuard('storage',()=>setPreferences(patch)));
+ipcMain.handle('settings:action',(_,action)=>updateGuard('storage',()=>settingsAction(action)));
+ipcMain.handle('updates:action',async(event,command,value)=>{
+  if(event.sender!==panel?.webContents||event.senderFrame!==panel.webContents.mainFrame||!updateCommands.has(command))throw Error('Invalid update request');
+  if(!appUpdates)return {__buddyError:true,code:'APP_UPDATE_UNAVAILABLE',message:'APP_UPDATE_UNAVAILABLE'};
+  try{
+    if(command==='bootstrap'){
+      const state=appUpdates.view();
+      if(!['bootstrap','recovery-required'].includes(state.phase)&&!state.target?.requiresBootstrap)throw updateError('APP_UPDATE_INVALID_STATE');
+      await shell.openExternal(bootstrapUrl);return appUpdates.view();
+    }
+    return await appUpdates.action(command,value);
+  }catch(error){const code=error.code??'APP_UPDATE_FAILED';return {__buddyError:true,code,message:code};}
+});
 ipcMain.handle('pet:play',(_,request)=>playPet(request));
 ipcMain.handle('pet:auto',()=>petAuto());
 ipcMain.handle('pet:state',()=>petState);
@@ -358,16 +404,16 @@ async function manageResources(characterId){
   const child=spawn(manager,['--root='+root,...(ids.length?['--characters-add='+ids.join(',')]:[])],{detached:true,stdio:'ignore'});await new Promise((ok,fail)=>{child.once('spawn',ok);child.once('error',fail);});child.unref();return {ok:true};
 }
 ipcMain.handle('resources:status',()=>resources.status(true));
-ipcMain.handle('resources:manage',(_,id)=>manageResources(id));
+ipcMain.handle('resources:manage',(_,id)=>updateGuard('storage',()=>manageResources(id)));
 ipcMain.handle('data-import:state',()=>dataImport?.state()??{onboarding,phase:'idle',canCancel:false});
 ipcMain.handle('data-import:choose',()=>dataImport.choose());
 ipcMain.handle('data-import:preview',(_,args)=>dataImport.preview(args));
-ipcMain.handle('data-import:start',(_,args)=>dataImport.start(args));
+ipcMain.handle('data-import:start',(_,args)=>updateGuard('data',()=>dataImport.start(args)));
 ipcMain.handle('data-import:cancel',async(_,args)=>{const value=await dataImport.cancel(args);if(onboarding&&!value.cancelling)setTimeout(()=>{void shutdown();},100);return value;});
-ipcMain.handle('data-import:create-new',()=>dataImport.createNew());
-ipcMain.handle('data-import:resume-work',()=>dataImport.resumeWork());
+ipcMain.handle('data-import:create-new',()=>updateGuard('data',()=>dataImport.createNew()));
+ipcMain.handle('data-import:resume-work',()=>updateGuard('data',()=>dataImport.resumeWork()));
 function assertImportIdle(){if(importBarrier)throw Error('正在导入资料，请先完成或取消导入');}
-ipcMain.handle('agents:action',async(event,action,payload)=>{if(event.sender!==panel?.webContents)throw Error('Invalid workspace sender');assertImportIdle();if(!agents)throw Error('工作插件入口尚未就绪');try{return await agents.legacyAction(action,payload??{});}catch(error){return {__buddyError:true,message:error.message,code:error.code,details:error.details};}});
+ipcMain.handle('agents:action',async(event,action,payload)=>{if(event.sender!==panel?.webContents)throw Error('Invalid workspace sender');assertImportIdle();if(!agents)throw Error('工作插件入口尚未就绪');try{return await updateGuard('work',()=>agents.legacyAction(action,payload??{}));}catch(error){return {__buddyError:true,message:error.message,code:error.code,details:error.details};}});
 ipcMain.handle('agents:choose-workspace',async event=>{if(event.sender!==panel?.webContents)throw Error('Invalid workspace sender');assertImportIdle();if(!agents?.status().enabled)throw Object.assign(Error('请先安装并启用工作与协作插件'),{code:'WORK_PLUGIN_REQUIRED'});const result=await dialog.showOpenDialog(panel,{title:t('选择工作项目目录'),properties:['openDirectory']});return result.canceled?null:result.filePaths[0];});
 ipcMain.handle('work:status',event=>{if(event.sender!==panel?.webContents)throw Error('Invalid workspace sender');return agents?.status()??{state:'not-ready',installed:false,enabled:false};});
 ipcMain.handle('work:open',async event=>{if(event.sender!==panel?.webContents)throw Error('Invalid workspace sender');assertImportIdle();try{return await agents.open();}catch(error){return {__buddyError:true,message:error.message,code:error.code};}});
@@ -387,30 +433,31 @@ ipcMain.handle('models:delete',(_,id)=>provider.remove(id));
 ipcMain.handle('models:activate',(_,id)=>provider.activate(id));
 // Listing belongs to the editor draft; Cancel must not replace a saved route's catalog.
 ipcMain.handle('models:list',(_,draft)=>provider.fetchModels(draft));
-ipcMain.handle('models:test',(_,draft)=>provider.test(draft));
+ipcMain.handle('models:test',(_,draft)=>updateGuard('chat',()=>provider.test(draft)));
 ipcMain.handle('cg:get',()=>connectionView(cg));
 ipcMain.handle('cg:save',(_,draft)=>saveConnection(cg,draft));
 ipcMain.handle('cg:delete',(_,id)=>cg.remove(id));
 ipcMain.handle('cg:activate',(_,id)=>cg.activate(id));
 ipcMain.handle('cg:enabled',(_,enabled)=>cg.setEnabled(enabled===true));
 ipcMain.handle('cg:list',async(_,draft)=>{const models=await cg.fetchModels(draft);if(draft.id)await cg.saveModels(draft.id,models);return models;});
-ipcMain.handle('cg:check',(_,draft)=>cg.test(draft));
-ipcMain.handle('cg:test-image',(_,draft)=>{assertImportIdle();return cg.testImage(draft);});
-ipcMain.handle('cg:resume',async(_,id)=>{assertImportIdle();try{return {ok:true,job:await cg.resume(id)};}catch(error){return {ok:false,error:error.message};}});
+ipcMain.handle('cg:check',(_,draft)=>updateGuard('cg',()=>cg.test(draft)));
+ipcMain.handle('cg:test-image',(_,draft)=>{assertImportIdle();return updateGuard('cg',()=>cg.testImage(draft));});
+ipcMain.handle('cg:resume',async(_,id)=>{assertImportIdle();try{return {ok:true,job:await updateGuard('cg',()=>cg.resume(id))};}catch(error){return {ok:false,error:error.message};}});
 ipcMain.handle('cg:image',(_,id)=>{const job=cg.assertReadableJob(id);if(!job?.assetRef)throw Error('CG 尚未完成');return {dataUrl:cg.readAsset(job.assetRef)};});
 ipcMain.handle('game:action',async(event,action,args)=>{
   if(action==='companion-r95'&&args?.action==='owner-bind'&&event.sender!==panel?.webContents)throw Error('主人绑定只能由本体设置页确认');
   if(typeof action!=='string')throw new Error('Invalid action');
-  if(importBarrier&&!['view','settings-get','companion-state','companion-memory-view','companion-life-list','cg-gallery','cg-data','cg-thumbnail','sprite-data','bg-data'].includes(action))assertImportIdle();
+  if(importBarrier&&!gameReads.has(action))assertImportIdle();
   if(!game)return {ok:false,code:'COMPANION_SAFE_MODE',error:'陪伴功能启动失败，已进入安全模式：'+(startupFailure?.message??'尚未就绪')};
   const dialog=provider.enabled&&['chat','side-story','side-story-free-reply','companion-group-send','companion-group-continue'].includes(action);
+  const release=gameReads.has(action)||gameStops.has(action)?null:updateReservation.enter(dialog?'chat':'storage');
   if(dialog){gameRequests++;petEvent({kind:'dialog',active:true});}
-  try{const result=await game.action(action,args||{});if(dialog&&result?.ok===false&&result.code!=='CHARACTER_NOT_INSTALLED'&&!userStopped(result.error?.message??result.message))feedback({id:'fail',source:'chat-error',text:'聊天暂时失败，请重试。',cycles:1});
+  try{const result=await measureDesktopDiagnostic('game-ipc-dispatch',()=>game.action(action,args||{}));if(dialog&&result?.ok===false&&result.code!=='CHARACTER_NOT_INSTALLED'&&!userStopped(result.error?.message??result.message))feedback({id:'fail',source:'chat-error',text:'聊天暂时失败，请重试。',cycles:1});
     // A line read on the pet or in the main window closes it in the other place too (approved design C8).
     if(action==='companion-r95'&&args?.action==='speech-read'&&result?.ok!==false){petEvent({kind:'social-line-read',messageId:args.args?.messageId});if(panel&&!panel.isDestroyed())panel.webContents.send('game:output',{type:'social.updated'});}
     return result;}
   catch(error){if(dialog&&!userStopped(error?.message??error))feedback({id:'fail',source:'chat-error',text:'聊天暂时失败，请重试。',cycles:1});throw error;}
-  finally{if(dialog){gameRequests--;petEvent({kind:'dialog',active:gameRequests>0||activityClock.busy.size>0});}}
+  finally{release?.();if(dialog){gameRequests--;petEvent({kind:'dialog',active:gameRequests>0||activityClock.busy.size>0});}}
 });
 ipcMain.handle('pet:story-feedback',(event,value)=>{if(event.sender!==panel?.webContents||!game?.hasCharacter?.(value?.characterId)||!validEmotion(value.emotion)||typeof value.text!=='string'||value.text.length>4000)return false;chatFeedback({...value,messageId:'story:'+String(value.messageId).slice(0,160)});return true;});
 ipcMain.on('panel:open',(event,page)=>{
@@ -479,18 +526,35 @@ const control=createLocalControlServer({
   onRequest:async request=>{
       let result;
       if(request.command==='snapshot')result={processId:process.pid,singleInstance:app.hasSingleInstanceLock(),snapshot,settings:settingsView(),petAction:petState,chat:{enabled:provider?.enabled || false,model:provider?.defaultModel},petBounds:pet?.getBounds(),petContentBounds:pet?.getContentBounds(),petVisible:pet?.isVisible(),petAssetsReady,petAlwaysOnTop:pet?.isAlwaysOnTop(),petInteraction:{gestureMode,lastPetHit,ignoringMouse,dragging:!!drag,...petInteraction()},displays:screen.getAllDisplays().map(d=>({workArea:d.workArea,scaleFactor:d.scaleFactor})),build,dataRoot};
-      else if(request.command==='installation-status')result={version:appVersion,build,dataRoot,processId:process.pid,ready:(!!game||!!startupFailure)&&petAssetsReady,onboarding,safeMode:!!startupFailure,startupFailure,busy:!!(gameRequests||provider?.status().busy||cg?.status().busy||extraBusy()),resources:resources.status(),components:{extensions:extensionComponentStatus(plugins?.snapshot())}};
+      else if(request.command==='installation-status'){
+        const updateBusy=updateReservation.status(),reasons=updateBusy.reasons.filter(row=>row.capability!=='data');
+        result={version:appVersion,root,build,dataRoot,processId:process.pid,ready:(!!game||!!startupFailure)&&petAssetsReady,onboarding,safeMode:!!startupFailure,startupFailure,
+          busy:reasons.length>0,reasons,updateBusy,resources:resources.status(),components:{extensions:extensionComponentStatus(plugins?.snapshot())}};
+      }
       else if(request.command==='local-card-status'&&localCardBuild){
         const installed=(plugins?.snapshot()?.dsh?.installed??[]).map(({packageKey,packageName,exactVersion,enabled,runtimeVerified,sourceId,sourceDigest,phase})=>({packageKey,packageName,exactVersion,enabled,runtimeVerified,sourceId,sourceDigest,phase}));
         const view=game?.viewState();
         result={quiet:cardQuiet,installed,embed:pluginEmbed?.snapshot(),counts:view&&{characters:view.characters.length,personas:view.personas.length,conversations:view.conversations.length,messages:view.conversations.reduce((n,row)=>n+row.messageCount,0),groups:view.groups.length,connections:provider.state.profiles.length,cg:cg.jobs.filter(row=>!row.deletedAt).length},sidebar:panel&&!panel.isDestroyed()?await panel.webContents.executeJavaScript(`Array.from(document.querySelectorAll('nav button')).some(b=>['一起玩牌','Card table'].includes(b.innerText.trim()))`):false};
       }
       else if(request.command==='data-import-state')result=dataImport?.state();
-      else if(request.command==='installation-quit'){if(request.expectedBuild!==build)result={ok:false,error:'Different installation'};else if(gameRequests||provider?.status().busy||cg?.status().busy||extraBusy())result={ok:false,busy:true};else{result={ok:true};setTimeout(()=>{void shutdown();},100);}}
+      else if(['installation-reserve','installation-release','installation-quit'].includes(request.command)){
+        if(request.expectedBuild!==build)result={ok:false,error:'Different installation'};
+        else if(request.command==='installation-release'){
+          result={ok:request.expectedProcessId===process.pid&&updateReservation.release(request.reservationId)};
+        }else if(request.command==='installation-reserve'||request.reservationId!==undefined){
+          if(request.expectedProcessId!==process.pid||!appUpdates?.permitsReservation(request.reservationId)||quitting||shuttingDown)result={ok:false,error:'Invalid update owner'};
+          else if(request.command==='installation-reserve')result=updateReservation.reserve(request.reservationId);
+          else{
+            result=updateReservation.commit(request.reservationId);
+            if(result.ok)setTimeout(()=>{void shutdown(true);},100);
+          }
+        }else if(updateReservation.active()||updateReservation.status().reasons.some(row=>row.capability!=='data'))result={ok:false,busy:true};
+        else{result={ok:true};setTimeout(()=>{void shutdown();},100);}
+      }
       else if(request.command==='resources-status')result=resources.status(true);
       // One-time repairs: plan is read-only; apply needs the planId the user confirmed.
       else if(request.command==='maintenance-plan'){if(!game)throw Error('陪伴功能未启动');result=game.maintenance.plan(request.task);}
-      else if(request.command==='maintenance-apply'){if(!game)throw Error('陪伴功能未启动');if(gameRequests||provider?.status().busy||cg?.status().busy)result={ok:false,busy:true};else result=await game.maintenance.apply(request.task,request.planId);}
+      else if(request.command==='maintenance-apply'){if(!game)throw Error('陪伴功能未启动');if(gameRequests||provider?.status().busy||cg?.status().busy||updateReservation.active())result={ok:false,busy:true};else result=await updateGuard('storage',()=>game.maintenance.apply(request.task,request.planId));}
       else if(request.command==='validation-window'&&arg('validation')==='1'){
         if(!panel||panel.isDestroyed())openPanel('galgame',false);
         if(![900,1180,1600,1920].includes(request.width))throw Error('Validation width outside test matrix');
@@ -508,6 +572,20 @@ const control=createLocalControlServer({
         result={bounds:pet.getContentBounds()};
       }
       else if(request.command==='validation-pet-window'&&arg('validation')==='1')result={state:petDiagnostics?.snapshot(),recent:petDiagnostics?.recent()};
+      else if(request.command==='validation-desktop-evidence'&&arg('validation')==='1'&&/^ub207r1-[a-z0-9-]+$/.test(arg('pipe')??'')&&arg('data')){
+        if(request.op==='start'){
+          startDesktopSample(request.phase);
+          await panel?.webContents.executeJavaScript(`(()=>{window.buddyDesktopSample?.observer?.disconnect();const row={count:0,maxMs:0};if(PerformanceObserver.supportedEntryTypes.includes('longtask')){row.observer=new PerformanceObserver(list=>{for(const e of list.getEntries()){row.count++;row.maxMs=Math.max(row.maxMs,e.duration);}});row.observer.observe({type:'longtask'});}window.buddyDesktopSample=row;})()`).catch(()=>{});
+          result={ok:true};
+        }else if(request.op==='stop'){
+          const main=stopDesktopSample();
+          const renderer=await panel?.webContents.executeJavaScript(`(()=>{const row=window.buddyDesktopSample;if(!row)return null;row.observer?.disconnect();delete window.buddyDesktopSample;return {longTasks:row.count,maxMs:row.maxMs};})()`).catch(()=>null);
+          result={main,renderer,processes:app.getAppMetrics().map(({type,cpu,memory})=>({type,cpuPercent:cpu.percentCPUUsage,workingSetKiB:memory.workingSetSize}))};
+        }else if(request.op==='window'){
+          const state=petDiagnostics?.snapshot();
+          result={state,native:await readPetFullscreenSnapshot({path:join(build,'pet-fullscreen.exe'),handle:state?.nativeHandle}),recent:petDiagnostics?.recent().slice(-24)};
+        }else throw Error('Invalid desktop evidence operation');
+      }
       else if(request.command==='validation-metrics'&&arg('validation')==='1'){
         result={processes:app.getAppMetrics(),gpuFeatures:app.getGPUFeatureStatus(),displays:screen.getAllDisplays().map(d=>({id:d.id,bounds:d.bounds,workArea:d.workArea,scaleFactor:d.scaleFactor})),trajectoryVisible:!!trajectoryWindow&&!trajectoryWindow.isDestroyed(),rendererErrors:[...rendererErrors]};
       }
@@ -530,8 +608,8 @@ const control=createLocalControlServer({
       else if(request.command==='settings-get')result=settingsView();
       else if(request.command==='quota-action')result=await quotas.action(request.action,request.args);
       else if(request.command==='token-action')result=await tokenAction(request.action,request.args);
-      else if(request.command==='settings-set')result=await setPreferences(request.patch);
-      else if(request.command==='settings-action')result=await settingsAction(request.action);
+      else if(request.command==='settings-set')result=await updateGuard('storage',()=>setPreferences(request.patch));
+      else if(request.command==='settings-action')result=await updateGuard('storage',()=>settingsAction(request.action));
       else if(request.command==='show'){openPanel(request.page || 'overview',false);result={ok:true};}
       else if(request.command==='hide'){petAuto();panel?.hide();result={ok:true};}
       else if(request.command==='pet-hide'){await setPreferences({petVisible:false});result={ok:true};}
@@ -562,16 +640,18 @@ control.on('error',error=>{
 });
 
 let shuttingDown=false;
-async function shutdown() {
+async function shutdown(forUpdate=false) {
   if(quitting||shuttingDown)return;
+  forUpdate ||= updateReservation.committed();
   shuttingDown=true;
   try{
   if(agents?.busy()){const choice=await dialog.showMessageBox(panel??pet,{type:'question',title:'工作与协作',message:'仍有工作任务正在运行。',buttons:['完成后退出','停止并保存后退出','返回'],defaultId:2,cancelId:2});if(choice.response===2)return;await agents.prepareExit(choice.response===0?'finish':'stop-save');}
-  quitting=true;await dailyCgScheduler?.stopAndDrain();await rewardTail;await agents?.close();pluginEmbed?.close();await plugins?.close();await pluginUsage?.close();petDiagnostics?.dispose();dataImport?.close();buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();provider?.close();await cg?.close();await game?.flushWorkLedger?.().catch(()=>{});await game?.close();
+  quitting=true;closePetFullscreen();applyPetVisibility(false);
+  await dailyCgScheduler?.stopAndDrain();await rewardTail;await agents?.close();pluginEmbed?.close();await plugins?.close();await pluginUsage?.close();petDiagnostics?.dispose();dataImport?.close();buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();provider?.close();await cg?.close();await game?.flushWorkLedger?.().catch(()=>{});await game?.close();
   await workSourceRegistry?.flush();
   if(worker)await closeMonitorWorker(worker,{onDiagnostic:value=>audit({type:'monitor-worker-close',...value})});
-  control.close();app.exit(0);
-  }catch(error){quitting=false;audit({type:'shutdown-blocked',code:error.code,message:error.message});await dialog.showMessageBox(panel??pet,{type:'error',title:'工作尚未停止',message:'退出未完成，已保留当前运行状态。',detail:String(error.message),buttons:['返回']});}
+  appUpdates?.close({keepApply:forUpdate});control.close();app.exit(0);
+  }catch(error){quitting=false;syncPetFullscreenObserver();applyPetVisibility(false);if(forUpdate)updateReservation.reopenAfterFailedShutdown();audit({type:'shutdown-blocked',code:error.code,message:error.message});await dialog.showMessageBox(panel??pet,{type:'error',title:'工作尚未停止',message:'退出未完成，已保留当前运行状态。',detail:String(error.message),buttons:['返回']});}
   finally{shuttingDown=false;}
 }
 app.on('before-quit',event=>{event.preventDefault();if(!quitting)void shutdown();});
@@ -619,7 +699,7 @@ app.whenReady().then(async()=>{
   });
   plugins=await createPluginPlatform({pageAppearance:options=>pluginPageAppearance(settings.preferences,themeCharacter,{...options,faces:pluginFaces(),portraits:(builtinPluginPortraits??=builtinPortraits(build))}),root,build,dataRoot,crypto:safeStorage,legacyManager:legacyPlugins,getSocialHost:()=>game?.r95?.socialHost,getGame:()=>game,getProvider:()=>provider,BrowserWindow,session,ipcMain,pluginClientPreloadPath:join(build,'plugin-client-preload.cjs'),openSocialSetup:request=>openSocialLogin(request),renderBiliSheet:createBiliSheetRenderer(nativeImage),analyzeBiliFrames:createBiliFrameAnalyzer(nativeImage),onReadingOpen:async()=>{assertImportIdle();if(!pluginEmbed)throw Object.assign(Error('Plugin page is not ready'),{code:'PLUGIN_EMBED_UNAVAILABLE'});await pluginEmbed.handle({op:'open',target:'bilibili'});},
     hostServices:{'work.host':{capability:'work.host',handler:request=>agents.service(request)}},resolveToolScope:context=>agents.nativeToolScope(context),
-    runtimeLockPath:arg('dsh-runtime-lock'),busy:()=>!!agents?.busy(),onUpdate:publishPlugins,audit,automaticWorkAllowed,
+    runtimeLockPath:arg('dsh-runtime-lock'),busy:()=>!!agents?.busy(),onUpdate:publishPlugins,audit,automaticWorkAllowed,maintenanceAdmission:()=>!updateReservation.active(),
     openExternal:async url=>{const parsed=new URL(url);if(!['http:','https:'].includes(parsed.protocol)||parsed.username||parsed.password)throw Error('外部页面地址无效');await shell.openExternal(parsed.href);},
     chooseComponentArchive:async()=>{const value=await dialog.showOpenDialog(panel??undefined,{title:'选择匹配的DSH运行组件',properties:['openFile'],filters:[{name:'DSH runtime component',extensions:['tgz']}]});return value.canceled?null:value.filePaths[0];},
     onUsage:value=>pluginUsage.record(value),
@@ -643,7 +723,7 @@ app.whenReady().then(async()=>{
   await cg.ready;
   let legacyGameSettings={};
   try{
-  game=await createGalgame({workBridge:agents.lifeBridge,r95Options:{tickAllowed:()=>!cardQuiet,getTimeZone:()=>settings.preferences?.statisticsTimeZone??'local',work:{ownerAction:(...args)=>agents.ownerAction(...args),getOwnerPlan:value=>agents.getOwnerPlan(value),ownerWorkOptions:value=>agents.ownerWorkOptions(value)},getRuntimeState:scope=>({sleepPhase:activityClock.phase,sleepIntentVersion:activityClock.sleepIntentVersion,waitingForReply:gameRequests>0,presenting:petState.socialPresentation===true,canPresent:(!!panel&&!panel.isDestroyed()&&panel.isVisible()&&!panel.webContents.isLoading())||(!!pet&&!pet.isDestroyed()&&pet.isVisible()&&petState.characterId===scope.characterId&&!petState.manual),activityAllowed:false}),onSpeech:value=>{const petShown=!!pet&&!pet.isDestroyed()&&pet.isVisible()&&petState.characterId===value.scope.characterId;if(petShown)petEvent({kind:'social-line',value});if(panel&&!panel.isDestroyed()&&(panel.isVisible()||petShown))panel.webContents.send('game:output',{type:'social.updated',...(petShown?{petMessageId:value.messageId}:{})});},onSleepIntent:value=>{if(value.kind==='temporary-feeding-start')activityClock.beginTemporaryWake(value.activityOriginId);else if(value.resumeOriginalSleep)activityClock.endTemporaryWake(value.activityOriginId);publishInteraction(true);}},dataRoot,provider,model,cg,resources,audit,imageConverter:rasterizeImage,onActivity:internalActivity,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,onOutput:event=>{if(panel&&!panel.isDestroyed())panel.webContents.send('game:output',event);},automaticWorkAllowed,getReplyStyle:()=>settings.preferences?.replyStyle??'natural',getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value?.kind==='daily'?{id:value.id,status:value.status}:value);}});
+  game=await createGalgame({workBridge:agents.lifeBridge,r95Options:{tickAllowed:automaticWorkAllowed,getTimeZone:()=>settings.preferences?.statisticsTimeZone??'local',work:{ownerAction:(...args)=>agents.ownerAction(...args),getOwnerPlan:value=>agents.getOwnerPlan(value),ownerWorkOptions:value=>agents.ownerWorkOptions(value)},getRuntimeState:scope=>({sleepPhase:activityClock.phase,sleepIntentVersion:activityClock.sleepIntentVersion,waitingForReply:gameRequests>0,presenting:petState.socialPresentation===true,canPresent:(!!panel&&!panel.isDestroyed()&&panel.isVisible()&&!panel.webContents.isLoading())||(!!pet&&!pet.isDestroyed()&&pet.isVisible()&&petState.characterId===scope.characterId&&!petState.manual),activityAllowed:false}),onSpeech:value=>{const petShown=!!pet&&!pet.isDestroyed()&&pet.isVisible()&&petState.characterId===value.scope.characterId;if(petShown)petEvent({kind:'social-line',value});if(panel&&!panel.isDestroyed()&&(panel.isVisible()||petShown))panel.webContents.send('game:output',{type:'social.updated',...(petShown?{petMessageId:value.messageId}:{})});},onSleepIntent:value=>{if(value.kind==='temporary-feeding-start')activityClock.beginTemporaryWake(value.activityOriginId);else if(value.resumeOriginalSleep)activityClock.endTemporaryWake(value.activityOriginId);publishInteraction(true);}},dataRoot,provider,model,cg,resources,audit,imageConverter:rasterizeImage,onActivity:internalActivity,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,onOutput:event=>{if(panel&&!panel.isDestroyed())panel.webContents.send('game:output',event);},automaticWorkAllowed,getReplyStyle:()=>settings.preferences?.replyStyle??'natural',getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value?.kind==='daily'?{id:value.id,status:value.status}:value);}});
   await cg.drainRewardFacts();if(!cardQuiet)cg.start();
    dailyCgScheduler=createDailyCgScheduler({dataRoot,now:Date.now,getTimeZone:()=>settings.preferences?.statisticsTimeZone??'local',admission:()=>!!game&&!quitting&&cg.enabled&&cg.available()&&automaticWorkAllowed()&&activityClock.phase==='awake',capture:context=>{const captured=game.captureDailyCg(context);return {...captured,profile:structuredClone(cg.selected()),themeConnection:structuredClone(cg.themePlanner.capture(captured.modelBinding))};},enqueue:(snapshot,context)=>game.enqueueDailyCg({...snapshot,signal:context.signal}),onError:error=>audit({type:'daily-cg-failed',code:error.code??'DAILY_CG_FAILED',message:String(error.message).slice(0,300)})});
    await dailyCgScheduler.ready;dailyCgScheduler.start();
@@ -662,7 +742,7 @@ app.whenReady().then(async()=>{
   const area=screen.getPrimaryDisplay().workArea;
   const bounds=clamp(petBounds(settings.petBounds || {x:area.x+area.width-290,y:area.y+area.height-290},settings.preferences.petScale));
   pet=new BrowserWindow({...petWindowOptions(bounds,settings.preferences.petScale),title:APP_NAME,icon:appIconPath,webPreferences:{preload:join(build,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,partition:'whale-memory'}});
-  petDiagnostics=createPetWindowDiagnostics(()=>pet,audit,{getExpected:()=>({visible:settings.preferences.petVisible,alwaysOnTop:settings.preferences.alwaysOnTop,assetsReady:petAssetsReady,quitting}),getInteraction:()=>({gestureMode,ignoringMouse,dragging:!!drag,gestureId:drag?.gestureId,motion:petMotion?.mode})});
+  petDiagnostics=createPetWindowDiagnostics(()=>pet,audit,{getExpected:()=>({visible:petVisibilityState().visible,petVisible:settings.preferences.petVisible,alwaysOnTop:settings.preferences.alwaysOnTop,assetsReady:petAssetsReady,quitting}),getInteraction:()=>({gestureMode,ignoringMouse,dragging:!!drag,gestureId:drag?.gestureId,motion:petMotion?.mode})});
   for(const event of ['show','hide','minimize','restore','focus','blur','always-on-top-changed','closed'])pet.on(event,()=>petDiagnostics.record(event));
   pet.webContents.on('render-process-gone',(_,value)=>petDiagnostics.record('render-process-gone',{renderGone:value}));petDiagnostics.record('created');
   brandWindow(pet);
@@ -671,17 +751,19 @@ app.whenReady().then(async()=>{
   for(const name of ['show','hide'])pet.on(name,()=>syncBrandIcons());
   petMotion=new PetMotion({bounds,requireReady:true,displays:()=>screen.getAllDisplays(),onPosition:value=>{if(pet&&!pet.isDestroyed())positionPet(pet,value,settings.preferences.petScale);},onState:()=>{publishInteraction(true);}});
   configurePetInteractions();activityClock.resume();
-  applyPetTopmost(pet,settings.preferences.alwaysOnTop);setGestureMode(false);
+  applyPetTopmost(pet,settings.preferences.alwaysOnTop);setGestureMode(false);syncPetFullscreenObserver();
   pet.loadFile(join(build,'pet.html'),{...previewQuery,query:{...previewQuery.query,petCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter))}});pet.once('ready-to-show',async()=>{
     if(PET_ACTIONS.some(action=>action.sourceFrameCount))try{await pet.webContents.executeJavaScript('window.petCharacterReady.then(()=>window.frameSequenceInspection.renderer.ready).then(()=>true)');}catch(error){pushBounded(rendererErrors,error.message);audit({type:'pet-assets-error',message:error.message});return;}
-    if(!pet.isDestroyed()){petAssetsReady=true;applyPetPreferences();}
+    if(!pet.isDestroyed()){petAssetsReady=true;applyPetPreferences();if(!startupFailure)appUpdates?.start();}
   });
   pet.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   tray=new Tray(appIcon.resize({width:32,height:32}));tray.setToolTip(arg('rig')==='working'?APP_NAME+' · 工作动作小样（独立预览）':APP_NAME+' · 本地 AI 用量监控与桌面陪伴');syncBrandIcons();
   updateTray();tray.on('double-click',()=>openPanel());
-  const recoverPet=()=>{if(!pet||pet.isDestroyed())return;cancelGesture('system-recovery');petMotion?.recover(clamp(petBounds(pet.getContentBounds(),settings.preferences.petScale)));publishInteraction(true);};
+  const recoverPet=()=>{if(!pet||pet.isDestroyed())return;cancelGesture('system-recovery');petMotion?.recover(clamp(petBounds(pet.getContentBounds(),settings.preferences.petScale)));publishInteraction(true);fullscreenObserver?.sample();};
   pet.on('hide',()=>cancelGesture('window-hidden'));pet.webContents.on('render-process-gone',()=>cancelGesture('renderer-lost'));
+  pet.on('closed',closePetFullscreen);
   screen.on('display-removed',recoverPet);screen.on('display-metrics-changed',recoverPet);
+  screen.on('display-added',()=>fullscreenObserver?.sample());
   powerMonitor.on('suspend',()=>{game?.r95?.feeding.pause('system-suspend');recoverPet();});powerMonitor.on('resume',()=>{game?.r95?.feeding.resume({sleeping:false});recoverPet();activityClock.resume();publishInteraction(true);});
   let lastCursorPoint=null;
   setInterval(()=>{
@@ -706,7 +788,13 @@ app.whenReady().then(async()=>{
   return worker;
   },{shouldRestart:()=>!quitting,onExit:code=>{rewardDrainPending=false;if(!quitting)audit({type:'monitor-worker-exit',code});}});
   if(localCardBuild&&!startupFailure&&!plugins.bundledCardGamesStatus().installed)await plugins.installBundledCardGames();
-  control.listen(pipe);audit({type:'app-start',mode:'offline',version:appVersion,build});
+  const updateStore=createSnapshotStorage(join(dataRoot,'app-update.json'));
+  const updatePrefs=await readJson(updateStore,{}).catch(()=>({}));
+  const updateBackend=createAppUpdateBackend({root,build,dataRoot,pipe,installation:installationResolution?.installation,version:appVersion});
+  appUpdates=createUpdateService({version:appVersion,build:build.split(/[\\/]/).at(-1),supported:updateBackend.supported&&!startupFailure,run:updateBackend.run,
+    load:()=>updatePrefs,save:value=>updateGuard('storage',()=>updateStore.writeText(JSON.stringify(value))),
+    onChange:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('updates:state',value);}});
+  control.listen(pipe);if(!startupFailure&&petAssetsReady)appUpdates.start();audit({type:'app-start',mode:'offline',version:appVersion,build});
   if(startupFailure)openPanel('safe-mode',false);
   else if(reopenRequested||['overview','galgame','settings','actions','agent-tasks','plugins','shop','backpack','social'].includes(arg('open')))openPanel(reopenRequested?'overview':arg('open'),false);
 }).catch(error=>{audit({type:'startup-error',message:error.stack});console.error(error);enterSafeMode(error);});

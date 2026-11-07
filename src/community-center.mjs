@@ -6,6 +6,7 @@ import { locale, t as coreT } from "./i18n.mjs";
 import { communityMessages, communityErrorText, communityCount } from "./community/messages.mjs";
 import { Icon } from "./ui-icons.mjs";
 import { StatusPill, Tabs, EmptyState, Menu, Switch } from "./ui-controls.mjs";
+import {legacyUpdateKey} from "./plugin-update-policy.mjs";
 import { Dialog } from "./ui-dialog.mjs";
 import { InstallPage, PluginLogo, installStage } from "./community-install-page.mjs";
 import { WorkDetail, AuthorDialog } from "./community-detail.mjs";
@@ -102,13 +103,13 @@ export function MaintenanceRow({ job, installed, ahead, busy, onCancel, onRetry,
     next && h("button", { type: "button", className: "ui-btn sm", disabled: busy, "data-maintenance-action": next, onClick: () => next === "retry" ? onRetry(job) : onReview(job) }, Icon(next === "retry" ? "refresh" : "eye", { size: 14 }), t(next === "retry" ? "重试" : "查看")));
 }
 export function UpdateCard({ update, record, busy, onReview }) {
-  const name = record?.packageName ?? update.packageKey.split(":").at(-1), changes = (update.changes ?? []).filter((row) => releaseNotes(row));
+  const name = record?.packageName ?? update.packageName ?? update.packageKey.split(":").at(-1), changes = (update.changes ?? []).filter((row) => releaseNotes(row));
   return h("article", { className: "ws-card ext-upd", "data-update": update.packageKey }, h(PluginLogo, { packageName: name, size: 44 }),
     h("div", { className: "ext-ir-main" },
       h("div", { className: "ext-row" }, h("b", null, pluginName(name)), h("span", { className: "ext-cap" }, update.from + " → " + update.to), !["available", "needs-user"].includes(update.state) && stages[update.state] && h(StatusPill, { tone: stageTone[update.state] ?? "idle" }, t(stages[update.state])), update.addedCapabilities?.length > 0 && h(StatusPill, { tone: "warn" }, tn("新增 {n} 项权限",update.addedCapabilities.length)), update.incompatibleData && h(StatusPill, { tone: "warn" }, t("资料版本变化"))),
       changes.length > 0 && h("details", { className: "ext-tech ext-changes", open: true }, h("summary", null, t("更新内容")), h("ul", { className: "ext-bul" }, ...changes.map((row) => h("li", { key: row.version }, Icon("check", { size: 14 }), h("span", null, (changes.length > 1 ? row.version + " · " : "") + releaseNotes(row)))))),
       update.addedCapabilities?.length > 0 && h("small", { className: "ext-cap" }, t("新增能力需要重新确认")), update.incompatibleData && h("small", { className: "ext-cap" }, t("资料版本变化，暂不自动更新。")), update.error && h("small", { className: "ext-cap", role: "status" }, communityErrorText(update.error.code) ?? update.error.message)),
-    h("button", { type: "button", className: "ui-btn primary", disabled: busy || update.incompatibleData || update.state === "queued", onClick: () => onReview(update) }, t("查看并更新…")));
+    h("button", { type: "button", className: "ui-btn primary", disabled: busy || update.incompatibleData || ["queued", "running", "unavailable", "interrupted-needs-user"].includes(update.state), onClick: () => onReview(update) }, update.state === "failed" ? L("重试…", "Retry…") : t("查看并更新…")));
 }
 function Stars({ value }) {
   return h("span", { className: "ext-stars", "aria-label": t("{n} 星").replace("{n}", value.toFixed(1)) }, Icon("star", { size: 13 }), value.toFixed(1));
@@ -146,12 +147,15 @@ export function CommunityHostDependencies({plan,working,ffmpeg,dsh,onCancel,onNo
 }
 function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = globalThis.window?.whale?.pluginFiles, workApi = globalThis.window?.whale?.work, onManage, onStatus, onPage, intent } = {}) {
   const [tab, setTab] = useState("community"), [state, setState] = useState(null), [listing, setListing] = useState({ items: [], total: 0, page: 1, pageSize: 24 }), [query, setQuery] = useState(""), [category, setCategory] = useState(""), [sort, setSort] = useState("recommended"), [favoritesOnly, setFavoritesOnly] = useState(false), [page, setPage] = useState(1), [revision, setRevision] = useState(0), [pending, setPending] = useState(0), [error, setError] = useState(""), [notice, setNotice] = useState("");
-  const [detail, setDetail] = useState(null), [author, setAuthor] = useState(null), [plan, setPlan] = useState(null), [granted, setGranted] = useState([]), [updates, setUpdates] = useState(null), [checkedAt, setCheckedAt] = useState(null), [sourceId, setSourceId] = useState("official"), [catalogUrl, setCatalogUrl] = useState(""), [reviewUrl, setReviewUrl] = useState(""), [catalogDialog, setCatalogDialog] = useState(false), [reviewDraft, setReviewDraft] = useState(null), [reviewStatus, setReviewStatus] = useState(null);
+  const [detail, setDetail] = useState(null), [author, setAuthor] = useState(null), [plan, setPlan] = useState(null), [granted, setGranted] = useState([]), [sourceId, setSourceId] = useState("official"), [catalogUrl, setCatalogUrl] = useState(""), [reviewUrl, setReviewUrl] = useState(""), [catalogDialog, setCatalogDialog] = useState(false), [reviewDraft, setReviewDraft] = useState(null), [reviewStatus, setReviewStatus] = useState(null);
   const [componentNeeded, setComponentNeeded] = useState(false), [componentWorking, setComponentWorking] = useState(null), [technicalError, setTechnicalError] = useState(null), [pendingAction, setPendingAction] = useState("");
   const [installFor, setInstallFor] = useState(null), [menuFor, setMenuFor] = useState(null), [cardMenu, setCardMenu] = useState(null), [filterMenu, setFilterMenu] = useState(false), [confirm, setConfirm] = useState(null), [loginRequest, setLoginRequest] = useState(null);
   const [workStatus, setWorkStatus] = useState(null), [accounts, setAccounts] = useState(null), [legacyInstalled, setLegacyInstalled] = useState([]), [engines, setEngines] = useState(null);
   const [offlinePreview, setOfflinePreview] = useState(null), [reviewCandidates, setReviewCandidates] = useState(null), [catalogLoading, setCatalogLoading] = useState(false);
   const mediaChecked=useRef(false),mounted = useRef(false), searchGeneration = useRef(0), detailGeneration = useRef(0), continuation = useRef(null);
+  const [legacyUpdate, setLegacyUpdate] = useState(null);
+  const updateSummary = state?.community?.pluginUpdates;
+  const checkedAt = updateSummary?.checkedAt ?? null, updates = checkedAt ? updateSummary.updates ?? [] : null;
   const say = (text, values) => setNotice(fill(t(text), values));
   const call = useCallback(async (request) => {
     if (!api) throw Error(t("扩展服务尚未就绪"));
@@ -244,7 +248,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
     let live = true;
     void workApi?.status?.().then((value) => live && setWorkStatus(value), () => {});
     void call({ action: "social-accounts-list" }).then((value) => live && setAccounts(value?.accounts ?? null), () => {});
-    void call({ action: "search", query: "", kind: "installed", page: 1, pageSize: 50 }).then((value) => live && setLegacyInstalled(Array.isArray(value?.items) ? value.items : []), () => {});
+    void call({ action: "search", query: "", kind: "installed", page: 1, pageSize: 50 }).then((value) => live && setLegacyInstalled(Array.isArray(value?.items) ? value.items.filter(item => item.current) : []), () => {});
     return () => { live = false; };
   }, [tab, revision, api]);
   // The sidebar footer (A2) shows how many plugins are installed and whether updates were found.
@@ -279,22 +283,22 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
     setAuthor((value) => value && { ...value, followed: enabled });
     setDetail((value) => value && { ...value, followed: enabled });
   }
-  async function prepare(work, version) {
+  async function prepare(work, version, update) {
     setPendingAction('正在检查插件安装计划…');
-    const value = await call({ action: "dsh-plan", ...refs(work), version });
+    const value = await call({ action: "dsh-plan", ...refs(work), version, ...(update ? {updateFrom: update.from, updateDigest: update.digest} : {}) });
     setGranted((value.priorGrantedCapabilities ?? []).filter(capability => value.declaredCapabilities?.includes(capability)));
     setPlan(value);
   }
   // Each plugin has its own install page (B3); it opens first and the plan fills it in.
-  function openInstall(work, version) {
+  function openInstall(work, version, update) {
     detailGeneration.current++;
     setDetail(null);
     setAuthor(null);
     setPlan(null);
     setGranted([]);
     setEngines(null);
-    setInstallFor({ work, packageName: work.packageName, sourceId: work.sourceId, version, submitted: false });
-    void run(() => prepare(work, version));
+    setInstallFor({ work, packageName: work.packageName, sourceId: work.sourceId, version, update, submitted: false });
+    void run(() => prepare(work, version, update));
   }
   // A3: the catalog does not list the plugin yet (not online). The same page opens and offers the signed file instead of a dead end.
   function openUnavailable(packageName) {
@@ -369,19 +373,26 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
     catch (cause) { if (mounted.current) setError(errorText(cause)); }
   }
   async function checkUpdates() {
-    const value = await call({ action: "community-check-updates" });
-    setUpdates(value.updates);
-    setCheckedAt(new Date());
+    await call({ action: "community-check-updates", refresh: true });
   }
   async function updateAll() {
     const value = await call({ action: "community-update-all" });
-    setUpdates(value.updates);
-    setCheckedAt(new Date());
-    const queued = value.updates.filter((row) => row.state === "queued").length, review = value.updates.filter((row) => row.state === "needs-user").length;
-    say(review ? "已开始更新 {n} 个插件；{m} 个有新增权限，需要你逐个查看。" : "已开始更新 {n} 个插件。", { n: queued, m: review });
+    const queued = value.updates.filter((row) => ["queued", "running", "completed"].includes(row.state)).length, review = value.updates.filter((row) => row.state === "needs-user").length;
+    setNotice(fill(review ? L("已开始更新 {n} 个插件；{m} 个需要你逐个查看。", "Started {n} plugin updates; {m} require review.") : t("已开始更新 {n} 个插件。"), {n: queued, m: review}));
   }
+  const updatePin = ({packageKey, from, to, digest}) => ({packageKey, from, to, digest});
   async function reviewUpdate(update) {
-    openInstall(await detailsWork(update.sourceId, update.workId), update.to);
+    if (update.backend === "buddy-v1") {
+      const plan = await call({action: "community-plan-update", ...updatePin(update)});
+      setLegacyUpdate({update, plan});
+      return;
+    }
+    openInstall(await detailsWork(update.sourceId, update.workId), update.to, update);
+  }
+  async function applyLegacyUpdate() {
+    const {update, plan} = legacyUpdate;
+    await call({action: "community-install-update", ...updatePin(update), planId: plan.planId});
+    setLegacyUpdate(null);
   }
   // Review 中-3: a maintenance record never re-queues itself. Install rows and rows whose source or plan changed open the plan
   // review for that version; uninstall and roll back use their confirmation; anything else shows the plugin's row (after a
@@ -477,7 +488,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
     const label = runtimeLabel(record), open = menuFor === record.packageKey, policy = state?.community?.updatePolicies?.[record.packageKey] ?? "manual", update = updates?.find((value) => value.packageKey === record.packageKey), job = jobFor(record.packageName), working = job && ["queued", "running"].includes(job.state);
     const items = [
       { label: t("更新方式：手动更新"), icon: "sliders", checked: policy === "manual", onSelect: () => void run(() => call({ action: "community-set-update-policy", packageKey: record.packageKey, policy: "manual" })) },
-      { label: t("更新方式：自动更新，新增能力仍需确认"), icon: "sliders", checked: policy === "auto", onSelect: () => void run(() => call({ action: "community-set-update-policy", packageKey: record.packageKey, policy: "auto" })) },
+      { label: L("更新方式：自动更新兼容补丁", "Update policy: automatic compatible patches"), icon: "sliders", checked: policy === "auto", onSelect: () => void run(() => call({ action: "community-set-update-policy", packageKey: record.packageKey, policy: "auto" })) },
       { label: t("在浏览器打开"), icon: "external", disabled: !record.enabled, onSelect: () => void run(() => call({ action: "dsh-open-client", packageKey: record.packageKey, external: true })) },
       "separator",
       record.previous && { label: t("回退到上一个版本…"), icon: "retry", onSelect: () => setConfirm({ kind: "rollback", record }) },
@@ -497,12 +508,16 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
   }
   // B4 keep: an installed 1.9-era extension is listed as it is (Kimi 1.0.0 stays 「不兼容」 and is managed under Sources).
   function legacyRow(row) {
-    const m = row.manifest, text = legacyText(m, { official: ["official", "legacy"].includes(row.sourceId ?? "legacy") }), incompatible = row.compatible === false;
-    return h("article", { className: "ws-card ext-irow", key: "legacy:" + m.id, "data-legacy-installed": m.id },
+    const m = row.manifest, key = legacyUpdateKey(row.sourceId ?? "legacy", m.id), policy = state?.community?.updatePolicies?.[key] ?? "manual", pending = updates?.find(value => value.packageKey === key), text = legacyText(m, { official: ["official", "legacy"].includes(row.sourceId ?? "legacy") }), incompatible = row.compatible === false;
+    return h("article", { className: "ws-card ext-irow", key: key, "data-legacy-installed": m.id },
       h("span", { className: "ext-logo", style: { "--pl": "44px" }, "aria-hidden": true }, Icon(m.kind === "runtime" ? "terminal" : "bolt", { size: 22 })),
-      h("div", { className: "ext-ir-main" }, h("div", { className: "ext-row" }, h("b", null, text.name), h("span", { className: "ext-cap" }, m.version), incompatible ? h(StatusPill, { tone: "warn" }, t("不兼容")) : h(StatusPill, { tone: row.enabled ? "ok" : "idle" }, t(row.enabled ? "已启用" : "已安装")), h("span", { className: "ws-tag" }, t("旧扩展"))),
+      h("div", { className: "ext-ir-main" }, h("div", { className: "ext-row" }, h("b", null, text.name), h("span", { className: "ext-cap" }, m.version), incompatible ? h(StatusPill, { tone: "warn" }, t("不兼容")) : h(StatusPill, { tone: row.enabled ? "ok" : "idle" }, t(row.enabled ? "已启用" : "已安装")), h("span", { className: "ws-tag" }, t("旧扩展")), pending && h("button", { type: "button", className: "ws-tag ext-tagbtn", onClick: () => setTab("updates") }, t("有更新 {v}").replace("{v}", pending.to))),
         h("small", { className: "ext-cap" }, incompatible ? t("暂不兼容当前版本的 AI 酱，数据和启用意图都保留着。") : t("1.9 时代的扩展，在「来源与旧扩展」里管理。"))),
-      h("button", { type: "button", className: "ui-btn ghost sm", onClick: () => setTab("sources") }, t("在来源里管理")));
+      h("div", {className: "ext-row"},
+        h("label", {className: "ext-cap"}, L("更新方式", "Update policy"), " ",
+          h("select", {value: policy, disabled: busy, onChange: event => { const policy = event.target.value; void run(() => call({action: "community-set-update-policy", packageKey: key, policy})); }},
+            h("option", {value: "manual"}, L("手动更新", "Manual")), h("option", {value: "auto"}, L("自动更新补丁", "Automatic patches")))),
+        h("button", { type: "button", className: "ui-btn ghost sm", onClick: () => setTab("sources") }, t("在来源里管理"))));
   }
   if (!api) return h("div", { className: "ws-page" }, h("div", { className: "ws-page-head" }, h("div", null, h("h2", { className: "ws-ptitle" }, t("扩展中心")))), h("div", { className: "ui-alert warn", role: "status" }, Icon("alert", { size: 16 }), h("div", null, t("扩展服务尚未就绪"))));
   const installed = state?.dsh?.installed ?? [], jobs = state?.maintenance?.jobs ?? [];
@@ -530,7 +545,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
         onEnable: () => void run(async () => { if(!await enableRecord(record))return; if (installFor.packageName === WORK) { if (onPage) onPage("agent-tasks"); else await workApi?.open?.(); } else if (SOCIAL_LOGIN[installFor.packageName] && officialSourceId(installFor.sourceId)) loginNext(installFor.packageName); }),
         onOpen: () => openPage(record),
         onNext: () => loginNext(installFor.packageName),
-        onRetry: () => { setInstallFor((value) => ({ ...value, submitted: false })); void run(() => prepare(installFor.work, installFor.version)); },
+        onRetry: () => { setInstallFor((value) => ({ ...value, submitted: false })); void run(() => prepare(installFor.work, installFor.version, installFor.update)); },
         onImport: () => void run(importPackage),
         onAddCatalog: () => { setInstallFor(null); setTab("sources"); setCatalogDialog(true); } }),
       catalogForm, offlineDialog);
@@ -538,6 +553,12 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
   const sourcesExtras = { catalog: { configured: !!state?.community?.configured, works: state?.community?.works ?? 0, rows: state?.community?.sources ?? [] }, busy, onSetCatalog: () => setCatalogDialog(true), onRefreshCatalog: () => void run(async () => { const result = await call({ action: "community-refresh" }); const failures = result.results?.filter((value) => value.error); say(failures?.length ? "部分来源未部署或暂时无法读取，已保留验证缓存。" : "社区索引已刷新。"); }), onImport: () => void run(importPackage), onExport: () => void run(exportPreferences), onImportPreferences: () => void run(importPreferences) };
   async function exportPreferences() { if (!files?.preferences) throw Error(t("扩展服务尚未就绪")); const value = pluginResult(await files.preferences("export")); if (value?.saved) say("收藏与关注已导出到文件。"); }
   async function importPreferences() { if (!files?.preferences) throw Error(t("扩展服务尚未就绪")); const value = pluginResult(await files.preferences("import")); if (value && !value.cancelled) say("已合并导入收藏与关注。"); }
+  const legacyUpdateDialog = legacyUpdate && h(Dialog, {title: t("查看并更新…"), onClose: () => setLegacyUpdate(null), busy,
+    footer: h(React.Fragment, null, h("span", {className: "spacer"}), button("取消", () => setLegacyUpdate(null), {disabled: busy}), button("确认更新", () => void run(applyLegacyUpdate), {disabled: busy, className: "ui-btn primary"}))},
+    h("p", null, legacyUpdate.update.packageName + " " + legacyUpdate.plan.from + " → " + legacyUpdate.plan.to),
+    h("p", null, L("下载量", "Download size") + " · " + (legacyUpdate.plan.downloadBytes / (1024 * 1024)).toFixed(1) + " MiB"),
+    legacyUpdate.plan.addedCapabilities.length > 0 && h("p", null, L("新增权限", "New permissions") + " · " + legacyUpdate.plan.addedCapabilities.join(", ")),
+    ...legacyUpdate.plan.dependencyChanges.map(dep => h("p", {key: dep.id}, dep.id + " " + (dep.from ?? "—") + " → " + dep.to)));
   const runningJob = jobs.find((job) => job.state === "running"), eligible = (updates ?? []).filter((row) => row.state === "available").length;
   return h(
     "div",
@@ -565,8 +586,9 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
     ),
     tab === "installed" && h("section", { className: "ext-col", "data-dsh-installed": true, id: "ext-tab-installed", role: "tabpanel" }, installed.length || legacyInstalled.length ? [...installed.map(installedRow), ...legacyInstalled.map(legacyRow)] : h("div", { className: "ws-card" }, h(EmptyState, { icon: "nav-plugins", title: t("还没有安装插件"), action: h("button", { type: "button", className: "ui-btn primary", onClick: () => setTab("community") }, t("去发现插件")) }, t("装好的插件会出现在这里，启用、打开和卸载都在这一页。")))),
     tab === "updates" && h("section", { className: "ext-col", id: "ext-tab-updates", role: "tabpanel" },
-      h("div", { className: "ws-card ext-card ext-between" }, h("div", null, h("b", null, updates == null ? t("还没检查更新") : updates.length ? tn("有 {n} 个更新",updates.length) : t("全部是最新的")), checkedAt && h("small", { className: "ext-cap", style: { display: "block" } }, t("上次检查：{time}").replace("{time}", checkedLabel(checkedAt)))),
+      h("div", { className: "ws-card ext-card ext-between" }, h("div", null, h("b", null, updates == null ? t("还没检查更新") : updates.length ? tn("有 {n} 个更新",updates.length) : updateSummary.errors?.length ? L("部分来源未能检查", "Some sources could not be checked") : t("全部是最新的")), checkedAt && h("small", { className: "ext-cap", style: { display: "block" } }, t("上次检查：{time}").replace("{time}", checkedLabel(new Date(checkedAt))))),
         h("div", { className: "ws-row-btns" }, h("button", { type: "button", className: "ui-btn ghost", disabled: busy, onClick: () => void run(checkUpdates) }, Icon("refresh", { size: 16 }), t("检查更新")), updates?.length > 0 && h("button", { type: "button", className: "ui-btn primary", disabled: busy || !eligible, title: eligible ? undefined : t("每个更新都要你先查看"), onClick: () => void run(updateAll) }, t("全部更新")))),
+      ...(updateSummary?.errors ?? []).map(({sourceId, error}, index) => h("p", {key: sourceId + ":" + index, className: "ext-cap", role: "status"}, sourceName(sourceId) + " · " + (communityErrorText(error.code) ?? error.message))),
       ...(updates ?? []).map((update) => h(UpdateCard, { key: update.packageKey, update, record: installed.find((value) => value.packageKey === update.packageKey), busy, onReview: (value) => void run(() => reviewUpdate(value)) })),
       h("h3", { className: "ws-sec" }, t("维护记录")),
       jobs.length ? h("div", { className: "ws-card ext-qlist" }, ...jobs.slice().reverse().map((job) => { const before = jobs.filter((value) => value.state === "queued" && Date.parse(value.createdAt) < Date.parse(job.createdAt)).at(-1) ?? (job.state === "queued" && runningJob) ?? null; return h(MaintenanceRow, { key: job.id, job, installed, ahead: before ? nameOf(before.packageKey, installed) : null, busy,
@@ -576,7 +598,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
         : h("p", { className: "ext-cap" }, t("还没有维护记录。"))),
     tab === "accounts" && h("section", { className: "ext-col", id: "ext-tab-accounts", role: "tabpanel" }, h(SocialAccounts, { api, openLogin: loginRequest, onOpenPlugin: (packageName) => { const record = installedRecord(packageName); if (record?.enabled) openPage(record); else setTab("installed"); } })),
     tab === "sources" && h("section", { className: "ext-col", id: "ext-tab-sources", role: "tabpanel" }, h(PluginCenter, { api, onManage, embedded: true, extras: sourcesExtras })),
-    catalogForm, offlineDialog,
+    catalogForm, offlineDialog, legacyUpdateDialog,
     detail && h(WorkDetail, { key: detail.work.key, detail, source: sourceOf(detail.work.sourceId), official: officialSourceId(detail.work.sourceId), busy, candidates: reviewCandidates, installed: installedRecord(detail.work.packageName, detail.work.sourceId), draft: reviewDraft, reviewStatus,
       onClose: () => { detailGeneration.current++; setDetail(null); },
       onInstall: (work, version) => openInstall({ ...work, authorName: detail.author?.name ?? null, authorLogin: detail.author?.githubLogin ?? null }, version),

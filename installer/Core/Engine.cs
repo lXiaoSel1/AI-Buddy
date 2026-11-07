@@ -3,15 +3,20 @@ namespace AiBuddy.Install;
 
 public sealed record InstallOptions(string Root,string Cache,string Edition,string[] Characters,string InitialCharacter,string? OfflineDirectory=null,bool Shortcuts=true,bool Launch=true,string? DataPath=null,string? Pipe=null,bool KeepCache=false);
 public sealed record StartupStatus(bool SafeMode,JsonElement? StartupFailure,bool Onboarding=false,JsonElement? Components=null);
-public sealed record Installation(int SchemaVersion,string Version,string ManifestSha256,string Edition,string[] Characters,string InitialCharacter,string Build,string Runtime,string Manager,string? DataPath,string? Pipe,DateTimeOffset InstalledAt,Dictionary<string,string> PackageHashes,StartupStatus? Startup=null,bool? DataInitialized=null,string[]? Warnings=null,string? InstallerRevision=null);
+public sealed record Installation(int SchemaVersion,string Version,string ManifestSha256,string Edition,string[] Characters,string InitialCharacter,string Build,string Runtime,string Manager,string? DataPath,string? Pipe,DateTimeOffset InstalledAt,Dictionary<string,string> PackageHashes,StartupStatus? Startup=null,bool? DataInitialized=null,string[]? Warnings=null,string? InstallerRevision=null,string? ManagerSha256=null,int? ManagerProtocol=null);
 public sealed record InstallDefaults(string Edition,string[] Characters,string InitialCharacter);
-public sealed record InstallJournal(string Id,string Phase,string ManifestHash,InstallOptions Options,string? PreviousPointer,string? PreviousInstallation,string Build,string Runtime,string[] RootFiles,string[] PreviouslyExistingRootFiles,string? AppVersion=null,string? ProfileAction=null,string? ExpectedDataPath=null,string? InstallerRevision=null,bool StartupAttempted=false);
+public sealed record InstallJournal(string Id,string Phase,string ManifestHash,InstallOptions Options,string? PreviousPointer,string? PreviousInstallation,string Build,string Runtime,string[] RootFiles,string[] PreviouslyExistingRootFiles,string? AppVersion=null,string? ProfileAction=null,string? ExpectedDataPath=null,string? InstallerRevision=null,bool StartupAttempted=false,string? AppSelection=null);
+public sealed record PreparedUpdate(string TransactionId,long DownloadBytes,long InstallBytes);
 public sealed record DiskEstimate(long DownloadBytes,long ExpandedBytes,long CacheAdditionalBytes,long InstallAdditionalBytes,long RetainedBytes);
 public sealed class IncompatibleRollbackException(string message):IOException(message);
 public interface IAppHost {
     StartupStatus? LastStartup=>null;
     Task<string?> DiscoverDataPath(string root,string? pipe,CancellationToken cancel)=>Task.FromResult<string?>(null);
     Task Stop(string root,Installation? previous,IProgress<InstallProgress>? progress,CancellationToken cancel);
+    Task ReportUpdateLockBusy(string root,IProgress<InstallProgress>? progress,CancellationToken cancel) {
+        progress?.Report(new("waiting-safe-point","",Reasons:["storage"]));
+        return Task.CompletedTask;
+    }
     Task StartAndVerify(string root,Installation installed,CancellationToken cancel);
     Task StartFreshAndVerify(string root,Installation installed,CancellationToken cancel)=>StartAndVerify(root,installed,cancel);
     Task StartInstalledAndVerify(string root,Installation installed,bool initialize,CancellationToken cancel)=>initialize?StartFreshAndVerify(root,installed,cancel):StartAndVerify(root,installed,cancel);
@@ -60,21 +65,33 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         // Root files coexist in staging, the new root and the rollback backup until commit finishes.
         return new(download,expanded,options.OfflineDirectory is null?missing:0,expanded+2*rootBytes+managerBytes+manifestBytes.LongLength+16L*1024*1024,retained);
     }
-    public async Task<Installation> Install(InstallOptions requested,IProgress<InstallProgress>? progress,CancellationToken cancel) {
+    public async Task<Installation> Install(InstallOptions requested,IProgress<InstallProgress>? progress,CancellationToken cancel) =>
+        (await InstallCore(requested,progress,cancel)).Installed!;
+    public async Task<PreparedUpdate> PrepareUpdate(InstallOptions requested,string selectionId,IProgress<InstallProgress>? progress,CancellationToken cancel) =>
+        (await InstallCore(requested,progress,cancel,selectionId)).Prepared!;
+    public async Task<Installation> ApplyUpdate(InstallOptions requested,string selectionId,IProgress<InstallProgress>? progress,CancellationToken cancel) =>
+        (await InstallCore(requested,progress,cancel,selectionId,true)).Installed!;
+
+    async Task<(Installation? Installed,PreparedUpdate? Prepared)> InstallCore(InstallOptions requested,IProgress<InstallProgress>? progress,CancellationToken cancel,string? selectionId=null,bool applying=false) {
+        var appUpdate=selectionId is not null;
+        if(appUpdate&&!System.Text.RegularExpressions.Regex.IsMatch(selectionId!,@"\A[a-f0-9]{64}\z"))throw new InvalidDataException("Invalid application update selection");
         Manifests.Parse(manifestBytes,manifestHash);
         var root=SafePaths.Full(requested.Root).TrimEnd(Path.DirectorySeparatorChar);SafePaths.NoLinks(root);
         if(Path.GetPathRoot(root)==root+Path.DirectorySeparatorChar || root.Length<4)throw new IOException("Choose a dedicated application folder");
         Directory.CreateDirectory(root);
         var control=SafePaths.Under(root,"local/installer");Directory.CreateDirectory(control);
-        await using var installationLock=new FileStream(Path.Combine(control,"install.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
+        await using var installationLock=await AcquireInstallLock(root,control,applying,progress,cancel);
         var journalPath=Path.Combine(control,"transaction.json");
         var retry=File.Exists(journalPath)?Json.Read<InstallJournal>(journalPath):null;
         if(retry is not null)ValidateJournal(retry,root);
-        await Recover(root,journalPath,progress,cancel);
+        if(appUpdate&&retry?.Phase is "committing" or "recovery-required")throw new IOException("Use the installation manager to recover the interrupted installation first");
+        if(!appUpdate)await Recover(root,journalPath,progress,cancel);
         var previous=Existing(root);
+        if(appUpdate&&(previous is null||!File.Exists(PointerPath(root))))throw new IOException("Application updates require an existing managed installation");
         var discovered=previous is null&&File.Exists(PointerPath(root))?await host.DiscoverDataPath(root,requested.Pipe,cancel):null;
         var profile=await InstallProfile.SelectAsync(root,requested,previous,discovered,retry,File.Exists(PointerPath(root)),hashProfileFile,cancel);
         cancel.ThrowIfCancellationRequested();
+        if(appUpdate&&profile.Action!="preserve")throw new InvalidDataException("Application updates require a preserved profile");
         var options=requested with {Root=root,DataPath=profile.DataPath,Pipe=profile.Pipe};
         var packages=Manifests.Select(m,options.Edition,options.Characters,options.InitialCharacter);
         Dictionary<string,string>? offline=null;
@@ -86,26 +103,70 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
             if(missing.Length>0)throw new FileNotFoundException("Offline packages missing:\n"+string.Join("\n",missing));
             offline=packages.ToDictionary(p=>p.Id,p=>SafePaths.Under(folder,p.AssetName));
         }
-        var estimate=Estimate(options);CheckSpace(root,options.Cache,estimate);
+        var estimate=Estimate(options);
         InstallJournal? journal=File.Exists(journalPath)?Json.Read<InstallJournal>(journalPath):null;
         var currentPointer=File.Exists(PointerPath(root))?await File.ReadAllTextAsync(PointerPath(root),cancel):null;
-        if(journal is null || journal.Phase!="staging" || journal.PreviousPointer!=currentPointer || journal.ManifestHash!=manifestHash || journal.Options.Edition!=options.Edition || !journal.Options.Characters.SequenceEqual(options.Characters) || journal.Options.InitialCharacter!=options.InitialCharacter || journal.Options.DataPath!=options.DataPath || journal.Options.Pipe!=options.Pipe || journal.ProfileAction!=profile.Action || journal.ExpectedDataPath!=profile.ExpectedDataPath) {
+        var currentRecord=File.Exists(RecordPath(root))?await File.ReadAllTextAsync(RecordPath(root),cancel):null;
+        var stageMatches=journal is not null&&journal.PreviousPointer==currentPointer&&journal.ManifestHash==manifestHash&&journal.Options.Edition==options.Edition&&journal.Options.Characters.SequenceEqual(options.Characters)&&journal.Options.InitialCharacter==options.InitialCharacter&&journal.Options.DataPath==options.DataPath&&journal.Options.Pipe==options.Pipe&&journal.ProfileAction==profile.Action&&journal.ExpectedDataPath==profile.ExpectedDataPath&&journal.AppSelection==selectionId&&(!appUpdate||journal.PreviousInstallation==currentRecord);
+        if(applying&&(!stageMatches||journal?.Phase!="prepared"))throw new InvalidDataException("Application update preparation is stale or missing");
+        if(!stageMatches || journal!.Phase!="staging" && (!appUpdate||journal.Phase!="prepared")) {
             var id=Guid.NewGuid().ToString("N");
             var rootFiles=packages.Where(p=>p.Mount=="root").SelectMany(p=>p.Files.Select(f=>f.Path)).ToArray();
-            journal=new(id,"staging",manifestHash,options,File.Exists(PointerPath(root))?await File.ReadAllTextAsync(PointerPath(root),cancel):null,File.Exists(RecordPath(root))?await File.ReadAllTextAsync(RecordPath(root),cancel):null,
-                $"builds/v{m.AppVersion}-{options.Edition}-{id}",$"runtime/AI-Buddy-v{m.AppVersion}-{id}",rootFiles,rootFiles.Where(f=>File.Exists(SafePaths.Under(root,f))).ToArray(),m.AppVersion,profile.Action,profile.ExpectedDataPath,ReleaseIdentity.InstallerRevision);
+            journal=new(id,"staging",manifestHash,options,currentPointer,currentRecord,
+                $"builds/v{m.AppVersion}-{options.Edition}-{id}",$"runtime/AI-Buddy-v{m.AppVersion}-{id}",rootFiles,rootFiles.Where(f=>File.Exists(SafePaths.Under(root,f))).ToArray(),m.AppVersion,profile.Action,profile.ExpectedDataPath,ReleaseIdentity.InstallerRevision,AppSelection:selectionId);
             Json.Save(journalPath,journal);
         }
-        var stage=SafePaths.Under(root,".install-staging/"+journal.Id);Directory.CreateDirectory(stage);
-        var downloads=new System.Collections.Concurrent.ConcurrentDictionary<string,string>();
-        if(offline is not null)foreach(var item in offline)downloads[item.Key]=item.Value;
-        else await Parallel.ForEachAsync(packages,new ParallelOptions{MaxDegreeOfParallelism=2,CancellationToken=cancel},async(p,ct)=>downloads[p.Id]=await downloader.Get(p,m.ReleaseTag,source?.Invoke(p)??Manifests.Url(m,p.AssetName),options.Cache,progress,ct));
-        foreach(var p in packages){cancel.ThrowIfCancellationRequested();await Extractor.Extract(p,downloads[p.Id],SafePaths.Under(stage,p.Mount),progress,cancel);}
-        checkpoint?.Invoke("extracted");
-        // Recheck the entire assembled tree, including files reused after an interrupted extraction.
-        foreach(var p in packages)foreach(var f in p.Files)if(!await Hashing.Matches(SafePaths.Under(stage,p.Mount+"/"+f.Path),f.Bytes,f.Sha256,cancel))throw new InvalidDataException("Assembled file mismatch: "+f.Path);
+        var stage=SafePaths.Under(root,".install-staging/"+journal!.Id);
+        if(applying) {
+            CheckSpace(root,options.Cache,estimate with{CacheAdditionalBytes=0,InstallAdditionalBytes=estimate.InstallAdditionalBytes-estimate.ExpandedBytes});
+        } else {
+            if(appUpdate)progress?.Report(new("preparing",""));
+            var remaining=new List<Package>();
+            var reusable=new Dictionary<string,string>();
+            foreach(var package in packages) {
+                if(appUpdate&&await PackageMatches(package,SafePaths.Under(stage,package.Mount),cancel))continue;
+                if(appUpdate&&previous!.PackageHashes.TryGetValue(package.Id,out var oldHash)&&oldHash==package.Sha256) {
+                    var original=package.Mount switch{"root"=>root,"runtime"=>SafePaths.Under(root,previous.Runtime),_=>SafePaths.Under(root,previous.Build)};
+                    if(await PackageMatches(package,original,cancel)){reusable.Add(package.Id,original);continue;}
+                }
+                remaining.Add(package);
+            }
+            var downloadBytes=estimate.CacheAdditionalBytes;
+            if(appUpdate) {
+                downloadBytes=0;
+                if(offline is null)foreach(var p in remaining)
+                    if(!await Hashing.Matches(SafePaths.Under(options.Cache,p.Sha256+".zip"),p.Bytes,p.Sha256,cancel))downloadBytes+=p.Bytes;
+                estimate=estimate with{CacheAdditionalBytes=downloadBytes};
+                progress?.Report(new("estimate","",downloadBytes,estimate.InstallAdditionalBytes));
+            }
+            CheckSpace(root,options.Cache,estimate);
+            Directory.CreateDirectory(stage);
+            foreach(var package in packages.Where(p=>reusable.ContainsKey(p.Id))) {
+                var original=reusable[package.Id];
+                foreach(var file in package.Files) {
+                    cancel.ThrowIfCancellationRequested();
+                    var target=SafePaths.Under(stage,package.Mount+"/"+file.Path);
+                    Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                    ReplaceProgramFile(SafePaths.Under(original,file.Path),target);
+                }
+            }
+            var downloads=new System.Collections.Concurrent.ConcurrentDictionary<string,string>();
+            if(offline is not null)foreach(var item in offline)downloads[item.Key]=item.Value;
+            else await Parallel.ForEachAsync(remaining,new ParallelOptions{MaxDegreeOfParallelism=2,CancellationToken=cancel},async(p,ct)=>downloads[p.Id]=await downloader.Get(p,m.ReleaseTag,source?.Invoke(p)??Manifests.Url(m,p.AssetName),options.Cache,progress,ct));
+            foreach(var p in remaining){cancel.ThrowIfCancellationRequested();await Extractor.Extract(p,downloads[p.Id],SafePaths.Under(stage,p.Mount),progress,cancel);}
+            checkpoint?.Invoke("extracted");
+        }
+        // Recheck the assembled tree after extraction and before applying a saved preparation.
+        foreach(var p in packages)if(!await PackageMatches(p,SafePaths.Under(stage,p.Mount),cancel))throw new InvalidDataException("Assembled package mismatch: "+p.Id);
+        if(appUpdate&&!applying) {
+            await profile.VerifyAsync(hashProfileFile,cancel);
+            cancel.ThrowIfCancellationRequested();
+            journal=journal with{Phase="prepared"};
+            Json.Save(journalPath,journal);
+            return (null,new(journal.Id,estimate.CacheAdditionalBytes,estimate.InstallAdditionalBytes));
+        }
         var managerRelative=$"maintenance/{m.AppVersion}/AI Buddy Setup.exe";
-        var installed=new Installation(1,m.AppVersion,manifestHash,options.Edition,options.Characters,options.InitialCharacter,journal.Build,journal.Runtime,managerRelative,options.DataPath,options.Pipe,DateTimeOffset.UtcNow,packages.ToDictionary(p=>p.Id,p=>p.Sha256),DataInitialized:previous?.DataInitialized,InstallerRevision:ReleaseIdentity.InstallerRevision);
+        var installed=new Installation(1,m.AppVersion,manifestHash,options.Edition,options.Characters,options.InitialCharacter,journal.Build,journal.Runtime,managerRelative,options.DataPath,options.Pipe,DateTimeOffset.UtcNow,packages.ToDictionary(p=>p.Id,p=>p.Sha256),DataInitialized:previous?.DataInitialized,InstallerRevision:ReleaseIdentity.InstallerRevision,ManagerSha256:await Hashing.FileHash(selfExe,cancel),ManagerProtocol:1);
         // Root launcher updates are journaled separately from immutable version trees.
         var backup=SafePaths.Under(control,"backups/"+journal.Id);Directory.CreateDirectory(backup);
         foreach(var f in journal.PreviouslyExistingRootFiles){var target=SafePaths.Under(backup,f);Directory.CreateDirectory(Path.GetDirectoryName(target)!);File.Copy(SafePaths.Under(root,f),target,true);}
@@ -114,7 +175,9 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         if(previous is not null&&(selected is null||!InstallProfile.SamePath(DataPaths.Registered(root,selected.DataPath,false),profile.ExpectedDataPath)||InstallProfile.NormalizedPipe(selected.Pipe)!=InstallProfile.NormalizedPipe(profile.Pipe)))throw new IOException("Personal-data selection changed during download; retry against the current profile");
         await profile.VerifyAsync(hashProfileFile,cancel);
         cancel.ThrowIfCancellationRequested();
-        await host.Stop(root,previous??installed,progress,cancel);cancel.ThrowIfCancellationRequested();
+        await host.Stop(root,previous??installed,progress,cancel);
+        if(applying)cancel=CancellationToken.None;
+        cancel.ThrowIfCancellationRequested();
         await profile.VerifyAsync(hashProfileFile,cancel);
         cancel.ThrowIfCancellationRequested();
         journal=journal with {Phase="committing"};Json.Save(journalPath,journal);
@@ -132,10 +195,11 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
             Json.Save(PointerPath(root),new {version=m.AppVersion,appVersion=m.AppVersion,path=journal.Build,runtime=new{path=journal.Runtime,executable=m.Runtime.Executable,sha256=m.Runtime.Sha256},animationProfile=options.Edition,installedAt=installed.InstalledAt});
             checkpoint?.Invoke("pointer");
             journal=journal with {StartupAttempted=true};Json.Save(journalPath,journal);
+            if(applying)progress?.Report(new("verifying",""));
             await host.StartInstalledAndVerify(root,installed,profile.Action=="initialize",cancel);
             if(host.LastStartup is { } startup&&(startup.Onboarding||startup.SafeMode||startup.StartupFailure is not null))throw new IOException("AI Buddy did not start normally; welcome, safe mode or startup failure cannot complete installation");
             var confirmed=Json.Read<Installation>(RecordPath(root));
-            if(confirmed.SchemaVersion!=installed.SchemaVersion||confirmed.Version!=installed.Version||confirmed.Build!=installed.Build||confirmed.ManifestSha256!=installed.ManifestSha256||confirmed.DataPath!=installed.DataPath||confirmed.Pipe!=installed.Pipe||confirmed.Runtime!=installed.Runtime||confirmed.Manager!=installed.Manager||confirmed.Edition!=installed.Edition||!confirmed.Characters.SequenceEqual(installed.Characters))throw new IOException("Installation identity changed during startup; the newer record will not be overwritten");
+            if(confirmed.SchemaVersion!=installed.SchemaVersion||confirmed.Version!=installed.Version||confirmed.Build!=installed.Build||confirmed.ManifestSha256!=installed.ManifestSha256||confirmed.DataPath!=installed.DataPath||confirmed.Pipe!=installed.Pipe||confirmed.Runtime!=installed.Runtime||confirmed.Manager!=installed.Manager||confirmed.ManagerSha256!=installed.ManagerSha256||confirmed.ManagerProtocol!=installed.ManagerProtocol||confirmed.Edition!=installed.Edition||!confirmed.Characters.SequenceEqual(installed.Characters))throw new IOException("Installation identity changed during startup; the newer record will not be overwritten");
             // The app confirms real business initialization before reporting ready.
             // Keep that confirmation instead of restoring this older in-memory flag.
             // Stopping a "don't launch" install happens after the commit below.
@@ -162,7 +226,25 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         try{var data=PersonalDataProtection.Read(root,journal,installed);data.RemoveTree(stage,root,progress);RemoveVersions(root,KeptVersions(root,journal),progress,data);if(!options.KeepCache)CleanCache(options.Cache,progress,data);}
         catch(Exception ex){progress?.Report(new("cleanup-pending",root,Detail:ex.Message));}
         if(warnings.Count>0){installed=installed with{Warnings=warnings.ToArray()};Json.Save(RecordPath(root),installed);}
-        progress?.Report(new("complete",m.AppVersion));return installed;
+        progress?.Report(new("complete",m.AppVersion));return (installed,null);
+    }
+    async Task<FileStream> AcquireInstallLock(string root,string control,bool wait,IProgress<InstallProgress>? progress,CancellationToken cancel) {
+        var path=Path.Combine(control,"install.lock");
+        var deadline=DateTime.UtcNow.AddMinutes(10);
+        while(true) {
+            cancel.ThrowIfCancellationRequested();
+            try {return new(path,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);}
+            catch(IOException error)when(wait&&(error.HResult&0xffff) is 32 or 33) {
+                if(DateTime.UtcNow>=deadline)throw new IOException("The application remained busy waiting for the installation lock",error);
+                await host.ReportUpdateLockBusy(root,progress,cancel);
+                await Task.Delay(1000,cancel);
+            }
+        }
+    }
+    static async Task<bool> PackageMatches(Package package,string directory,CancellationToken cancel) {
+        foreach(var file in package.Files)
+            if(!await Hashing.Matches(SafePaths.Under(directory,file.Path),file.Bytes,file.Sha256,cancel))return false;
+        return true;
     }
     // Version trees this installer created carry the transaction id in their name.
     static readonly System.Text.RegularExpressions.Regex OwnedBuild=new(@"\Av(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-(?:30fps|60fps)-[a-f0-9]{32}\z"),
@@ -277,7 +359,7 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         // Old 1.8.0 journals did not store AppVersion. Only their exact owned layout is accepted.
         var version=journal.AppVersion??"1.8.0";
         if(!ReleaseIdentity.KnownTransactionVersion(version) || !System.Text.RegularExpressions.Regex.IsMatch(journal.Id,"^[a-f0-9]{32}$") || journal.Options.Edition is not ("30fps" or "60fps") || journal.Build!=$"builds/v{version}-{journal.Options.Edition}-{journal.Id}" || journal.Runtime!=$"runtime/AI-Buddy-v{version}-{journal.Id}" || journal.RootFiles.Any(p=>!Manifests.RootFileAllowed(p)) || journal.PreviouslyExistingRootFiles.Except(journal.RootFiles).Any())throw new InvalidDataException("Invalid transaction ownership; no recovery files were changed");
-        var active=journal.Phase is "staging" or "committing" or "recovery-required"||journal.Phase=="rolled-back"&&journal.PreviousPointer is null&&journal.PreviousInstallation is null;
+        var active=journal.Phase is "staging" or "prepared" or "committing" or "recovery-required"||journal.Phase=="rolled-back"&&journal.PreviousPointer is null&&journal.PreviousInstallation is null;
         if(journal.ProfileAction is not null||journal.ExpectedDataPath is not null){if(journal.ProfileAction is not ("initialize" or "preserve")||journal.ExpectedDataPath is null||!Path.IsPathFullyQualified(journal.ExpectedDataPath)||root is not null&&active&&!InstallProfile.SamePath(journal.ExpectedDataPath,DataPaths.Registered(root,journal.Options.DataPath,false)))throw new InvalidDataException("Invalid transaction profile binding; no recovery files were changed");}
     }
     static void ReplaceProgramFile(string source,string target){

@@ -4,12 +4,14 @@ import {join, resolve} from 'node:path';
 import {writeAtomic} from '../atomic-write.mjs';
 import {assertPluginTreeNoLinks} from '../plugin-archive.mjs';
 import {canonicalPluginJson, compareVersions, satisfiesVersionRange} from '../plugin-manifest.mjs';
+import {stablePatchUpdate, legacyUpdateKey} from '../plugin-update-policy.mjs';
 import {fetchPluginJson} from '../plugin-sources.mjs';
 import {createPluginBackendRegistry} from '../plugin-backends.mjs';
 import {BUDDY_PLUGIN_CAPABILITIES} from '../buddy-plugin-services/capability-grants.mjs';
 import {BUDDY_BRIDGE_COMPATIBILITY_VERSION} from '../buddy-plugin-services/version.mjs';
 import {communityDigest, communityHttps, communityPackageKey, parseDshPackageRef, rankCommunityWorks, verifyCommunityCatalog} from './catalog.mjs';
 import {aggregateReviews, buildReviewFormUrl, reviewFromGitHubIssue, verifyReviewIndex} from './reviews.mjs';
+import {createPluginUpdateCoordinator} from './plugin-updates.mjs';
 import {createMaintenanceQueue} from './maintenance-queue.mjs';
 import {OFFLINE_FILE_LIMIT, readOfflinePluginFile} from './offline-bundle.mjs';
 import {OFFICIAL_COMMUNITY_CATALOG_URL, isOfficialCommunitySource, normalizeCommunitySource} from './official-source.mjs';
@@ -36,7 +38,7 @@ const pluginIdentity = ref => 'dsh.' + communityDigest({sourceId: ref.sourceId, 
 function publicInstallation(record, verified = false) { if (!record) return null; const value = copy(omit(record, ['sourceProof', 'backendPlan', 'previous'])); value.previous = record.previous ? {version: record.previous.packageRef.exactVersion} : null; value.runtimeVerified = verified; value.enabledIntent = record.enabled === true; value.runtimeState = record.runtimeFailure && !verified ? 'failed' : record.enabled ? verified ? 'loaded' : 'pending-load' : 'disabled'; value.phase = value.runtimeState; return value; }
 const publicJob = job => Object.fromEntries(['id', 'packageKey', 'operation', 'state', 'createdAt', 'updatedAt'].map(key => [key, job[key]]));
 
-export async function createCommunityService({root, dataRoot, legacyManager, dshBackend, hostDependencies = null, bridgeCompatibilityVersion = BUDDY_BRIDGE_COMPATIBILITY_VERSION, busy = async () => false, onUpdate = () => {}, onPackageState = async () => {}, onOpenClient, onOpenExternal, fetchImpl = globalThis.fetch, now = Date.now, pollMs = 5000, automaticWorkAllowed = () => true, minimumWatermarks = COMMUNITY_MINIMUM_WATERMARKS, officialFingerprints = officialScopeFingerprints()} = {}) {
+export async function createCommunityService({root, dataRoot, legacyManager, dshBackend, hostDependencies = null, bridgeCompatibilityVersion = BUDDY_BRIDGE_COMPATIBILITY_VERSION, busy = async () => false, onUpdate = () => {}, onPackageState = async () => {}, onOpenClient, onOpenExternal, fetchImpl = globalThis.fetch, now = Date.now, pollMs = 5000, automaticWorkAllowed = () => true, maintenanceAdmission = () => true, minimumWatermarks = COMMUNITY_MINIMUM_WATERMARKS, officialFingerprints = officialScopeFingerprints()} = {}) {
   if (!legacyManager?.action || !legacyManager?.snapshot) throw Error('Existing signed plugin manager is required');
   const control = join(resolve(root), 'local/community'), preferencesDirectory = join(resolve(dataRoot), 'community');
   await assertPluginTreeNoLinks(control); await assertPluginTreeNoLinks(preferencesDirectory); await mkdir(control, {recursive: true}); await mkdir(preferencesDirectory, {recursive: true});
@@ -54,6 +56,16 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
   await assertPluginTreeNoLinks(offlineDirectory); await rm(offlineDirectory, {recursive: true, force: true});
   backends.register('buddy-v1', legacyManager); if (dshBackend) backends.register('dsh', dshBackend);
   let closed = false, queue, timer, closePromise, nativeState = {state: dshBackend ? 'not-started' : 'unavailable'}, prefSerial = Promise.resolve();
+  let legacyUpdateWrites = 0;
+  const pluginUpdates = createPluginUpdateCoordinator({
+    legacyManager, preferences, writePreferences: (...args) => writePreferences(...args),
+    getRecords: () => registry.packages, getWorks: allWorks, getJobs: () => queue?.snapshot().jobs ?? [],
+    sourceFingerprint: id => catalogs.get(id)?.verified.keyFingerprint, sourceError: id => errors.get(id),
+    runtimeVersion: () => nativeState.version, bridgeCompatibilityVersion, refreshCatalogs, planInstall, queueInstall,
+    maintenanceAdmission, automaticWorkAllowed, assertAdmission: () => assertAdmission(), now,
+    isClosed: () => closed, publicFailure, update: () => update(),
+  });
+  const assertAdmission = () => { if (closed || !maintenanceAdmission()) fail('Maintenance is waiting for an application update', 'PLUGIN_MAINTENANCE_RESERVED'); };
   const persistRegistry = () => writeAtomic(registryFile, canonicalPluginJson(registry));
   const persistCache = () => writeAtomic(cacheFile, canonicalPluginJson(cache));
   const update = () => { if (!closed) try { onUpdate(snapshot()); } catch {} };
@@ -68,8 +80,8 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
   function currentRelease(work, version) { const release = version ? work.releases.find(value => value.version === version) : [...work.releases].sort((a, b) => -compareVersions(a.version, b.version))[0]; if (!release) fail('Release not found', 'COMMUNITY_RELEASE_NOT_FOUND'); return release; }
   function sourceRows() { return [...new Set([...Object.keys(cache.sources), ...catalogs.keys(), ...errors.keys()])].map(sourceId => ({sourceId, cachedAt: cache.sources[sourceId]?.cachedAt ?? null, available: catalogs.has(sourceId) && sourceAvailability.get(sourceId) !== false, stale: errors.has(sourceId), lastError: errors.get(sourceId) ?? null, catalogId: catalogs.get(sourceId)?.id ?? null, generatedAt: catalogs.get(sourceId)?.generatedAt ?? null, officialScope: officialFingerprints.has(catalogs.get(sourceId)?.verified.keyFingerprint)})); }
   function snapshot() {
-    const maintenance = queue?.snapshot() ?? {schemaVersion: 1, jobs: []};
-    return {...legacyManager.snapshot(), community: {schemaVersion: 1, works: allWorks().length, sources: sourceRows(), favorites: copy(preferences.favorites), follows: copy(preferences.follows), updatePolicies: copy(preferences.updatePolicies), pendingReviews: copy(preferences.pendingReviews), configured: catalogs.size > 0, backends: backends.describe(), categoryCapabilities: {function: {installable: backends.supports('dsh', 'planInstall')}, 'work-engine': {installable: true}, 'character-motion': {installable: false}, 'theme-scene': {installable: false}, voice: {installable: false}}}, dsh: {state: copy(nativeState), installed: Object.values(registry.packages).map(record => publicInstallation(record, runtimeVerified.has(record.packageKey)))}, maintenance: {schemaVersion: maintenance.schemaVersion, jobs: maintenance.jobs.map(job => ({id: job.id, packageKey: job.packageKey, operation: job.operation, state: job.state, createdAt: job.createdAt, updatedAt: job.updatedAt, ...(typeof job.intent?.packageRef?.exactVersion === 'string' ? {version: job.intent.packageRef.exactVersion} : {}), ...(job.waitingReason ? {waitingReason: job.waitingReason} : {}), ...(job.error ? {error: publicFailure(job.error)} : {}), ...(job.result ? {result: safeNativeResult(job.result)} : {})}))}};
+    const legacy = legacyManager.snapshot(), maintenance = queue?.snapshot() ?? {schemaVersion: 1, jobs: []};
+    return {...legacy, community: {schemaVersion: 1, works: allWorks().length, sources: sourceRows(), favorites: copy(preferences.favorites), follows: copy(preferences.follows), updatePolicies: copy(preferences.updatePolicies), pluginUpdates: copy(pluginUpdates.summary(legacy.installed, maintenance.jobs)), pendingReviews: copy(preferences.pendingReviews), configured: catalogs.size > 0, backends: backends.describe(), categoryCapabilities: {function: {installable: backends.supports('dsh', 'planInstall')}, 'work-engine': {installable: true}, 'character-motion': {installable: false}, 'theme-scene': {installable: false}, voice: {installable: false}}}, dsh: {state: copy(nativeState), installed: Object.values(registry.packages).map(record => publicInstallation(record, runtimeVerified.has(record.packageKey)))}, maintenance: {schemaVersion: maintenance.schemaVersion, jobs: maintenance.jobs.map(job => ({id: job.id, packageKey: job.packageKey, operation: job.operation, state: job.state, createdAt: job.createdAt, updatedAt: job.updatedAt, ...(typeof job.intent?.packageRef?.exactVersion === 'string' ? {version: job.intent.packageRef.exactVersion} : {}), ...(job.waitingReason ? {waitingReason: job.waitingReason} : {}), ...(job.error ? {error: publicFailure(job.error)} : {}), ...(job.result ? {result: safeNativeResult(job.result)} : {})}))}};
   }
   // Review 中-2: one catalog commit at a time per source. The replay, freshness and same-version checks run synchronously
   // against the state that is about to be replaced, right before the commit, so an older signed catalog can never land last.
@@ -173,13 +185,15 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     if ((work.status ?? 'published') !== 'published' || !['function', 'work-engine'].includes(work.category)) fail('This work is withdrawn or its category has no install backend', 'COMMUNITY_INSTALL_UNAVAILABLE');
     if (work.backend === 'buddy-v1') return legacyManager.action({action: 'plan', sourceId: work.sourceId, requests: [{id: work.packageName, version: release.version}]});
     const parsedRef = parseDshPackageRef(release.package, {sourceId: work.sourceId}), packageRef = {...parsedRef, hostPluginId: pluginIdentity(parsedRef)}, packageKey = communityPackageKey(packageRef), installed = registry.packages[packageKey];
+    if (request.updateFrom !== undefined && (installed?.exactVersion !== request.updateFrom || packageRef.sourceDigest !== request.updateDigest || compareVersions(packageRef.exactVersion, request.updateFrom) <= 0))
+      fail('Plugin update changed; check updates again', 'PLUGIN_UPDATE_CHANGED');
     const unsupportedCapabilities = packageRef.capabilities.filter(capability => !BUDDY_PLUGIN_CAPABILITIES.includes(capability)); if (unsupportedCapabilities.length) fail('This Buddy bridge does not implement: ' + unsupportedCapabilities.join(', '), 'PLUGIN_CAPABILITY_UNSUPPORTED');
     if (Object.values(registry.packages).some(record => record.packageName === packageRef.packageName && record.sourceId !== packageRef.sourceId)) fail('This DSH package is already installed from another source; explicitly uninstall it first. Data is retained.', 'PLUGIN_SOURCE_CONFLICT');
     const savedDigest = registry.releaseDigests[packageKey + '@' + packageRef.exactVersion]; if (savedDigest && savedDigest !== packageRef.sourceDigest) fail('Same source/version cannot replace installed content', 'COMMUNITY_RELEASE_CHANGED');
     const source = await trustedSource(work.sourceId); if (!source.enabled || source.removed) fail('Source is disabled', 'PLUGIN_SOURCE_DISABLED');
     const appVersion = legacyManager.snapshot().appVersion;
     if (!appVersion || !satisfiesVersionRange(appVersion, packageRef.compatibility.app) || !satisfiesVersionRange(bridgeCompatibilityVersion, packageRef.compatibility.bridge)) fail('Plugin is incompatible with this app or Buddy bridge version', 'PLUGIN_INCOMPATIBLE');
-    const value={schemaVersion:1,operation:'install',workId:work.id,packageKey,packageRef,catalogDigest:work.catalogDigest,sourceFingerprint:source.keyFingerprint,sourceGeneration:source.generation,declaredCapabilities:packageRef.capabilities,priorGrantedCapabilities:installed?.grantedCapabilities??[],priorEnabled:installed?.enabled===true,priorDataSchemaVersion:installed?.dataSchemaVersion??null,expectedInstalled:installed?communityDigest(installed):null,profileId:request.profileId??'buddy-community-v1',createdAt:new Date(now()).toISOString()};
+    const value={schemaVersion:1,operation:'install',workId:work.id,packageKey,packageRef,catalogDigest:work.catalogDigest,sourceFingerprint:source.keyFingerprint,sourceGeneration:source.generation,declaredCapabilities:packageRef.capabilities,priorGrantedCapabilities:installed?.grantedCapabilities??[],priorEnabled:installed?.enabled===true,priorDataSchemaVersion:installed?.dataSchemaVersion??null,expectedInstalled:installed?communityDigest(installed):null,...(request.updateFrom!==undefined?{updateFrom:request.updateFrom}:{}),profileId:request.profileId??'buddy-community-v1',createdAt:new Date(now()).toISOString()};
     return value;
   }
   async function assertInstallationIntent(value){
@@ -216,6 +230,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
   }
   async function checkIntent(job) {
     const intent = job.intent, source = await trustedSource(intent.packageRef.sourceId);
+    if (intent.updateMode === 'auto' && (preferences.updatePolicies[job.packageKey] !== 'auto' || !stablePatchUpdate(intent.updateFrom, intent.packageRef.exactVersion))) return {allowed: false, code: 'PLUGIN_AUTO_UPDATE_DISABLED', message: 'Automatic updates were turned off; review this update manually'};
     if (!['disable', 'uninstall'].includes(job.operation) && ((job.operation === 'install' || coldBiliActivation(job)) && (!source.enabled || source.removed) || source.keyFingerprint !== intent.sourceFingerprint || source.generation !== intent.sourceGeneration)) return {allowed: false, code: 'PLUGIN_SOURCE_CHANGED', message: 'Pinned source changed; review a new maintenance plan'};
     const current = catalogs.get(source.sourceId);
     if (job.operation === 'install' && current?.verified.payloadSha256 !== intent.catalogDigest) return {allowed: false, code: 'COMMUNITY_PLAN_CHANGED', message: 'Catalog changed; review a new installation plan'};
@@ -239,18 +254,58 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     const installed=registry.packages[job.packageKey],ref=job.intent.packageRef;
     return job.operation==='enable'&&installed?.enabled===true&&!runtimeVerified.has(job.packageKey)&&installed.packageName==='@ai-buddy/bilibili-companion'&&installed.sourceId==='official'&&officialFingerprints.has(job.intent.sourceFingerprint)&&installed.generation===job.intent.expectedGeneration&&installed.sourceDigest===ref.sourceDigest&&installed.exactVersion===ref.exactVersion&&installed.sourceProof?.sourceFingerprint===job.intent.sourceFingerprint;
   }
+  async function restoreUpdate(job, old) {
+    const source = await trustedSource(old.sourceId);
+    if (source.removed || !source.enabled || source.keyFingerprint !== old.sourceProof?.sourceFingerprint || source.generation !== job.intent.sourceGeneration)
+      fail('Cannot restore a changed publisher automatically', 'PLUGIN_SOURCE_CHANGED');
+    const value = await backends.invoke('dsh', 'rollback', {...job.intent.packageRef, profileId: old.profileId}, {plan: old.backendPlan, enabled: false});
+    requireNativeOutcome(value);
+    if (old.enabled) {
+      const enabled = await backends.invoke('dsh', 'enable', old);
+      requireNativeOutcome(enabled);
+      if (enabled?.enabled !== true) fail('Previous plugin could not be enabled', 'DSH_ENABLE_UNCONFIRMED');
+    }
+    const generation = Math.max(registry.generations[job.packageKey] ?? 0, old.generation) + 1;
+    const restored = {...old, generation, phase: old.enabled ? 'loaded' : 'disabled'};
+    delete restored.runtimeFailure;
+    registry.generations[job.packageKey] = generation;
+    registry.packages[job.packageKey] = restored;
+    persistRegistry(); await publishPackage(restored);
+    if (restored.enabled) runtimeVerified.add(job.packageKey); else runtimeVerified.delete(job.packageKey);
+    update();
+  }
+  function requireNativeOutcome(result) {
+    if (result?.ok === false || result?.success === false || ['failed', 'error'].includes(result?.state)) fail('DSH operation did not succeed: ' + (result?.error?.message ?? result?.state), 'DSH_OPERATION_FAILED');
+  }
   async function executeOperation(job) {
     const intent = job.intent, key = job.packageKey, old = registry.packages[key];
     let result;
+    const coordinated = job.operation === 'install' && !!old && !!intent.updateMode;
+    const keepEnabled = coordinated && old.enabled && intent.priorDataSchemaVersion === intent.packageRef.dataSchemaVersion &&
+      (intent.updateMode === 'review' || intent.grantedCapabilities.every(capability => intent.priorGrantedCapabilities.includes(capability)));
+    if (coordinated && (!old.backendPlan || !backends.supports('dsh', 'rollback'))) fail('An exact verified previous version is needed for a safe update', 'DSH_ROLLBACK_PLAN_REQUIRED');
     if (job.operation === 'install') result = await backends.invoke('dsh', 'install', intent.backendPlan, {enabled: false, grantedCapabilities: intent.grantedCapabilities});
     else if (job.operation === 'rollback') { if (!old?.previous?.backendPlan) fail('No exact prior installation plan is available', 'DSH_ROLLBACK_PLAN_REQUIRED'); result = await backends.invoke('dsh', 'rollback', {...intent.packageRef, profileId: old.profileId}, {plan: old.previous.backendPlan, enabled: false}); }
     else result = await backends.invoke('dsh', job.operation, {...intent.packageRef, profileId: old?.profileId, generation: old?.generation});
-    if (result?.ok === false || result?.success === false || ['failed', 'error'].includes(result?.state)) fail('DSH operation did not succeed: ' + (result?.error?.message ?? result?.state), 'DSH_OPERATION_FAILED');
-    const finalCheck = await checkIntent(job);
-    if (finalCheck !== true) { if (old) { old.generation = Math.max(registry.generations[key] ?? 0, old.generation) + 1; registry.generations[key] = old.generation; runtimeVerified.delete(key); persistRegistry(); await publishPackage({...old, enabled: false, phase: 'source-changed'}); } fail('Source or installation changed during native operation; inspect actual runtime', 'COMMUNITY_NATIVE_OUTCOME_REQUIRES_REVIEW'); }
+    requireNativeOutcome(result);
+    let finalCheck = await checkIntent(job);
+    if (finalCheck === true && keepEnabled) {
+      const generation = Math.max(registry.generations[key] ?? 0, old.generation) + 1;
+      runtimeVerified.delete(key);
+      await publishPackage({...old, enabled: false, generation, phase: 'updating'});
+      finalCheck = await checkIntent(job);
+      if (finalCheck === true) {
+        const enabled = await backends.invoke('dsh', 'enable', intent.packageRef);
+        requireNativeOutcome(enabled);
+        if (enabled?.enabled !== true) fail('DSH did not confirm the updated plugin is enabled', 'DSH_ENABLE_UNCONFIRMED');
+        result = {...result, enabled: true, loaded: enabled.loaded === true, phase: enabled.phase ?? 'loaded'};
+        finalCheck = await checkIntent(job);
+      }
+    }
+    if (finalCheck !== true) { if (old && !coordinated) { old.generation = Math.max(registry.generations[key] ?? 0, old.generation) + 1; registry.generations[key] = old.generation; runtimeVerified.delete(key); persistRegistry(); await publishPackage({...old, enabled: false, phase: 'source-changed'}); } fail('Source, policy or installation changed during native operation; inspect actual runtime', 'COMMUNITY_NATIVE_OUTCOME_REQUIRES_REVIEW'); }
     const generation = coldBiliActivation(job) ? old.generation : Math.max(old?.generation ?? 0, registry.generations[key] ?? 0) + 1; registry.generations[key] = generation;
     if (job.operation === 'uninstall') { runtimeVerified.delete(key); if (old) await publishPackage({...old, enabled: false, phase: 'uninstalled', generation}); delete registry.packages[key]; persistRegistry(); update(); return safeNativeResult(result); }
-    const record = {...old, ...intent.packageRef, packageKey: key, pluginId: pluginIdentity(intent.packageRef), declaredCapabilities: intent.packageRef.capabilities, grantedCapabilities: intent.grantedCapabilities ?? old?.grantedCapabilities ?? [], generation, profileId: result?.profileId ?? old?.profileId ?? 'buddy-community-v1', enabled: job.operation === 'enable' ? result?.enabled === true : job.operation === 'disable' || job.operation === 'install' ? false : old?.enabled ?? false, phase: result?.phase ?? result?.state ?? (job.operation === 'install' ? 'installed' : job.operation === 'enable' ? 'enable-unconfirmed' : 'disabled'), nativeEvidence: safeNativeResult(result), updatedAt: new Date(now()).toISOString(), sourceProof: {catalogDigest: intent.catalogDigest ?? old?.sourceProof?.catalogDigest, sourceFingerprint: intent.sourceFingerprint}, backendPlan: intent.backendPlan ?? old?.backendPlan};
+    const record = {...old, ...intent.packageRef, packageKey: key, pluginId: pluginIdentity(intent.packageRef), declaredCapabilities: intent.packageRef.capabilities, grantedCapabilities: intent.grantedCapabilities ?? old?.grantedCapabilities ?? [], generation, profileId: result?.profileId ?? old?.profileId ?? 'buddy-community-v1', enabled: job.operation === 'enable' ? result?.enabled === true : job.operation === 'install' ? keepEnabled : job.operation === 'disable' ? false : old?.enabled ?? false, phase: result?.phase ?? result?.state ?? (job.operation === 'install' ? 'installed' : job.operation === 'enable' ? 'enable-unconfirmed' : 'disabled'), nativeEvidence: safeNativeResult(result), updatedAt: new Date(now()).toISOString(), sourceProof: {catalogDigest: intent.catalogDigest ?? old?.sourceProof?.catalogDigest, sourceFingerprint: intent.sourceFingerprint}, backendPlan: intent.backendPlan ?? old?.backendPlan};
     if (job.operation === 'enable' && !record.enabled) fail('DSH did not confirm that the plugin is enabled', 'DSH_ENABLE_UNCONFIRMED');
     record.phase = record.enabled ? 'loaded' : job.operation === 'install' ? 'installed' : 'disabled'; delete record.runtimeFailure;
     if (job.operation === 'install') { record.previous = old ? {packageRef: omit(old, ['previous', 'backendPlan']), backendPlan: old.backendPlan, grantedCapabilities: old.grantedCapabilities} : null; record.grantedCapabilities = intent.grantedCapabilities; }
@@ -258,7 +313,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     registry.packages[key] = record; registry.releaseDigests[key + '@' + record.exactVersion] = record.sourceDigest; persistRegistry(); await publishPackage(record); if (record.enabled) runtimeVerified.add(key); else runtimeVerified.delete(key); update();
     // The imported copy is only needed until its plan is installed (review 低-2); DSH keeps its own verified cache.
     if (job.operation === 'install' && offlineArtifacts.has(record.sourceDigest)) { const staged = offlineArtifacts.get(record.sourceDigest); offlineArtifacts.delete(record.sourceDigest); await rm(staged.path, {force: true}).catch(() => {}); }
-    if (job.operation === 'install' && intent.priorEnabled && intent.priorDataSchemaVersion === record.dataSchemaVersion && record.grantedCapabilities.every(capability => intent.priorGrantedCapabilities.includes(capability))) await queueInstalled({packageKey: key, idempotencyKey: 'restore-enabled:' + job.id}, 'enable');
+    if (job.operation === 'install' && !coordinated && intent.priorEnabled && intent.priorDataSchemaVersion === record.dataSchemaVersion && record.grantedCapabilities.every(capability => intent.priorGrantedCapabilities.includes(capability))) await queueInstalled({packageKey: key, idempotencyKey: 'restore-enabled:' + job.id}, 'enable');
     return {...safeNativeResult(result), packageKey: key, generation};
   }
   async function execute(job) {
@@ -266,24 +321,39 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     const decision = await checkIntent(job);
     if (closed) fail('Community is closed', 'COMMUNITY_CLOSED');
     if (decision !== true && decision?.allowed !== true) fail(decision?.message ?? 'Maintenance intent changed', decision?.code ?? 'MAINTENANCE_RECONFIRM_REQUIRED');
+    const old = registry.packages[job.packageKey];
     try { return await executeOperation(job); }
     catch (cause) {
-      const record = registry.packages[job.packageKey];
-      if (record) { record.runtimeFailure = publicFailure(cause); record.phase = 'failed'; record.generation = Math.max(record.generation, registry.generations[job.packageKey] ?? 0) + 1; registry.generations[job.packageKey] = record.generation; runtimeVerified.delete(job.packageKey); persistRegistry(); await publishPackage({...record, enabled: false, phase: 'failed'}); update(); }
+      if (cause.code === "DSH_ROLLBACK_PLAN_REQUIRED") throw cause;
+      if (job.intent.updateMode && old?.backendPlan ) {
+        let restored = false;
+        try { await restoreUpdate(job, old); restored = true; }
+        catch (rollbackCause) { cause = Object.assign(new AggregateError([cause, rollbackCause], 'Plugin update failed and the previous runtime could not be verified'), {code: 'PLUGIN_UPDATE_RECOVERY_REQUIRED'}); }
+        if (restored) throw cause;
+      }
+      const record = job.intent.updateMode && old ? old : registry.packages[job.packageKey];
+      if (record) { registry.packages[job.packageKey] = record; record.runtimeFailure = publicFailure(cause); record.phase = 'failed'; record.generation = Math.max(record.generation, registry.generations[job.packageKey] ?? 0) + 1; registry.generations[job.packageKey] = record.generation; runtimeVerified.delete(job.packageKey); persistRegistry(); await publishPackage({...record, enabled: false, phase: 'failed'}); update(); }
       throw cause;
     }
   }
-  queue = await createMaintenanceQueue({directory: control, execute, revalidate: checkIntent, isBusy: async job => {
-    if(closed)return true;
+  queue = await createMaintenanceQueue({directory: control, execute, revalidate: checkIntent, canStart: maintenanceAdmission, isBusy: async job => {
+    if(closed||!maintenanceAdmission())return true;
     const cold=coldBiliActivation(job);
     if(cold){for(const prior of queue.snapshot().jobs){if(prior.id===job.id)break;if(prior.packageKey===job.packageKey&&['queued','running'].includes(prior.state))return true;}}
     return busy(job.packageKey,job.intent.packageRef,cold?registry.packages[job.packageKey].pluginId:null);
   }, now, onChange: update});
-  async function queueInstall(request) {
+  async function queueInstall(request, updateMode) {
     const plan=plans.get(request.planId);if(!plan)fail('Installation plan is missing; prepare it again','COMMUNITY_PLAN_NOT_FOUND');
     const grantedCapabilities=request.grantedCapabilities??[];
     if(!Array.isArray(grantedCapabilities)||new Set(grantedCapabilities).size!==grantedCapabilities.length||grantedCapabilities.some(value=>!plan.declaredCapabilities.includes(value))||plan.operation==='enable'&&communityDigest([...grantedCapabilities].sort())!==communityDigest([...plan.priorGrantedCapabilities].sort()))fail('Capabilities must be an explicit subset of the displayed plan','COMMUNITY_CAPABILITY_INVALID');
-    const enqueue=async actual=>{await assertInstallationIntent(plan);const job=await queue.enqueue({operation:plan.operation??'install',packageKey:plan.packageKey,intent:{...actual,grantedCapabilities,...(plan.operation==='enable'?{expectedGeneration:plan.expectedGeneration}:{})},idempotencyKey:plan.hostDependencyToken?'install:'+request.planId:request.idempotencyKey??'install:'+request.planId});void queue.drain().catch(()=>{});return {job:publicJob(job),snapshot:snapshot()};};
+    const enqueue = async actual => {
+      await assertInstallationIntent(plan);
+      const existing = queue.snapshot().jobs.find(job => job.operation === 'install' && job.packageKey === plan.packageKey && job.intent.packageRef.exactVersion === plan.packageRef.exactVersion && job.intent.packageRef.sourceDigest === plan.packageRef.sourceDigest && ['queued', 'running'].includes(job.state));
+      if (updateMode && existing) return {job: publicJob(existing), snapshot: snapshot()};
+      const job = await queue.enqueue({operation: plan.operation ?? 'install', packageKey: plan.packageKey, intent: {...actual, grantedCapabilities, ...(updateMode ? {updateMode} : {}), ...(plan.operation === 'enable' ? {expectedGeneration: plan.expectedGeneration} : {})}, idempotencyKey: plan.hostDependencyToken ? 'install:' + request.planId : request.idempotencyKey ?? 'install:' + request.planId});
+      void queue.drain().catch(() => {});
+      return {job: publicJob(job), snapshot: snapshot()};
+    };
     if(plan.hostDependencyToken)return hostDependencies.run({token:plan.hostDependencyToken,planId:plan.planId,confirmation:communityDigest([...grantedCapabilities].sort()),assertCurrent:()=>assertInstallationIntent(plan),materialize:options=>plan.operation==='enable'?Promise.resolve(plan):nativeInstallPlan(plan,options),enqueue,cancelJob:async id=>publicJob(await queue.cancel(id))});
     return enqueue(plan);
   }
@@ -320,33 +390,6 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
   async function invalidatePackageRuntime({packageKey, generation, phase = 'runtime-not-verified'}) {
     const record = registry.packages[packageKey]; if (!record || generation != null && record.generation !== generation) return;
     runtimeVerified.delete(packageKey); record.generation = Math.max(record.generation, registry.generations[packageKey] ?? 0) + 1; registry.generations[packageKey] = record.generation; persistRegistry(); await publishPackage({...record, enabled: false, phase}); update();
-  }
-  async function checkUpdates() {
-    const output = [];
-    for (const record of Object.values(registry.packages)) {
-      const work = allWorks().find(work => work.sourceId === record.sourceId && work.packageName === record.packageName && work.backend === 'dsh'); if (!work) continue;
-      const release = currentRelease(work); if (compareVersions(release.version, record.exactVersion) <= 0) continue;
-      const requested = parseDshPackageRef(release.package, {sourceId: work.sourceId}), addedCapabilities = requested.capabilities.filter(value => !record.grantedCapabilities.includes(value)), incompatibleData = requested.dataSchemaVersion !== record.dataSchemaVersion;
-      const policy = preferences.updatePolicies[record.packageKey] ?? 'manual', needsUser = addedCapabilities.length > 0 || incompatibleData;
-      // changes: the signed release notes between the installed and the offered version, newest first (B5 「更新内容」).
-      const changes = work.releases.filter(value => compareVersions(value.version, record.exactVersion) > 0 && compareVersions(value.version, release.version) <= 0).sort((a, b) => -compareVersions(a.version, b.version)).map(value => ({version: value.version, notes: value.notes ?? null, ...(value.locales ? {locales: copy(value.locales)} : {})}));
-      const row = {packageKey: record.packageKey, from: record.exactVersion, to: release.version, policy, addedCapabilities, incompatibleData, state: needsUser ? 'needs-user' : 'available', workId: work.id, sourceId: work.sourceId, changes};
-      if (policy === 'auto' && !needsUser) { try{const plan = await planInstall({sourceId: work.sourceId, id: work.id, version: release.version, profileId: record.profileId}); if(plan.hostComponents?.some(component=>!component.ready)){row.state='needs-user';row.hostComponents=plan.hostComponents;}else{const result=await queueInstall({planId:plan.planId,grantedCapabilities:record.grantedCapabilities.filter(capability=>requested.capabilities.includes(capability))});row.state='queued';row.jobId=result.job.id;}}catch(cause){if(cause.code!=='HOST_DEPENDENCY_PLAN_CHANGED')throw cause;row.state='needs-user';row.error=publicFailure(cause);} }
-      output.push(row);
-    }
-    return {updates: output};
-  }
-  // 「全部更新」 (B5): each update that asks for nothing new goes through the same plan and queue as the automatic policy,
-  // granting only what is already granted. Updates with new permissions or a data change stay for the user to review.
-  async function updateAll() {
-    const {updates} = await checkUpdates(), output = [];
-    for (const row of updates) {
-      if (row.state !== 'available') { output.push(row); continue; }
-      // Review 低-5: the plan itself is checked again; a catalog that changed meanwhile and now asks for more stays for the user.
-      try { const record = registry.packages[row.packageKey], plan = await planInstall({sourceId: row.sourceId, id: row.workId, version: row.to, profileId: record.profileId}); if (!record || plan.addedCapabilities.length || plan.hostComponents?.some(component=>!component.ready) || plan.packageRef.dataSchemaVersion !== record.dataSchemaVersion) { output.push({...row, state: 'needs-user', addedCapabilities: plan.addedCapabilities, incompatibleData: plan.packageRef.dataSchemaVersion !== record?.dataSchemaVersion}); continue; } const result = await queueInstall({planId: plan.planId, grantedCapabilities: record.grantedCapabilities.filter(capability => plan.declaredCapabilities.includes(capability))}); output.push({...row, state: 'queued', jobId: result.job.id}); }
-      catch (cause) { output.push({...row, state: cause.code==='HOST_DEPENDENCY_PLAN_CHANGED'?'needs-user':'failed', error: publicFailure(cause)}); }
-    }
-    return {updates: output};
   }
   // Offline import (B6), in two steps (review 中-1): prepareDshOffline reads and verifies the file and returns what it holds and
   // the date of its signed catalog; nothing is stored until community-offline-confirm. Trust is the online one: the envelope must
@@ -425,6 +468,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
   }
   async function action(request = {}) {
     if (closed) fail('Community is closed', 'COMMUNITY_CLOSED');
+    if (request.action === 'community-update-summary') return copy(pluginUpdates.summary());
     await refreshSourceAvailability();
     if (closed) fail('Community is closed', 'COMMUNITY_CLOSED');
     const type = request.action;
@@ -441,9 +485,33 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
       case 'community-favorite': case 'community-follow': return writePreferences(() => { const key = String(request.key), valid = type === 'community-favorite' ? allWorks().some(work => work.key === key) : [...catalogs].some(([sourceId, catalog]) => catalog.authors.some(author => sourceId + ':' + author.id === key)); if (!valid || typeof request.enabled !== 'boolean') fail('Invalid favorite/follow selection', 'COMMUNITY_REQUEST_INVALID'); const field = type === 'community-favorite' ? 'favorites' : 'follows'; preferences[field] = request.enabled ? [...new Set([...preferences[field], key])] : preferences[field].filter(value => value !== key); return {enabled: request.enabled}; });
       case 'community-export-preferences': return {schemaVersion: 1, favorites: copy(preferences.favorites), follows: copy(preferences.follows)};
       case 'community-import-preferences': return writePreferences(() => { const value = request.value; if (value?.schemaVersion !== 1 || !Array.isArray(value.favorites) || !Array.isArray(value.follows) || [...value.favorites, ...value.follows].some(key => typeof key !== 'string' || key.length > 800 || !/^[^\s:]{1,200}:\S{1,500}$/.test(key)) || value.favorites.length + value.follows.length > 20000) fail('Invalid preference import', 'COMMUNITY_REQUEST_INVALID'); const favorites = [...new Set([...preferences.favorites, ...value.favorites])], follows = [...new Set([...preferences.follows, ...value.follows])]; if (favorites.length + follows.length > 20000) fail('Favourites and follows would exceed 20000 entries', 'COMMUNITY_REQUEST_INVALID'); preferences.favorites = favorites; preferences.follows = follows; return {imported: true}; });
-      case 'community-set-update-policy': return writePreferences(() => { if (!['manual', 'auto'].includes(request.policy) || !registry.packages[request.packageKey]) fail('Invalid update policy', 'COMMUNITY_REQUEST_INVALID'); preferences.updatePolicies[request.packageKey] = request.policy; return {policy: request.policy}; });
-      case 'community-check-updates': return checkUpdates();
-      case 'community-update-all': return updateAll();
+      case 'community-set-update-policy': return writePreferences(() => {
+        const installed = Object.entries(legacyManager.snapshot().installed ?? {}).some(([id, row]) => legacyUpdateKey(row.sourceId ?? 'legacy', id) === request.packageKey);
+        if (!['manual', 'auto'].includes(request.policy) || (!registry.packages[request.packageKey] && !installed)) fail('Invalid update policy', 'COMMUNITY_REQUEST_INVALID');
+        preferences.updatePolicies[request.packageKey] = request.policy;
+        pluginUpdates.setPolicy(request.packageKey, request.policy);
+        return {policy: request.policy};
+      });
+      case 'community-check-updates': return pluginUpdates.check({refresh: request.refresh === true});
+      case 'community-update-all': return pluginUpdates.run('manual');
+      case 'community-plan-update': {
+        assertAdmission();
+        const row = pluginUpdates.pinned(request, 'buddy-v1');
+        return legacyManager.action({action: 'plan-update', ...row, mode: 'review'});
+      }
+      case 'community-install-update': {
+        assertAdmission();
+        const row = pluginUpdates.pinned(request, 'buddy-v1');
+        legacyUpdateWrites++;
+        try {
+          const result = await legacyManager.action({action: 'install-update', planId: request.planId, packageKey: row.packageKey, digest: row.digest});
+          await pluginUpdates.rememberFailure(row, null);
+          return result;
+        } catch (cause) {
+          if (cause.code !== 'PLUGIN_BUSY') await pluginUpdates.rememberFailure(row, cause);
+          throw cause;
+        } finally { legacyUpdateWrites--; }
+      }
       case 'community-find-review': return findReview(request);
       case 'community-offline-confirm': return confirmOfflineImport(request);
       case 'community-offline-cancel': if (pendingImport?.id === request.importId) pendingImport = null; return {cancelled: true};
@@ -457,7 +525,10 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
       case 'dsh-probe': nativeState = safeNativeResult(await backends.invoke('dsh', 'probe')); update(); return copy(nativeState);
       case 'dsh-plan': return planInstall(request);
       case 'dsh-plan-enable': return planEnable(request);
-      case 'dsh-install': return queueInstall(request);
+      case 'dsh-install': {
+        const plan = plans.get(request.planId);
+        return queueInstall(request, plan?.updateFrom !== undefined ? 'review' : undefined);
+      }
       case 'dsh-enable': {const old=registry.packages[request.packageKey];if(hostDependencies&&old?.packageName==='@ai-buddy/bilibili-companion'){const plan=await planEnable(request);if(plan.hostComponents.some(value=>!value.ready))return {dependencyPlan:plan};return queueInstall({planId:plan.planId,grantedCapabilities:plan.priorGrantedCapabilities});}return queueInstalled(request,'enable');}
       case 'dsh-disable': case 'dsh-rollback': case 'dsh-uninstall': return queueInstalled(request,type.slice(4));
       case 'dsh-open-client': return openClient(request);
@@ -481,15 +552,23 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     if (event.kind === 'runtime-verification' || event.kind === 'install-state' || event.kind === 'platform-progress') { if (typeof event.phase === 'string' && nativeState.phase !== event.phase) { nativeState = {...nativeState, phase: event.phase}; update(); } }
     else if (event.kind === 'tools-changed' && nativeState.phase === 'verifying-component') { nativeState = {...nativeState, phase: 'checking-plugin'}; update(); }
   });
-  if (pollMs > 0) { timer = setInterval(() => { if(automaticWorkAllowed())void queue.drain().catch(() => {}); }, pollMs); timer.unref?.(); }
+  if (pollMs > 0) {
+    pluginUpdates.start();
+    timer = setInterval(() => {
+      if (!automaticWorkAllowed()) return;
+      void queue.drain().catch(() => {});
+      pluginUpdates.retryDeferred();
+    }, pollMs);
+    timer.unref?.();
+  }
   function close() {
     if (closePromise) return closePromise; closed = true; clearInterval(timer); offNativeEvents?.(); for (const controller of metadataRequests.keys()) controller.abort(Object.assign(Error('Community is closed'), {code: 'COMMUNITY_CLOSED'}));
     closePromise = (async () => {
-      await Promise.allSettled([...sourceLocks.values()]); await queue.close(); await prefSerial; await Promise.allSettled([...pendingInvalidations, ...pendingPublications]);
+      await Promise.allSettled([...sourceLocks.values()]); await queue.close(); await pluginUpdates.close(); await prefSerial; await Promise.allSettled([...pendingInvalidations, ...pendingPublications]);
       const cleanup = []; for (const record of Object.values(registry.packages)) { record.generation = Math.max(record.generation, registry.generations[record.packageKey] ?? 0) + 1; registry.generations[record.packageKey] = record.generation; cleanup.push(publishPackage({...record, enabled: false, phase: 'closed'})); }
       try { if (Object.keys(registry.packages).length) persistRegistry(); } catch (cause) { cleanup.push(Promise.reject(cause)); }
       const results = await Promise.allSettled(cleanup), owned = []; if (backends.supports('dsh', 'close')) owned.push(Promise.resolve().then(() => backends.invoke('dsh', 'close'))); if (legacyManager.close) owned.push(Promise.resolve().then(() => legacyManager.close())); throwCleanupFailures([...results, ...await Promise.allSettled(owned)]);
     })(); return closePromise;
   }
-  return {action, snapshot, close, activateInstalled, invalidateRuntime, resolveDshInstalled, confirmNativeActivation, invalidatePackageRuntime, drainMaintenance: queue.drain, prepareDshOffline: importOfflineFile, prepareOffline: (...args) => legacyManager.prepareOffline(...args), resolveInstalled: (...args) => legacyManager.resolveInstalled(...args), resolveTrustedSource: trustedSource};
+  return {action, snapshot, close, activateInstalled, invalidateRuntime, resolveDshInstalled, confirmNativeActivation, invalidatePackageRuntime, drainMaintenance: queue.drain, runAutomaticUpdates: pluginUpdates.automatic, maintenanceBusy: () => legacyUpdateWrites > 0 || pluginUpdates.busy() || queue.isExecuting(), prepareDshOffline: importOfflineFile, prepareOffline: (...args) => legacyManager.prepareOffline(...args), resolveInstalled: (...args) => legacyManager.resolveInstalled(...args), resolveTrustedSource: trustedSource};
 }

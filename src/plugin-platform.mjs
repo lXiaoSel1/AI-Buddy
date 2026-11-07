@@ -1,3 +1,4 @@
+import {PLUGIN_MAINTENANCE_BUSY} from './plugin-maintenance-client.mjs';
 import {createLocalCardGamesBundle,LOCAL_CARD_GAMES} from './local-card-games-bundle.mjs';
 import {createCardGamesArt} from './card-games-art.mjs';
 import {createCardGameService} from './voice-games/game-service.mjs';
@@ -68,8 +69,17 @@ export function createHostDependencyCoordinator({describe,prepare,busy=()=>false
  return {plan,run,cancel,close,snapshot,preparing:()=>active?.preparing===true,active:()=>active!==null};
 }
 /** Application composition only. Work business is supplied by its enabled plugin. */
-export async function createPluginPlatform({root,build,dataRoot,legacyManager,getGame,getProvider,getSocialHost=()=>null,crypto,BrowserWindow,session,ipcMain,pluginClientPreloadPath,openExternal,openSocialSetup=()=>{},renderBiliSheet,analyzeBiliFrames,onReadingOpen=async()=>{},chooseComponentArchive,componentWorkerFactory,ffmpegWorkerFactory,ffmpegBundledNotices=join(build,'media-notices','ffmpeg'),ffmpegManagerFactory=createFfmpegComponentManager,qqLoginFactory=createQqLoginRuntime,runtimeLockPath,resolveToolScope,hostServices={},busy=()=>false,automaticWorkAllowed=()=>true,onUpdate=()=>{},onUsage=()=>{},onNotification=()=>{},audit=()=>{},pageAppearance=()=>null}){
+export async function createPluginPlatform({root,build,dataRoot,legacyManager,getGame,getProvider,getSocialHost=()=>null,crypto,BrowserWindow,session,ipcMain,pluginClientPreloadPath,openExternal,openSocialSetup=()=>{},renderBiliSheet,analyzeBiliFrames,onReadingOpen=async()=>{},chooseComponentArchive,componentWorkerFactory,ffmpegWorkerFactory,ffmpegBundledNotices=join(build,'media-notices','ffmpeg'),ffmpegManagerFactory=createFfmpegComponentManager,qqLoginFactory=createQqLoginRuntime,runtimeLockPath,resolveToolScope,hostServices={},busy=()=>false,automaticWorkAllowed=()=>true,maintenanceAdmission=()=>true,onUpdate=()=>{},onUsage=()=>{},onNotification=()=>{},audit=()=>{},pageAppearance=()=>null}){
   const pages=new Map(),lifecycles=new Map(),grantStates=new Map(),exports=new Map(),nativeEvents=new EventEmitter(),workBackends=new Map(),workPreparations=new Map(),workReleases=new Map(),releasedWorkBackends=new WeakMap(),taskToolBackends=new Set(),runtimeDescriptors=new Map();let communityCalls=0,currentBackend=null,currentLock=null,selectedComponentLock=null,componentChecked=false,componentChanging=false,componentGeneration=0,inflight=0,closed=false,platform,workClientHost,workClientOpener,localCard;
+  let admittedMutations = 0;
+  const mutationActions = new Set(['install','install-offline','install-update','enable','disable','rollback','uninstall','sources-add','sources-disable','sources-remove',
+    'dsh-install','dsh-enable','dsh-disable','dsh-rollback','dsh-uninstall','dsh-open-client','dsh-component-install','bili-component-prepare',
+    'community-install-update','community-update-all','community-offline-confirm','social-login-start','social-login-refresh','social-accounts-save']);
+  async function admitMutation(run) {
+    if (!maintenanceAdmission()) throw error('Application update is reserving maintenance; retry when it finishes','PLUGIN_MAINTENANCE_RESERVED');
+    admittedMutations++;
+    try { return await run(); } finally { admittedMutations--; }
+  }
   let dshComponentState={state:'missing'};
   const componentManager=createManagedDshComponentManager({destinationRoot:join(dataRoot,'plugin-runtimes','dsh-components'),workerPath:join(build,'dsh-component-worker.mjs'),workerFactory:componentWorkerFactory,busy:()=>inflight>0||taskToolBackends.size>0||localCard?.busy()||bridge.busy()||busy(),onUpdate:value=>{dshComponentState=value;onUpdate(platform?.snapshot());}});
   const ffmpegManager=ffmpegManagerFactory({directory:join(dataRoot,'media-components','ffmpeg'),bundledTools:join(build,'bili-media'),bundledNotices:ffmpegBundledNotices,workerPath:join(build,'ffmpeg-component-worker.mjs'),workerFactory:ffmpegWorkerFactory,onUpdate:()=>onUpdate(platform?.snapshot())});
@@ -112,6 +122,16 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,ge
     authorizeUI:request=>currentBackend?.verifySocialUI(request)??false});
   const cardGames=createCardGameService({getGame,getProvider});
   const voiceGamesFacade=createNativeVoiceGamesFacade({dataRoot,games:cardGames,art:createCardGamesArt({build,dataRoot,getGame}),resolveGrant:identity=>{if(localCard?.owns(identity.pluginId))return localCard.grant(identity);const row=socialRecords.get(identity.pluginId),grant=bridge.grants.get(identity.pluginId);return row?{...row,...grant}:null;},authorizeUI:request=>localCard?.owns(request.identity?.pluginId)?localCard.verifyUI(request):currentBackend?.verifySocialUI(request)??false});
+  const socialDispatch = socialFacade.dispatch, gameDispatch = voiceGamesFacade.dispatch;
+  const newSocialWork = new Set(['activity.lease','connections.open','proactive.offer','owner.work.propose','owner.work.approve']);
+  socialFacade.dispatch = (request, ...rest) => {
+    const operation = request?.payload?.operation;
+    const createsWork = newSocialWork.has(request?.method) || request?.method === 'connections.request' &&
+      ['video.fullReading.confirm','video.fullReading.continue','video.storyboard.continue','qq.memory.retry'].includes(operation);
+    return createsWork ? admitMutation(() => socialDispatch(request, ...rest)) : socialDispatch(request, ...rest);
+  };
+  const newGameWork = new Set(['games.table.create','games.table.next','games.table.action','games.table.resume','games.table.seats','games.table.topup','games.model.request','games.chat.send','games.replay.review']);
+  voiceGamesFacade.dispatch = (request, ...rest) => newGameWork.has(request?.method) ? admitMutation(() => gameDispatch(request, ...rest)) : gameDispatch(request, ...rest);
   const socialTick=setInterval(()=>{if(!automaticWorkAllowed())return;for(const record of socialRecords.values())if(record.enabled)socialFacade.emit(record,{type:'tick',at:Date.now()});},10000);socialTick.unref?.();
   function assertComponentSelection(generation){
     if(closed)throw error('插件平台已关闭','PLUGIN_CLOSED');
@@ -152,7 +172,7 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,ge
     if(closed)throw error('插件平台已关闭','PLUGIN_CLOSED');
     const prior=bridge.grants.get(id);bridge.grants.set({pluginId:id,declared:record.declaredCapabilities??[],granted:record.grantedCapabilities??[],enabled:true,generation:Math.max((prior?.generation??0)+1,record.generation??1)});grantStates.set(id,state);
   }
-  const community=await createCommunityService({root,dataRoot,legacyManager,dshBackend,automaticWorkAllowed,hostDependencies:{plan:value=>dependencyCoordinator.plan(value),run:value=>dependencyCoordinator.run(value)},busy:(key,ref,activationPlugin)=>dependencyCoordinator?.preparing()||componentChanging||(activationPlugin?communityCalls>0||bridge.busy(activationPlugin)||[...taskToolBackends].some(b=>b.usesPlugin(activationPlugin)):inflight>0||taskToolBackends.size>0||bridge.busy()||busy()),onUpdate:value=>onUpdate(platform?.snapshot()??value),onPackageState,onOpenClient:(descriptor,{external=false}={})=>external?clientHost.external(descriptor):clientHost.open(descriptor,{surface:embedScope.getStore()?.surface??null,panel:embedScope.getStore()?.panel??null}),onOpenExternal:openExternal});
+  const community=await createCommunityService({root,dataRoot,legacyManager,dshBackend,automaticWorkAllowed,maintenanceAdmission,hostDependencies:{plan:value=>dependencyCoordinator.plan(value),run:value=>dependencyCoordinator.run(value)},busy:(key,ref,activationPlugin)=>dependencyCoordinator?.preparing()||componentChanging||(activationPlugin?communityCalls>0||bridge.busy(activationPlugin)||[...taskToolBackends].some(b=>b.usesPlugin(activationPlugin)):inflight>0||taskToolBackends.size>0||bridge.busy()||busy()),onUpdate:value=>onUpdate(platform?.snapshot()??value),onPackageState,onOpenClient:(descriptor,{external=false}={})=>external?clientHost.external(descriptor):clientHost.open(descriptor,{surface:embedScope.getStore()?.surface??null,panel:embedScope.getStore()?.panel??null}),onOpenExternal:openExternal});
   const cardClientHost=createDshClientHost({BrowserWindow,session,openExternal,audit,onState:event=>{audit({type:'plugin-client',...event});clientEvents.emit('state',{kind:'card',...event});},appearance:pageAppearance});
   localCard=await createLocalCardGamesBundle({build,dataRoot,selectedRuntimeLock,voiceGamesServices:voiceGamesFacade,clientHost:cardClientHost,foreignInstalled:()=>community.snapshot().dsh.installed.some(record=>record.packageName===LOCAL_CARD_GAMES.packageName),onUpdate:()=>onUpdate(platform?.snapshot()),audit});
   function withLocalCard(snapshot){
@@ -263,7 +283,8 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,ge
     catch(cause){try{await close();}catch(stopError){throw Object.assign(stopError,{cause});}throw cause;}
     finally{inflight--;}
   }
-  async function action(request){
+  const action = request => mutationActions.has(request?.action) ? admitMutation(() => dispatchAction(request)) : dispatchAction(request);
+  async function dispatchAction(request){
     const operation=request?.action;
     if(localCard?.owns(request?.packageKey)){
       if(operation==='dsh-enable')return localCard.enable();
@@ -308,7 +329,8 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,ge
     const result=await community.action(request),extra={hostDependencies:dependencyCoordinator.snapshot(),mediaComponents:{ffmpeg:ffmpegManager.snapshot()},dshComponent:dshComponentState};return result?.snapshot?{...result,snapshot:{...withLocalCard(result.snapshot),...extra}}:operation==='community-status'?{...withLocalCard(result),...extra}:result;
   }
   // Main-window embedding (plugin-embed.mjs): same community open path, only the page's surface differs.
-  async function openClientEmbedded({packageKey,surface}){
+  const openClientEmbedded = options => admitMutation(() => openClient(options));
+  async function openClient({packageKey,surface}){
     if(typeof surface!=='function')throw error('嵌入页面需要宿主提供的显示面','PLUGIN_EMBED_DENIED');
     if(localCard?.owns(packageKey))return localCard.open(surface);
     const record=community.snapshot().dsh.installed.find(value=>value.packageKey===packageKey);
@@ -319,7 +341,7 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,ge
   platform={...community,action,bridge,cardGames,voiceGamesFacade,openClientEmbedded,
     installBundledCardGames(){if(!localCard)throw error('本构建未附带一起玩牌','LOCAL_CARD_GAMES_UNAVAILABLE');return localCard.install();},
     bundledCardGamesStatus:()=>localCard?.status()??{available:false},
-    activateInstalled:packageKey=>localCard?.owns(packageKey)?localCard.activate():community.activateInstalled(packageKey),onClientState:listener=>{clientEvents.on('state',listener);return()=>clientEvents.off('state',listener);},socialAccounts,dshBackend,componentManager,ffmpegManager,dependencyCoordinator,clientHost,runtimeDescriptor,createIsolatedWorkBackend,releaseIsolatedWorkBackend,createTaskToolBackend,openWorkClient,setWorkClientOpener:opener=>{if(typeof opener!=='function')throw TypeError('Work client opener must be host supplied');workClientOpener=opener;},invalidateRuntime:async value=>{runtimeDescriptors.clear();invalidateDshComponentVerification();await localCard?.invalidate();return community.invalidateRuntime(value);},
+    activateInstalled:packageKey=>admitMutation(()=>localCard?.owns(packageKey)?localCard.activate():community.activateInstalled(packageKey)),onClientState:listener=>{clientEvents.on('state',listener);return()=>clientEvents.off('state',listener);},socialAccounts,dshBackend,componentManager,ffmpegManager,dependencyCoordinator,clientHost,runtimeDescriptor,createIsolatedWorkBackend,releaseIsolatedWorkBackend,createTaskToolBackend,openWorkClient,setWorkClientOpener:opener=>{if(typeof opener!=='function')throw TypeError('Work client opener must be host supplied');workClientOpener=opener;},invalidateRuntime:async value=>{runtimeDescriptors.clear();invalidateDshComponentVerification();await localCard?.invalidate();return community.invalidateRuntime(value);},
     // Host-only read ports. These are not renderer action names or plugin RPCs.
     resolveDshInstalled:packageKey=>community.resolveDshInstalled(packageKey),
     resolveTrustedSource:sourceId=>community.resolveTrustedSource(sourceId),
@@ -328,7 +350,7 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,ge
     async issueToolContext({pluginId,characterId,personaId,workspace,taskId,sessionId=randomUUID(),permissionScope=['tools.list','tools.invoke'],connectionRefs=[],planState='planning',readOnlyToolNames=[],approvedPlanRevision=null}){return bridge.issueContext({pluginId,characterId,personaId,workspace,taskId,sessionId,permissionScope,connectionRefs,planState,readOnlyToolNames,approvedPlanRevision});},
     async issueActiveToolContext({pluginId,characterId,personaId,workspace,taskId,sessionId=randomUUID(),permissionScope=['tools.list','tools.invoke'],connectionRefs=[],planState='execution',readOnlyToolNames=[],approvedPlanRevision=null},lease){return bridge.issueActiveContext({pluginId,characterId,personaId,workspace,taskId,sessionId,permissionScope,connectionRefs,planState,readOnlyToolNames,approvedPlanRevision},lease);},
     async exportTools(bindings){const exporter=await createDshMcpExport({bindings,onAudit:event=>audit({type:'mcp-tool',...event})});exports.set(exporter.sessionId,exporter);return exporter;},
-    busy:()=>dependencyCoordinator.preparing()||componentChanging||inflight>0||taskToolBackends.size>0||localCard?.busy()||bridge.busy(),
+    busy:()=>admittedMutations>0||community.maintenanceBusy()||legacyManager[PLUGIN_MAINTENANCE_BUSY]?.()||dependencyCoordinator.preparing()||componentChanging||inflight>0||taskToolBackends.size>0||localCard?.busy()||bridge.busy(),
     // Theme or language changed: open plugin pages pick it up without reloading.
     async refreshAppearance(){await Promise.allSettled([clientHost.refreshAppearance(),cardClientHost.refreshAppearance(),workClientHost?.refreshAppearance()]);},
     async close(){if(closed)return;closed=true;await dependencyCoordinator.close();await ffmpegManager.close();await componentManager.close();clearInterval(socialTick);await Promise.all([...exports.values()].map(value=>value.close()).concat([...taskToolBackends].map(value=>value.close())));exports.clear();await Promise.allSettled([...workPreparations.values()]);await workClientHost?.close();for(const value of [...workBackends.values()])await value.backend.close();workBackends.clear();await community.close();await localCard?.close();await cardClientHost.close();await voiceGamesFacade.close();await socialFacade.close();await socialBroker.close();await biliVision.close();await socialTransport.close();await socialLogin.close();socialAccounts.close();await clientHost.close();await bridge.close();},

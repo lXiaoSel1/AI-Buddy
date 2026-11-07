@@ -2,6 +2,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {readFile,stat,mkdir,rm} from 'node:fs/promises';
 import {join,resolve,relative,isAbsolute,sep} from 'node:path';
 import {writeAtomic} from './atomic-write.mjs';
+import {legacyUpdateKey, selectStableUpdate, stablePatchUpdate} from './plugin-update-policy.mjs';
 import {canonicalPluginJson,pluginId,parsePluginVersion,pluginCompatibility,satisfiesVersionRange} from './plugin-manifest.mjs';
 import {verifyPluginCatalog,resolvePluginInstallPlan,catalogPackages} from './plugin-catalog.mjs';
 import {assertPluginTreeNoLinks,inspectPluginArchive,extractPluginArchive,verifyInstalledPlugin} from './plugin-archive.mjs';
@@ -21,7 +22,7 @@ const summaryManifest=manifest=>Object.fromEntries(Object.entries(manifest).filt
 export async function createPluginSourceManager({legacy,root,dataRoot,appVersion,apiVersion,onUpdate=()=>{},now=Date.now}={}){
  const backend=legacy[PLUGIN_SOURCE_BACKEND],control=join(root,'local/plugins'),sourceFile=join(control,'sources.json'),registryFile=join(control,'registry-v2.json');
  let sourcesRecord=await json(sourceFile,{schemaVersion:1,sources:{}}),registry=await json(registryFile,{schemaVersion:2,packages:{}}),closed=false,active=null;
- const catalogs=new Map(),previews=new Map(),plans=new Map(),generations=new Map(),requests=new Set(),verified=new Set();
+ const catalogs=new Map(),previews=new Map(),plans=new Map(),updatePlans=new Map(),generations=new Map(),requests=new Set(),verified=new Set();
  const verificationKey=(sid,saved)=>sid+':'+saved.manifest.id+'@'+saved.manifest.version+':'+saved.archive.sha256;
  function validate(){
   if(sourcesRecord?.schemaVersion!==1||!sourcesRecord.sources||typeof sourcesRecord.sources!=='object'||Array.isArray(sourcesRecord.sources)||registry?.schemaVersion!==2||!registry.packages||typeof registry.packages!=='object'||Array.isArray(registry.packages))fail('扩展来源或独立登记损坏；旧资料保留','PLUGIN_SOURCE_STORAGE_INVALID');
@@ -76,7 +77,7 @@ export async function createPluginSourceManager({legacy,root,dataRoot,appVersion
   }catch(error){if(closed)return;try{await mutation(async()=>{const row=source(sid);if(row.keyFingerprint!==original.keyFingerprint||generation(sid)!==revision&&error.code==='PLUGIN_SOURCE_CHANGED')return;sourcesRecord.sources[sid]={...row,lastError:{code:error.code??'PLUGIN_SOURCE_FETCH_FAILED',message:String(error.message).slice(0,2000)}};persistSources();update();});}catch{}}
   finally{requests.delete(controller);}
  }
- async function refresh(sid){assertReady();const ids=sid?[source(sid,{available:true}).sourceId]:Object.values(allSources()).filter(x=>x.enabled&&!x.removed).map(x=>x.sourceId);let cursor=0;await Promise.all(Array.from({length:Math.min(4,ids.length)},async()=>{while(cursor<ids.length)await refreshOne(ids[cursor++]);}));return snapshot();}
+ async function refresh(sid,{onlyInstalled=false}={}){assertReady();const requested=onlyInstalled?new Set(refs().filter(ref=>!ref.legacy).map(ref=>ref.sourceId)):null;const ids=sid?[source(sid,{available:true}).sourceId]:Object.values(allSources()).filter(x=>x.enabled&&!x.removed&&(!requested||requested.has(x.sourceId))).map(x=>x.sourceId);let cursor=0;await Promise.all(Array.from({length:Math.min(4,ids.length)},async()=>{while(cursor<ids.length)await refreshOne(ids[cursor++]);}));return snapshot();}
  function matchingRef(sid,id,version){return refs(id).find(row=>row.sourceId===sid&&row.row.versions[version]);}
  function activation(sid,manifest,ref){if(manifest.kind==='runtime')return {supported:false,usable:false,state:'dependency'};if(manifest.kind!=='plugin'||manifest.id!=='ai-buddy.kimi-engine'||!manifest.activationEvents.includes('onHarness:kimi')||!manifest.capabilities.includes('harness.register'))return {supported:false,usable:false,state:'unsupported',reason:'当前主程序尚无此扩展的激活入口'};if(ref&&refs(manifest.id).length!==1)return {supported:true,usable:false,state:'unsupported',reason:'存在不同来源的重复登记，请先明确清理'};if(!ref||ref.row.current!==manifest.version)return {supported:true,usable:false,state:'not-installed'};if(!ref.row.enabled)return {supported:true,usable:false,state:'disabled'};if(sid!==LEGACY_SOURCE_ID&&!verified.has(verificationKey(sid,ref.row.versions[manifest.version])))return {supported:true,usable:false,state:'disabled',reason:'本地扩展文件未通过来源与哈希校验'};for(const[id,range]of Object.entries(manifest.dependencies)){const dep=refs(id).find(row=>row.sourceId===sid);if(!dep||!satisfiesVersionRange(dep.row.current,range)||refs(id).length!==1||sid!==LEGACY_SOURCE_ID&&!verified.has(verificationKey(sid,dep.row.versions[dep.row.current])))return {supported:true,usable:false,state:'missing-dependency'};}return {supported:true,usable:true,state:'ready'};}
  function itemFor(sid,item,{full=false,sourceRow=null}={}){const ref=matchingRef(sid,item.manifest.id,item.manifest.version),row=sourceRow??(sid===LEGACY_SOURCE_ID?legacySource():sourceSummary(source(sid))),manifest=full?clone(item.manifest):summaryManifest(item.manifest);return {sourceId:sid,source:clone(row),manifest,archive:clone(item.archive),installed:!!ref,current:ref?.row.current===item.manifest.version,enabled:ref?.row.enabled??false,previous:ref?.row.previous??null,...pluginCompatibility(item.manifest,{appVersion,apiVersion}),activation:activation(sid,item.manifest,ref)};}
@@ -93,6 +94,91 @@ export async function createPluginSourceManager({legacy,root,dataRoot,appVersion
  async function inUse(id,sid){function depends(candidate,target,seen=new Set()){if(candidate===target)return true;if(seen.has(candidate))return false;seen.add(candidate);const ref=refs(candidate).find(x=>x.sourceId===sid),saved=ref?.row.versions[ref.row.current];return !!saved&&Object.keys(saved.manifest.dependencies).some(dep=>depends(dep,target,seen));}for(const ref of refs())if(ref.sourceId===sid&&depends(ref.id,id)&&(await backend.busy(ref.id)||backend.host?.isActive?.(ref.id)))return true;return false;}
  async function plan(sid,requestsValue){assertReady();const row=source(sid,{available:true}),catalog=catalogs.get(sid);if(!catalog)fail('来源尚无已验证目录，请先刷新','PLUGIN_SOURCE_NOT_CACHED');const installed=[];for(const[id,value]of Object.entries(registry.packages))if(value.sourceId===sid)for(const[version,item]of Object.entries(value.versions))try{await verifySaved(item,sid);installed.push({id,version,sha256:item.archive.sha256});}catch{}const value=resolvePluginInstallPlan(catalog,requestsValue,{installed,appVersion,apiVersion});for(const item of value.packages)checkSourceConflict(item.manifest.id,sid);const planId=hash({sourceId:sid,key:row.keyFingerprint,catalog:value.catalogSha256,generation:generation(sid),plan:value});const result={...value,planId,sourceId:sid,keyFingerprint:row.keyFingerprint,generation:generation(sid),catalogSha256:catalog.verified.payloadSha256};plans.set(planId,result);return clone(result);}
  function checkPlan(value){const row=source(value.sourceId,{available:true});if(generation(value.sourceId)!==value.generation||row.keyFingerprint!==value.keyFingerprint||catalogs.get(value.sourceId)?.verified.payloadSha256!==value.catalogSha256)fail('来源或目录已改变，请重新核对安装计划','PLUGIN_SOURCE_CHANGED');for(const item of value.packages)checkSourceConflict(item.manifest.id,value.sourceId);return row;}
+ function updateCandidates(automatic = false) {
+  const base = legacy.snapshot(), rows = [], errors = [];
+  const installed = refs(), seen = new Set(), ambiguousIds = new Set();
+  for (const ref of installed) { if (seen.has(ref.id)) ambiguousIds.add(ref.id); else seen.add(ref.id); }
+  for (const ref of installed) {
+   if (ambiguousIds.has(ref.id)) continue;
+   const prior = ref.row.versions[ref.row.current], origin = ref.legacy ? null : source(ref.sourceId), catalog = catalogs.get(ref.sourceId);
+   const items = ref.legacy ? base.packages ?? [] : catalog?.packages ?? [];
+   const schema = ref.row.dataSchemaVersion ?? prior.manifest.dataSchemaVersion;
+   const incompatibleSchema = manifest => manifest.dataSchemaVersion !== schema || !manifest.compatibleDataVersions.includes(schema);
+   const candidates = items.filter(({manifest}) => manifest.id === ref.id && (!automatic ||
+     stablePatchUpdate(ref.row.current, manifest.version) && !incompatibleSchema(manifest) &&
+     manifest.capabilities.every(value => prior.manifest.capabilities.includes(value))));
+   const selected = selectStableUpdate(candidates, ref.row.current,
+     item => pluginCompatibility(item.manifest, {appVersion, apiVersion}).compatible, item => item.manifest.version);
+   const error = ref.legacy ? base.catalogError && {code: 'PLUGIN_SOURCE_FETCH_FAILED', message: base.catalogError} : origin.lastError;
+   if (error && !errors.some(value => value.sourceId === ref.sourceId)) errors.push({sourceId: ref.sourceId, error});
+   if (!selected) continue;
+   const {target, compatible} = selected;
+   const addedCapabilities = target.manifest.capabilities.filter(value => !prior.manifest.capabilities.includes(value));
+   const incompatibleData = incompatibleSchema(target.manifest);
+   const changed = !ref.legacy && prior.sourceProof?.keyFingerprint !== origin.keyFingerprint;
+   const available = compatible && !error && !changed && (ref.legacy || (origin.enabled && !origin.removed));
+   rows.push({backend: 'buddy-v1', id: ref.id, sourceId: ref.sourceId, packageName: target.manifest.name, packageKey: legacyUpdateKey(ref.sourceId, ref.id),
+     from: ref.row.current, to: target.manifest.version, digest: target.archive.sha256, addedCapabilities, incompatibleData, bytes: target.archive.bytes,
+     state: !available ? 'unavailable' : addedCapabilities.length || incompatibleData ? 'needs-user' : 'available',
+     changes: target.releaseNotes ? [{version: target.manifest.version, notes: target.releaseNotes}] : [],
+     ...(!available ? {error: error ?? (changed ? {code: 'PLUGIN_SOURCE_CHANGED', message: 'Installed publisher identity changed'} :
+      !compatible ? {code: 'PLUGIN_INCOMPATIBLE', message: 'Update requires a compatible app, API or platform'} : {code: 'PLUGIN_SOURCE_DISABLED', message: 'Plugin source is disabled or removed'})} : {})});
+  }
+  return {updates: rows, errors};
+ }
+ async function refreshUpdateSources() {
+  await refresh(null, {onlyInstalled: true});
+  if (refs().some(ref => ref.legacy)) await legacy.refreshCatalog();
+ }
+ function exactUpdate(request, mode) {
+  const row = updateCandidates(mode === 'auto').updates.find(value => value.packageKey === request.packageKey && value.id === request.id &&
+    value.sourceId === request.sourceId && value.from === request.from && value.to === request.to && value.digest === request.digest);
+  if (!row || row.state === 'unavailable' || row.incompatibleData) fail('Plugin update changed or is unavailable; check updates again', 'PLUGIN_UPDATE_CHANGED');
+  return row;
+ }
+ async function updateApproval(plan) {
+  const {expected, mode, selected} = plan, row = exactUpdate(expected, mode);
+  const ref = chosen(row.id, row.sourceId), prior = ref.row.versions[row.from];
+  if (ref.row.enabled !== plan.enabled || prior.archive.sha256 !== plan.fromDigest || (ref.legacy ? backend.catalogDigest() : catalogs.get(row.sourceId)?.verified.payloadSha256) !== selected.catalogSha256)
+   fail('Installed plugin or signed catalog changed after review', 'PLUGIN_UPDATE_CHANGED');
+  if (mode === 'auto') {
+   const preferences = join(dataRoot, 'community', 'preferences-v1.json');
+   await assertPluginTreeNoLinks(preferences);
+   const prefs = await json(preferences, {});
+   if (prefs.updatePolicies?.[row.packageKey] !== 'auto') fail('Automatic updates were turned off; review this update manually', 'PLUGIN_AUTO_UPDATE_DISABLED');
+  }
+ }
+ async function planUpdate(request) {
+  const mode = request.mode;
+  if (!['review', 'manual', 'auto'].includes(mode)) fail('Invalid plugin update mode', 'PLUGIN_UPDATE_CHANGED');
+  const row = exactUpdate(request, mode), ref = chosen(row.id, row.sourceId);
+  if (mode === 'auto' && await inUse(row.id, row.sourceId)) fail('Extension is in use; waiting for an idle update slot', 'PLUGIN_BUSY');
+  const choices = [{id: row.id, version: row.to}], prior = ref.row.versions[row.from];
+  if (ref.legacy) await backend.assertCatalogPublisher(prior);
+  const selected = ref.legacy ? await legacy.plan(choices) : await plan(row.sourceId, choices);
+  const rootItem = selected.packages.find(value => value.manifest.id === row.id);
+  if (!rootItem || rootItem.archive.sha256 !== row.digest) fail('Signed plugin update digest changed', 'PLUGIN_UPDATE_CHANGED');
+  const dependencyChanges = selected.packages.filter(value => value !== rootItem).flatMap(item => {
+   const prior = refs(item.manifest.id).find(record => record.sourceId === row.sourceId)?.row;
+   return prior?.current === item.manifest.version && prior.versions[prior.current]?.archive.sha256 === item.archive.sha256 ? [] :
+    [{id: item.manifest.id, from: prior?.current ?? null, to: item.manifest.version}];
+  });
+  const requiresReview = row.addedCapabilities.length > 0 || dependencyChanges.length > 0 || mode === 'auto' && !stablePatchUpdate(row.from, row.to);
+  const planId = randomUUID(), pin = {expected: row, mode, selected, enabled: ref.row.enabled, fromDigest: prior.archive.sha256, requiresReview};
+  if (mode !== 'auto' || !requiresReview) await updateApproval(pin);
+  updatePlans.set(planId, pin); while (updatePlans.size > 64) updatePlans.delete(updatePlans.keys().next().value);
+  return {planId, packageKey: row.packageKey, from: row.from, to: row.to, downloadBytes: selected.downloadBytes, unpackedBytes: selected.unpackedBytes, addedCapabilities: row.addedCapabilities, dependencyChanges, requiresReview};
+ }
+ async function installUpdate(request) {
+  const pin = updatePlans.get(request.planId);
+  if (!pin || (request.packageKey !== undefined && request.packageKey !== pin.expected.packageKey) || (request.digest !== undefined && request.digest !== pin.expected.digest))
+   fail('Plugin update confirmation expired', 'PLUGIN_UPDATE_CHANGED');
+  if (pin.requiresReview && pin.mode !== 'review') fail('Plugin update must be explicitly reviewed', 'PLUGIN_UPDATE_REVIEW_REQUIRED');
+  updatePlans.delete(request.planId);
+  const check = () => updateApproval(pin);
+  await check();
+  return pin.expected.sourceId === LEGACY_SOURCE_ID ? legacyResult(legacy.install({planId: pin.selected.planId, updateCheck: check})) : install(pin.selected.planId, check);
+ }
  async function verifySaved(saved,sid){const key=verificationKey(sid,saved);verified.delete(key);const origin=saved.sourceProof,pinned=source(sid);if(!origin||origin.sourceId!==sid||origin.keyFingerprint!==pluginSourceFingerprint(origin.publicKey)||origin.keyFingerprint!==pinned.keyFingerprint)fail('扩展安装来源证明无效','PLUGIN_SOURCE_PROOF_INVALID');if(!/^[a-f0-9]{64}$/.test(origin.catalogSha256??''))fail('扩展目录证明哈希无效','PLUGIN_SOURCE_PROOF_INVALID');const proof=join(sourceDirectory(sid),'proofs',origin.catalogSha256+'.json');await assertPluginTreeNoLinks(proof);const envelope=await json(proof,null),catalog=verifyPluginCatalog(envelope,{trustedKeys:{[origin.keyId]:origin.publicKey}});if(catalog.verified.payloadSha256!==origin.catalogSha256||!catalog.packages.some(item=>canonicalPluginJson(item.manifest)===canonicalPluginJson(saved.manifest)&&canonicalPluginJson(item.archive)===canonicalPluginJson(saved.archive)))fail('扩展文件与原来源签名不一致','PLUGIN_SOURCE_PROOF_INVALID');if(!saved.directory.startsWith('packages/'+sid+'/'+saved.manifest.id+'/'))fail('扩展代码目录与来源不符','PLUGIN_SOURCE_PROOF_INVALID');await verifyInstalledPlugin(under(saved.directory),saved.manifest);verified.add(key);return saved;}
  async function download(item,signal){
   const complete=join(control,'cache',item.archive.sha256+'.zip'),partial=complete+'.partial';let offset=0;
@@ -108,12 +194,13 @@ export async function createPluginSourceManager({legacy,root,dataRoot,appVersion
   const bytes=await readFile(partial);if(count!==item.archive.bytes||hash(bytes)!==item.archive.sha256){if(count===item.archive.bytes)await rm(partial,{force:true});fail('扩展下载校验失败','PLUGIN_DOWNLOAD_INVALID');}
   await rename(partial,complete);return bytes;
  }
- async function install(planId){const selected=plans.get(planId);if(!selected)fail('安装计划已过期，请重新核对','PLUGIN_PLAN_EXPIRED');checkPlan(selected);return mutation(async()=>{const origin=checkPlan(selected),id=randomUUID(),stage=join(control,'staging',id),journal=join(control,'transactions',id+'.json'),controller=new AbortController();active={id,phase:'preparing',sourceId:selected.sourceId,controller};update();const next=clone(registry),prepared=[];try{
+ async function install(planId,updateCheck){const selected=plans.get(planId);if(!selected)fail('安装计划已过期，请重新核对','PLUGIN_PLAN_EXPIRED');checkPlan(selected);return mutation(async()=>{const origin=checkPlan(selected),id=randomUUID(),stage=join(control,'staging',id),journal=join(control,'transactions',id+'.json'),controller=new AbortController();active={id,phase:'preparing',sourceId:selected.sourceId,controller};update();const next=clone(registry),prepared=[];try{
+  if(updateCheck)await updateCheck();
   if(await backend.availableBytes(control)<selected.downloadBytes+selected.unpackedBytes+16*1024*1024)fail('安装扩展的可用磁盘空间不足','PLUGIN_DISK_SPACE');await mkdir(stage,{recursive:true});writeAtomic(journal,JSON.stringify({id,phase:'preparing',stage:'staging/'+id,planId,sourceId:selected.sourceId}));
   for(const item of selected.packages){if(controller.signal.aborted)throw controller.signal.reason;active.packageId=item.manifest.id;active.totalBytes=item.archive.bytes;const prior=next.packages[item.manifest.id],saved=prior?.versions[item.manifest.version],dataDir=join(dataRoot,'plugins',selected.sourceId,item.manifest.id),schema=schemaFor(await json(join(dataDir,'.schema.json'),null)),schemaVersion=schema?.dataSchemaVersion??prior?.dataSchemaVersion??item.manifest.dataSchemaVersion;if(item.manifest.dataSchemaVersion!==schemaVersion||!item.manifest.compatibleDataVersions.includes(schemaVersion))fail('扩展资料版本需要明确迁移；代码未切换','PLUGIN_DATA_MIGRATION_REQUIRED');if(saved&&saved.archive.sha256!==item.archive.sha256)fail('已发布的同一来源版本不能替换内容','PLUGIN_VERSION_CHANGED');if(item.reuse&&saved){await verifySaved(saved,selected.sourceId);prepared.push({item,saved});continue;}active.phase='downloading';update();const bytes=await download(item,controller.signal),inspected=inspectPluginArchive(bytes,item.manifest);if(await backend.availableBytes(control)<inspected.unpackedBytes+4*1024*1024)fail('解压扩展的可用磁盘空间不足','PLUGIN_DISK_SPACE');active.phase='extracting';update();const staged=join(stage,item.manifest.id);await extractPluginArchive(bytes,staged,item.manifest,{signal:controller.signal});prepared.push({item,staged,saved:{manifest:item.manifest,archive:item.archive,directory:'packages/'+selected.sourceId+'/'+item.manifest.id+'/'+item.manifest.version+'-'+item.archive.sha256.slice(0,16),sourceProof:{sourceId:selected.sourceId,url:origin.url,keyId:origin.keyId,publicKey:origin.publicKey,keyFingerprint:origin.keyFingerprint,catalogSha256:selected.catalogSha256},installedAt:new Date(now()).toISOString()}});}
   checkPlan(selected);if(controller.signal.aborted)throw controller.signal.reason;for(const {item}of prepared)if(await inUse(item.manifest.id,selected.sourceId))fail('扩展正在使用，请先停止对应工作任务','PLUGIN_BUSY');
   const projected=clone(next.packages);for(const {item,saved}of prepared){const prior=projected[item.manifest.id];projected[item.manifest.id]={...prior,sourceId:selected.sourceId,current:item.manifest.version,versions:{...prior?.versions,[item.manifest.version]:saved}};}for(const row of Object.values(projected))for(const[dep,range]of Object.entries(row.versions[row.current].manifest.dependencies)){const selected=projected[dep];if(!selected||selected.sourceId!==row.sourceId||!satisfiesVersionRange(selected.current,range))fail('安装会破坏现有扩展的同源依赖','PLUGIN_DEPENDENCY_ERROR');}
-  checkPlan(selected);if(controller.signal.aborted)throw controller.signal.reason;
+  if(updateCheck)await updateCheck();checkPlan(selected);if(controller.signal.aborted)throw controller.signal.reason;
   active.phase='committing';update();writeAtomic(journal,JSON.stringify({id,phase:'prepared',stage:'staging/'+id,planId,sourceId:selected.sourceId}));
   for(const {item,staged,saved}of prepared){const target=under(saved.directory);if(staged){await mkdir(resolve(target,'..'),{recursive:true});await assertPluginTreeNoLinks(target);try{await stat(target);await verifyInstalledPlugin(target,item.manifest);}catch(error){if(error.code!=='ENOENT')throw error;await rename(staged,target);}}const prior=next.packages[item.manifest.id];next.packages[item.manifest.id]={sourceId:selected.sourceId,current:item.manifest.version,previous:prior?.current&&prior.current!==item.manifest.version?prior.current:prior?.previous??null,enabled:prior?.enabled??false,versions:{...prior?.versions,[item.manifest.version]:saved},dataSchemaVersion:prior?.dataSchemaVersion??item.manifest.dataSchemaVersion};const dataDir=join(dataRoot,'plugins',selected.sourceId,item.manifest.id);await assertPluginTreeNoLinks(dataDir);await mkdir(dataDir,{recursive:true});if(!await json(join(dataDir,'.schema.json'),null))writeAtomic(join(dataDir,'.schema.json'),JSON.stringify({schemaVersion:1,dataSchemaVersion:next.packages[item.manifest.id].dataSchemaVersion}));}
   registry=next;persistRegistry();for(const{saved}of prepared)verified.add(verificationKey(selected.sourceId,saved));plans.delete(planId);await rm(journal,{force:true});return snapshot();
@@ -134,9 +221,9 @@ export async function createPluginSourceManager({legacy,root,dataRoot,appVersion
   else if(type==='uninstall'){for(const other of refs())if(other.id!==id&&Object.hasOwn(other.row.versions[other.row.current].manifest.dependencies,id))fail('其他已安装扩展依赖此包','PLUGIN_DEPENDENCY_ERROR');if(await backend.busy(id))fail('扩展正在使用','PLUGIN_BUSY');await backend.host?.stop?.(id);delete registry.packages[id];persistRegistry();for(const saved of Object.values(row.versions)){const path=under(saved.directory);await assertPluginTreeNoLinks(path);await rm(path,{recursive:true,force:true});}update();return snapshot();}
   persistRegistry();update();return snapshot();});}
  function cancel(){if(active?.phase==='committing')return false;if(active){active.controller.abort(Object.assign(Error('扩展下载已取消'),{code:'PLUGIN_CANCELLED'}));return true;}return legacy.cancel();}
- async function action(request={}){const {action:type,sourceId:sid,id}=request;if(type==='status')return snapshot();if(type==='cancel')return cancel();if(type==='sources-list')return {sources:snapshot().sources};if(type==='sources-preview')return preview(request.url);if(type==='sources-add')return add(request);if(type==='sources-refresh')return refresh(sid);if(type==='sources-disable'){if(typeof request.disabled!=='boolean')fail('停用来源必须明确传入布尔值','PLUGIN_SOURCE_INVALID');return changeSource(sid,{enabled:!request.disabled});}if(type==='sources-remove')return changeSource(sid,{enabled:false,removed:true});if(type==='search')return search(request);if(type==='details')return details(request);if(type==='plan'&&sid!=null&&sid!==LEGACY_SOURCE_ID)return plan(sid,request.requests);if(type==='install'&&plans.has(request.planId))return install(request.planId);if(['enable','disable','rollback','uninstall'].includes(type)){const ref=chosen(id,sid);return installedAction(type,id,ref.sourceId);}return delegate('action',request);}
+ async function action(request={}){const {action:type,sourceId:sid,id}=request;if(type==='status')return snapshot();if(type==='update-candidates'){if(request.refresh===true)await refreshUpdateSources();const candidates=updateCandidates();return request.includeAutomatic===true?{...candidates,automaticUpdates:updateCandidates(true).updates}:candidates;}if(type==='plan-update')return planUpdate(request);if(type==='install-update')return installUpdate(request);if(type==='cancel')return cancel();if(type==='sources-list')return {sources:snapshot().sources};if(type==='sources-preview')return preview(request.url);if(type==='sources-add')return add(request);if(type==='sources-refresh')return refresh(sid);if(type==='sources-disable'){if(typeof request.disabled!=='boolean')fail('停用来源必须明确传入布尔值','PLUGIN_SOURCE_INVALID');return changeSource(sid,{enabled:!request.disabled});}if(type==='sources-remove')return changeSource(sid,{enabled:false,removed:true});if(type==='search')return search(request);if(type==='details')return details(request);if(type==='plan'&&sid!=null&&sid!==LEGACY_SOURCE_ID)return plan(sid,request.requests);if(type==='install'&&plans.has(request.planId))return install(request.planId);if(['enable','disable','rollback','uninstall'].includes(type)){const ref=chosen(id,sid);return installedAction(type,id,ref.sourceId);}return delegate('action',request);}
  function resolveTrustedSource(sid){assertReady();const row=source(sid);return clone({sourceId:row.sourceId,descriptorId:row.descriptorId??row.id,keyId:row.keyId,publicKey:row.publicKey,keyFingerprint:row.keyFingerprint,url:row.url,catalogUrl:row.catalogUrl,enabled:row.enabled!==false,removed:row.removed===true,generation:generation(sid)});}
- async function close(){if(closed)return;closed=true;for(const controller of requests)controller.abort();active?.controller.abort();previews.clear();plans.clear();await legacy.close();}
+ async function close(){if(closed)return;closed=true;for(const controller of requests)controller.abort();active?.controller.abort();previews.clear();plans.clear();updatePlans.clear();await legacy.close();}
  // Read-only proof validation does not acquire or create the installer lock.
  for(const row of Object.values(registry.packages))for(const saved of Object.values(row.versions))try{await verifySaved(saved,row.sourceId);}catch{}
  return {snapshot,action,resolveInstalled,resolveTrustedSource,close,loadCatalog:value=>delegate('loadCatalog',value),refreshCatalog:()=>delegate('refreshCatalog'),plan:legacy.plan,install:value=>plans.has(value?.planId)?install(value.planId):delegate('install',value),enable:id=>installedAction('enable',id),disable:id=>installedAction('disable',id),rollback:id=>installedAction('rollback',id),uninstall:id=>installedAction('uninstall',id),activate:legacy.activate,importOffline:value=>delegate('importOffline',value),prepareOffline:(...args)=>delegate('prepareOffline',...args),installOffline:value=>delegate('installOffline',value),cancel};

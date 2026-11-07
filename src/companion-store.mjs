@@ -5,6 +5,7 @@ import {createSnapshotStorage,readJson} from './storage.mjs';
 import {currentLife} from './companion-life.mjs';
 import {normalizePhotoPlannerBinding} from './group-cg-planner.mjs';
 import {imageSlots,isMediaUrl} from './media-store.mjs';
+import {measureDesktopDiagnostic} from './desktop-diagnostics.mjs';
 
 export const DEFAULT_PERSONA_ID='default';
 export function companionId(value){if(typeof value!=='string'||!/^[a-zA-Z0-9_:.-]{1,200}$/.test(value)||value==='prototype'||Object.hasOwn(Object.prototype,value))throw Error('身份或记录 ID 格式无效');return value;}
@@ -29,7 +30,7 @@ export async function openCompanionStore(dataRoot,{media=null}={}){
  if(state.schema===1){state={...state,schema:2,minimumWriter:'r95-social-core-v1',requiredCapabilities:['social-core-state-v1'],r95Migration:{from:1,to:2,at:Date.now(),minimumWriterCapability:'social-core-v1'}};await disk.writeText(JSON.stringify(state));}
  // One serialization per change (B4): the body is compared without the revision,
  // which is then written first.
- const body=value=>{const {revision,...rest}=value;return JSON.stringify(rest);};
+ const body=value=>{const {revision,...rest}=value;return measureDesktopDiagnostic('companion-serialize',()=>JSON.stringify(rest));};
  let tail=Promise.resolve(),current=body(state);
  // A picture newly set as a data URL is stored as a media file and replaced by its
  // URL. Pictures already in the state stay until the T2 migration moves them.
@@ -37,7 +38,7 @@ export async function openCompanionStore(dataRoot,{media=null}={}){
   if(!media)return;const before=new Map();for(const [holder,key,path]of imageSlots(state))before.set(path,holder[key]);
   for(const [holder,key,path]of imageSlots(next)){const value=holder[key];if(typeof value!=='string'||!value.startsWith('data:image/')||before.get(path)===value)continue;const url=media.put(value);if(url)holder[key]=url;}
  }
- const api={get state(){return state;},async mutate(fn,{storeImages:convert=true}={}){const task=tail.then(async()=>{const next=copy(state);const result=await fn(next);if(convert)storeImages(next);const text=body(next);if(text===current)return result;next.revision=(Number(state.revision)||0)+1;await disk.writeText('{"revision":'+next.revision+(text==='{}'?'}':','+text.slice(1)));state=next;current=text;return result;});tail=task.catch(()=>{});return task;},async flush(){await tail;},snapshot:()=>copy(state)};
+ const api={get state(){return state;},async mutate(fn,{storeImages:convert=true}={}){const task=tail.then(async()=>{const next=measureDesktopDiagnostic('companion-clone',()=>copy(state));const result=await fn(next);if(convert)storeImages(next);const text=body(next);if(text===current)return result;next.revision=(Number(state.revision)||0)+1;await disk.writeText('{"revision":'+next.revision+(text==='{}'?'}':','+text.slice(1)));state=next;current=text;return result;});tail=task.catch(()=>{});return task;},async flush(){await tail;},snapshot:()=>copy(state)};
  return api;
 }
 export function makeCard(raw,previous=null,{draft=false}={}){

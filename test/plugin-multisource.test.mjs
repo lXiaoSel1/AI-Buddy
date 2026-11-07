@@ -133,3 +133,28 @@ test('official badges are recomputed from the pinned URL and key rather than a s
 test('a self-consistent replacement proof cannot escape its retained source trust anchor',async t=>{
  const f=await setup(t),pub=publisher('anchor'),other=publisher('substitute'),one=pack();publish(f,pub,[one]);await add(f,pub);const sid=f.manager.snapshot().sources.find(x=>x.name===pub.name).sourceId,p=await f.manager.action({action:'plan',sourceId:sid,requests:[one.manifest.id]});await f.manager.action({action:'install',planId:p.planId});await f.manager.close();const path=join(f.root,'local/plugins/registry-v2.json'),record=JSON.parse(await readFile(path,'utf8')),saved=record.packages[one.manifest.id].versions['1.0.0'],envelope=catalog(other,[one]),proofHash=hash(canonicalPluginJson(envelope.payload));await writeFile(join(f.root,'local/plugins/sources',sid,'proofs',proofHash+'.json'),JSON.stringify(envelope));saved.sourceProof={...saved.sourceProof,publicKey:other.key,keyFingerprint:pluginSourceFingerprint(other.key),catalogSha256:proofHash};await writeFile(path,JSON.stringify(record));const again=await createPluginManager(f.config);t.after(()=>again.close());await assert.rejects(again.resolveInstalled(one.manifest.id,{requireEnabled:false}),{code:'PLUGIN_SOURCE_PROOF_INVALID'});
 });
+
+test('pinned multisource update skips prereleases and cannot auto-upgrade a separately installed dependency', async t => {
+  const f = await setup(t), a = publisher('updates'), b = publisher('update-offline'), prior = pack(), priorDep = pack('third.tools-runtime'), another = pack('third.another');
+  publish(f, a, [prior, priorDep]); publish(f, b, [another]); await add(f, a); await add(f, b);
+  const sid = name => f.manager.snapshot().sources.find(row => row.name === name).sourceId;
+  for (const [sourceId, item] of [[sid(a.name), prior], [sid(a.name), priorDep], [sid(b.name), another]]) {
+    const plan = await f.manager.action({action: 'plan', sourceId, requests: [{id: item.manifest.id, version: '1.0.0'}]});
+    await f.manager.action({action: 'install', planId: plan.planId});
+  }
+  const updatedDep = pack('third.tools-runtime', '1.0.1'), updated = pack(prior.manifest.id, '1.0.1', {'third.tools-runtime':'^1.0.1'}), beta = pack(prior.manifest.id, '1.0.2-beta.1');
+  publish(f, a, [prior, priorDep, updatedDep, updated, beta], '2026-10-25T01:00:00Z');
+  f.remote.set(b.catalogUrl, Error('offline'));
+  const result = await f.manager.action({action:'update-candidates', refresh: true});
+  const row = result.updates.find(value => value.id === prior.manifest.id);
+  assert.equal(row.to, '1.0.1');
+  assert.equal(result.errors[0].sourceId, sid(b.name));
+  const auto = await f.manager.action({action:'plan-update', ...row, mode:'auto'});
+  assert.equal(auto.requiresReview, true);
+  await assert.rejects(f.manager.action({action:'install-update', planId:auto.planId}), {code:'PLUGIN_UPDATE_REVIEW_REQUIRED'});
+  assert.equal(f.manager.snapshot().installed[priorDep.manifest.id].current, '1.0.0');
+  const manual = await f.manager.action({action:'plan-update', ...row, mode:'review'});
+  await f.manager.action({action:'sources-disable', sourceId:row.sourceId, disabled:true});
+  await assert.rejects(f.manager.action({action:'install-update', planId:manual.planId}), {code:'PLUGIN_UPDATE_CHANGED'});
+  assert.equal(f.manager.snapshot().installed[prior.manifest.id].current, '1.0.0');
+});
