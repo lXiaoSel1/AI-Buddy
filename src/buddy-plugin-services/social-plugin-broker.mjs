@@ -1,4 +1,4 @@
-import {validFullReadingUnderstanding} from './bili-full-reading.mjs';
+import {validFullReadingUnderstanding,parseFullReadingUnderstanding} from './bili-full-reading.mjs';
 import {fullReadingAuthority,fullReadingModel,assertFullReadingModel} from './bili-full-reading-authority.mjs';
 import {buildQqMessageEnvelope,parseQqMessageSegments,validateQqReplyStylePolicy} from './qq-message-envelope.mjs';
 import {createSocialRuntimeJournal,socialScopeSnapshot,markModelNotSubmitted,modelNotSubmittedError} from './social-runtime-journal.mjs';
@@ -269,14 +269,15 @@ export function createSocialPluginBroker({dataRoot,accounts,transport,bridge,get
      bridge.grants.assertGeneration(identity.pluginId,original.grantGeneration);bridge.grants.require(identity.pluginId,'models.request',{permissionScope:['models.request']});verify(original,identity);
      const exact=api.get({scope:visionScope(original),readingId:owner.readingId});if(exact.phase==='cancelled'||exact.planHash!==reading.planHash||record.input.material?.readRange?.planHash!==exact.planHash)continue;
      assertFullReadingModel(exact,capturedModel(original));proof=api.verifyRecoveryMaterial({scope:visionScope(original),readingId:owner.readingId,batchId:latest,material:record.input.material,visualMaterialRefs:record.input.visualMaterialRefs});
-     if(proof.stepKind!==record.input.stepKind)continue;understanding=record.result.understanding;try{understanding??=JSON.parse(record.result.text??'null');}catch{understanding=null;}
+     if(proof.stepKind!==record.input.stepKind)continue;understanding=parseFullReadingUnderstanding(record.result);
      schemaValid=validFullReadingUnderstanding(understanding,new Set(record.input.material.items.map(item=>item.id)));
     }catch{continue;}
     await check();signal?.throwIfAborted();verify(original,identity);bridge.grants.assertGeneration(identity.pluginId,original.grantGeneration);
     const accountNow=accounts.forPlugin(identity.packageName);if(accountNow.ref!==currentAccount.ref||accountNow.generation!==currentAccount.generation||api.getForAccount(owner).phase==='cancelled')return api.getForAccount(owner);
     const {hostMaterial,hostVideo,hostReadingMode,hostReadingId,completedAt,...result}=record.result;
     const processed=!!(schemaValid&&understanding.completedMaterial===true),existing=api.get({scope:visionScope(original),readingId:owner.readingId}),completed=existing.calls?.find(call=>call.stepId===latest&&call.status==='completed');
-    if(completed){if(completed.providerRequestId!==result.requestId||completed.processed!==processed)continue;reading=existing;}
+    if(completed&&(completed.providerRequestId!==result.requestId||completed.processed!==processed&&!(completed.processed===false&&processed)))continue;
+    if(completed?.processed===processed)reading=existing;
     else reading=api.reconcile({scope:visionScope(original),readingId:owner.readingId,batchId:latest,inputHash:proof.inputHash,providerRequestId:result.requestId,result});
     if(!reading.calls?.some(call=>call.stepId===latest&&call.status==='completed'&&call.processed===processed&&call.providerRequestId===result.requestId))return reading;
     journal.markReconciled({id:record.id,input:record.input,scope:record.scope});
@@ -412,7 +413,7 @@ export function createSocialPluginBroker({dataRoot,accounts,transport,bridge,get
   if(row.channel==='bilibili'){
    let model=row.models.get(payload.providerRequestId);
    if(!model){const saved=journal.result(payload.providerRequestId);if(saved&&['pluginId','characterId','personaId','lifeId','operationId','sessionId','accountBindingId','bindingGeneration'].every(k=>saved.scope[k]===row[k]))model={result:saved.result,material:saved.result.hostMaterial,video:saved.result.hostVideo};}
-   if(!model)throw fail('BUDDY_EVIDENCE_MISSING');let parsed;try{parsed=JSON.parse(model.result.text);}catch{throw fail('SOCIAL_UNDERSTANDING_INVALID');}
+   if(!model)throw fail('BUDDY_EVIDENCE_MISSING');let parsed;try{parsed=model.result.hostReadingMode==='full-v1'&&payload.sourceKind!=='bilibili-comment'?parseFullReadingUnderstanding(model.result):JSON.parse(model.result.text);}catch{throw fail('SOCIAL_UNDERSTANDING_INVALID');}
    if(payload.sourceKind==='bilibili-comment'){
     const observed=(row.facts??[]).find(o=>{try{const body=JSON.parse(o.body);return o.method==='POST'&&body.code===0&&String(body.data?.rpid??body.data?.reply?.rpid)===payload.platformMessageId;}catch{return false;}});
     if(row.visibilityScope!=='public'||payload.deliveryState!=='sent'||!observed||parsed.text!==payload.text)throw fail('BUDDY_EVIDENCE_MISSING');
