@@ -1,7 +1,7 @@
 export const PLUGIN_MAINTENANCE_BUSY = Symbol('host-only extension maintenance status');
 // The facade survives failed starts and process restarts. Consumers (including
 // Harness factories) retain one stable identity for the entire app lifetime.
-export async function createPluginMaintenanceClient({runnerPath, root, dataRoot, appVersion, busy = () => false, onUpdate = () => {},
+export async function createPluginMaintenanceClient({runnerPath, root, dataRoot, appVersion, voiceTestFingerprint, busy = () => false, onUpdate = () => {},
   processFactory, timeoutMs = 30 * 60 * 1000, initializeTimeoutMs = 10000, closeTimeoutMs = 5000} = {}) {
   const factory = processFactory ?? (await import('electron')).utilityProcess.fork;
   let current = null, generation = 0, serial = 0, closing = false, closePromise = null, retryPromise = null;
@@ -75,7 +75,7 @@ export async function createPluginMaintenanceClient({runnerPath, root, dataRoot,
       holder.onError = cause => processFailure(holder, cause);
       holder.onExit = code => { holder.exited = true; processFailure(holder, error('扩展维护进程已结束：' + code, 'PLUGIN_PROCESS_EXIT')); };
       child.on('message', holder.onMessage); child.once('error', holder.onError); child.once('exit', holder.onExit);
-      const value = await request(holder, 'initialize', {root, dataRoot, appVersion}, initializeTimeoutMs);
+      const value = await request(holder, 'initialize', {root, dataRoot, appVersion, ...(voiceTestFingerprint ? {voiceTestFingerprint} : {})}, initializeTimeoutMs);
       if (!closing && current === holder && !holder.disposing) { holder.initialized = true; publish(normalize(value)); }
     } catch (cause) {
       if (!closing && (!holder || current === holder)) state('failed', cause);

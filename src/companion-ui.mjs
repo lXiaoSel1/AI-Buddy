@@ -298,9 +298,10 @@ export function CompanionManager({state,request,panel='characters',onClose,resol
 
 export {CompanionGroupStage} from './group-stage-ui.mjs';
 
-export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onToggleChat,onApi}){
+export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onToggleChat,onApi,voiceControls,voiceSubtitle}){
  const group=activeCompanionGroup(state),[text,setText]=useState(''),[bindings,setBindings]=useState([]),[busy,setBusy]=useState(false),[error,setError]=useState(''),[photoOpen,setPhotoOpen]=useState(false);
  useEffect(()=>{setText('');setBindings([]);setError('');},[group?.id]);
+ useEffect(()=>{const append=event=>{if(event.detail?.scope?.conversationId!==group?.id)return;setText(old=>old+(old&&event.detail.text?'\n':'')+event.detail.text);};window.addEventListener('ai-buddy:voice-draft',append);return()=>window.removeEventListener('ai-buddy:voice-draft',append);},[group?.id]);
  const operationRef=useRef(null),requestRef=useRef(request),r95Client=useRef(null);requestRef.current=request;if(!r95Client.current)r95Client.current=createR95ActionClient((...args)=>requestRef.current(...args));
  const inputActive=useRef(false),inputScope=useRef(state?.r95?.scope);inputScope.current=state?.r95?.scope;
  const setInputActive=active=>{if(!inputScope.current||inputActive.current===active)return;inputActive.current=active;void r95Client.current('input',{active,scope:inputScope.current}).catch(e=>setError(e.message));};
@@ -354,13 +355,14 @@ export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onTo
   // Approved designs C6 / C9: mood and Auto chips are in the toolbar now; while Auto runs, one strip says who is
   // talking, round n / total, who is next and whether your message waits behind hers.
   h(AutoRoundStrip,{view:state.r95?{...state.r95,groupId:state.r95.groupId??group.id}:null,onAction:r95Client.current,nameOf,busy:isRunning&&!ordinaryRuntime,speaker:isRunning&&!ordinaryRuntime&&identity.activeId?nameOf(identity.activeId):'',queued}),
-  h('div',{className:'whg-line-now'+(message?'':' narrator'),key:message?.id||group.id,'aria-live':'polite','data-group-message-id':!runtime.streaming?.text?message?.id:undefined,'data-auto-request-id':!runtime.streaming?.text?message?.autoRequestId:undefined},((isRunning||canRetry)&&runtime.streaming?.text)||displayMessageText||t('说点什么，开始这一轮群聊。')),
+  h('div',{className:'whg-line-now'+(message?'':' narrator'),key:message?.id||group.id,'aria-live':'polite','data-group-message-id':!runtime.streaming?.text?message?.id:undefined,'data-auto-request-id':!runtime.streaming?.text?message?.autoRequestId:undefined},voiceSubtitle?.text||((isRunning||canRetry)&&runtime.streaming?.text)||displayMessageText||t('说点什么，开始这一轮群聊。')),
   h(ChatSpeechLines,{view:state.r95,onAction:r95Client.current,onReply:focusInput}),
   runtime.streaming?.interrupted&&h('p',{className:'buddy-muted',role:'status'},t('上次回复已中断，以下仅为保留的部分正文，未结算。')),
   (sourceView(message)||needsFullView(fullText))&&h('div',{className:'gx-foot'},h(MessageSources,{message}),h('span',{className:'grow'}),fullText&&h(FullMessageButton,{text:fullText,messageId:group.id+':'+message.id,title:message?.characterName||member?.name||message?.personaName,name:speakerName||undefined,at:message?.createdAt??message?.at,interrupted:partial})),
   !message&&!round&&h('p',{className:'buddy-group-hint'},t('发送后第一位会自动回复，后续成员点击“继续”接话。')),
   alert,autoStrip&&!ordinaryRuntime?null:showEnded?h(AutoEndedSummary,{view:state.r95,nameOf}):round,
   queued>0&&!autoStrip&&h('p',{role:'status',className:'r95-queued','data-r95-queued-user':queued},Icon('clock',{size:13}),t('你的消息排在她后面'),' · ',queued),
+  voiceControls,
   h('div',{className:'whg-input-row gx-say',onFocusCapture:()=>setInputActive(true),onBlurCapture:e=>{if(!e.currentTarget.contains(e.relatedTarget))setInputActive(false);}},h('div',{className:'gx-ta'+(inputBlocked?' dis':'')},h(GroupMentionInput,{value:text,bindings,placeholder:autoSession?t('插一句…（Auto 进行中也可以说话）'):placeholder,onChange:(value,nextBindings)=>{setText(value);setBindings(nextBindings);setInputActive(!!value);},members:group.memberIds.map(id=>characterOf(id)).filter(Boolean),disabled:inputBlocked,onSubmit:send}),h('small',{'aria-hidden':true},t('Enter 发送 · Shift+Enter 换行'))),
    h('button',{type:'button',className:'whg-send gx-send',disabled:sendBlocked||!text.trim(),onClick:send},isRunning&&!autoSession?h('span',{className:'ui-spinner','aria-hidden':true}):Icon('send',{size:15}),autoSession?t('插话'):t('发送'))),
   photoOpen&&h(GroupPhotoDialog,{state,request,chat,onToggleChat,onApi,onClose:()=>setPhotoOpen(false),onPhoto}));

@@ -1,3 +1,4 @@
+import {useVoiceClient} from '../voice/client.mjs';
 import {affectionText,dialogueLineRoom} from '../companion-display.mjs'
 import {t} from '../i18n.mjs';
 import {visibleCompanionText,visibleInterruptedText} from '../companion-presentation.mjs';
@@ -911,6 +912,11 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   useEffect(() => () => {
     if (draftConversation.current) void callApi('companion-conversation-update', { id: draftConversation.current, draft: draftText.current }).catch(() => {})
   }, [props.sessionId])
+  const voiceClient = useVoiceClient([s?.current,s?.companion?.activePersonaId,s?.companion?.activeConversationId,s?.companion?.activeGroupId].join(':'),(event:any)=>{
+    if(event.scope?.channel==='app-group'){window.dispatchEvent(new CustomEvent('ai-buddy:voice-draft',{detail:event}));return;}
+    if(event.scope?.conversationId!==draftConversation.current)return;
+    setText((old:string)=>old+(old&&event.text?'\n':'')+event.text);
+  });
   const group = activeCompanionGroup(s?.companion)
   useEffect(() => { props.onDisplayMode?.(group ? 'group' : 'private') }, [group?.id, props.onDisplayMode])
   const currentStory = s?.sideStory?.scene
@@ -2378,7 +2384,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
 
   // A chat turn: the typed text comes back into the box if the model call fails, so nothing has to be retyped.
   function say(payload: any, typed = '', answered: any = null): void {
-    if (busy) return
+    if (busy || voiceClient.speaking) return
     setBusy(true)
     setPendingChat(payload)
     setFailedChat(null)
@@ -2392,7 +2398,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   }
 
   function dialogue(): React.ReactElement {
-    if (group) return React.createElement(CompanionGroupDialogue, { state: s.companion, request: companionRequest, chat: props.chat, onToggleChat: props.onToggleChat, onApi: props.onManage, onPhoto: (cgId:string) => setGroupPanelRequest({groupId:group.id,panel:'gallery',cgId,nonce:Date.now()}), onManage: () => setGroupPanelRequest({groupId:group.id,panel:'settings',nonce:Date.now()}) })
+    if (group) return React.createElement(CompanionGroupDialogue, { state: s.companion, request: companionRequest, voiceControls:voiceClient.controls, voiceSubtitle:voiceClient.subtitle, chat: props.chat, onToggleChat: props.onToggleChat, onApi: props.onManage, onPhoto: (cgId:string) => setGroupPanelRequest({groupId:group.id,panel:'gallery',cgId,nonce:Date.now()}), onManage: () => setGroupPanelRequest({groupId:group.id,panel:'settings',nonce:Date.now()}) })
     const last = lastLine()
     const userName = last?.personaSnapshot?.nickname || s.companion?.personas?.find((p: any) => p.id === s.companion.activePersonaId)?.nickname || t("你")
     const plateLabel = last ? (last.who === 'heroine' ? s.name : last.who === 'user' ? userName : t("旁白")) : s.name
@@ -2413,7 +2419,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
           type: 'button',
         }, React.createElement('kbd', { 'aria-hidden': 'true' }, i + 1), React.createElement('span', null, c.text))))
       : null
-    const blocked = busy || offline
+    const blocked = busy || offline || voiceClient.speaking
     const input = React.createElement('div', { className: 'whg-input-row gx-say' },
       React.createElement('label', { className: 'gx-ta gx-compact' + (blocked ? ' dis' : '') },
         React.createElement('textarea', {
@@ -2457,7 +2463,9 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     shownSpeech.current = speechShown ? speech[0] : null
     const replyPlate = !!liveText || speechShown, pWho = replyPlate ? 'heroine' : plateWho, pLabel = replyPlate ? s.name : plateLabel, pStyle = replyPlate ? plateVars({ who: 'heroine', characterId: s.current, color: s.color }) : plateStyle
     const displayLastText=visibleCompanionText(last?{...last,request:lastStored?.request}:null,{messages:s.companion?.messages??[]})
-    const now = speechShown
+    const now = voiceClient.subtitle
+      ? React.createElement('div',{className:'whg-line-now heroine','data-voice-subtitle':true},voiceClient.subtitle.text)
+      : speechShown
       ? React.createElement(ChatSpeechLines, { view: s.companion.r95, onAction: r95ClientRef.current, onReply: () => focusGalgameReply(), inDialog: true, optionsRef: speechOptionsRef })
       : liveText
       ? React.createElement('div',{className:'whg-line-now heroine','data-streaming-reply':true,'aria-live':'off','aria-busy':replying},liveText,streaming?React.createElement('i',{className:'gx-caret','aria-hidden':'true'}):null)
@@ -2488,6 +2496,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       s.companion?.lifeRecovery?.characterId === s.current ? React.createElement(LifeRecoveryBanner, { state: s.companion, request: companionRequest, characterId: s.current, setFeedback: (text: string, error?: boolean) => setApiError(error ? text : null) }) : null,
       alert,
       speechShown ? null : choices,
+      voiceClient.controls,
       input,
     )
   }

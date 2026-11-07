@@ -2770,7 +2770,7 @@ export function apply(
         }
         const chunk = next.value
         if (!chunk) continue
-        if (chunk.type === 'text-delta' && chunk.text) {out += chunk.text;options.onText?.(out,chunk)}
+        if (chunk.type === 'text-delta' && chunk.text) {out += chunk.text;await options.onText?.(out,chunk)}
         if (chunk.type === 'finish' && chunk.reason) {
           const kind = chunk.reason && chunk.reason.kind
           if (kind === 'error' || kind === 'aborted') {
@@ -5150,13 +5150,13 @@ export function apply(
                 })(),
                 system: systemPrompt(prepared.profile, prepared.promptCharacter, prepared.pendingActivity)
                   + (companionContext ? '\n完整角色卡（只扮演此角色）：' + JSON.stringify(companionContext.profile) + '\n本会话用户身份：' + JSON.stringify(companionContext.persona)
-                    + '\n未提供的其他身份经历、私聊与群聊内容均不可获知，不编造。可在回复末尾用 [[emotion:标签]] 标记你实际表达的情绪，标签限 normal,cheerful,shy,serious,confused,angry,frightened,exasperated,starry。\n'+(companionContext.memoryText||'')  : '')
+                    + '\n未提供的其他身份经历、私聊与群聊内容均不可获知，不编造。' + (companionContext.voicePrompt || '可在回复末尾用 [[emotion:标签]] 标记你实际表达的情绪，标签限 normal,cheerful,shy,serious,confused,angry,frightened,exasperated,starry。') + '\n'+(companionContext.memoryText||'')  : '')
                   + '\n' + replyStyleInstruction(replyStyle, ctx.language?.()),
                 temperature: 0.9,
                 maxTokens: 1200,
                 incremental: !!companionContext,
                 onTiming: companionContext ? (value: any)=>ctx.emit?.('galgame/output-timing',{requestId,...value}) : undefined,
-                onText: companionContext ? (text: string,part: any)=>ctx.emit?.('galgame/text-delta',{requestId,characterId:prepared.charId,text,turnId:part?.turnId,itemId:part?.itemId}) : undefined,
+                onText: companionContext ? (text: string,part: any)=>ctx.captureCompanionDelta?.({requestId,characterId:prepared.charId,text,turnId:part?.turnId,itemId:part?.itemId}) : undefined,
                 userLimit: true,
               }, signal)
             } catch (err: any) {
@@ -5176,8 +5176,9 @@ export function apply(
             reply = ctx.language?.() === 'en' ? 'I heard you. The connection is having trouble; let us talk again in a moment.' : prepared.profile.address + '说的话，我听到了。（连接暂时不顺畅，稍后我们再接着聊。）'
             usedFallback = true
           }
-          reply=filterReplySourceLabels(reply,{requestText:text})
-          const emotionTag=reply.match(/\[\[emotion:([a-z-]+)\]\]\s*$/i)?.[1]
+          const voiceReply=companionContext?.voicePrompt&&!usedFallback ? await ctx.finishCompanionVoice?.(requestId,reply) : null
+          reply=filterReplySourceLabels(voiceReply?.text??reply,{requestText:text})
+          const emotionTag=voiceReply?.emotion??reply.match(/\[\[emotion:([a-z-]+)\]\]\s*$/i)?.[1]
           reply=reply.replace(/\s*\[\[emotion:[a-z-]+\]\]\s*$/i,'')
           const {emotion, emotionSource} = replyEmotion(reply,emotionTag)
           pendingChoiceCharId = prepared.charId

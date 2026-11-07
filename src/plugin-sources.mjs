@@ -63,3 +63,8 @@ export async function previewPluginSource(input,{fetchImpl=fetch,signal}={}){
  const source={...descriptor,descriptorId:descriptor.id,url,keyFingerprint:pluginSourceFingerprint(descriptor.publicKey),official:sourceIsOfficial(url,descriptor)};
  return {source,catalog,envelope,signatureValid:true,packageCount:catalog.packages.length,descriptorHash:sha(canonicalPluginJson(descriptor))};
 }
+export function isVoiceSourceAuthorized(sourceId, keyFingerprint, testFingerprint) {
+  return sourceId===LEGACY_SOURCE_ID ||
+    (sourceId===OFFICIAL_SOURCE_ID && keyFingerprint===defaultPluginSource().keyFingerprint) ||
+    (!!testFingerprint && keyFingerprint===testFingerprint);
+}

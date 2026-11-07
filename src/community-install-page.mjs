@@ -6,6 +6,7 @@ import {communityMessages,communityCount} from './community/messages.mjs';
 import {Icon} from './ui-icons.mjs';
 import {StatusPill} from './ui-controls.mjs';
 import {capabilityView,officialProfile,pluginIcon,workText,formatBytes} from './community-capabilities.mjs';
+import {isVoiceEnginePackage} from './voice/package-contract.mjs';
 const h=React.createElement;
 const t=value=>locale()==='en'?communityMessages[value]??coreT(value):coreT(value);
 const tn=(key,n)=>communityCount(key,n,t);
@@ -38,9 +39,9 @@ export function InstallPage({work,source,official:officialSource,plan,granted,on
  const shown=locked&&record?.grantedCapabilities?record.grantedCapabilities:granted;
  const n=shown.filter(id=>declared.includes(id)).length;
  const order=['plan','runtime','installing','installed'],at=Math.max(1,order.indexOf(stage)+1);
- const steps=[t('勾选权限'),t('准备运行组件'),t('安装'),profile?profile.next:t('启用')];
+ const voice=isVoiceEnginePackage(packageName),steps=voice?[t('核对来源'),t('校验共享依赖'),t('安装'),t('启用')]:[t('勾选权限'),t('准备运行组件'),t('安装'),profile?profile.next:t('启用')];
  const stepper=h('ol',{className:'ext-isteps'},...steps.map((label,i)=>h('li',{key:i,className:i+1<at||stage==='installed'&&i<3?'done':i+1===at||stage==='installed'&&i===3?'cur':''},h('span',null,i+1<at||stage==='installed'&&i<3?Icon('check',{size:12}):i+1),h('b',null,label),i===1&&h('small',null,t('只在第一次')))));
- const version=plan?.packageRef?.exactVersion??work?.releases?.[0]?.version,size=formatBytes(plan?.packageBytes);
+ const version=plan?.packageRef?.exactVersion??work?.releases?.[0]?.version,size=formatBytes(plan?.packageBytes??plan?.downloadBytes);
  const head=h('div',{className:'ext-ihead'},
   h('button',{type:'button',className:'ui-btn ghost sm ext-back',onClick:onBack},Icon('chevron',{size:14}),t('扩展中心 · 发现')),
   h('div',{className:'ext-ih-main'},h(PluginLogo,{packageName,size:64}),h('div',{className:'ext-ih-text'},h('h2',{className:'ws-ptitle'},profile?.name??text.name??packageName),
@@ -58,7 +59,7 @@ export function InstallPage({work,source,official:officialSource,plan,granted,on
  const rows=h(React.Fragment,null,open.length>0&&h('ul',{className:'ext-caps'+(locked?' locked':'')},...open.map(row)),kept.length>0&&h('details',{className:'ext-fold ext-kept'},h('summary',null,h('span',null,tn('已授予 {n} 项，保持不变',kept.filter(id=>granted.includes(id)).length))),h('ul',{className:'ext-caps'},...kept.map(row))));
  const perms=h('section',{className:'ws-card ext-card ext-iperm'},h('div',{className:'ext-between'},h('h3',{className:'ws-sec'},t('权限')),plan&&h('span',{className:'ws-tag'},locked?t('授予 {n} 项 · 不授予 {m} 项').replace('{n}',n).replace('{m}',declared.length-n):t('已勾选 {n} / {m}').replace('{n}',n).replace('{m}',declared.length))),
   h('p',{className:'ext-cap'},stage==='unavailable'?t('有了签名插件包，这里会逐项列出它要的权限。'):locked?t('点了安装以后，这里锁住，只显示授予了哪些。'):upgrade&&open.length?t('这次更新新增了下面这些权限，只勾选你允许的。'):t(keepsEnabled?'升级将保留启用设置；请仅勾选本次允许的能力。':'安装不会自动启用；请仅勾选本次允许的能力。')),
-  !plan?null:declared.length?rows:h('p',{className:'ext-cap'},t('这个插件没有声明额外的能力。')));
+  voice?h('p',{className:'ext-cap'},t('语音引擎只在陪伴页使用；麦克风和云端服务需要分别开启。')):!plan?null:declared.length?rows:h('p',{className:'ext-cap'},t('这个插件没有声明额外的能力。')));
  const tech=h('details',{className:'ext-tech'},h('summary',null,t('技术详情')),h('code',null,[packageName+' '+(version??''),plan?.packageRef?.sourceDigest&&(plan.packageRef.digestType??'sha256')+':'+plan.packageRef.sourceDigest,source&&(t(source.name)+' · '+(source.sourceId??'')),plan?.packageRef?.spec?.kind&&'spec: '+plan.packageRef.spec.kind,declared.length&&t('能力')+': '+declared.join(', ')].filter(Boolean).join('\n')));
  let state;
  if(stage==='unavailable')state=h('div',{className:'ext-col','data-install-unavailable':true},h('div',{className:'ui-alert warn',role:'status'},Icon('archive',{size:16}),h('div',null,h('b',null,catalogOnline?t('目录里还没有这个插件'):t('官方目录还没有上线')),h('p',null,t('可以从文件安装：选一个已签名的插件包，核对签名后会显示这个插件的安装计划。')))),
@@ -72,7 +73,7 @@ export function InstallPage({work,source,official:officialSource,plan,granted,on
  else{const next=NEXT[packageName],enabled=!!record?.enabled;state=h('div',{className:'ext-col','data-install-next':packageName},h('div',{className:'ui-alert ext-okalert',role:'status'},Icon('check',{size:16}),h('div',null,h('b',null,enabled?t('已安装，已启用'):t('已安装，还没启用')))),
   profile&&next?.[0]&&h('p',{className:'ext-cap'},t(next[0])),
   profile?.nextAction==='work'&&h(React.Fragment,null,h('b',{className:'ext-sm'},t('选一个工作引擎')),h(Engines,{engines})),
-  h('div',{className:'ws-row-btns'},enabled?h('button',{type:'button',className:'ui-btn primary',disabled:busy,onClick:onOpen},Icon('external',{size:16}),t('打开')):h('button',{type:'button',className:'ui-btn primary',disabled:busy,onClick:onEnable},profile&&next?h(React.Fragment,null,Icon(next[2],{size:16}),t(next[1])):t('启用')),
+  h('div',{className:'ws-row-btns'},enabled?h('button',{type:'button',className:'ui-btn primary',disabled:busy,onClick:onOpen},Icon('external',{size:16}),t(voice?'语音设置':'打开')):h('button',{type:'button',className:'ui-btn primary',disabled:busy,onClick:onEnable},profile&&next?h(React.Fragment,null,Icon(next[2],{size:16}),t(next[1])):t('启用')),
    !enabled&&h('button',{type:'button',className:'ui-btn ghost',onClick:onBack},t('稍后')),enabled&&profile?.nextAction==='accounts'&&h('button',{type:'button',className:'ui-btn ghost',onClick:onNext},profile.next)));}
  const side=h('aside',{className:'ws-card ext-card ext-iside'},h('h3',{className:'ws-sec'},t('安装')),stepper,h('hr',{className:'ext-hr'}),state,profile&&h(React.Fragment,null,h('hr',{className:'ext-hr'}),h('div',{className:'ext-ineed'},h('b',null,t('还需要')),...profile.need.map((row,i)=>h('div',{key:i,className:'ext-row top'},h('span',{className:'ext-cap-ic'},Icon(row.icon,{size:16})),h('span',null,h('b',null,row.text),h('small',null,row.sub)))))));
  return h('div',{className:'ext-ipage','data-community-install-page':packageName,'data-install-stage':stage},head,h('div',{className:'ext-ibody'},

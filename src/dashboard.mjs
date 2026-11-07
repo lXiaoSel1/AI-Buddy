@@ -27,6 +27,7 @@ import {SocialLoginRequest} from './social-login-ui.mjs';
 import {createSocialLoginRequests} from './social-login-requests.mjs';
 import {PageBoundary} from './page-boundary.mjs';
 import {useGalgameUnread} from './chat-r95-ui.mjs';
+import {useVoiceOutput} from './voice/client.mjs';
 // Keep native caption controls and their safe area outside the scrolling app.
 const overlay=navigator.windowControlsOverlay;
 function syncWindowChrome(){document.documentElement.classList.toggle('desktop-titlebar',!!overlay?.visible);}
@@ -100,6 +101,7 @@ function SidebarStatus({page,status,character,settings,chat,onPage,activity}){
   h('button',{type:'button',className:'sidebar-bottom','aria-expanded':open,'aria-label':line+' · '+sub+' · '+t('查看现在在做什么'),title:line+'\n'+sub,onClick:()=>setOpen(value=>!value)},h('b',null,h('span',{className:'offline-dot '+tone}),h('span',{className:'side-status-line'},line)),h('small',null,sub)));
 }
 function App(){
+ useVoiceOutput();
  const [data,setData]=useState(null),[page,setPage]=useState(normalizeDashboardPage(location.hash.slice(1))),[chat,setChat]=useState({enabled:false}),[query,setQuery]=useState(''),[filter,setFilter]=useState('all'),[vendor,setVendor]=useState('all'),[purpose,setPurpose]=useState('all'),[source,setSource]=useState('all'),[chosen,setChosen]=useState(null),[date,setDate]=useState('');
  const [settings,setSettings]=useState(null),[settingsError,setSettingsError]=useState('');
  setLocale(settings?.preferences.language||'zh-CN');

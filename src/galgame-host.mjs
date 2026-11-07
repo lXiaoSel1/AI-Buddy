@@ -10,7 +10,7 @@ import {writePortableImages} from './companion-media.mjs';
 import {createMediaStore} from './media-store.mjs';
 import {createDraftStore} from './draft-store.mjs';
 
-export async function createGalgame({dataRoot,provider,model,cg=null,resources=null,getLanguage=()=> 'zh-CN',getReplyStyle=()=> 'natural',onCharacter=()=>{},onPetVisibility=()=>{},onChatCommitted=()=>{},onOutput=()=>{},onCgUpdated=()=>{},onActivity=()=>{},audit=()=>{},imageConverter=null,automaticWorkAllowed=()=>true,workBridge=null,r95Options={}}) {
+export async function createGalgame({dataRoot,provider,model,cg=null,resources=null,getLanguage=()=> 'zh-CN',getReplyStyle=()=> 'natural',onCharacter=()=>{},onPetVisibility=()=>{},onChatCommitted=()=>{},onOutput=()=>{},onCgUpdated=()=>{},onActivity=()=>{},audit=()=>{},imageConverter=null,automaticWorkAllowed=()=>true,workBridge=null,r95Options={},voice=null}) {
   const media=createMediaStore(dataRoot),drafts=createDraftStore(dataRoot,{onError:error=>audit({type:'draft-store-error',message:String(error?.message??error)})});
   const companionStore=await openCompanionStore(dataRoot,{media});
   const languageContext=new AsyncLocalStorage();
@@ -37,9 +37,11 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
     const view=await engine.handleAction('view',{});
     await engine.handleAction('settings-set',{characterMode:'manual',characterId:resources?.fallback(resources.status().initialCharacter)??(provider.currentSelection?view.current||'deepseek':'deepseek'),sideStorySeedSource:'activity',...(!provider.currentSelection?{chatMode:'manual',chatProvider:'codex',chatModel:model}:{})});
   }
-  const companion=await createCompanionService({workBridge,r95Options,store:companionStore,engine,provider,dataRoot,imageCodec:cg?.imageCodec,imageConverter,media,drafts,resources,onCharacter,onChatCommitted,onOutput,onActivity,getLanguage,getReplyStyle,audit,automaticWorkAllowed});
+  const companion=await createCompanionService({workBridge,r95Options,voice,store:companionStore,engine,provider,dataRoot,imageCodec:cg?.imageCodec,imageConverter,media,drafts,resources,onCharacter,onChatCommitted,onOutput,onActivity,getLanguage,getReplyStyle,audit,automaticWorkAllowed});
   bus.on('galgame/output-timing',value=>companion.captureTiming(value));
   bus.on('galgame/text-delta',value=>companion.captureDelta(value));
+  ctx.finishCompanionVoice=(id,raw)=>companion.finishPrivateVoice(id,raw);
+  ctx.captureCompanionDelta=value=>companion.captureDelta(value);
   ctx.companionSignal=id=>companion.signalFor(id);
   ctx.assertCompanionLife=(id,token)=>companion.assertLife(id,token);
   ctx.guardCompanionProfile=(action,args)=>companion.guardProfile(action,args);
@@ -52,9 +54,12 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
   let sequence=0;
   return {
     get gameEconomy(){return companion.r95?.feeding?.gameEconomy;},viewState:()=>companion.viewState(),cardGamesPortrait:companion.cardGamesPortrait,gameContext:scope=>companion.gameContext(scope),recordGameFact:value=>companion.recordGameFact(value),
+    voiceScope:companion.voiceScope,voiceSubmit:companion.voiceSubmit,voiceReceipt:companion.voiceReceipt,voiceCancel:companion.voiceCancel,
     async action(action,args={}) {
+     const previous=voice?companion.voiceScope():null;
+     try{
       if(action==='cg-daily')throw Object.assign(Error('Daily CG requires host admission'),{code:'DAILY_CG_HOST_ONLY'});
-      if(action.startsWith('companion-'))return companion.action(action,args);
+      if(action.startsWith('companion-'))return await companion.action(action,args);
       companion.guardProfile(action,args);
       if(action==='chat')return languageContext.run(getLanguage(),()=>companion.chat(args));
       const usesChat=action==='chat'||action==='side-story-free-reply'||action==='side-story'&&!['advance','close','choose'].includes(args.op);
@@ -73,6 +78,7 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
       if(result?.current)return companion.decorate(result);
       if(result?.view)return {...result,view:await companion.decorate(result.view)};
       return result;
+     }finally{if(voice)companion.voiceScopeChanged(previous);}
     },
     assertDailyCgScope:scope=>companion.assertDailyCgScope(scope),captureDailyCg:args=>companion.captureDailyCg(args),
     async enqueueDailyCg(snapshot){companion.assertDailyCgScope(snapshot.scope);const result=await engine.handleAction('cg-daily',snapshot);if(result?.ok===false)throw Object.assign(Error(result.error||'日常CG排队失败'),{code:result.code||'DAILY_CG_ENQUEUE_FAILED'});return result;},

@@ -6,6 +6,7 @@ import {closeMonitorWorker} from './monitor-worker-shutdown.mjs';
 import {createPluginMaintenanceClient} from './plugin-maintenance-client.mjs';
 import {pluginActionResult} from './plugin-ipc.mjs';
 import {createPluginPlatform} from './plugin-platform.mjs';
+import {createVoiceHost,trustedVoiceSender} from './voice/host.mjs';
 import {createBiliSheetRenderer,createBiliFrameAnalyzer} from './bili-sheet-renderer.mjs';
 import {createPluginEmbed,embedCapable,EMBED_CHANNEL,EMBED_EVENT,EMBED_TARGETS} from './plugin-embed.mjs';
 import {pluginPageAppearance} from './plugin-page-appearance.mjs';
@@ -129,10 +130,10 @@ const fullscreenPolicy=createPetFullscreenPolicy({onChange:hidden=>{fullscreenHi
 let dailyCgScheduler;
 let pet,panel,tray,worker,game,provider,snapshot={indexing:true,sessions:[],active:[],todayUsage:{codex:{total:0},claude:{total:0}},workTotal:0},settings={},drag=null,lastWork=null,quitting=false,gestureMode=false,lastPetHit=false,ignoringMouse=true,petAssetsReady=false;
 const settingsStore=createSnapshotStorage(join(dataRoot,'settings.json'));
-let cg,quotas,agents,plugins,petDiagnostics,pluginUsage,pluginEmbed,appUpdates,chatPreferences;
+let cg,quotas,agents,plugins,petDiagnostics,pluginUsage,pluginEmbed,appUpdates,chatPreferences,voiceHost;
 const updateReservation=createUpdateReservation({external:()=>[
   ...(gameRequests||provider?.status().busy||activityClock.busy.size||game?.r95?.busy?.()?['chat']:[]),
-  ...(cg?.status().busy?['cg']:[]),...(agents?.busy()?['work']:[]),
+  ...(cg?.status().busy?['cg']:[]),...(agents?.busy()?['work']:[]),...(voiceHost?.busy()?['voice']:[]),
   ...(plugins?.busy?.()||extensionOperationBusy(plugins?.snapshot())?['plugin']:[]),...(importBarrier?['data']:[]),
 ]});
 const bootstrapUrl='https://github.com/lXiaoSel1/AI-Buddy/releases/latest';
@@ -345,7 +346,7 @@ function openPanel(page='overview',focus=true) {
     }
     lockPageZoom(panel,error=>audit({type:'zoom-policy-error',message:error.message}));
     panel.setMenuBarVisibility(false);syncBrandIcons();panel.loadFile(join(build,'index.html'),{hash:page,...previewQuery,query:{...previewQuery.query,theme:resolvedTheme(settings.preferences,themeCharacter),petCharacter:resources.fallback(resolvePetCharacter(settings.preferences,themeCharacter))}});
-    panel.on('close',event=>{if(!quitting){event.preventDefault();if(onboarding){void shutdown();return;}petAuto();panel.hide();}});
+    panel.on('close',event=>{if(!quitting){event.preventDefault();if(onboarding){void shutdown();return;}void voiceHost?.action('stop').catch(error=>audit({type:'voice-panel-stop',code:error.code}));petAuto();panel.hide();}});
     // Lets the panel release heavy media (action gallery decoders, stills) while hidden.
     for(const [name,visible] of [['hide',false],['show',true]])panel.on(name,()=>{if(panel&&!panel.isDestroyed())panel.webContents.send('panel:visibility',{visible});});
     panel.on('hide',()=>pluginEmbed?.release());for(const name of ['minimize','restore'])panel.on(name,()=>pluginEmbed?.refresh());panel.on('show',()=>{try{assertImportIdle();pluginEmbed?.resume();}catch{}});
@@ -421,6 +422,15 @@ ipcMain.handle('agents:action',async(event,action,payload)=>{if(event.sender!==p
 ipcMain.handle('agents:choose-workspace',async event=>{if(event.sender!==panel?.webContents)throw Error('Invalid workspace sender');assertImportIdle();if(!agents?.status().enabled)throw Object.assign(Error('请先安装并启用工作与协作插件'),{code:'WORK_PLUGIN_REQUIRED'});const result=await dialog.showOpenDialog(panel,{title:t('选择工作项目目录'),properties:['openDirectory']});return result.canceled?null:result.filePaths[0];});
 ipcMain.handle('work:status',event=>{if(event.sender!==panel?.webContents)throw Error('Invalid workspace sender');return agents?.status()??{state:'not-ready',installed:false,enabled:false};});
 ipcMain.handle('work:open',async event=>{if(event.sender!==panel?.webContents)throw Error('Invalid workspace sender');assertImportIdle();try{return await agents.open();}catch(error){return {__buddyError:true,message:error.message,code:error.code};}});
+ipcMain.handle('voice:action',async(event,op,payload)=>{
+ if(!trustedVoiceSender(event,panel))throw Error('Invalid voice sender');
+ assertImportIdle();if(!voiceHost)return {__buddyError:true,code:'VOICE_HOST_UNAVAILABLE',message:'语音服务尚未就绪'};
+ try{
+  // Existing capture/audio must settle even after the updater reserves new work.
+  const continuing=['state','profiles','cloud-status','cloud-prepare-preview','capture-feed','capture-finish','receipt','stop'].includes(op);
+  return await (continuing?voiceHost.action(op,payload):updateGuard('voice',()=>voiceHost.action(op,payload)));
+ }catch(error){return {__buddyError:true,code:error.code??'VOICE_FAILED',message:String(error.message).slice(0,400)};}
+});
 ipcMain.handle('plugins:action',async(event,request)=>{if(event.sender!==panel?.webContents)throw Error('Invalid extension sender');assertImportIdle();return pluginActionResult(plugins,request);});
 // Plugin pages inside the main window: only the main window's own page may place, cover or move them.
 ipcMain.handle(EMBED_CHANNEL,async(event,request)=>{if(event.sender!==panel?.webContents||event.senderFrame!==panel.webContents.mainFrame)throw Error('Invalid embed sender');if(!pluginEmbed)return {__buddyError:true,code:'PLUGIN_EMBED_UNAVAILABLE',message:'插件页面还没准备好'};try{if(!['state','slot','cover','capture'].includes(request?.op))assertImportIdle();return await pluginEmbed.handle(request);}catch(error){return {__buddyError:true,code:error.code??'PLUGIN_EMBED_FAILED',message:error.message};}});
@@ -651,7 +661,7 @@ async function shutdown(forUpdate=false) {
   try{
   if(agents?.busy()){const choice=await dialog.showMessageBox(panel??pet,{type:'question',title:'工作与协作',message:'仍有工作任务正在运行。',buttons:['完成后退出','停止并保存后退出','返回'],defaultId:2,cancelId:2});if(choice.response===2)return;await agents.prepareExit(choice.response===0?'finish':'stop-save');}
   quitting=true;closePetFullscreen();applyPetVisibility(false);
-  await dailyCgScheduler?.stopAndDrain();await rewardTail;await agents?.close();pluginEmbed?.close();await plugins?.close();await pluginUsage?.close();petDiagnostics?.dispose();dataImport?.close();buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();await settingsTail;await settingsWriteTail;provider?.close();await cg?.close();await game?.flushWorkLedger?.().catch(()=>{});await game?.close();
+  await dailyCgScheduler?.stopAndDrain();await rewardTail;await agents?.close();pluginEmbed?.close();await plugins?.close();await voiceHost?.close();await pluginUsage?.close();petDiagnostics?.dispose();dataImport?.close();buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();await settingsTail;await settingsWriteTail;provider?.close();await cg?.close();await game?.flushWorkLedger?.().catch(()=>{});await game?.close();
   await workSourceRegistry?.flush();
   if(worker)await closeMonitorWorker(worker,{onDiagnostic:value=>audit({type:'monitor-worker-close',...value})});
   appUpdates?.close({keepApply:forUpdate});control.close();app.exit(0);
@@ -677,7 +687,9 @@ app.whenReady().then(async()=>{
   settings=await readJson(settingsStore,{});
   const netSession=session.fromPartition('whale-memory');
   netSession.webRequest.onBeforeRequest({urls:['http://*/*','https://*/*']},(details,callback)=>{audit({type:'renderer-external-blocked',scheme:details.url.split(':')[0]});callback({cancel:true});});
-  netSession.setPermissionRequestHandler((_,__,callback)=>callback(false));
+  const allowMicrophone=(contents,permission,details)=>permission==='media'&&contents===panel?.webContents&&voiceHost?.microphoneAllowed()===true&&details?.mediaType!=='video'&&(details?.mediaTypes??['audio']).every(value=>value==='audio');
+  netSession.setPermissionCheckHandler((contents,permission,_origin,details)=>!!allowMicrophone(contents,permission,details));
+  netSession.setPermissionRequestHandler((contents,permission,callback,details)=>callback(!!allowMicrophone(contents,permission,details))); 
   // Read-only, by content name only: 64 hex characters and an image extension.
   netSession.protocol.handle(MEDIA_SCHEME,async request=>{
     const name=mediaName(request.url);if(!name)return new Response(null,{status:404});
@@ -693,7 +705,7 @@ app.whenReady().then(async()=>{
   await provider.ready;
   chatPreferences=createChatPreferences({provider,read:()=>settings.preferences,write:preferences=>settingsStore.writeText(JSON.stringify({...settings,preferences})),apply:preferences=>{settings.preferences=preferences;},serialize:serializeSettings,audit});
   const publishPlugins=value=>{const snapshot=plugins?.snapshot()??value;if(panel&&!panel.isDestroyed())panel.webContents.send('plugins:update',snapshot);if(Array.isArray(snapshot?.dsh?.installed))pluginEmbed?.recordsChanged(snapshot.dsh.installed);};
-  const legacyPlugins=await createPluginMaintenanceClient({runnerPath:join(build,'plugin-maintenance.cjs'),root,dataRoot,appVersion,busy:async()=>!!agents?.busy(),onUpdate:publishPlugins});
+  const legacyPlugins=await createPluginMaintenanceClient({runnerPath:join(build,'plugin-maintenance.cjs'),root,dataRoot,appVersion,voiceTestFingerprint:arg('voice-test-fingerprint'),busy:async()=>!!agents?.busy(),onUpdate:publishPlugins});
   pluginUsage=createPluginUsageRecorder({dataRoot,onRecorded:()=>worker?.postMessage({type:'refresh'})});
   agents=createWorkPluginGate({dataRoot,build,verifyOwnerAuthority:(...args)=>{if(!game?.r95)throw Error('主人授权服务尚未就绪');return game.r95.owner.verifyProof(...args);},getPlatform:()=>plugins,getGame:()=>game,getProvider:()=>provider,binaryResolver:binary,audit,automaticWorkAllowed,
     confirmResumeApproval:createWorkResumeConfirmation({dialog,BrowserWindow,language:()=>settings.preferences.language}),
@@ -702,7 +714,12 @@ app.whenReady().then(async()=>{
     onRegisterUsageSource:async value=>{await managedWorkSource({id:value.id,tool:value.engine,path:value.path,name:'工作插件 · '+value.engine,format:'auto',enabled:true,mode:value.usageMode==='cumulative'?'cumulative':'request',workAttribution:value.workAttribution,...(value.nativeHistoryRange?{nativeHistoryRange:value.nativeHistoryRange}:{})});return {sourceId:value.id,registered:true};},
     onEvent:()=>{if(panel&&!panel.isDestroyed())panel.webContents.send('work:event',{type:'work-status-changed',busy:!!agents?.busy()});},
   });
-  plugins=await createPluginPlatform({pageAppearance:options=>pluginPageAppearance(settings.preferences,themeCharacter,{...options,faces:pluginFaces(),portraits:(builtinPluginPortraits??=builtinPortraits(build))}),root,build,dataRoot,crypto:safeStorage,legacyManager:legacyPlugins,getSocialHost:()=>game?.r95?.socialHost,getGame:()=>game,getProvider:()=>provider,BrowserWindow,session,ipcMain,pluginClientPreloadPath:join(build,'plugin-client-preload.cjs'),openSocialSetup:request=>openSocialLogin(request),renderBiliSheet:createBiliSheetRenderer(nativeImage),analyzeBiliFrames:createBiliFrameAnalyzer(nativeImage),onReadingOpen:async()=>{assertImportIdle();if(!pluginEmbed)throw Object.assign(Error('Plugin page is not ready'),{code:'PLUGIN_EMBED_UNAVAILABLE'});await pluginEmbed.handle({op:'open',target:'bilibili'});},
+  voiceHost=createVoiceHost({dataRoot,build,crypto:safeStorage,getGame:()=>game,getPlatform:()=>plugins,audit,
+    send:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('voice:event',value);},
+    chooseAssets:async kind=>{const result=await dialog.showOpenDialog(panel,{title:'选择匹配的语音组件目录 · '+kind,properties:['openDirectory']});return result.canceled?null:result.filePaths[0];},
+    chooseReference:async()=>{const result=await dialog.showOpenDialog(panel,{title:'选择当前角色的平静参考音',properties:['openFile'],filters:[{name:'WAV',extensions:['wav']}]});return result.canceled?null:{file:result.filePaths[0]};},
+  });
+  plugins=await createPluginPlatform({voice:{quiesce:()=>voiceHost.quiesce(),snapshot:()=>voiceHost.snapshot(),cardEvent:request=>request?.type==='scope-update'?voiceHost.cardEvent(request):updateGuard('voice',()=>voiceHost.cardEvent(request))},voiceTestFingerprint:arg('voice-test-fingerprint'),pageAppearance:options=>pluginPageAppearance(settings.preferences,themeCharacter,{...options,faces:pluginFaces(),portraits:(builtinPluginPortraits??=builtinPortraits(build))}),root,build,dataRoot,crypto:safeStorage,legacyManager:legacyPlugins,getSocialHost:()=>game?.r95?.socialHost,getGame:()=>game,getProvider:()=>provider,BrowserWindow,session,ipcMain,pluginClientPreloadPath:join(build,'plugin-client-preload.cjs'),openSocialSetup:request=>openSocialLogin(request),renderBiliSheet:createBiliSheetRenderer(nativeImage),analyzeBiliFrames:createBiliFrameAnalyzer(nativeImage),onReadingOpen:async()=>{assertImportIdle();if(!pluginEmbed)throw Object.assign(Error('Plugin page is not ready'),{code:'PLUGIN_EMBED_UNAVAILABLE'});await pluginEmbed.handle({op:'open',target:'bilibili'});},
     hostServices:{'work.host':{capability:'work.host',handler:request=>agents.service(request)}},resolveToolScope:context=>agents.nativeToolScope(context),
     runtimeLockPath:arg('dsh-runtime-lock'),busy:()=>!!agents?.busy(),onUpdate:publishPlugins,audit,automaticWorkAllowed,maintenanceAdmission:()=>!updateReservation.active(),
     openExternal:async url=>{const parsed=new URL(url);if(!['http:','https:'].includes(parsed.protocol)||parsed.username||parsed.password)throw Error('外部页面地址无效');await shell.openExternal(parsed.href);},
@@ -728,7 +745,7 @@ app.whenReady().then(async()=>{
   await cg.ready;
   let legacyGameSettings={};
   try{
-  game=await createGalgame({workBridge:agents.lifeBridge,r95Options:{tickAllowed:automaticWorkAllowed,getTimeZone:()=>settings.preferences?.statisticsTimeZone??'local',work:{ownerAction:(...args)=>agents.ownerAction(...args),getOwnerPlan:value=>agents.getOwnerPlan(value),ownerWorkOptions:value=>agents.ownerWorkOptions(value)},getRuntimeState:scope=>({sleepPhase:activityClock.phase,sleepIntentVersion:activityClock.sleepIntentVersion,waitingForReply:gameRequests>0,presenting:petState.socialPresentation===true,canPresent:(!!panel&&!panel.isDestroyed()&&panel.isVisible()&&!panel.webContents.isLoading())||(!!pet&&!pet.isDestroyed()&&pet.isVisible()&&petState.characterId===scope.characterId&&!petState.manual),activityAllowed:false}),onSpeech:value=>{const petShown=!!pet&&!pet.isDestroyed()&&pet.isVisible()&&petState.characterId===value.scope.characterId;if(petShown)petEvent({kind:'social-line',value});if(panel&&!panel.isDestroyed()&&(panel.isVisible()||petShown))panel.webContents.send('game:output',{type:'social.updated',...(petShown?{petMessageId:value.messageId}:{})});},onSleepIntent:value=>{if(value.kind==='temporary-feeding-start')activityClock.beginTemporaryWake(value.activityOriginId);else if(value.resumeOriginalSleep)activityClock.endTemporaryWake(value.activityOriginId);publishInteraction(true);}},dataRoot,provider,model,cg,resources,audit,imageConverter:rasterizeImage,onActivity:internalActivity,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,onOutput:event=>{if(panel&&!panel.isDestroyed())panel.webContents.send('game:output',event);},automaticWorkAllowed,getReplyStyle:()=>settings.preferences?.replyStyle??'natural',getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value?.kind==='daily'?{id:value.id,status:value.status}:value);}});
+  game=await createGalgame({voice:voiceHost.controller,workBridge:agents.lifeBridge,r95Options:{tickAllowed:automaticWorkAllowed,getTimeZone:()=>settings.preferences?.statisticsTimeZone??'local',work:{ownerAction:(...args)=>agents.ownerAction(...args),getOwnerPlan:value=>agents.getOwnerPlan(value),ownerWorkOptions:value=>agents.ownerWorkOptions(value)},getRuntimeState:scope=>({sleepPhase:activityClock.phase,sleepIntentVersion:activityClock.sleepIntentVersion,waitingForReply:gameRequests>0,presenting:petState.socialPresentation===true,canPresent:(!!panel&&!panel.isDestroyed()&&panel.isVisible()&&!panel.webContents.isLoading())||(!!pet&&!pet.isDestroyed()&&pet.isVisible()&&petState.characterId===scope.characterId&&!petState.manual),activityAllowed:false}),onSpeech:value=>{const petShown=!!pet&&!pet.isDestroyed()&&pet.isVisible()&&petState.characterId===value.scope.characterId;if(petShown)petEvent({kind:'social-line',value});if(panel&&!panel.isDestroyed()&&(panel.isVisible()||petShown))panel.webContents.send('game:output',{type:'social.updated',...(petShown?{petMessageId:value.messageId}:{})});},onSleepIntent:value=>{if(value.kind==='temporary-feeding-start')activityClock.beginTemporaryWake(value.activityOriginId);else if(value.resumeOriginalSleep)activityClock.endTemporaryWake(value.activityOriginId);publishInteraction(true);}},dataRoot,provider,model,cg,resources,audit,imageConverter:rasterizeImage,onActivity:internalActivity,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,onOutput:event=>{if(panel&&!panel.isDestroyed())panel.webContents.send('game:output',event);},automaticWorkAllowed,getReplyStyle:()=>settings.preferences?.replyStyle??'natural',getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value?.kind==='daily'?{id:value.id,status:value.status}:value);}});
   await cg.drainRewardFacts();if(!cardQuiet)cg.start();
    dailyCgScheduler=createDailyCgScheduler({dataRoot,now:Date.now,getTimeZone:()=>settings.preferences?.statisticsTimeZone??'local',admission:()=>!!game&&!quitting&&cg.enabled&&cg.available()&&automaticWorkAllowed()&&activityClock.phase==='awake',capture:context=>{const captured=game.captureDailyCg(context);return {...captured,profile:structuredClone(cg.selected()),themeConnection:structuredClone(cg.themePlanner.capture(captured.modelBinding))};},enqueue:(snapshot,context)=>game.enqueueDailyCg({...snapshot,signal:context.signal}),onError:error=>audit({type:'daily-cg-failed',code:error.code??'DAILY_CG_FAILED',message:String(error.message).slice(0,300)})});
    await dailyCgScheduler.ready;dailyCgScheduler.start();

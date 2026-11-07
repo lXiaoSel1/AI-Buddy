@@ -13,6 +13,7 @@ import { WorkDetail, AuthorDialog } from "./community-detail.mjs";
 import { OfflineImportDialog } from "./community-offline-dialog.mjs";
 import { pluginName, workText, releaseNotes, legacyText, formatBytes } from "./community-capabilities.mjs";
 import { EMBED_TARGETS, embedCapable, embedTargetFor } from "./plugin-embed-targets.mjs";
+import { isVoiceEnginePackage, VOICE_SHARED_PACKAGE } from './voice/package-contract.mjs';
 const h = React.createElement;
 const t = (value) => locale() === "en" ? communityMessages[value] ?? coreT(value) : coreT(value);
 const tn = (key, n) => communityCount(key, n, t);
@@ -169,6 +170,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
   // "Open" goes to the plugin's page in the main window (approved design G); a version that cannot be shown
   // there yet, or a host without page navigation, keeps the plugin's own window.
   function openPage(record) {
+    if (isVoiceEnginePackage(record?.packageName)) { onPage?.("galgame"); return; }
     const target = embedTargetFor(record.packageName);
     if (target && onPage && embedCapable(target, record.exactVersion)) { onPage(EMBED_TARGETS[target].page); return; }
     void run(() => call({ action: "dsh-open-client", packageKey: record.packageKey }));
@@ -248,12 +250,12 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
     let live = true;
     void workApi?.status?.().then((value) => live && setWorkStatus(value), () => {});
     void call({ action: "social-accounts-list" }).then((value) => live && setAccounts(value?.accounts ?? null), () => {});
-    void call({ action: "search", query: "", kind: "installed", page: 1, pageSize: 50 }).then((value) => live && setLegacyInstalled(Array.isArray(value?.items) ? value.items.filter(item => item.current) : []), () => {});
+    void call({ action: "search", query: "", kind: "installed", page: 1, pageSize: 50 }).then((value) => live && setLegacyInstalled(Array.isArray(value?.items) ? value.items.filter(row => row.current && row.manifest?.id !== VOICE_SHARED_PACKAGE) : []), () => {});
     return () => { live = false; };
   }, [tab, revision, api]);
   // The sidebar footer (A2) shows how many plugins are installed and whether updates were found.
   useEffect(() => {
-    if (state) onStatus?.({ plugins: { installed: state.dsh?.installed?.length ?? 0, updates: updates == null ? null : updates.length } });
+    if (state) onStatus?.({ plugins: { installed: (state.dsh?.installed?.length ?? 0) + (state.voicePackages?.filter(row=>row.installed).length ?? 0), updates: updates == null ? null : updates.length } });
   }, [state, updates]);
   function sourceOf(id) {
     return state?.sources?.find((value) => value.sourceId === id);
@@ -331,6 +333,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
     else say("签名目录已导入。");
   }
   async function enableRecord(record){
+    if(isVoiceEnginePackage(record?.packageName)){await call({action:'enable',id:record.packageName,sourceId:record.sourceId});await refreshState();return true;}
     const result=await call({action:'dsh-enable',packageKey:record.packageKey});
     if(result?.dependencyPlan){const value=result.dependencyPlan;setGranted(value.priorGrantedCapabilities);setPlan(value);setInstallFor({work:{packageName:record.packageName},packageName:record.packageName,sourceId:record.sourceId,submitted:false,enabling:true});return false;}return true;
   }
@@ -433,7 +436,13 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
       else openUnavailable(intent.install);
     });
   }, [intent?.at]);
-  const installedRecord = (packageName, source) => state?.dsh?.installed?.find((record) => record.packageName === packageName && (!source || record.sourceId === source));
+  const installedRecord = (packageName, source) => {
+    if (isVoiceEnginePackage(packageName)) {
+      const row=state?.voicePackages?.find(value=>value.id===packageName && value.installed && (!source || value.sourceId===source));
+      return row ? {...row,packageName,exactVersion:row.version} : null;
+    }
+    return state?.dsh?.installed?.find(record=>record.packageName===packageName && (!source || record.sourceId===source));
+  };
   // G2 「在扩展中心查看」 entry point: intent {packageName} (optionally with tab) opens that plugin's own details sheet (B2)
   // when a verified catalog lists it; otherwise the Installed tab shows, with its row brought into view.
   async function openRecordDetails(packageName) {
@@ -463,7 +472,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
   const busy = pending > 0;
   function workCard(work) {
     const record = installedRecord(work.packageName, work.sourceId), version = latestVersion(work), official = officialWork(work), text = workText(work, { official });
-    const installable = !(busy || work.status === "withdrawn" || !["function", "work-engine"].includes(work.category));
+    const installable = !(busy || work.status === "withdrawn" || !["function", "work-engine"].includes(work.category) && work.installable !== true);
     return h(
       "article",
       { key: work.key, className: "ws-card ext-pcard", "data-community-work": work.id, "data-community-source": work.sourceId },
@@ -509,6 +518,20 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
   // B4 keep: an installed 1.9-era extension is listed as it is (Kimi 1.0.0 stays 「不兼容」 and is managed under Sources).
   function legacyRow(row) {
     const m = row.manifest, key = legacyUpdateKey(row.sourceId ?? "legacy", m.id), policy = state?.community?.updatePolicies?.[key] ?? "manual", pending = updates?.find(value => value.packageKey === key), text = legacyText(m, { official: ["official", "legacy"].includes(row.sourceId ?? "legacy") }), incompatible = row.compatible === false;
+    if(isVoiceEnginePackage(m.id)){
+      const voice=installedRecord(m.id,row.sourceId);
+      const label={ready:"已启用",changing:"正在维护",disabled:"已安装","source-disabled":"来源已停用","source-untrusted":"来源未获准运行","missing-dependency":"缺少共享组件",incompatible:"不兼容",unavailable:"扩展服务未就绪"}[voice?.state]??"已安装";
+      const change=action=>void run(async()=>{await call({action,id:m.id,sourceId:row.sourceId});await refreshState();});
+      return h("article",{className:"ws-card ext-irow",key,"data-voice-installed":m.id},
+        h(PluginLogo,{packageName:m.id,size:44}),
+        h("div",{className:"ext-ir-main"},h("div",{className:"ext-row"},h("b",null,text.name),h("span",{className:"ext-cap"},m.version),h(StatusPill,{tone:voice?.usable?"ok":"idle"},t(label)),pending&&h("button",{type:"button",className:"ws-tag ext-tagbtn",onClick:()=>setTab("updates")},t("有更新 {v}").replace("{v}",pending.to))),
+          h("small",{className:"ext-cap"},t(voice?.usable?"在陪伴页选择声音并准备运行组件。":"配音设置和角色资料会保留。"))),
+        h("div",{className:"ws-row-btns"},
+          voice?.usable&&h("button",{type:"button",className:"ui-btn primary sm",onClick:()=>openPage(voice)},t("语音设置")),
+          h("label",{className:"ext-cap"},L("更新方式","Update policy")," ",h("select",{value:policy,disabled:busy,onChange:event=>{const policy=event.target.value;void run(()=>call({action:"community-set-update-policy",packageKey:key,policy}));}},h("option",{value:"manual"},L("手动更新","Manual")),h("option",{value:"auto"},L("自动更新补丁","Automatic patches")))),
+          h("button",{type:"button",className:"ui-btn sm",disabled:busy||!row.enabled&&(incompatible||!row.activation?.supported),onClick:()=>change(row.enabled?"disable":"enable")},t(row.enabled?"停用":"启用")),
+          h("button",{type:"button",className:"ui-btn ghost sm",onClick:()=>setTab("sources")},t("查看版本与维护"))));
+    }
     return h("article", { className: "ws-card ext-irow", key: key, "data-legacy-installed": m.id },
       h("span", { className: "ext-logo", style: { "--pl": "44px" }, "aria-hidden": true }, Icon(m.kind === "runtime" ? "terminal" : "bolt", { size: 22 })),
       h("div", { className: "ext-ir-main" }, h("div", { className: "ext-row" }, h("b", null, text.name), h("span", { className: "ext-cap" }, m.version), incompatible ? h(StatusPill, { tone: "warn" }, t("不兼容")) : h(StatusPill, { tone: row.enabled ? "ok" : "idle" }, t(row.enabled ? "已启用" : "已安装")), h("span", { className: "ws-tag" }, t("旧扩展")), pending && h("button", { type: "button", className: "ws-tag ext-tagbtn", onClick: () => setTab("updates") }, t("有更新 {v}").replace("{v}", pending.to))),

@@ -307,7 +307,7 @@ export async function createPluginManager(options = {}) {
     try { options.onUpdate?.(manager ? manager.snapshot() : value); } catch {}
   }});
   try { manager = await createPluginSourceManager({legacy, root: resolve(options.root), dataRoot: resolve(options.dataRoot), appVersion: options.appVersion,
-    apiVersion: options.apiVersion ?? PLUGIN_API_VERSION, onUpdate: options.onUpdate, now: options.now ?? Date.now}); }
+    apiVersion: options.apiVersion ?? PLUGIN_API_VERSION, onUpdate: options.onUpdate, now: options.now ?? Date.now, voiceTestFingerprint: options.voiceTestFingerprint}); }
   catch (error) { await legacy.close(); throw error; }
   try { options.onUpdate?.(manager.snapshot()); } catch {}
   return manager;
