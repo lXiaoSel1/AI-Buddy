@@ -17,13 +17,13 @@
 **AI Buddy app** (this repository) · [Bilibili Companion plugin](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ Connect plugin](https://github.com/lXiaoSel1/AI-Buddy-QQ) · [Card Games plugin](https://github.com/lXiaoSel1/AI-Buddy-Card-Games)
 
 <!-- ai-buddy-source-version: 2.0.8 -->
-**Current release: [v2.0.7](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.7)** · 2.0 added the Extensions center with official plugins, points with a shop, backpack and feeding, and Social & mood; group chat can now run in Auto, with the characters taking turns on their own. 2.0.4 added the table service, so you can install Card Games from Extensions and play Dou Dizhu and Texas Hold'em with your characters. 2.0.5 fixes that page sticking on "Starting" when you switch from the Bilibili or QQ page. 2.0.6 fixes an installer freeze while verifying old profiles. 2.0.7 fixes Bilibili Companion storyboard acquisition on affected CDN routes. The 30fps and 60fps editions have the same features. See the [2.0.7 release notes](docs/RELEASE-2.0.7.en.md).
+**Current release: [v2.0.8](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.8)** · 2.0 added the Extensions center with official plugins, points with a shop, backpack and feeding, and Social & mood; group chat can now run in Auto, with the characters taking turns on their own. 2.0.4 added the table service, so you can install Card Games from Extensions and play Dou Dizhu and Texas Hold'em with your characters. 2.0.5 fixes that page sticking on "Starting" when you switch from the Bilibili or QQ page. 2.0.6 fixes an installer freeze while verifying old profiles. 2.0.7 fixes Bilibili Companion storyboard acquisition on affected CDN routes. The 30fps and 60fps editions have the same features. 2.0.8 connects application and plugin updates in Settings. See the [2.0.8 release notes](docs/RELEASE-2.0.8.en.md).
 
 ## Online installer (recommended)
 
-**Application version 2.0.7.** This version supports Card Games 1.0.0 from Extensions.
+**Application version 2.0.8.** This version supports Card Games 1.0.0 from Extensions.
 
-[Download the Windows x64 installer 2.0.7](https://github.com/lXiaoSel1/AI-Buddy/releases/download/v2.0.7/AI-Buddy-Setup-2.0.7-win-x64.exe) → choose 30fps / 60fps and characters → it downloads, verifies and installs. The same installer adds characters, repairs files and upgrades.
+[Download the Windows x64 installer 2.0.7](https://github.com/lXiaoSel1/AI-Buddy/releases/download/v2.0.8/AI-Buddy-Setup-2.0.8-win-x64.exe) → choose 30fps / 60fps and characters → it downloads, verifies and installs. The same installer adds characters, repairs files and upgrades.
 
 The installer is about 50 MiB. Every character takes about **1.33 GiB** to download at 30fps or **1.75 GiB** at 60fps; fewer characters download less. For what to do after the first launch, see the [Quick start](#quick-start) below.
 
@@ -53,7 +53,7 @@ AI Buddy (AI 酱) is a Windows desktop app. It only reads your local AI-tool log
 
 Five steps get you from the installer to your first chat. The orange numbers in the pictures mark where to click. The [illustrated quick start](docs/QUICKSTART.en.md) covers each step in more detail, including importing an old save, choosing a model and connecting plugin accounts. Steps 2–5 show the Chinese interface; switch the language under **Settings** in the sidebar, and the buttons sit in the same places.
 
-**1. Run the installer.** Open `AI-Buddy-Setup-2.0.7-win-x64.exe`: ① check the installation folder → ② choose 30fps or 60fps and the initial character → ③ tick the characters to install (more can be added later) → ④ click **Install / Add / Repair**. The installer shows the selected download size and the disk space needed, and verifies every file before installing it.
+**1. Run the installer.** Open `AI-Buddy-Setup-2.0.8-win-x64.exe`: ① check the installation folder → ② choose 30fps or 60fps and the initial character → ③ tick the characters to install (more can be added later) → ④ click **Install / Add / Repair**. The installer shows the selected download size and the disk space needed, and verifies every file before installing it.
 
 <img src="docs/images/en-step-1-installer.webp" width="420" alt="Installer: installation folder, animation edition and initial character, character resources and the Install / Add / Repair button">
 
@@ -257,18 +257,18 @@ Requires Windows 10/11 x64. The installer bundles its runtime; Node.js, Python, 
 
 ### Online installer (recommended)
 
-1. Download `AI-Buddy-Setup-2.0.7-win-x64.exe` (about 50 MiB) from the [v2.0.7 release](https://github.com/lXiaoSel1/AI-Buddy/releases/tag/v2.0.7).
+1. Download `AI-Buddy-Setup-2.0.8-win-x64.exe` (about 50 MiB) from the [v2.0.8 release](https://github.com/lXiaoSel1/AI-Buddy/releases/tag/v2.0.8).
 2. Choose the installation folder (default `%LOCALAPPDATA%\Programs\AI Buddy`), 30fps or 60fps, the characters to install and the initial character. The first-run defaults are 30fps, every character and DeepSeek.
-3. Click **Install / Add / Repair**. The installer downloads from the pinned v2.0.7 release and checks SHA-256 for every package and file; every character takes about 1.33 GiB at 30fps or 1.75 GiB at 60fps. If a download is interrupted, run the same installer again with the same folder to resume.
+3. Click **Install / Add / Repair**. The installer downloads from the pinned v2.0.8 release and checks SHA-256 for every package and file; every character takes about 1.33 GiB at 30fps or 1.75 GiB at 60fps. If a download is interrupted, run the same installer again with the same folder to resume.
 4. Desktop and Start menu shortcuts are created by default. After installing, the installer starts AI Buddy once to check it; untick "Keep AI Buddy running after verification" and it closes AI Buddy after the check. The installer does not turn on online chat, automatic CG, startup registration or background updates, and it installs no plugins.
 
-**Offline install**: download `install-manifest-2.0.7.json` and the resource ZIPs you need from the [v2.0.7 release](https://github.com/lXiaoSel1/AI-Buddy/releases/tag/v2.0.7) into one folder, then select it as the "Offline resource folder" in the installer. Every file is still verified.
+**Offline install**: download `install-manifest-2.0.8.json` and the resource ZIPs you need from the [v2.0.8 release](https://github.com/lXiaoSel1/AI-Buddy/releases/tag/v2.0.8) into one folder, then select it as the "Offline resource folder" in the installer. Every file is still verified.
 
-**Upgrading from an earlier version**: run the 2.0.7 installer and choose the existing installation folder. An older installer also finds it through **Check for updates**. If an upgrade from 2.0.2 froze before downloading, retry with this installer: it stays responsive and can be cancelled while it verifies your old profile. Coming from 2.0.3 or earlier, the wallet moves to a new format the first time your data opens, and older versions can no longer write to that data, so back it up first. It waits for chat and CG to finish, closes AI Buddy normally, and keeps your personal data, chat connections, character settings and the previous program version. If you installed to a new folder, the first launch shows the welcome page: quit the old version normally from its tray menu, then choose **Import an old save** and point it at the old program folder or data folder. The import copies the data and checks every file; the old save stays as it was. Do not copy an old profile over the new folder by hand.
+**Upgrading from an earlier version**: run the 2.0.8 installer and choose the existing installation folder. An older installer also finds it through **Check for updates**. If an upgrade from 2.0.2 froze before downloading, retry with this installer: it stays responsive and can be cancelled while it verifies your old profile. Coming from 2.0.3 or earlier, the wallet moves to a new format the first time your data opens, and older versions can no longer write to that data, so back it up first. It waits for chat and CG to finish, closes AI Buddy normally, and keeps your personal data, chat connections, character settings and the previous program version. If you installed to a new folder, the first launch shows the welcome page: quit the old version normally from its tray menu, then choose **Import an old save** and point it at the old program folder or data folder. The import copies the data and checks every file; the old save stays as it was. Do not copy an old profile over the new folder by hand.
 
 Notes:
 
-- Neither the installer nor the app is commercially code-signed, so Windows may report an unknown publisher. Check the files against `SHA256SUMS-2.0.7.txt` on the same page first if you like.
+- Neither the installer nor the app is commercially code-signed, so Windows may report an unknown publisher. Check the files against `SHA256SUMS-2.0.8.txt` on the same page first if you like.
 - On first launch it looks for common log folders under the current user. No AI tools installed? The companion features still work offline.
 - The automatic GitHub **Source code** archives are source-only and do not run.
 - This repository and official releases are public. Release packages exclude the developer's saves, connection secrets and local logs.
@@ -528,7 +528,7 @@ Development needs Windows x64 and Node.js 24. `npm test` covers pure logic with 
 
 The "installer downloads" badge under the title is updated every 6 hours by [`.github/workflows/installer-download-badge.yml`](.github/workflows/installer-download-badge.yml). It counts only downloads of each version's `AI-Buddy-Setup-*-win-x64.exe`, summed over all versions, and writes the result to the `badges` branch rather than committing to `main`. GitHub does not tell downloaders apart, so test downloads during development count too.
 
-Do not commit `local/`, generated `builds/`, keys, personal CGs or logs. Release notes: [2.0.7](docs/RELEASE-2.0.7.en.md), [2.0.6](docs/RELEASE-2.0.6.en.md), [2.0.5](docs/RELEASE-2.0.5.en.md), [2.0.4](docs/RELEASE-2.0.4.en.md), [2.0.3](docs/RELEASE-2.0.3.md), [2.0.2](docs/RELEASE-2.0.2.md), [1.9.2](docs/RELEASE-1.9.2.md), [1.9.0](docs/RELEASE-1.9.0.md). Validation records for earlier versions are also in [`docs/`](docs/).
+Do not commit `local/`, generated `builds/`, keys, personal CGs or logs. Release notes: [2.0.8](docs/RELEASE-2.0.8.en.md), [2.0.7](docs/RELEASE-2.0.7.en.md), [2.0.6](docs/RELEASE-2.0.6.en.md), [2.0.5](docs/RELEASE-2.0.5.en.md), [2.0.4](docs/RELEASE-2.0.4.en.md), [2.0.3](docs/RELEASE-2.0.3.md), [2.0.2](docs/RELEASE-2.0.2.md), [1.9.2](docs/RELEASE-1.9.2.md), [1.9.0](docs/RELEASE-1.9.0.md). Validation records for earlier versions are also in [`docs/`](docs/).
 
 ## License and credits
 
