@@ -200,7 +200,10 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
         assertCurrent(ctx);return mirrorBinding(ctx,result,generation);
       });
     }
-    if(op==='configure'||op==='profile-select')await stopCards(op==='configure'?'configuration-changed':'profile-changed');
+    if(op==='configure'||op==='profile-select'){
+      const generation=voiceEpoch+1;
+      await stopAll(op==='configure'?'configuration-changed':'profile-changed');assertVoiceOpen(generation);
+    }
     return controller.action(op,payload);
   }
   return {action,controller,assets,profiles,settings,runtime,cloud,cardEvent,

@@ -27,20 +27,20 @@ async function fixture(t){
   const settings=createVoiceSettings();await settings.update({enabled:true});
   const local={async cancelCapture(){},async stopEngine(){},async close(){}};
   const host=createVoiceHost({dataRoot,build:dataRoot,getGame:()=>({voiceScope:()=>scope,voiceCancel(){}}),
-    getPlatform:()=>({async resolveVoicePackage(){return {assertCurrent(){}};},voicePackageStatus:()=>[]}),
-    components:{settings,cloud,local,profiles:{async current({engine}){return engine==='breeze'?profile:null;},async resolve(){return profile;}},assets:{},credentials:{},supervisor:{async close(){}}},
+    getPlatform:()=>({async resolveVoicePackage(){return {assertCurrent(){}};},voicePackageStatus:()=>[{id:'ai-buddy.voice-breeze',engine:'breeze',installed:true,enabled:true,usable:true,trusted:true}]}),
+    components:{settings,cloud,local,profiles:{async current({engine}){return engine==='breeze'?profile:null;},async resolve(){return profile;},async select(){return profile;}},assets:{},credentials:{},supervisor:{async close(){}}},
   });
   t.after(async()=>{lateResult.resolve();exited.resolve();await host.close();await rm(dataRoot,{recursive:true,force:true});});
   return {host,cloud,started,cancelled,exited,lateResult,dataRoot,requests:()=>requests};
 }
 
-for(const stop of ['stop','quiesce'])test(`global ${stop} cancels unowned cloud preparation and awaits exit plus failed receipt before returning`,{timeout:5000},async t=>{
+for(const stop of ['stop','quiesce','configure-disable','profile-select'])test(`global ${stop} cancels unowned cloud preparation and awaits exit plus failed receipt before returning`,{timeout:5000},async t=>{
   const f=await fixture(t);
   const pending=f.host.action('cloud-prepare',{consentUpload:true});
   const rejected=assert.rejects(pending,error=>error.name==='AbortError');
   await f.started.promise;
   let stopped=false;
-  const stopping=(stop==='stop'?f.host.action('stop'):f.host.quiesce()).then(()=>{stopped=true;});
+  const stopping=(stop==='stop'?f.host.action('stop'):stop==='quiesce'?f.host.quiesce():stop==='configure-disable'?f.host.action('configure',{enabled:false}):f.host.action('profile-select',{profileId:'alice-breeze'})).then(()=>{stopped=true;});
   try{
     await Promise.race([f.cancelled.promise,stopping.then(()=>{throw Error('global stop returned without cancelling the unowned cloud worker');})]);
     assert.equal(stopped,false,'maintenance must wait for the actual exit proof');
