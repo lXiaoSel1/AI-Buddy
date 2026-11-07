@@ -24,10 +24,13 @@ async function fixture(t){
   const selected=(await settings.get()).selectedPackageId;
   const scope={channel:'app-private',characterId:'alice',personaId:'persona',lifeId:'life',operationId:'operation',conversationId:'private'};
   const assetDialog=gate(),assetChosen=gate(),audioEnded=gate(),events=[];
+  let prepared=false;
   const runtime={
+    async prepare({signal}){signal?.throwIfAborted();prepared=true;return {ready:true,state:'ready'};},
+    async ready(){return {ready:prepared,state:prepared?'ready':'idle'};},
     async startCapture(){},async feedCapture(){return {partial:'existing'};},
     async finishCapture(){return {text:'existing capture'};},async cancelCapture(){},
-    async stopEngine(){},async close(){},
+    async stopEngine(){prepared=false;},async close(){prepared=false;},
     async *speak(){yield {type:'pcm',pcm:new Uint8Array([0,0]),sampleRate:24000};},
   };
   const voiceHost=createVoiceHost({dataRoot,build:dataRoot,
@@ -73,6 +76,8 @@ test('update reservation blocks new voice work, drains capture/playback, and wai
 
   // An already admitted reply still needs its real terminal playback receipt.
   const turnScope={...f.scope,requestId:'existing-reply'};
+  assert.equal(await f.host.controller.admit(turnScope),null,'an unprepared local worker cannot admit speech');
+  assert.equal((await f.call('prepare',{target:'speech'})).preparation.state,'ready');
   const admission=await f.host.controller.admit(turnScope);assert.ok(admission);
   const envelope={...turnScope,...admission,index:0,segmentId:'existing-reply:voice:0'};
   assert.equal(await f.host.controller.segment({envelope,text:'existing reply'}),true);

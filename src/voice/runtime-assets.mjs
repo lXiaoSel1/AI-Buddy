@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import { assertPluginTreeNoLinks } from '../plugin-archive.mjs';
 import { pluginRelativePath } from '../plugin-manifest.mjs';
 import { renamePluginPath } from '../plugin-files.mjs';
+import {createVoiceAssetVerifier} from './asset-verifier.mjs';
 
 const ids = { breeze: 'ai-buddy.voice-breeze', gpt: 'ai-buddy.voice-gpt-sovits' };
 const scripts = { asr: 'asr_worker.py', breeze: 'breeze_worker.py', gpt: 'gpt_worker.py' };
@@ -77,10 +78,11 @@ async function download(file, signal, fetchImpl) {
   throw fault('VOICE_ASSET_DOWNLOAD', '语音资源下载失败，请检查连接后重试');
 }
 
-export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = fetch,promote=renamePluginPath }) {
+export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = fetch,promote=renamePluginPath,verificationWorker }) {
   const root = join(dataRoot, 'voice', 'components');
   const pending = new Map();
-  const verified = new Map();
+  const descriptors = new Map();
+  const verifier=createVoiceAssetVerifier({workerPath:verificationWorker});
 
   async function plan(kind, engineId) {
     if (!Object.hasOwn(scripts, kind)) throw fault('VOICE_ASSET_MANIFEST', '未知语音组件');
@@ -94,38 +96,22 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
     }
     const file = join(record.directory, 'assets.json');
     await assertPluginTreeNoLinks(file);
-    const bytes = await readFile(file);
-    const descriptorHash = digest(bytes);
-    if (record.manifest && !record.manifest.files.some(row => row.path === 'assets.json' && row.sha256 === descriptorHash && row.bytes === bytes.length)) {
-      throw fault('VOICE_ASSET_MANIFEST', '语音组件清单与插件签名不符');
+    const info=await lstat(file,{bigint:true});
+    if(!info.isFile())throw fault('VOICE_ASSET_MANIFEST','语音组件清单类型无效');
+    const identity=stamp(info),key=[kind,file,record.sourceId,record.archiveSha256,identity].join('|');
+    let cached=descriptors.get(key);
+    if(!cached){
+      const bytes=await readFile(file),descriptorHash=digest(bytes);
+      if(identity!==stamp(await lstat(file,{bigint:true})))throw fault('VOICE_ASSET_MANIFEST','语音组件清单在读取中发生变化');
+      const descriptor=JSON.parse(bytes),total=validate(kind,descriptor);
+      cached={descriptorHash,descriptor,total,bytes:bytes.length};descriptors.set(key,cached);if(descriptors.size>8)descriptors.delete(descriptors.keys().next().value);
     }
-    const descriptor = JSON.parse(bytes);
-    const total = validate(kind, descriptor);
+    const {descriptorHash,descriptor,total}=cached;
+    if(record.manifest&&!record.manifest.files.some(row=>row.path==='assets.json'&&row.sha256===descriptorHash&&row.bytes===cached.bytes))throw fault('VOICE_ASSET_MANIFEST','语音组件清单与插件签名不符');
     const proof = [kind, record.sourceId, record.archiveSha256, descriptorHash].join(':');
     const destination = join(root, kind, descriptorHash);
     const cacheRoot = join(root, 'cache', kind, descriptorHash);
     return { descriptor, destination, cacheRoot, proof, total, script: join(record.directory, scripts[kind]), sharedDirectory: owner.shared.directory };
-  }
-
-  async function verifyFile(path, expected, signal,verifyDirectory) {
-    if(verifyDirectory)await verifyDirectory(dirname(path));else await assertPluginTreeNoLinks(path);
-    let info;
-    try { info = await lstat(path, { bigint: true }); }
-    catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-      throw fault('VOICE_ASSET_MISSING', '语音资源尚未准备');
-    }
-    if (!info.isFile() || info.nlink !== 1n || info.size !== BigInt(expected.bytes)) {
-      throw fault('VOICE_ASSET_HASH', '语音资源大小或类型与清单不符');
-    }
-    const identity = stamp(info);
-    if (verified.get(path)?.identity === identity && verified.get(path)?.sha256 === expected.sha256) return;
-    const hash = createHash('sha256');
-    for await (const chunk of createReadStream(path, { signal })) hash.update(chunk);
-    if (identity !== stamp(await lstat(path, { bigint: true })) || hash.digest('hex') !== expected.sha256) {
-      throw fault('VOICE_ASSET_HASH', '语音资源摘要与清单不符');
-    }
-    verified.set(path, { identity, sha256: expected.sha256 });
   }
 
   async function checkMarker(selected) {
@@ -139,23 +125,9 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
     }
   }
 
-  async function checkReady(selected) {
-    await checkMarker(selected);
-    // The root and its ancestors were checked with the marker above. Recheck
-    // every distinct descendant directory each pass, rather than walking the
-    // same Python library ancestors tens of thousands of times. Leaf identity,
-    // link count, length and SHA checks are unchanged.
-    const directories=new Map([[selected.destination,Promise.resolve()]]);
-    function verifyDirectory(path){
-      if(directories.has(path))return directories.get(path);
-      const check=(async()=>{await verifyDirectory(dirname(path));const info=await lstat(path);if(!info.isDirectory()||info.isSymbolicLink())throw fault('VOICE_ASSET_HASH','语音组件目录类型或链接已改变');})();
-      directories.set(path,check);return check;
-    }
-    const files=selected.descriptor.files;
-    for(let start=0;start<files.length;start+=8){
-      const results=await Promise.allSettled(files.slice(start,start+8).map(file=>verifyFile(join(selected.destination,file.path),file,undefined,verifyDirectory)));
-      const rejected=results.find(value=>value.status==='rejected');if(rejected)throw rejected.reason;
-    }
+  async function checkReady(selected,options={}) {
+    options.signal?.throwIfAborted();await checkMarker(selected);options.signal?.throwIfAborted();
+    await verifier.verify(selected,options);options.signal?.throwIfAborted();
   }
 
   async function status(kind, engineId) {
@@ -174,9 +146,9 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
     }
   }
 
-  async function resolve(kind, engineId) {
-    const selected = await plan(kind, engineId);
-    await checkReady(selected);
+  async function resolve(kind, engineId, options={}) {
+    options.signal?.throwIfAborted();const selected = await plan(kind, engineId);
+    await checkReady(selected,options);
     await assertPluginTreeNoLinks(selected.cacheRoot);
     await mkdir(selected.cacheRoot, { recursive: true });
     const { descriptor, destination } = selected;
@@ -190,7 +162,7 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
     const selected = await plan(kind, engineId);
     if (pending.has(selected.destination)) return pending.get(selected.destination);
     const operation = (async () => {
-      try { await checkReady(selected); return { state: 'ready', reused: true }; }
+      try { await checkReady(selected,{signal,onProgress}); return { state: 'ready', reused: true }; }
       catch (error) {
         if (error.code !== 'VOICE_ASSET_MISSING') throw error;
       }
@@ -205,7 +177,7 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
         const previous=join(parent,entry.name);await assertPluginTreeNoLinks(previous);
         let marker;try{marker=await readFile(join(previous,'.ready'),'utf8');}catch(error){if(error.code==='ENOENT')continue;throw error;}
         if(marker!==selected.proof)continue;
-        await checkReady({...selected,destination:previous});signal?.throwIfAborted();
+        await checkReady({...selected,destination:previous},{signal,onProgress});signal?.throwIfAborted();
         if((await plan(kind,engineId)).proof!==selected.proof)throw fault('VOICE_ASSET_REVOKED','语音组件版本已更改');
         await promote(previous,destination,{retryBudgetMs:10000});return {state:'ready',reused:true,resumed:true};
       }
@@ -264,5 +236,5 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
     finally { pending.delete(selected.destination); }
   }
 
-  return { status, prepare, resolve };
+  return { status, prepare, resolve, close:()=>verifier.close() };
 }

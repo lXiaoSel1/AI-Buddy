@@ -1,4 +1,4 @@
-import {useVoiceClient} from '../voice/client.mjs';
+import {useVoiceClient,VoiceDialogueLine,voiceDialogueState} from '../voice/client.mjs';
 import {affectionText,dialogueLineRoom} from '../companion-display.mjs'
 import {t} from '../i18n.mjs';
 import {visibleCompanionText,visibleInterruptedText} from '../companion-presentation.mjs';
@@ -2398,7 +2398,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   }
 
   function dialogue(): React.ReactElement {
-    if (group) return React.createElement(CompanionGroupDialogue, { state: s.companion, request: companionRequest, voiceControls:voiceClient.controls, voiceSubtitle:voiceClient.subtitle, chat: props.chat, onToggleChat: props.onToggleChat, onApi: props.onManage, onPhoto: (cgId:string) => setGroupPanelRequest({groupId:group.id,panel:'gallery',cgId,nonce:Date.now()}), onManage: () => setGroupPanelRequest({groupId:group.id,panel:'settings',nonce:Date.now()}) })
+    if (group) return React.createElement(CompanionGroupDialogue, { state: s.companion, request: companionRequest, voiceControls:voiceClient.controls, voiceSubtitle:voiceClient.subtitle, voicePresentation:voiceClient.presentation, chat: props.chat, onToggleChat: props.onToggleChat, onApi: props.onManage, onPhoto: (cgId:string) => setGroupPanelRequest({groupId:group.id,panel:'gallery',cgId,nonce:Date.now()}), onManage: () => setGroupPanelRequest({groupId:group.id,panel:'settings',nonce:Date.now()}) })
     const last = lastLine()
     const userName = last?.personaSnapshot?.nickname || s.companion?.personas?.find((p: any) => p.id === s.companion.activePersonaId)?.nickname || t("你")
     const plateLabel = last ? (last.who === 'heroine' ? s.name : last.who === 'user' ? userName : t("旁白")) : s.name
@@ -2463,8 +2463,9 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     shownSpeech.current = speechShown ? speech[0] : null
     const replyPlate = !!liveText || speechShown, pWho = replyPlate ? 'heroine' : plateWho, pLabel = replyPlate ? s.name : plateLabel, pStyle = replyPlate ? plateVars({ who: 'heroine', characterId: s.current, color: s.color }) : plateStyle
     const displayLastText=visibleCompanionText(last?{...last,request:lastStored?.request}:null,{messages:s.companion?.messages??[]})
-    const now = voiceClient.subtitle
-      ? React.createElement('div',{className:'whg-line-now heroine','data-voice-subtitle':true},voiceClient.subtitle.text)
+    const voiceRequestId=liveStream?.requestId??(replying?voiceClient.presentation.requests?.at(-1)?.requestId:lastStored?.requestId),voiceLine=voiceDialogueState(voiceClient.presentation,voiceRequestId)
+    const now = voiceLine
+      ? React.createElement(VoiceDialogueLine,{className:'whg-line-now heroine',presentation:voiceClient.presentation,requestId:voiceRequestId})
       : speechShown
       ? React.createElement(ChatSpeechLines, { view: s.companion.r95, onAction: r95ClientRef.current, onReply: () => focusGalgameReply(), inDialog: true, optionsRef: speechOptionsRef })
       : liveText
@@ -2474,7 +2475,11 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       : last
         ? React.createElement('div', { key: 'now-' + ((s.history || []).length), className: 'whg-line-now ' + last.who + (apiError ? ' muted' : ''), 'aria-live': 'polite' }, displayLastText)
         : React.createElement('div', { className: 'whg-line-now narrator' }, t("（点击输入框，开始和") + s.name + t("对话吧）"))
-    const footStatus = streaming
+    const footStatus = voiceLine?.waiting
+      ? React.createElement('span',{className:'gx-foot-st',role:'status'},t('正在准备配音…'))
+      : voiceLine?.subtitle
+      ? React.createElement('span',{className:'gx-foot-st','data-stream-paragraph':voiceLine.subtitle.envelope.index+1},fill(t('第 {n} 段 · 正在说'),{n:voiceLine.subtitle.envelope.index+1}))
+      : streaming
       ? React.createElement('span', { className: 'gx-foot-st', 'data-stream-paragraph': Math.max(1, paragraphCount(liveText)) }, fill(t('第 {n} 段 · 正在说'), { n: Math.max(1, paragraphCount(liveText)) }))
       : stopped ? React.createElement('span', { className: 'gx-foot-st stopped', role: 'status' }, Icon('stop', { size: 12 }), t('已停止 · 保留了已生成的部分') + (stopReason ? ' · ' + stopReason : '')) : null
     const sourceMessage = !replying && !liveText && !speechShown ? lastStored : null

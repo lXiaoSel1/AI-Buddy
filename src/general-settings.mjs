@@ -10,6 +10,7 @@ import {frameSequence} from './frame-sequence.mjs';
 import {DataImportSetting,DataImportModal} from './data-import-ui.mjs';
 import {DshPreviewNoticeSetting} from './dsh-preview-notice-ui.mjs';
 import {UpdateSettings} from './update-settings.mjs';
+import {VoiceSettings} from './voice/client.mjs';
 const h=React.createElement;
 const providerName=value=>value==='claude'?'Claude Code':value;
 // B2: maxOutputTokens is 'auto' or a whole number from 256 to 65536 (default 8192).
@@ -109,6 +110,7 @@ export function GeneralSettings({view,onSaved,onPage,onManage,onPlugins}){
         h('section',{className:'ws-card ws-set settings-output'},h('h2',{className:'ws-sec'},t('模型输出')),replyStyle(),h(OutputLimitSetting,{value:prefs.maxOutputTokens??OUTPUT_LIMIT.fallback,disabled:busy,onSave:patch=>void save(patch)}),h('p',{className:'settings-note ws-muted'},t('回复被截断时，可以在这里调高上限后重试。'))),
         h(TokenDetectionControl,{onManage:()=>onPage('tokens')}),
         h('section',{className:'ws-card ws-set settings-character'},h('h2',{className:'ws-sec'},t("角色与对话")),h('p',{className:'ws-meta'},t("角色、好感度、记忆、立绘和背景在 Galgame 中设置。联网聊天开关在聊天模型中设置，重启后保留选择。")),h('div',{className:'ws-srow ws-end'},h('span',null),h('button',{className:'ui-btn sm',onClick:()=>onPage('galgame')},t("打开 Galgame →")))))),
+    h(VoiceSettings,{onPlugins:onPlugins??(()=>onPage('plugins')),onChat:()=>onPage('galgame')}),
     h(DataImportSetting,{onOpen:()=>setImportOpen(true)}),
     h('details',{className:'ws-details settings-install'},h('summary',null,Icon('chevron',{size:16}),t("本地安装"),h('span',{className:'ws-muted'},' · '+t("AI 酱 ")+view.version)),h(UpdateSettings,{version:view.version,onPlugins:onPlugins??(()=>onPage('plugins'))}),h('dl',{className:'ws-dl settings-info'},h('dt',null,t("版本")),h('dd',null,view.version+' · '+view.build),h('dt',null,t("数据目录")),h('dd',null,view.dataRoot),h('dt',null,t("日志来源")),h('dd',null,...view.logRoots.map((r,i)=>h('div',{key:i},h('span',null,providerName(r.provider)+' '),h('code',null,r.path))))),h('p',{className:'settings-note ws-muted'},t("设置保存为版本快照；旧版本、用量与陪伴历史继续保留。"))),
     h('section',{className:'ws-card ws-set'},h(DshPreviewNoticeSetting)),h(AboutCard),

@@ -159,6 +159,7 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile }
   let closed = false;
   let captureTail = Promise.resolve();
   let engineTail = Promise.resolve();
+  let preparation;
 
   function captureOperation(run) {
     const result = captureTail.then(run);
@@ -188,20 +189,67 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile }
     tts = undefined;
   }
 
+  async function ensureWorker(kind, packageId, signal, onProgress) {
+    if (signal?.aborted) throw aborted();
+    onProgress?.({state:'verifying',component:kind});
+    const assets = await resolveAssets(kind, packageId, {signal,onProgress:value=>onProgress?.({...value,state:value.state??value.phase,component:kind})});
+    if (signal?.aborted) throw aborted();
+    const prior = kind === 'asr' ? asr : tts;
+    if (prior && (prior.dead() || prior.kind !== kind || prior.proof !== assets.proof)) {
+      await (kind === 'asr' ? retireAsr() : retireTts());
+    }
+    let worker = kind === 'asr' ? asr : tts;
+    if (!worker) {
+      onProgress?.({state:'loading',component:kind});
+      worker = makeWorker({kind,assets,supervisor});
+      worker.proof = assets.proof;
+      if (kind === 'asr') asr = worker; else tts = worker;
+      try {
+        await worker.start(signal);
+        if (signal?.aborted) throw aborted();
+        worker.initialized = true;
+      } catch (error) {
+        await (kind === 'asr' ? retireAsr() : retireTts());
+        throw error;
+      }
+    }
+    return worker;
+  }
+
+  function ready({engine,target='speech',assetProof} = {}) {
+    const speechReady = !!tts?.initialized && tts.kind === engine && !tts.dead() && (assetProof==null||tts.proof===assetProof);
+    const asrReady = !!asr?.initialized && !asr.dead();
+    const isReady = target === 'asr' ? asrReady : speechReady && (target !== 'live' || asrReady);
+    return {ready:isReady,state:isReady?'ready':'idle'};
+  }
+
+  function prepare({engine,packageId,engineId=packageId,target='speech',signal,onProgress} = {}) {
+    assertOpen();
+    if (!engines.has(engine) || !['speech','live','asr'].includes(target)) throw fail('VOICE_PREPARE_INVALID','语音准备请求无效');
+    if (preparation) {
+      if (preparation.engine === engine && preparation.packageId === engineId && preparation.target === target) return preparation.task;
+      throw fail('VOICE_PREPARE_BUSY','语音组件正在准备');
+    }
+    const controller = new AbortController();
+    const combined = signal ? AbortSignal.any([signal,controller.signal]) : controller.signal;
+    const row = preparation = {engine,packageId:engineId,target,controller};
+    const progress = value => {if (!combined.aborted) onProgress?.(value);};
+    row.task = (async () => {
+      if (target !== 'asr') await engineOperation(()=>ensureWorker(engine,engineId,combined,progress));
+      if (target === 'live' || target === 'asr') await captureOperation(()=>ensureWorker('asr',engineId,combined,progress));
+      if (combined.aborted) throw aborted();
+      return ready({engine,target});
+    })().finally(()=>{if (preparation === row) preparation = undefined;});
+    return row.task;
+  }
+
   async function startCapture({ engineId } = {}) {
     assertOpen();
     if (captureController) throw fail('VOICE_CAPTURE_ACTIVE', '已有录音正在进行');
     const controller = captureController = new AbortController();
     return captureOperation(async () => {
       try {
-        const assets = await resolveAssets('asr', engineId);
-        if (controller.signal.aborted) throw aborted();
-        if (asr?.dead() || (asr && asr.proof !== assets.proof)) await retireAsr();
-        if (!asr) {
-          asr = makeWorker({ kind: 'asr', assets, supervisor });
-          asr.proof = assets.proof;
-          await asr.start(controller.signal);
-        }
+        await ensureWorker('asr',engineId,controller.signal);
         await asr.result('capture', {}, controller.signal);
         captureActive = true;
       } catch (error) {
@@ -243,8 +291,8 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile }
   function cancelCapture() {
     const active = captureController;
     active?.abort();
+    if (['live','asr'].includes(preparation?.target)) preparation.controller.abort();
     return captureOperation(async () => {
-      if (!active) return;
       captureActive = false;
       if (captureController === active) captureController = undefined;
       // Abort can leave an outstanding stream reply. Never attach a later
@@ -253,7 +301,7 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile }
     });
   }
 
-  async function* speak({ engine, characterId, profileId, profileVersion, text, instruction = '', performance, referenceStyle, signal }) {
+  async function* speak({ engine, packageId, characterId, profileId, profileVersion, text, instruction = '', performance, referenceStyle, signal }) {
     assertOpen();
     if (!engines.has(engine) || typeof text !== 'string' || !text.trim() || Array.from(text).length > 240 ||
         typeof instruction !== 'string' || Array.from(instruction).length > 500) throw fail('VOICE_TTS_INVALID', '配音请求无效');
@@ -264,16 +312,7 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile }
     try {
       if (combined.aborted) throw aborted();
       const reference = await resolveProfile({ characterId, profileId, profileVersion, engine, performance, referenceStyle });
-      const assets = await resolveAssets(engine);
-      await engineOperation(async () => {
-        if (combined.aborted) throw aborted();
-        if (tts && (tts.dead() || tts.kind !== engine || tts.proof !== assets.proof)) await retireTts();
-        if (!tts) {
-          tts = makeWorker({ kind: engine, assets, supervisor });
-          tts.proof = assets.proof;
-          await tts.start(combined);
-        }
-      });
+      await engineOperation(()=>ensureWorker(engine,packageId,combined));
       yield { type: 'reference', style: reference.referenceStyle, source: reference.referenceSource };
       for await (const event of tts.request('speak', {
         text, instruction, reference: { path: reference.path, text: reference.text, language: reference.language },
@@ -297,17 +336,19 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile }
   }
 
   function stopEngine() {
+    preparation?.controller.abort();
     speakController?.abort();
     return engineOperation(retireTts);
   }
 
   async function close() {
     closed = true;
+    preparation?.controller.abort();
     captureController?.abort();
     speakController?.abort();
     const results = await Promise.allSettled([captureOperation(retireAsr), engineOperation(retireTts)]);
     for (const result of results) if (result.status === 'rejected') throw result.reason;
   }
 
-  return { startCapture, feedCapture, finishCapture, cancelCapture, speak, stopEngine, close };
+  return { prepare, ready, startCapture, feedCapture, finishCapture, cancelCapture, speak, stopEngine, close };
 }

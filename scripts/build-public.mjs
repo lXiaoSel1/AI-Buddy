@@ -103,6 +103,7 @@ const shared={bundle:true,logLevel:'info',legalComments:'eof'};
 for(const entry of ['main','preload','plugin-client-preload','monitor-worker','plugin-runner','plugin-maintenance'])await build({...shared,entryPoints:[join(root,'src',entry+'.mjs')],outfile:join(out,entry+'.cjs'),platform:'node',target:'node24',format:'cjs',external:['electron'],define:entry==='main'?{'__FRAME_SEQUENCES__':JSON.stringify(sequences),'__PET_CHARACTER_SEQUENCES__':JSON.stringify(characters)}:undefined});
 // App-owned archive parser runs as a separate ESM worker beside the CJS host.
 await build({...shared,entryPoints:[join(root,'src/work-archive-cursor-worker.mjs')],outfile:join(out,'work-archive-cursor-worker.mjs'),platform:'node',target:'node24',format:'esm'});
+await build({...shared,entryPoints:[join(root,'src/voice/asset-verifier-worker.mjs')],outfile:join(out,'voice-assets-worker.cjs'),platform:'node',target:'node24',format:'cjs'});
 await build({...shared,entryPoints:[join(root,'src/dsh-platform/component-install-worker.mjs')],outfile:join(out,'dsh-component-worker.mjs'),platform:'node',target:'node24',format:'esm'});
 await build({...shared,entryPoints:[join(root,'src/media-components/ffmpeg-worker.mjs')],outfile:join(out,'ffmpeg-component-worker.mjs'),platform:'node',target:'node24',format:'esm'});
 await build({...shared,entryPoints:[join(root,'src/buddy-plugin-services/bili-full-media-worker.mjs')],outfile:join(out,'bili-full-media-worker.mjs'),platform:'node',target:'node24',format:'esm'});

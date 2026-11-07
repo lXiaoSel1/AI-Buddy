@@ -140,3 +140,31 @@ test('stopping during capture startup waits for initialization to retire, withou
   assert.equal(events.some(row=>row.type==='capture'&&row.state==='listening'),false);
   assert.equal((await voice.state()).capture,null);
 });
+
+
+test('preparation exposes real loading and stop cancels it without a late ready state',async()=>{
+  let release,started=false;
+  const held=new Promise(resolve=>{release=resolve;});
+  const {voice,events}=await fixture({runtime:{
+    async prepare({onProgress}){started=true;onProgress({state:'loading',component:'breeze'});await held;return {ready:true};},
+    async cancelCapture(){},async stopEngine(){},async close(){}
+  }});
+  const pending=voice.action('prepare',{target:'speech'});
+  const cancelled=assert.rejects(pending,{code:'VOICE_PREPARATION_CANCELLED'});
+  await until(()=>started);
+  assert.deepEqual((await voice.state()).preparation,{state:'loading',target:'speech',component:'breeze'});
+  const stop=voice.action('stop');
+  release();await cancelled;await stop;
+  assert.equal((await voice.state()).preparation.state,'idle');
+  assert.equal(events.some(row=>row.type==='state'&&row.state.preparation?.state==='ready'),false);
+});
+
+
+test('a preparation failure publishes the actual error and never reports ready',async()=>{
+  const {voice,events}=await fixture({runtime:{async prepare(){throw Object.assign(Error('component load failed'),{code:'VOICE_WORKER_NOT_READY'});},async cancelCapture(){},async stopEngine(){}}});
+  await assert.rejects(voice.action('prepare',{target:'live'}),{code:'VOICE_WORKER_NOT_READY'});
+  const state=await voice.state();
+  assert.deepEqual(state.preparation,{state:'failed',target:'live',code:'VOICE_WORKER_NOT_READY',message:'component load failed'});
+  assert.equal(events.some(row=>row.type==='state'&&row.state.preparation?.state==='failed'),true);
+  assert.equal(events.some(row=>row.type==='state'&&row.state.preparation?.state==='ready'),false);
+});

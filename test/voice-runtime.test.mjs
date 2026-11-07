@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createVoiceRuntime} from '../src/voice/runtime.mjs';
 
-async function fixture(t) {
+async function fixture(t, {initializeDelay=0} = {}) {
   const {join} = await import('node:path');
   const {tmpdir} = await import('node:os');
   const {mkdtemp, rm, writeFile} = await import('node:fs/promises');
@@ -20,6 +20,7 @@ for await (const line of createInterface({input:process.stdin})) {
   } else if (request.op === 'feed') {
     send({id:request.id, type:'result', partial:'SIL你', endpoint:true, limit:false});
   } else {
+    if (request.op === 'initialize') await new Promise(resolve=>setTimeout(resolve,${initializeDelay}));
     send({id:request.id, type:'result', state:'ready', text:request.op === 'finish'?'SIL你好 SIL':undefined});
   }
 }
@@ -67,4 +68,41 @@ test('cancelling an in-flight synthesis retires only the owned worker', async t 
   controller.abort();
   await assert.rejects(next,{name:'AbortError'});
   assert.equal(running.size,0);
+});
+
+
+test('prepare reports selected TTS ready only after its real initialize response', async t => {
+  const {runtime,admitted}=await fixture(t,{initializeDelay:80});
+  const stages=[];
+  const pending=runtime.prepare({engine:'gpt',target:'speech',onProgress:row=>stages.push(row)});
+  assert.equal((await runtime.ready({engine:'gpt'})).ready,false);
+  await pending;
+  assert.equal((await runtime.ready({engine:'gpt'})).ready,true);
+  assert.equal((await runtime.ready({engine:'breeze'})).ready,false);
+  assert.deepEqual(admitted,['gpt']);
+  assert.ok(stages.some(row=>row.state==='loading'&&row.component==='gpt'));
+});
+
+
+test('Live preparation initializes only the selected TTS plus shared ASR', async t => {
+  const {runtime,admitted}=await fixture(t,{initializeDelay:20});
+  assert.equal((await runtime.prepare({engine:'breeze',target:'live'})).ready,true);
+  assert.deepEqual(admitted,['breeze','asr']);
+  assert.equal((await runtime.ready({engine:'breeze',target:'live'})).ready,true);
+  await runtime.cancelCapture();
+  assert.equal((await runtime.ready({engine:'breeze',target:'live'})).ready,false);
+  assert.equal((await runtime.ready({engine:'breeze'})).ready,true);
+});
+
+test('stopping actual worker initialization retires it and a fresh preparation can succeed', async t => {
+  const {runtime,admitted,running}=await fixture(t,{initializeDelay:80});
+  const pending=runtime.prepare({engine:'gpt'});
+  const rejected=assert.rejects(pending,{name:'AbortError'});
+  for(let i=0;i<100&&!admitted.length;i++)await new Promise(resolve=>setTimeout(resolve,2));
+  assert.equal(admitted.length,1);
+  await runtime.stopEngine();await rejected;
+  assert.equal(running.size,0);
+  assert.equal((await runtime.ready({engine:'gpt'})).ready,false);
+  assert.equal((await runtime.prepare({engine:'breeze'})).ready,true);
+  assert.deepEqual(admitted,['gpt','breeze']);
 });

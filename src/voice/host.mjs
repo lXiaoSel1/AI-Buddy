@@ -26,8 +26,8 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
   const credentials=components.credentials??createVoiceCredentials({dataRoot,crypto});
   const supervisor=components.supervisor??createManagedProcessSupervisor({guardPath:join(build,'managed-process-guard.exe'),statePath:join(dataRoot,'voice','processes.json'),onState:value=>audit({type:'voice-process',...value})});
   const resolvePackage=(...args)=>getPlatform().resolveVoicePackage(...args);
-  const assets=components.assets??createVoiceAssets({dataRoot,resolveVoicePackage:resolvePackage});
-  const local=components.local??createVoiceRuntime({resolveAssets:async(kind,id)=>assets.resolve(kind,id??(await settings.get()).selectedPackageId),resolveProfile:params=>profiles.resolve(params),supervisor});
+  const assets=components.assets??createVoiceAssets({dataRoot,resolveVoicePackage:resolvePackage,verificationWorker:join(build,'voice-assets-worker.cjs')});
+  const local=components.local??createVoiceRuntime({resolveAssets:async(kind,id,options)=>assets.resolve(kind,id??(await settings.get()).selectedPackageId,options),resolveProfile:params=>profiles.resolve(params),supervisor});
   const cloud=components.cloud??createVoiceCloud({dataRoot,supervisor,
     resolveRuntime:async({packageId})=>{await resolvePackage(packageId,{provider:'minimax'});const value=await assets.resolve('asr',packageId);return {...value,script:join(value.sharedDirectory,'cloud_speech.py')};},
     resolveProfile:params=>profiles.resolve(params),
@@ -211,6 +211,6 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
     microphoneAllowed:()=>microphone,
     snapshot:()=>({microphoneAuthorized:microphone,cardSpeechBusy:cards.busy()}),
     quiesce:()=>stopAll('package-maintenance'),
-    async close(){closed=true;voiceEpoch++;microphone=false;cardEpoch++;await runtime.stopEngine?.();await Promise.allSettled([...cloudOperations]);await cardTail;const results=await Promise.allSettled([cards.close(),controller.close()]);const failed=results.find(value=>value.status==='rejected');if(failed)throw failed.reason;await runtime.close?.();await supervisor.close();},
+    async close(){try{closed=true;voiceEpoch++;microphone=false;cardEpoch++;await runtime.stopEngine?.();await Promise.allSettled([...cloudOperations]);await cardTail;const results=await Promise.allSettled([cards.close(),controller.close()]);const failed=results.find(value=>value.status==='rejected');if(failed)throw failed.reason;await runtime.close?.();await supervisor.close();}finally{await assets.close?.();}},
   };
 }

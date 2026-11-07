@@ -1,4 +1,5 @@
 import {visibleCompanionText} from './companion-presentation.mjs';
+import {VoiceDialogueLine} from './voice/client.mjs';
 import {groupSpeakerState} from './group-stage.mjs';
 import {affectionText} from './companion-display.mjs';
 import React,{useEffect,useRef,useState} from 'react';
@@ -298,7 +299,7 @@ export function CompanionManager({state,request,panel='characters',onClose,resol
 
 export {CompanionGroupStage} from './group-stage-ui.mjs';
 
-export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onToggleChat,onApi,voiceControls,voiceSubtitle}){
+export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onToggleChat,onApi,voiceControls,voiceSubtitle,voicePresentation}){
  const group=activeCompanionGroup(state),[text,setText]=useState(''),[bindings,setBindings]=useState([]),[busy,setBusy]=useState(false),[error,setError]=useState(''),[photoOpen,setPhotoOpen]=useState(false);
  useEffect(()=>{setText('');setBindings([]);setError('');},[group?.id]);
  useEffect(()=>{const append=event=>{if(event.detail?.scope?.conversationId!==group?.id)return;setText(old=>old+(old&&event.detail.text?'\n':'')+event.detail.text);};window.addEventListener('ai-buddy:voice-draft',append);return()=>window.removeEventListener('ai-buddy:voice-draft',append);},[group?.id]);
@@ -355,7 +356,7 @@ export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onTo
   // Approved designs C6 / C9: mood and Auto chips are in the toolbar now; while Auto runs, one strip says who is
   // talking, round n / total, who is next and whether your message waits behind hers.
   h(AutoRoundStrip,{view:state.r95?{...state.r95,groupId:state.r95.groupId??group.id}:null,onAction:r95Client.current,nameOf,busy:isRunning&&!ordinaryRuntime,speaker:isRunning&&!ordinaryRuntime&&identity.activeId?nameOf(identity.activeId):'',queued}),
-  h('div',{className:'whg-line-now'+(message?'':' narrator'),key:message?.id||group.id,'aria-live':'polite','data-group-message-id':!runtime.streaming?.text?message?.id:undefined,'data-auto-request-id':!runtime.streaming?.text?message?.autoRequestId:undefined},voiceSubtitle?.text||((isRunning||canRetry)&&runtime.streaming?.text)||displayMessageText||t('说点什么，开始这一轮群聊。')),
+  h(VoiceDialogueLine,{presentation:voicePresentation,requestId:runtime.streaming?.requestId??runtime.pendingMessage?.requestId??runtime.pendingMessage?.id??message?.requestId??message?.id,className:'whg-line-now'+(message?'':' narrator'),key:message?.id||group.id,'aria-live':'polite','data-group-message-id':!runtime.streaming?.text?message?.id:undefined,'data-auto-request-id':!runtime.streaming?.text?message?.autoRequestId:undefined},(!voicePresentation&&voiceSubtitle?.text)||((isRunning||canRetry)&&runtime.streaming?.text)||displayMessageText||t('说点什么，开始这一轮群聊。')),
   h(ChatSpeechLines,{view:state.r95,onAction:r95Client.current,onReply:focusInput}),
   runtime.streaming?.interrupted&&h('p',{className:'buddy-muted',role:'status'},t('上次回复已中断，以下仅为保留的部分正文，未结算。')),
   (sourceView(message)||needsFullView(fullText))&&h('div',{className:'gx-foot'},h(MessageSources,{message}),h('span',{className:'grow'}),fullText&&h(FullMessageButton,{text:fullText,messageId:group.id+':'+message.id,title:message?.characterName||member?.name||message?.personaName,name:speakerName||undefined,at:message?.createdAt??message?.at,interrupted:partial})),

@@ -130,3 +130,33 @@ test('the first failed stop seals other owners even while the old iterator has n
   assert.equal((await queued).code,'STOP_EARLY_FAILURE');release();await old;
   assert.equal((await stopped).code,'STOP_EARLY_FAILURE');await runtime.close();
 });
+
+
+test('local readiness comes from the selected initialized worker instead of provider selection', async () => {
+  const runtime=createSpeechRuntime({local:{ready:async()=>({ready:false,state:'loading'}),async close(){}}});
+  assert.deepEqual(await runtime.ready({engine:'breeze'}),{ready:false,state:'loading'});
+  await runtime.close();
+});
+
+
+test('a queued card stop cannot cancel active chat preparation or cross its owner boundary', async () => {
+  let release,started;
+  const held=new Promise(resolve=>{release=resolve;}),entered=new Promise(resolve=>{started=resolve;});
+  let stopped=0,prepared=false;
+  const local={async prepare({signal}){started();await held;signal.throwIfAborted();prepared=true;return {ready:true};},
+    async ready(){return {ready:prepared};},async stopEngine(){stopped++;},async close(){}};
+  const runtime=createSpeechRuntime({local}),chat=runtime.channel('chat'),cards=runtime.channel('card-table');
+  const pending=chat.prepare({engine:'breeze'});await entered;const before=stopped;
+  await cards.stopEngine();assert.equal(stopped,before);
+  release();assert.equal((await pending).ready,true);
+  assert.equal((await chat.ready({engine:'breeze'})).ready,true);await runtime.close();
+});
+
+test('cloud speech preparation checks binding without synthesis or upload', async () => {
+  let remoteCalls=0,localLoads=0;
+  const local={async prepare(){localLoads++;return {ready:true};},async stopEngine(){},async close(){}};
+  const cloud={async status(){return {state:'ready'};},async *speak(){remoteCalls++;},async prepareVoice(){remoteCalls++;},async stopEngine(){},async close(){}};
+  const runtime=createSpeechRuntime({local,cloud});
+  assert.equal((await runtime.prepare({engine:'gpt',speechProvider:'minimax',target:'speech'})).ready,true);
+  assert.equal(remoteCalls,0);assert.equal(localLoads,0);await runtime.close();
+});
