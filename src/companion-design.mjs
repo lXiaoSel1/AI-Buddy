@@ -65,6 +65,10 @@ export const CompanionDesignCSS=`
 .buddy-columns.buddy-history{grid-template-columns:290px minmax(0,1fr)}
 .buddy-sidebar{gap:8px}
 .buddy-sidebar-list{gap:2px;max-height:none}
+#buddy-manager-characters{container-type:size}
+#buddy-manager-characters .buddy-sidebar{min-height:0;max-height:100cqh}
+#buddy-manager-characters .buddy-sidebar-list{min-height:0;flex-direction:column;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable}
+#buddy-manager-characters .buddy-sidebar>.buddy-new,#buddy-manager-characters .buddy-sidebar-list>.buddy-side-item{flex:none;max-width:none}
 .buddy-side-h{margin:6px 4px 0;font-size:var(--buddy-fs-cap);font-weight:600;letter-spacing:.04em;color:var(--buddy-muted)}
 .buddy-new{display:flex;align-items:center;gap:8px;width:100%;min-height:36px;padding:0 12px;border:1px dashed color-mix(in srgb,var(--buddy-accent) 55%,var(--buddy-border));border-radius:var(--buddy-r-btn);background:transparent;color:var(--buddy-accent-text);font:inherit;font-weight:600;cursor:pointer}
 .buddy-new:hover{background:color-mix(in srgb,var(--buddy-accent) 8%,transparent)}

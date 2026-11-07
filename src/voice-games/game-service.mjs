@@ -198,7 +198,7 @@ export function createCardGameService({getGame,getProvider,now=Date.now}){
   }
   if(!['games.chat.send','games.replay.review'].includes(method))await flushOutbox();
   options.checkSync?.();if(method==='games.table.read')return lobby();
-  options.checkSync?.();if(method==='games.table.create'){const players=resolvePlayers(payload.players),tableId='table-'+digest([persona(),payload.commandId]).slice(0,24),bindings=await prepareBindings(players,tableId+':1');options.checkSync?.();ready();const current=resolvePlayers(payload.players);if(digest(current)!==digest(players))throw fail('GAME_LIFE_CHANGED');for(const value of bindings)models.assertPrepared(value);return view(economy.create({...payload,tableId,players,bindings}));}
+  options.checkSync?.();if(method==='games.table.create'){const players=resolvePlayers(payload.players),tableId='table-'+digest([persona(),payload.commandId]).slice(0,24),bindings=await prepareBindings(players,tableId+':1');options.checkSync?.();ready();const current=resolvePlayers(payload.players);if(digest(current)!==digest(players))throw fail('GAME_LIFE_CHANGED');for(const value of bindings)models.assertPrepared(value);const created=economy.create({...payload,tableId,players,bindings});return view(table(created.id));}
   const t=table(payload.tableId);
   if(method===moveMethod||method===leaveMethod){
    const intent=mutationIntent(t,method,payload);

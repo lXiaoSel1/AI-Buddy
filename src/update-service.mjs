@@ -9,12 +9,12 @@ const progressPhases=new Map([
 ]);
 const measure=value=>Number.isSafeInteger(value)&&value>=0?value:null;
 const resultFields=result=>({...Object.fromEntries(['version','notes','installerBytes','downloadBytes','installBytes'].map(key=>[key,
-  key.endsWith('Bytes')?measure(result[key]):typeof result[key]==='string'?result[key].slice(0,key==='notes'?4000:40):null])),requiresBootstrap:result.requiresBootstrap===true});
+  key.endsWith('Bytes')?measure(result[key]):typeof result[key]==='string'?result[key].slice(0,key==='notes'?4000:40):null])),requiresBootstrap:result.requiresBootstrap===true,migration:result.migration===true});
 
-export function createUpdateService({version,build,supported,run,onChange=()=>{},load=()=>({}),save=async()=>{},now=Date.now}){
+export function createUpdateService({version,build,supported,run,bootstrapRun,recoveryRequired=false,onChange=()=>{},load=()=>({}),save=async()=>{},now=Date.now}){
   let record=load()??{},selected=null,task=null,closed=false,started=false,timer=null,retryAt=0,receiptTimer=null,lastProgress=null;
-  let state={version,build,revision:0,phase:supported?'idle':'bootstrap',checkedAt:record.checkedAt??null,
-    automatic:record.automatic!==false,target:null,error:null,retryAction:null,progress:null,reasons:[],canCancel:false};
+  let state={version,build,revision:0,phase:recoveryRequired?'recovery-required':supported?'idle':'bootstrap',checkedAt:record.checkedAt??null,
+    automatic:record.automatic!==false,target:null,error:recoveryRequired?'APP_UPDATE_RECOVERY_REQUIRED':null,retryAction:null,progress:null,reasons:[],canCancel:false};
   const view=()=>structuredClone(state);
   const update=patch=>{state={...state,...patch,revision:state.revision+1};onChange(view());};
   let saveTail=Promise.resolve();
@@ -62,7 +62,9 @@ export function createUpdateService({version,build,supported,run,onChange=()=>{}
         const checkedAt=now();
         await persist({checkedAt});update({checkedAt});
       }
-      const result=await run(op,{nonce,signal:controller.signal,onProgress:progress,...(['apply','prepare'].includes(op)?{selectionId:selected}:{})});
+      const backend=supported?run:bootstrapRun;
+      if(!backend)throw updateError('APP_UPDATE_BOOTSTRAP');
+      const result=await backend(op,{nonce,signal:controller.signal,onProgress:progress,...(['apply','prepare'].includes(op)?{selectionId:selected}:{})});
       accept(result,op);
     }catch(error){
       const cancelled=error.code==='APP_UPDATE_CANCELLED'||error.name==='AbortError';
@@ -83,12 +85,13 @@ export function createUpdateService({version,build,supported,run,onChange=()=>{}
     if(command==='automatic'&&typeof value==='boolean'){
       await persist({automatic:value});update({automatic:value});return view();
     }
+    if(command==='later'&&state.phase==='ready')return view();
     if(command==='cancel'){
       if(state.canCancel)task?.controller.abort();
       return view();
     }
-    if(closed||!supported||state.phase==='bootstrap'||state.phase==='recovery-required')throw updateError('APP_UPDATE_INVALID_STATE');
-    if(command==='check')return operate('check');
+    if(closed||(!supported&&!bootstrapRun)||state.phase==='recovery-required')throw updateError('APP_UPDATE_INVALID_STATE');
+    if(command==='check'||command==='bootstrap')return operate('check');
     if(command==='download'&&selected&&!state.target?.requiresBootstrap&&(state.phase==='available'||state.retryAction==='download'))return operate('prepare');
     if(command==='apply'&&selected&&(state.phase==='ready'||state.retryAction==='apply'))return operate('apply');
     throw updateError('APP_UPDATE_INVALID_STATE');
@@ -97,7 +100,7 @@ export function createUpdateService({version,build,supported,run,onChange=()=>{}
     if(closed)return;
     timer=setTimeout(async()=>{
       try{
-        if(supported&&state.automatic&&!task&&!['ready','available','bootstrap','recovery-required'].includes(state.phase)&&
+        if(!recoveryRequired&&(supported||bootstrapRun)&&state.automatic&&!task&&!['ready','available','recovery-required'].includes(state.phase)&&
           (state.checkedAt===null||now()-state.checkedAt>=day))await operate('check');
       }finally{schedule(day);}
     },delay);
@@ -109,7 +112,7 @@ export function createUpdateService({version,build,supported,run,onChange=()=>{}
     if(state.phase==='verifying'&&attempt<5&&!closed){receiptTimer=setTimeout(()=>void recoverStatus(attempt+1),2000);receiptTimer.unref?.();}
     else if(state.phase==='verifying')update({phase:'recovery-required',error:'APP_UPDATE_RECEIPT_PENDING'});
   }
-  function start(){if(started||closed)return;started=true;if(supported){update({phase:'initializing'});void recoverStatus();}schedule(45_000);}
+  function start(){if(started||closed)return;started=true;if(!recoveryRequired&&(supported||bootstrapRun)){update({phase:'initializing'});void recoverStatus();}schedule(45_000);}
   function close({keepApply=false}={}){closed=true;clearTimeout(timer);clearTimeout(receiptTimer);if(!keepApply||task?.op!=='apply')task?.controller.abort();}
   return {view,action,start,close,permitsReservation:nonce=>task?.op==='apply'&&task.nonce===nonce&&!task.controller.signal.aborted};
 }

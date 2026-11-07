@@ -21,6 +21,7 @@ internal static class Program {
             Http=new HttpClient(new SocketsHttpHandler{AllowAutoRedirect=true,MaxAutomaticRedirections=8,AutomaticDecompression=System.Net.DecompressionMethods.None,ConnectTimeout=TimeSpan.FromSeconds(30)}){Timeout=Timeout.InfiniteTimeSpan};
             Http.DefaultRequestHeaders.UserAgent.ParseAdd("AI-Buddy-Setup/"+ReleaseIdentity.InstallerVersion);
             Updates=new(Http);
+            if(AppBootstrap.Requested(args))return Task.Run(()=>AppBootstrap.Run(args,Http,Updates,Manifest,ManifestBytes,BuildIdentity.ManifestSha256,Self)).GetAwaiter().GetResult();
             if(AppUpdate.Requested(args))return Task.Run(()=>AppUpdate.Run(args,Http,Updates,Manifest,ManifestBytes,BuildIdentity.ManifestSha256,Self)).GetAwaiter().GetResult();
             Engine=new(Manifest,ManifestBytes,BuildIdentity.ManifestSha256,new Downloader(Http),new WindowsHost(Argument(args,"roots")),Self);
             if(headlessAction is not null)return Task.Run(()=>RunHeadless(args,headlessAction)).GetAwaiter().GetResult();
@@ -50,7 +51,7 @@ internal static class Program {
         var receipt=Argument(args,"receipt")??(readOnly?Path.Combine(Path.GetTempPath(),"AI-Buddy-Setup-"+Guid.NewGuid().ToString("N")+".json"):Path.Combine(root,"local","installer","headless-result.json"));
         var log=new List<InstallProgress>();var progress=new Progress<InstallProgress>(v=>{lock(log){if(v.Phase!="download"&&v.Phase!="extract")log.Add(v);}});
         try {
-            if(command=="inspect"){Json.Save(receipt,new{ok=true,version=Manifest.AppVersion,installerRevision=ReleaseIdentity.InstallerRevision,manifestSha256=Hashing.Bytes(ManifestBytes),runtime=System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription});return 0;}
+            if(command=="inspect"){Json.Save(receipt,new{ok=true,version=Manifest.AppVersion,installerRevision=ReleaseIdentity.InstallerRevision,manifestSha256=Hashing.Bytes(ManifestBytes),appUpdateProtocol=1,appBootstrapProtocol=1,runtime=System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription});return 0;}
             if(command=="check-update") {using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(90));var update=await Updates.Check(ReleaseIdentity.Version,timeout.Token);Json.Save(receipt,new{ok=true,command,installerRevision=ReleaseIdentity.InstallerRevision,currentVersion=ReleaseIdentity.Version,available=update is not null,release=update});return 0;}
             if(command is "data-import-commit" or "data-import-recover"){
                 var importer=new DataImportManager(new WindowsHost(Argument(args,"roots")));

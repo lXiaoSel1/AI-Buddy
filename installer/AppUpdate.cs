@@ -20,7 +20,7 @@ internal static class AppUpdate {
     const string Prefix="AI-Buddy-App-Update-";
     const int Protocol=1;
     const int MessageLimit=128*1024;
-    static readonly JsonSerializerOptions LineJson=new(Json.Options){WriteIndented=false,DefaultIgnoreCondition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull};
+    internal static readonly JsonSerializerOptions LineJson=new(Json.Options){WriteIndented=false,DefaultIgnoreCondition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull};
     static readonly string[] ManagerArguments=["app-update","app-root","app-nonce","app-pid","app-selection"];
     static readonly string[] WorkerArguments=["app-worker","app-worker-nonce","app-parent"];
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe,out uint processId);
@@ -87,7 +87,7 @@ internal static class AppUpdate {
         if(payload is null)return null;
         var separator=payload.IndexOf("\n\n",StringComparison.Ordinal);
         if(separator<0)return null;
-        string[] metadata=["Source:","Installer SHA-256:","Manifest SHA-256:","Checksums SHA-256:","App Update Protocol:"];
+        string[] metadata=["Source:","Installer SHA-256:","Manifest SHA-256:","Checksums SHA-256:","App Update Protocol:","App Bootstrap Protocol:"];
         var lines=payload[(separator+2)..].Split('\n',StringSplitOptions.TrimEntries|StringSplitOptions.RemoveEmptyEntries)
             .Where(line=>!metadata.Any(prefix=>line.StartsWith(prefix,StringComparison.Ordinal)))
             .Take(12).Select(line=>line.StartsWith("Notes:",StringComparison.Ordinal)?line[6..].TrimStart():line);
@@ -98,7 +98,7 @@ internal static class AppUpdate {
         new(true,stage,SelectionId(selection),selection.Release.Version,selection.Release.Bytes,preparation?.DownloadBytes,preparation?.InstallBytes,
             ReleaseUrl:selection.Release.ReleaseUrl,Notes:SignedNotes(selection.Release));
 
-    static AppUpdateResult Failure(Exception error) => error switch {
+    internal static AppUpdateResult Failure(Exception error) => error switch {
         OperationCanceledException=>new(false,Code:"APP_UPDATE_CANCELLED",Message:"Update cancelled before commit"),
         DownloadException failure=>new(false,Code:failure.Wait is null?"APP_UPDATE_DOWNLOAD_FAILED":"APP_UPDATE_RATE_LIMITED",
             Message:failure.Wait is null?"The release server did not complete the update request":"The release server requested a delay",
@@ -309,7 +309,7 @@ internal static class AppUpdate {
         } finally {cancellation.Cancel();}
     }
 
-    static void Emit(Stream output,string nonce,string type,object value) {
+    internal static void Emit(Stream output,string nonce,string type,object value) {
         var envelope=new Dictionary<string,JsonElement>{
             ["protocol"]=JsonSerializer.SerializeToElement(Protocol),["nonce"]=JsonSerializer.SerializeToElement(nonce),
             ["processId"]=JsonSerializer.SerializeToElement(Environment.ProcessId),["type"]=JsonSerializer.SerializeToElement(type)};
@@ -317,7 +317,7 @@ internal static class AppUpdate {
         try{Write(output,envelope);}catch(IOException){} // The parent exits during a successful apply.
     }
 
-    static async Task ListenCancel(Lines input,string nonce,CancellationTokenSource cancellation,bool cancelOnEof) {
+    internal static async Task ListenCancel(Lines input,string nonce,CancellationTokenSource cancellation,bool cancelOnEof) {
         try {
             var line=await input.Read(cancellation.Token);
             if(line is null&&cancelOnEof||line is {} value&&value.TryGetProperty("command",out var command)&&command.GetString()=="cancel"&&
@@ -337,7 +337,7 @@ internal static class AppUpdate {
         lock(output){output.Write(bytes);output.WriteByte((byte)'\n');output.Flush();}
     }
 
-    sealed class Lines(Stream stream) {
+    internal sealed class Lines(Stream stream) {
         readonly byte[] buffer=new byte[4096];
         int offset,length;
         public async Task<JsonElement?> Read(CancellationToken cancel) {
@@ -353,7 +353,7 @@ internal static class AppUpdate {
         }
     }
 
-    sealed class ProgressSink(Action<InstallProgress> write):IProgress<InstallProgress> {
+    internal sealed class ProgressSink(Action<InstallProgress> write):IProgress<InstallProgress> {
         string? phase;
         long next;
         public void Report(InstallProgress value) {

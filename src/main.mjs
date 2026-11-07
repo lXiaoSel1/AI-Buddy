@@ -15,6 +15,7 @@ import {extensionComponentStatus,extensionOperationBusy} from './installation-co
 import {createInstalledResources} from './installed-resources.mjs';
 import {spawn,spawnSync} from 'node:child_process';
 import {createAppUpdateBackend} from './update-backend-client.mjs';
+import {createAppBootstrapBackend} from './update-bootstrap-backend.mjs';
 import {createUpdateService} from './update-service.mjs';
 import {createUpdateReservation,updateError} from './update-reservation.mjs';
 import {startDesktopSample,stopDesktopSample,measureDesktopDiagnostic} from './desktop-diagnostics.mjs';
@@ -43,6 +44,7 @@ import { createSnapshotStorage,readJson } from './storage.mjs';
 import { createGalgame } from './galgame-host.mjs';
 import { CodexProvider } from './codex-provider.mjs';
 import { ModelRouter } from './model-router.mjs';
+import {createChatPreferences} from './chat-preferences.mjs';
 import {QuotaService} from './quota-service.mjs';
 import {CgService} from './cg-service.mjs';
 import {createDailyCgScheduler} from './daily-cg-scheduler.mjs';
@@ -127,14 +129,14 @@ const fullscreenPolicy=createPetFullscreenPolicy({onChange:hidden=>{fullscreenHi
 let dailyCgScheduler;
 let pet,panel,tray,worker,game,provider,snapshot={indexing:true,sessions:[],active:[],todayUsage:{codex:{total:0},claude:{total:0}},workTotal:0},settings={},drag=null,lastWork=null,quitting=false,gestureMode=false,lastPetHit=false,ignoringMouse=true,petAssetsReady=false;
 const settingsStore=createSnapshotStorage(join(dataRoot,'settings.json'));
-let cg,quotas,agents,plugins,petDiagnostics,pluginUsage,pluginEmbed,appUpdates;
+let cg,quotas,agents,plugins,petDiagnostics,pluginUsage,pluginEmbed,appUpdates,chatPreferences;
 const updateReservation=createUpdateReservation({external:()=>[
   ...(gameRequests||provider?.status().busy||activityClock.busy.size||game?.r95?.busy?.()?['chat']:[]),
   ...(cg?.status().busy?['cg']:[]),...(agents?.busy()?['work']:[]),
   ...(plugins?.busy?.()||extensionOperationBusy(plugins?.snapshot())?['plugin']:[]),...(importBarrier?['data']:[]),
 ]});
 const bootstrapUrl='https://github.com/lXiaoSel1/AI-Buddy/releases/latest';
-const updateCommands=new Set(['status','check','download','apply','cancel','automatic','bootstrap']);
+const updateCommands=new Set(['status','check','download','apply','cancel','automatic','bootstrap','manual-help','later']);
 const gameReads=new Set(['view','settings-get','companion-state','companion-memory-view','companion-life-list','cg-gallery','cg-data','cg-thumbnail','sprite-data','bg-data']);
 const gameStops=new Set(['companion-chat-cancel','companion-group-stop','companion-group-auto-pause','companion-group-auto-stop','cg-cancel']);
 function updateGuard(capability,run){return updateReservation.run(capability,run);}
@@ -149,7 +151,7 @@ function consumeRewardFacts(facts,sender){rewardTail=rewardTail.then(async()=>{l
 function noteStartupFailure(scope,error){startupFailure={scope,message:String(error?.message??error).slice(0,2000),at:new Date().toISOString()};audit({type:'safe-mode',scope,message:error?.stack??String(error)});}
 let feedbackSerial=0;
 let reopenRequested=false;
-let logRoots=[],settingsTail=Promise.resolve(),monitorAppliedInterval=1000;
+let logRoots=[],settingsTail=Promise.resolve(),settingsWriteTail=Promise.resolve(),monitorAppliedInterval=1000;
 let tokenSources=null,sourceRequest=0;const sourceRequests=new Map();
 let workSourceRegistry;
 function sourceRegistry(){return workSourceRegistry??=createWorkSourceRegistry({dataRoot,home:process.env.USERPROFILE,env:process.env,roots:arg('roots')?logRoots:undefined},projection=>worker?.postMessage({type:'apply-source-registry',projection}),audit);}
@@ -241,7 +243,8 @@ function moveDrag(point){
   petMotion.move(point);drag.moved=petMotion.moved;
   if(drag.moved)petEvent({kind:'drag',active:true,direction:petMotion.walkDirection});publishInteraction();
 }
-async function saveSettings() {await settingsStore.writeText(JSON.stringify(settings));}
+function serializeSettings(run){const result=settingsWriteTail.then(run);settingsWriteTail=result.catch(()=>{});return result;}
+function saveSettings(){return serializeSettings(()=>settingsStore.writeText(JSON.stringify(settings)));}
 function settingsView(){return {startupFailure,safeMode:!!startupFailure,interactionMedia:Object.fromEntries(resources.status().characters.map(c=>[c.id,interactionMediaReady(c.id)])),resources:resources.status(),effectivePetCharacter:effectivePetCharacter(),petResourceNotice:validPetCharacter(themeCharacter)?null:'当前角色没有桌宠资源，保留当前桌宠',preferences:{...settings.preferences},themeCharacter,petCharacterId:petState.characterId??resources.fallback('deepseek'),version:appVersion,build:build.split(/[\\/]/).at(-1),dataRoot,logRoots,tokenSources,defaultModel:provider?.defaultModel,modelConnections:provider?.state?connectionView(provider):null,cgConnections:cg?.state?connectionView(cg):null,systemTimeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,monitorAppliedInterval};}
 // a stop the user asked for (companion-chat-cancel) is not a chat failure
 const userStopped=message=>/用户停止回复$/.test(String(message??''));
@@ -293,25 +296,30 @@ function applyPetPreferences(resize=false){
 // Approved design C8: a line kept while neither the pet nor the main window could show it appears on the pet once
 // the pet is back (it is still read only through speech-read; the Galgame shows the same stored line).
 async function deliverKeptLine(){try{const result=await game?.action('companion-r95',{action:'view',args:{}}),view=result?.companion?.r95??result?.r95Result,line=(view?.lines??[]).find(row=>row?.status!=='read'&&typeof row.text==='string');if(line&&pet&&!pet.isDestroyed()&&pet.isVisible()&&petState.characterId===view.scope?.characterId)petEvent({kind:'social-line',value:{...line,scope:view.scope}});}catch{}}
-async function syncPetVisibility(visible){
+async function syncPetVisibility(visible){return serializeSettings(async()=>{
   if(!settings.preferences)return;
   settings.preferences={...settings.preferences,petVisible:visible};
-  applyPetPreferences();await saveSettings();broadcastSettings();
-}
-function setPreferences(patch){
+  applyPetPreferences();await settingsStore.writeText(JSON.stringify(settings));broadcastSettings();
+});}
+function setPreferences(patch,{allowUnavailable=false}={}){
   let valid;try{valid=validatePreferencesPatch(patch);}catch(error){return Promise.reject(error);}
+  const chatChanged=Object.hasOwn(valid,'chatEnabled');
+  if(chatChanged&&(quitting||shuttingDown))return Promise.reject(Error('正在退出，请稍后再修改联网聊天设置'));
   const run=settingsTail.then(async()=>{
+    if(chatChanged)assertImportIdle();
     const next={...settings.preferences,...valid},resize=next.petScale!==settings.preferences.petScale;
     if(valid.petFixedCharacter)resources.require([valid.petFixedCharacter]);
     if(resize&&drag)throw new Error('请先松开桌宠，再调整大小');
     if(next.petVisible!==settings.preferences.petVisible)await game?.action('pet-set',{enabled:next.petVisible});
-    const previousPet=effectivePetCharacter();settings.preferences=next;if(effectivePetCharacter()!==previousPet){cancelGesture('character-change');activityClock.resume();}applyChrome();applyPetPreferences(resize);
+    const previousPet=effectivePetCharacter();
+    if(chatChanged)await chatPreferences.save(valid,{allowUnavailable});else settings.preferences=next;
+    if(effectivePetCharacter()!==previousPet){cancelGesture('character-change');activityClock.resume();}applyChrome();applyPetPreferences(resize);
     worker?.postMessage({type:'configure',refreshIntervalMs:next.monitorRefreshMs,statisticsTimeZone:next.statisticsTimeZone,autoPriceUpdates:next.autoPriceUpdates});
-    await saveSettings();audit({type:'settings-changed',keys:Object.keys(valid)});return broadcastSettings();
+    if(!chatChanged)await saveSettings();audit({type:'settings-changed',keys:Object.keys(valid)});return broadcastSettings();
   });settingsTail=run.catch(()=>{});return run;
 }
 async function settingsAction(action){
-  if(action==='defaults')return setPreferences({...DEFAULT_PREFERENCES});
+  if(action==='defaults')return setPreferences({...DEFAULT_PREFERENCES},{allowUnavailable:true});
   if(action==='reset-position'){
     cancelGesture('reset-position');
     const area=screen.getPrimaryDisplay().workArea,size=petSize(settings.preferences.petScale);
@@ -383,11 +391,7 @@ ipcMain.handle('updates:action',async(event,command,value)=>{
   if(event.sender!==panel?.webContents||event.senderFrame!==panel.webContents.mainFrame||!updateCommands.has(command))throw Error('Invalid update request');
   if(!appUpdates)return {__buddyError:true,code:'APP_UPDATE_UNAVAILABLE',message:'APP_UPDATE_UNAVAILABLE'};
   try{
-    if(command==='bootstrap'){
-      const state=appUpdates.view();
-      if(!['bootstrap','recovery-required'].includes(state.phase)&&!state.target?.requiresBootstrap)throw updateError('APP_UPDATE_INVALID_STATE');
-      await shell.openExternal(bootstrapUrl);return appUpdates.view();
-    }
+    if(command==='manual-help'){await shell.openExternal(bootstrapUrl);return appUpdates.view();}
     return await appUpdates.action(command,value);
   }catch(error){const code=error.code??'APP_UPDATE_FAILED';return {__buddyError:true,code,message:code};}
 });
@@ -426,7 +430,7 @@ ipcMain.handle('plugins:choose-package',async event=>{if(event.sender!==panel?.w
 ipcMain.handle('plugins:preferences-file',async(event,mode)=>{if(event.sender!==panel?.webContents)throw Error('Invalid extension sender');assertImportIdle();if(!plugins)throw Error('扩展服务尚未就绪');if(mode==='export'){const value=await pluginActionResult(plugins,{action:'community-export-preferences'});if(value?.error)return value;const result=await dialog.showSaveDialog(panel,{title:t('导出收藏与关注'),defaultPath:'ai-buddy-favorites.json',filters:[{name:'JSON',extensions:['json']}]});if(result.canceled)return {cancelled:true};writeFileSync(result.filePath,JSON.stringify(value,null,2),'utf8');return {saved:true};}if(mode!=='import')throw Error('Invalid favourites file mode');const result=await dialog.showOpenDialog(panel,{title:t('导入收藏与关注'),properties:['openFile'],filters:[{name:'JSON',extensions:['json']}]});if(result.canceled)return {cancelled:true};return pluginActionResult({action:async()=>plugins.action({action:'community-import-preferences',value:await readPreferencesFile(result.filePaths[0])})},{});});
 ipcMain.handle('plugins:work-engines',event=>{if(event.sender!==panel?.webContents)throw Error('Invalid extension sender');return detectWorkEngines({root,connections:provider?.view?.().profiles??[]});});
 ipcMain.handle('chat:status',()=>provider.status());
-ipcMain.handle('chat:enabled',(_,enabled)=>{assertImportIdle();provider.setEnabled(enabled);audit({type:'chat-enabled',enabled:provider.enabled});return provider.status();});
+ipcMain.handle('chat:enabled',(_,enabled)=>updateGuard('storage',async()=>{assertImportIdle();await setPreferences({chatEnabled:enabled});audit({type:'chat-enabled',enabled:provider.enabled});return provider.status();}));
 ipcMain.handle('models:get',()=>connectionView(provider));
 ipcMain.handle('models:save',(_,draft)=>saveConnection(provider,draft));
 ipcMain.handle('models:delete',(_,id)=>provider.remove(id));
@@ -450,7 +454,7 @@ ipcMain.handle('game:action',async(event,action,args)=>{
   if(importBarrier&&!gameReads.has(action))assertImportIdle();
   if(!game)return {ok:false,code:'COMPANION_SAFE_MODE',error:'陪伴功能启动失败，已进入安全模式：'+(startupFailure?.message??'尚未就绪')};
   const dialog=provider.enabled&&['chat','side-story','side-story-free-reply','companion-group-send','companion-group-continue'].includes(action);
-  const release=gameReads.has(action)||gameStops.has(action)?null:updateReservation.enter(dialog?'chat':'storage');
+  const release=gameReads.has(action)||gameStops.has(action)||action==='companion-r95'&&['auto-pause','auto-stop'].includes(args?.action)?null:updateReservation.enter(dialog?'chat':'storage');
   if(dialog){gameRequests++;petEvent({kind:'dialog',active:true});}
   try{const result=await measureDesktopDiagnostic('game-ipc-dispatch',()=>game.action(action,args||{}));if(dialog&&result?.ok===false&&result.code!=='CHARACTER_NOT_INSTALLED'&&!userStopped(result.error?.message??result.message))feedback({id:'fail',source:'chat-error',text:'聊天暂时失败，请重试。',cycles:1});
     // A line read on the pet or in the main window closes it in the other place too (approved design C8).
@@ -647,7 +651,7 @@ async function shutdown(forUpdate=false) {
   try{
   if(agents?.busy()){const choice=await dialog.showMessageBox(panel??pet,{type:'question',title:'工作与协作',message:'仍有工作任务正在运行。',buttons:['完成后退出','停止并保存后退出','返回'],defaultId:2,cancelId:2});if(choice.response===2)return;await agents.prepareExit(choice.response===0?'finish':'stop-save');}
   quitting=true;closePetFullscreen();applyPetVisibility(false);
-  await dailyCgScheduler?.stopAndDrain();await rewardTail;await agents?.close();pluginEmbed?.close();await plugins?.close();await pluginUsage?.close();petDiagnostics?.dispose();dataImport?.close();buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();provider?.close();await cg?.close();await game?.flushWorkLedger?.().catch(()=>{});await game?.close();
+  await dailyCgScheduler?.stopAndDrain();await rewardTail;await agents?.close();pluginEmbed?.close();await plugins?.close();await pluginUsage?.close();petDiagnostics?.dispose();dataImport?.close();buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();await settingsTail;await settingsWriteTail;provider?.close();await cg?.close();await game?.flushWorkLedger?.().catch(()=>{});await game?.close();
   await workSourceRegistry?.flush();
   if(worker)await closeMonitorWorker(worker,{onDiagnostic:value=>audit({type:'monitor-worker-close',...value})});
   appUpdates?.close({keepApply:forUpdate});control.close();app.exit(0);
@@ -687,6 +691,7 @@ app.whenReady().then(async()=>{
   const codex=new CodexProvider({binary,defaultModel:model,dataRoot,onUsage:usage=>worker?.postMessage({type:'companion-usage',...usage}),audit});
   provider=new ModelRouter({codex,dataRoot,crypto:safeStorage,outputLimit:()=>settings.preferences?.maxOutputTokens??8192,searchPolicy:request=>game?.r95?.searchPolicy(request)??false,onNativeSearch:event=>game?.r95?.recordNativeSearch(event),legacy:existsSync(settingsStore.target+'.snapshots'),onActivity:internalActivity,onChange:()=>broadcastSettings(),onUsage:usage=>{appendFileSync(join(dataRoot,'api-usage.jsonl'),JSON.stringify(usage)+'\n');worker?.postMessage({type:'refresh'});},audit});
   await provider.ready;
+  chatPreferences=createChatPreferences({provider,read:()=>settings.preferences,write:preferences=>settingsStore.writeText(JSON.stringify({...settings,preferences})),apply:preferences=>{settings.preferences=preferences;},serialize:serializeSettings,audit});
   const publishPlugins=value=>{const snapshot=plugins?.snapshot()??value;if(panel&&!panel.isDestroyed())panel.webContents.send('plugins:update',snapshot);if(Array.isArray(snapshot?.dsh?.installed))pluginEmbed?.recordsChanged(snapshot.dsh.installed);};
   const legacyPlugins=await createPluginMaintenanceClient({runnerPath:join(build,'plugin-maintenance.cjs'),root,dataRoot,appVersion,busy:async()=>!!agents?.busy(),onUpdate:publishPlugins});
   pluginUsage=createPluginUsageRecorder({dataRoot,onRecorded:()=>worker?.postMessage({type:'refresh'})});
@@ -736,6 +741,7 @@ app.whenReady().then(async()=>{
   setLocale(settings.preferences.language);
   if(game&&settings.preferences.petVisible!==(legacyGameSettings.petEnabled!==false))await game.action('pet-set',{enabled:settings.preferences.petVisible});
   await saveSettings();
+  if(!startupFailure)chatPreferences.restore();
   // Resolve the saved/manual or model-following character before the first
   // desktop greeting, even when the Galgame panel has not been opened.
   if(game)try{await game.action('view');}catch(error){audit({type:'startup-view-error',message:error.stack});}
@@ -791,7 +797,9 @@ app.whenReady().then(async()=>{
   const updateStore=createSnapshotStorage(join(dataRoot,'app-update.json'));
   const updatePrefs=await readJson(updateStore,{}).catch(()=>({}));
   const updateBackend=createAppUpdateBackend({root,build,dataRoot,pipe,installation:installationResolution?.installation,version:appVersion});
+  const bootstrapBackend=createAppBootstrapBackend({root,build,dataRoot,pipe,installation:installationResolution?.installation,version:appVersion});
   appUpdates=createUpdateService({version:appVersion,build:build.split(/[\\/]/).at(-1),supported:updateBackend.supported&&!startupFailure,run:updateBackend.run,
+    recoveryRequired:!!startupFailure,bootstrapRun:startupFailure?undefined:bootstrapBackend.run,
     load:()=>updatePrefs,save:value=>updateGuard('storage',()=>updateStore.writeText(JSON.stringify(value))),
     onChange:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('updates:state',value);}});
   control.listen(pipe);if(!startupFailure&&petAssetsReady)appUpdates.start();audit({type:'app-start',mode:'offline',version:appVersion,build});

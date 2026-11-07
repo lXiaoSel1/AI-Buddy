@@ -2,6 +2,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {mkdirSync,readFileSync,writeFileSync,existsSync,lstatSync,readdirSync} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {createBiliFullReadingStore,fullReadingUnits} from './bili-full-reading-store.mjs';
+import {parseModelResponseObject} from './model-response-object.mjs';
 
 const fail=code=>Object.assign(Error(code),{code});
 const ensure=(v,code)=>{if(!v)throw fail(code);};
@@ -56,8 +57,7 @@ function modelBudget(raw={}){
 const pngHeader=Buffer.from([137,80,78,71,13,10,26,10]);
 export function parseFullReadingUnderstanding(result){
  if(result?.understanding!=null)return result.understanding;if(typeof result?.text!=='string')return;
- const text=result.text.trim(),fenced=text.match(/^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i);let value;try{value=JSON.parse(fenced?fenced[1]:text);}catch{return;}
- return value&&typeof value==='object'&&!Array.isArray(value)?value:undefined;
+ return parseModelResponseObject(result.text)??undefined;
 }
 export function validFullReadingUnderstanding(value,ids){
  const keys=['summary','notes','evidenceRefs','completedMaterial','shareWorthy','shareText','interestTags','commentWorthy'];
@@ -178,7 +178,7 @@ export function createBiliFullReading({directory,acquireMedia,now=Date.now,stora
   reconcile:args=>finishBatch({...args,status:'completed'},{reconcile:true}),
   readImageForAccount(args){const r=account(args),id=Object.keys(r.assets).find(id=>r.assets[id].ref===args.ref);ensure(id,'BILI_VISION_REFERENCE_DENIED');const a=r.assets[id],bytes=readFileSync(join(images,a.sha256+'.png'));ensure(fullReadingHash(bytes)===a.sha256,'BILI_VISION_CACHE_MISMATCH');return {mimeType:'image/png',dataUrl:'data:image/png;base64,'+bytes.toString('base64')};},
   pauseForAccount(args){const r=account(args);pause(r.readingId);if(!['completed','cancelled'].includes(r.phase)){r.phase='paused';r.modelReason='BILI_FULL_PAUSED';save(r);}return dto(r);},
-  stopForAccount(args){const r=account(args);pause(r.readingId,'BILI_VISION_STOPPED');r.phase='cancelled';save(r);return dto(r);},
+  stopForAccount(args){const r=account(args);if(args.onlyIfUnconfirmed===true){ensure(r.confirmed!==true,'BILI_FULL_PLAN_FROZEN');ensure(typeof args.planHash==='string'&&args.planHash===r.planHash&&Number.isSafeInteger(args.revision)&&args.revision===r.revision&&['awaiting-confirmation','paused'].includes(r.phase)&&r.batches.length===0,'BILI_CONTROL_STALE');}if(r.phase==='completed'||r.phase==='cancelled')return dto(r);pause(r.readingId,'BILI_VISION_STOPPED');r.phase='cancelled';save(r);return dto(r);},
   cancelScope,
   async close(){if(closed)return;for(const id of jobs.keys())pause(id,'BILI_VISION_CLOSED');await Promise.allSettled([...jobs.values()].map(j=>j.promise));closed=true;}
  };

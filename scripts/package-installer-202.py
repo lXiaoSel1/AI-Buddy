@@ -2,20 +2,19 @@
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path, PurePosixPath
 import shutil
-import subprocess
 import zipfile
 import sys
 sys.dont_write_bytecode = True
 from public_distribution_validation import APPLICATION_VERSION, boundaries, validated_trees, scan_public, OwnedOutput, no_links
+from installer_release_inputs import inspect_installer, source_version, compatible_resource_base, compatible_runtime_base, validate_manifest
 
 VERSION = json.loads((Path(__file__).resolve().parents[1] / 'package.json').read_text(encoding='utf-8'))['version']
 MEDIA_VERSION = '1.9.2'
 LIMIT = 1024 ** 3
 CHUNK_LIMIT = 950 * 1024 ** 2
-NAMES = {'deepseek': 'DeepSeek', 'claude': 'Claude', 'grok': 'Grok', 'seed': 'Seed', 'kimi': 'Kimi', 'qwen': 'Qwen', 'minimax': 'MiniMax', 'chatgpt': 'GPT', 'gemini': 'Gemini', 'glm': 'GLM', 'hunyuan': '混元'}
+NAMES = {'deepseek': 'DeepSeek', 'claude': 'Claude', 'grok': 'Grok', 'seed': 'Seed', 'kimi': 'Kimi', 'qwen': 'Qwen', 'minimax': 'MiniMax', 'chatgpt': 'GPT', 'gemini': 'Gemini', 'glm': 'GLM', 'hunyuan': '娣峰厓'}
 MEDIA = {'.webm', '.webp', '.png', '.jpg', '.jpeg', '.ico', '.zip'}
 APPROVED_MEDIA = '12ac599d424e678acb1c7f964c65551fdc48dc40ac31ea47facb253256a7b871'
 
@@ -194,20 +193,67 @@ def package(candidate, out, plan_only=False):
 def portable(candidate, out, installer, work):
     """Produce a complete offline tree, verified full ZIP and <=1 GiB binary volumes."""
     boundaries(inputs=(candidate, installer, Path(__file__).absolute().parents[1]), outputs=(out, work), fresh=(work,))
-    output, working = OwnedOutput(out), OwnedOutput(work, fresh=True)
     group_trees(candidate)
+    return _write_portable(candidate, out, installer, work)
+
+
+def portable_from_manifest(candidate, out, installer, work, *, source, builds, root_tree):
+    """Reconstruct an incremental candidate from exact final manifest maps."""
+    candidate, out, installer, work, source, root_tree = [Path(p).absolute() for p in (candidate, out, installer, work, source, root_tree)]
+    builds = {edition: Path(builds[edition]).absolute() for edition in ('30fps', '60fps')}
+    boundaries(inputs=(source, installer, root_tree, *builds.values()), outputs=(candidate, out, work), fresh=(candidate, work))
+    version = source_version(source)
+    if version != VERSION:
+        raise ValueError('Manifest portable source version differs')
+    resource_base = compatible_resource_base(source, version)
+    runtime_base = compatible_runtime_base(source, version, resource_base)
+    manifest_path = OwnedOutput(out).target(out / ('install-manifest-' + version + '.json'), required=True)
+    manifest_digest = sha(manifest_path)
+    manifest = validate_manifest(manifest_path, version, resource_base, runtime_base)
+    counts = {}
+    for edition, build in builds.items():
+        selected = [p for p in manifest['packages'] if p.get('edition') in (None, edition)]
+        for mount, tree in (('build', build), ('root', root_tree)):
+            expected = {f['path']: f for p in selected if p['mount'] == mount for f in p['files']}
+            if scan(tree) != expected:
+                raise ValueError('Manifest portable candidate files differ: ' + edition + '/' + mount)
+            counts[edition + '/' + mount] = len(expected)
+    reconstruction = OwnedOutput(candidate, fresh=True)
+    reconstruction.directory(candidate, fresh=True)
+    reconstruction.copy_tree(root_tree, candidate / 'root')
+    for edition, build in builds.items():
+        reconstruction.copy_tree(build, candidate / edition / 'build')
+    for package in manifest['packages']:
+        if package['mount'] != 'runtime':
+            continue
+        with zipfile.ZipFile(no_links(out / package['assetName'])) as archive:
+            for row in package['files']:
+                target = reconstruction.target(candidate / 'runtime' / row['path'], fresh=True)
+                reconstruction.directory(target.parent)
+                with archive.open(row['path']) as src, reconstruction.target(target, fresh=True).open('xb') as dst:
+                    shutil.copyfileobj(src, dst, 1024 * 1024)
+                if target.stat().st_size != row['bytes'] or sha(target) != row['sha256']:
+                    raise ValueError('Reconstructed runtime bytes differ from manifest')
+    if sha(manifest_path) != manifest_digest:
+        raise ValueError('Final manifest changed during portable reconstruction')
+    result = _write_portable(candidate, out, installer, work)
+    result.update(fromManifest=True, resourceBaseVersion=resource_base, runtimeBaseVersion=runtime_base)
+    working = OwnedOutput(work)
+    save(work / 'manifest-candidate.json', dict(ok=True, manifestSha256=manifest_digest, candidate=str(candidate), source=str(source), builds={e: str(p) for e, p in builds.items()}, root=str(root_tree), coverage=counts, resourceBaseVersion=resource_base, runtimeBaseVersion=runtime_base), working)
+    save(work / 'offline-packages.json', result, working)
+    return result
+
+
+def _write_portable(candidate, out, installer, work):
+    """Shared writer; callers establish their respective candidate contracts."""
+    output, working = OwnedOutput(out), OwnedOutput(work, fresh=True)
     manifest_path = output.target(out / ('install-manifest-' + VERSION + '.json'), required=True)
     manifest = output.read_json(manifest_path)
     digest = sha(manifest_path)
     if manifest['appVersion'] != VERSION or manifest['releaseTag'] != 'v' + VERSION:
         raise ValueError('Wrong portable manifest')
     working.directory(work, fresh=True)
-    identity = working.target(work / 'installer-identity.json', fresh=True)
-    working.target(work / 'identity-probe', directory=True, fresh=True)
-    result = subprocess.run([str(installer), '--headless', '--action=inspect', '--root=' + str(work / 'identity-probe'), '--receipt=' + str(identity)], check=True, capture_output=True, text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-    working.write_text(work / 'installer-identity.log', result.stdout + result.stderr, replace=False)
-    if working.read_json(identity, encoding='utf-8-sig')['manifestSha256'] != digest:
-        raise ValueError('Installer is not pinned to the fixed ' + VERSION + ' manifest')
+    manager_identity = inspect_installer(installer, manifest_path, work, VERSION)
     installer_asset = output.target(out / ('AI-Buddy-Setup-' + VERSION + '-win-x64.exe'))
     if installer_asset.exists() and sha(installer_asset) != sha(installer):
         raise ValueError('Existing installer asset differs')
@@ -223,9 +269,11 @@ def portable(candidate, out, installer, work):
             working.copy_tree(source, dest)
         working.directory((tree / manager).parent)
         working.copy_file(installer, tree / manager)
+        if sha(tree / manager) != manager_identity['managerSha256']:
+            raise ValueError('Portable manager differs from the inspected executable')
         selected = [p for p in manifest['packages'] if not p.get('edition') or p['edition'] == edition]
         pointer = dict(version=VERSION, appVersion=VERSION, path=build, runtime=dict(path=runtime, **manifest['runtime']), animationProfile=edition, manifestSha256=digest)
-        installation = dict(schemaVersion=1, version=VERSION, manifestSha256=digest, edition=edition, characters=[c['id'] for c in manifest['characters']], initialCharacter='deepseek', build=build, runtime=runtime, manager=manager, dataPath=None, pipe=None, dataInitialized=False, installedAt='2026-10-21T00:00:00Z', packageHashes={p['id']: p['sha256'] for p in selected})
+        installation = dict(schemaVersion=1, version=VERSION, manifestSha256=digest, edition=edition, characters=[c['id'] for c in manifest['characters']], initialCharacter='deepseek', build=build, runtime=runtime, manager=manager, managerSha256=manager_identity['managerSha256'], managerProtocol=manager_identity['managerProtocol'], dataPath=None, pipe=None, dataInitialized=False, installedAt='2026-10-21T00:00:00Z', packageHashes={p['id']: p['sha256'] for p in selected})
         # A portable archive must never overwrite the user's selected data root.
         # The application only applies these program defaults when their complete
         # pointer binding matches the current build (not an online UUID build).
@@ -331,11 +379,20 @@ if __name__ == '__main__':
     parser.add_argument('--output', required=True)
     parser.add_argument('--plan-only', action='store_true')
     parser.add_argument('--offline-only', action='store_true')
+    parser.add_argument('--portable-from-manifest', action='store_true', help='Build portable editions from final manifest/ZIPs and exact --root/--build-30/--build-60 inputs; --candidate is a fresh reconstruction directory')
+    parser.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument('--root', type=Path)
+    parser.add_argument('--build-30', type=Path)
+    parser.add_argument('--build-60', type=Path)
     parser.add_argument('--installer')
     parser.add_argument('--portable-output')
     args = parser.parse_args()
     candidate, output = Path(args.candidate).absolute(), Path(args.output).absolute()
-    if args.offline_only:
+    if args.portable_from_manifest:
+        if not all((args.installer, args.portable_output, args.root, args.build_30, args.build_60)) or args.plan_only or args.offline_only:
+            parser.error('--portable-from-manifest requires --installer, --portable-output, --root, --build-30 and --build-60 without --plan-only/--offline-only')
+        print(json.dumps(portable_from_manifest(candidate, output, Path(args.installer).absolute(), Path(args.portable_output).absolute(), source=args.source.absolute(), builds={'30fps': args.build_30.absolute(), '60fps': args.build_60.absolute()}, root_tree=args.root.absolute()), ensure_ascii=False))
+    elif args.offline_only:
         if not args.installer or not args.portable_output or args.plan_only:
             parser.error('--offline-only requires --installer and --portable-output without --plan-only')
         print(json.dumps(portable(candidate, output, Path(args.installer).absolute(), Path(args.portable_output).absolute()), ensure_ascii=False))

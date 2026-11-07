@@ -14,6 +14,7 @@ export function checkReleaseVersion(root){
   if(!state||Array.isArray(state)||state.schemaVersion!==1||state.version!==v||!['approved','published'].includes(state.stage)||!semver(state.publishedVersion)||!semver(state.resourceBaseVersion)||!semver(state.installerVersion))throw Error('Invalid release.json state or source version');
   const compare=(a,b)=>{const left=a.split('.').map(Number),right=b.split('.').map(Number);for(let i=0;i<3;i++){if(left[i]!==right[i])return left[i]>right[i]?1:-1;}return 0;};
   if(compare(state.publishedVersion,v)>0||compare(state.resourceBaseVersion,v)>0||compare(state.installerVersion,v)>0)throw Error('Release metadata references a future version');
+  if(state.runtimeBaseVersion!==undefined&&(!semver(state.runtimeBaseVersion)||compare(state.runtimeBaseVersion,v)>0))throw Error('Invalid runtime base version');
   if(state.stage==='published'&&state.publishedVersion!==v)throw Error('Published source must match publishedVersion');
  }
  const publishedVersion=state?.publishedVersion??v;

@@ -3041,5 +3041,16 @@
   "项需处理": "need attention",
   "尚未检查插件更新": "Plugin updates have not been checked",
   "部分插件来源暂时无法检查。": "Some plugin sources could not be checked.",
-  "查看已安装插件": "View installed plugins"
+  "查看已安装插件": "View installed plugins",
+  "角色、好感度、记忆、立绘和背景在 Galgame 中设置。联网聊天开关在聊天模型中设置，重启后保留选择。": "Manage characters, affection, memories, portraits and backgrounds in Galgame. Set online chat under Chat model; your choice is kept after restarting.",
+  "记住开关选择，重启后保留。未配置可用模型时保持关闭。": "Your choice is kept after restarting. Chat stays off when no usable model is configured.",
+  "可在应用内准备更新组件": "Update components can be prepared in the app",
+  "准备应用内更新": "Prepare in-app updates",
+  "手动恢复帮助": "Manual recovery help",
+  "更新签名或文件校验失败，当前版本仍可使用。": "The update signature or files could not be verified. You can keep using the current version.",
+  "安装状态需要恢复，请查看手动恢复帮助。": "The installation needs recovery. See manual recovery help.",
+  "更新准备已变化，请重新检查更新。": "The prepared update changed. Check for updates again.",
+  "此发布尚不支持应用内更新，请等待兼容版本。": "This release does not support in-app updates yet. Wait for a compatible release.",
+  "手动下载与帮助": "Manual download and help",
+  "打开官方发布帮助": "Open official release help"
 }

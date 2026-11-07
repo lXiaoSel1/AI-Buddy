@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 
-export const APPLICATION_VERSION='2.0.7',MEDIA_BASE_VERSION='1.9.2';
+export const APPLICATION_VERSION='2.0.8',MEDIA_BASE_VERSION='1.9.2';
 export const APPROVED_BASELINE_SHA256='12ac599d424e678acb1c7f964c65551fdc48dc40ac31ea47facb253256a7b871';
 export const APPROVED_APPROVAL_SHA256='30f610d52dc03aee82baaddd31e1f081abd2be22758c3e66e7a74235e30428fb';
-export const PUBLIC_ASSET_INVENTORY_SHA256='85b08ca0f7d2c21f72ac5cb18a09895e0775ad18ec85f90c66e0212bf6656ff4';
+export const PUBLIC_ASSET_INVENTORY_SHA256='01845638924bc36427d72ce4c3ad5989627901369babea33f239edbf504614ff';
 export const CHARACTER_IDS=Object.freeze(['deepseek','claude','grok','seed','kimi','qwen','minimax','chatgpt','gemini','glm','hunyuan']);
 export const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
 const fail=message=>{throw Error('Distribution validation: '+message);};

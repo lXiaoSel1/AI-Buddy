@@ -1,4 +1,5 @@
 import {visibleCompanionText} from './companion-presentation.mjs';
+import {groupSpeakerState} from './group-stage.mjs';
 import {affectionText} from './companion-display.mjs';
 import React,{useEffect,useRef,useState} from 'react';
 import {FullMessageButton,FullMessageCSS,needsFullView} from './full-message-viewer.mjs';
@@ -84,7 +85,7 @@ export function companionCardDraft(character){
 export function groupCurrentMessage(companion){
  const runtime=companion?.groupRuntime,stream=runtime?.streaming,message=runtime?.currentMessage;
  // Only received dialogue text can be a transient preview; queued/pending model drafts remain hidden and do not settle rewards.
- if(stream?.text&&['generating','failed','idle'].includes(runtime.status))return {...stream,id:stream.requestId,role:'assistant',transient:true};
+ if(stream?.text&&['generating','awaiting-presentation','failed','idle'].includes(runtime.status))return {...stream,id:stream.requestId,role:'assistant',transient:true};
  return message&&typeof message.text==='string'?message:null;
 }
 export function activeCompanionGroup(companion){return companion?.groups?.find(row=>row.id===companion.activeGroupId)||null;}
@@ -132,7 +133,7 @@ function CharacterEditor({state,request,setFeedback,resolveArt,connections,onClo
  const updateField=(key,patch)=>setDraft(old=>({...old,fields:{...old.fields,[key]:{...old.fields[key],...patch}}}));
  const save=async action=>{if(saving)return;setSaving(true);setFeedback('');try{const result=await request(action,{...draft});const id=result.card?.id||result.character?.id||result.characterId||draft.id;setFeedback(t(action==='companion-character-draft'?'草稿已保存，尚未应用。':'角色已保存。'));if(id){setSelected(action==='companion-character-draft'?'draft:'+id:id);const saved=result.card||result.companion?.characters?.find(c=>c.id===id);if(saved)setDraft(companionCardDraft(saved));}return{id,result};}catch(error){setFeedback(errorText(error),true);}finally{setSaving(false);}};
  return h('div',{className:'buddy-columns'},
-  h('aside',{className:'buddy-sidebar'},newButton('新建角色',()=>choose(''),{'data-companion-new-character':true}),h('div',{className:'buddy-sidebar-list'},...(state.characters||[]).map(c=>sideItem({key:c.id,current:selected===c.id,'data-companion-character':c.id,head:face(characterHead(c,resolveArt),companionCharacterName(c)),title:companionCharacterName(c),sub:t(characterRole(c)),onClick:()=>choose(c.id)}))),...(state.draftCharacters||[]).map(c=>sideItem({key:'draft:'+c.id,current:selected==='draft:'+c.id,head:face(companionImage(c.avatar,resolveArt),c.name||'?'),title:c.name||t('未命名角色'),tag:t('草稿'),onClick:()=>choose('draft:'+c.id)}))),
+  h('aside',{className:'buddy-sidebar'},newButton('新建角色',()=>choose(''),{'data-companion-new-character':true}),h('div',{className:'buddy-sidebar-list'},...(state.characters||[]).map(c=>sideItem({key:c.id,current:selected===c.id,'data-companion-character':c.id,head:face(characterHead(c,resolveArt),companionCharacterName(c)),title:companionCharacterName(c),sub:t(characterRole(c)),onClick:()=>choose(c.id)})),...(state.draftCharacters||[]).map(c=>sideItem({key:'draft:'+c.id,current:selected==='draft:'+c.id,head:face(companionImage(c.avatar,resolveArt),c.name||'?'),title:c.name||t('未命名角色'),tag:t('草稿'),onClick:()=>choose('draft:'+c.id)})))),
   h('form',{onSubmit:e=>{e.preventDefault();void save('companion-character-save');},'aria-busy':saving},
    h('div',{className:'buddy-form-title'},character&&face(characterHead(character,resolveArt),companionCharacterName(character),'buddy-face lg'),h('div',{className:'spacer'},h('h3',null,character?companionCharacterName(character):t('新建角色')),h('span',{className:'buddy-muted'},character?.builtin?t('内置角色 · 可恢复默认人设'):t('自建角色 · 不自动生成图片或桌宠'))),character&&button('与这位聊天',async()=>{try{await request('companion-character-select',{id:character.id});onClose();}catch(error){setFeedback(errorText(error),true);}},{disabled:saving})),
    h('nav',{className:'buddy-jump','aria-label':t('跳到')},...[...fieldGroups.map(([title])=>title),'示例对话','模型关联'].map((title,i)=>h('button',{type:'button',key:title,onClick:e=>e.currentTarget.closest('form')?.querySelector('#buddy-card-sec-'+i)?.scrollIntoView({behavior:'smooth',block:'start'})},t(title)))),
@@ -304,7 +305,7 @@ export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onTo
  const inputActive=useRef(false),inputScope=useRef(state?.r95?.scope);inputScope.current=state?.r95?.scope;
  const setInputActive=active=>{if(!inputScope.current||inputActive.current===active)return;inputActive.current=active;void r95Client.current('input',{active,scope:inputScope.current}).catch(e=>setError(e.message));};
  useEffect(()=>{const expected=state?.r95?.scope;return()=>{if(inputActive.current){inputActive.current=false;void r95Client.current('input',{active:false,scope:expected}).catch(()=>{});}};},[group?.id,JSON.stringify(state?.r95?.scope)]);
- const runtime=state?.groupRuntime||{};
+ const runtime=state?.groupRuntime||{},identity=groupSpeakerState(runtime,state.groupMessages);
  useEffect(()=>{if(!group||!GROUP_BUSY_STATUSES.includes(runtime.status))return;const timer=setInterval(()=>request('companion-state',{}).catch(()=>{}),900);return()=>clearInterval(timer);},[group?.id,runtime.status]);
  const [,setTick]=useState(0);
  useEffect(()=>{if(runtime.status!=='waiting-life-save'||!runtime.waitDeadline)return;const timer=setInterval(()=>setTick(v=>v+1),1000);return()=>clearInterval(timer);},[runtime.status,runtime.waitDeadline]);
@@ -352,7 +353,7 @@ export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onTo
   h('div',{className:'buddy-group-meta'},h('button',{type:'button',className:'gx-gbtn',disabled:locked,title:locked?t('本轮结束后可用'):undefined,onClick:()=>setPhotoOpen(true)},Icon('camera',{size:13}),t('合影 CG')),h('button',{type:'button',className:'gx-gbtn',disabled:locked,title:locked?t('本轮结束后可用'):undefined,onClick:()=>void perform('companion-group-end')},t('结束本次聊天'))),
   // Approved designs C6 / C9: mood and Auto chips are in the toolbar now; while Auto runs, one strip says who is
   // talking, round n / total, who is next and whether your message waits behind hers.
-  h(AutoRoundStrip,{view:state.r95?{...state.r95,groupId:state.r95.groupId??group.id}:null,onAction:r95Client.current,nameOf,busy:isRunning&&!ordinaryRuntime,speaker:isRunning&&!ordinaryRuntime&&member?companionCharacterName(member):'',queued}),
+  h(AutoRoundStrip,{view:state.r95?{...state.r95,groupId:state.r95.groupId??group.id}:null,onAction:r95Client.current,nameOf,busy:isRunning&&!ordinaryRuntime,speaker:isRunning&&!ordinaryRuntime&&identity.activeId?nameOf(identity.activeId):'',queued}),
   h('div',{className:'whg-line-now'+(message?'':' narrator'),key:message?.id||group.id,'aria-live':'polite','data-group-message-id':!runtime.streaming?.text?message?.id:undefined,'data-auto-request-id':!runtime.streaming?.text?message?.autoRequestId:undefined},((isRunning||canRetry)&&runtime.streaming?.text)||displayMessageText||t('说点什么，开始这一轮群聊。')),
   h(ChatSpeechLines,{view:state.r95,onAction:r95Client.current,onReply:focusInput}),
   runtime.streaming?.interrupted&&h('p',{className:'buddy-muted',role:'status'},t('上次回复已中断，以下仅为保留的部分正文，未结算。')),

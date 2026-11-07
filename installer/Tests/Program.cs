@@ -5,6 +5,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 if(args is ["--owned-test-ack-loss",var testPipe,var testRoot]) {await AckLossFixture.Run(testPipe,testRoot);return;}
+if(args is ["--update-discovery-only"]){await new Suite().UpdateTests();return;}
 var suite=new Suite();await suite.Run();
 
 sealed class Suite {
@@ -19,18 +20,18 @@ sealed class Suite {
   var index=files.Select(f=>new InstallFile(f.Key,f.Value.Length,Hashing.Bytes(f.Value))).ToArray();return new(id,"test",mount,id+".zip",new FileInfo(path).Length,files.Values.Sum(b=>(long)b.Length),Hashing.FileHash(path).Result,[],index,Edition:edition,FilesSha256:Manifests.IndexHash(index));
  }
  InstallManifest Fixture(Package[] p)=>new(1,ReleaseIdentity.Version,"v"+ReleaseIdentity.Version,"lXiaoSel1/AI-Buddy","win32","x64",ReleaseIdentity.Version,1,"30fps","deepseek",["root","runtime"],new("AI Buddy.exe",p.Single(p=>p.Id=="runtime").Files[0].Sha256),[new("30fps","30fps","app30"),new("60fps","60fps","app60")],[new("deepseek","DeepSeek","character",new(){["30fps"]=["motion30"],["60fps"]=["motion60"]})],p);
- async Task UpdateTests() {
+ public async Task UpdateTests() {
   const string api="https://api.github.com/repos/lXiaoSel1/AI-Buddy",web="https://github.com/lXiaoSel1/AI-Buddy";
-  var binary=Encoding.UTF8.GetBytes("fake installer; never executed");var sha=Hashing.Bytes(binary);var manifestSha=new string('a',64);var source=new string('b',40);var tagSha=new string('c',40);
+  var binary=Encoding.UTF8.GetBytes("fake installer; never executed");var sha=Hashing.Bytes(binary);var manifestSha=new string('a',64);var checksumSha=new string('f',64);var source=new string('b',40);var tagSha=new string('c',40);
   // Fixtures carry a placeholder signature. The pinned-key check itself is tested below with the published v1.9.0 tag.
   const string FixtureSignature="-----BEGIN SSH SIGNATURE-----\nfixture\n-----END SSH SIGNATURE-----\n";
   UpdateDiscovery Discovery(HttpClient client)=>new(client,verifySignature:(_,signature)=>signature==FixtureSignature);
   System.Text.Json.Nodes.JsonObject Fixture(string version="1.9.1") {
    string tag="v"+version;var signature=FixtureSignature;
-   string body=$"AI Buddy {version}\n\nSource: {source}\nManifest SHA-256: {manifestSha}\nInstaller SHA-256: {sha}\n";
+   string body=$"AI Buddy {version}\n\nSource: {source}\nManifest SHA-256: {manifestSha}\nInstaller SHA-256: {sha}\nChecksums SHA-256: {checksumSha}\n";
    object Asset(string name,long size,string hash)=>new{name,size,state="uploaded",digest="sha256:"+hash,browser_download_url=web+"/releases/download/"+tag+"/"+name};
    return System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(new{
-    release=new{tag_name=tag,html_url=web+"/releases/tag/"+tag,target_commitish=source,draft=false,prerelease=false,assets=new[]{Asset("AI-Buddy-Setup-"+version+"-win-x64.exe",binary.Length,sha),Asset("install-manifest-"+version+".json",12,manifestSha)}},
+    release=new{tag_name=tag,html_url=web+"/releases/tag/"+tag,target_commitish=source,draft=false,prerelease=false,assets=new[]{Asset("AI-Buddy-Setup-"+version+"-win-x64.exe",binary.Length,sha),Asset("install-manifest-"+version+".json",12,manifestSha),Asset("SHA256SUMS-"+version+".txt",12,checksumSha)}},
     reference=new{@ref="refs/tags/"+tag,@object=new{type="tag",sha=tagSha}},
     tag=new{sha=tagSha,tag,@object=new{type="commit",sha=source},message=body+signature,verification=new{verified=true,reason="valid",signature,payload=$"object {source}\ntype commit\ntag {tag}\ntagger fixture <test@example.invalid> 0 +0000\n\n"+body}}
    }))!.AsObject();
@@ -48,14 +49,14 @@ sealed class Suite {
   await Test("signed stable update binds source installer and manifest without credentials",async()=>{var calls=new List<string>();using var http=Client(Fixture(),calls);var update=await Discovery(http).Check("1.9.0",default);Assert(update is{Version:"1.9.1"}&&update.InstallerSha256==sha&&update.ManifestSha256==manifestSha&&update.SourceCommit==source,"signed identities");Assert(calls.Count==3&&calls.Count(x=>x.EndsWith("/latest"))==1,"exactly one latest resolution");});
   await Test("GitHub-verified tag not signed by the pinned release key is rejected",async()=>{using var http=Client(Fixture(),[]);await Reject(()=>new UpdateDiscovery(http).Check("1.9.0",default));});
   await Test("the pinned-key check receives the GitHub payload and signature",async()=>{string? seenPayload=null,seenSignature=null;var f=Fixture();using var http=Client(f,[]);await new UpdateDiscovery(http,verifySignature:(p,s)=>{seenPayload=p;seenSignature=s;return true;}).Check("1.9.0",default);Assert(seenPayload==(string)f["tag"]!["verification"]!["payload"]!&&seenSignature==FixtureSignature,"payload and signature passed to the verifier");});
-  await Test("published v1.9.0 tag passes the default pinned-key check",async()=>{
+  await Test("published v1.9.0 signature remains valid but old unsigned checksums cannot authorize an update",async()=>{
    var body=PublishedTag.Payload[(PublishedTag.Payload.IndexOf("\n\n",StringComparison.Ordinal)+2)..];
    string Line(string key)=>body.Split('\n').Single(l=>l.StartsWith(key+": ",StringComparison.Ordinal))[(key.Length+2)..];
    var real=Line("Source");var f=Fixture("1.9.0");var release=f["release"]!.AsObject();release["target_commitish"]=real;
-   release["assets"]=System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(new[]{new{name="AI-Buddy-Setup-1.9.0-win-x64.exe",size=binary.Length,state="uploaded",digest="sha256:"+Line("Installer SHA-256"),browser_download_url=web+"/releases/download/v1.9.0/AI-Buddy-Setup-1.9.0-win-x64.exe"},new{name="install-manifest-1.9.0.json",size=12,state="uploaded",digest="sha256:"+Line("Manifest SHA-256"),browser_download_url=web+"/releases/download/v1.9.0/install-manifest-1.9.0.json"}}));
+   release["assets"]=System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(new[]{new{name="AI-Buddy-Setup-1.9.0-win-x64.exe",size=binary.Length,state="uploaded",digest="sha256:"+Line("Installer SHA-256"),browser_download_url=web+"/releases/download/v1.9.0/AI-Buddy-Setup-1.9.0-win-x64.exe"},new{name="install-manifest-1.9.0.json",size=12,state="uploaded",digest="sha256:"+Line("Manifest SHA-256"),browser_download_url=web+"/releases/download/v1.9.0/install-manifest-1.9.0.json"},new{name="SHA256SUMS-1.9.0.txt",size=12,state="uploaded",digest="sha256:"+checksumSha,browser_download_url=web+"/releases/download/v1.9.0/SHA256SUMS-1.9.0.txt"}}));
    var tag=f["tag"]!.AsObject();tag["object"]!["sha"]=real;tag["message"]=body+PublishedTag.Signature;tag["verification"]!["signature"]=PublishedTag.Signature;tag["verification"]!["payload"]=PublishedTag.Payload;
-   using var http=Client(f,[]);var update=await new UpdateDiscovery(http).Check("1.8.0",default);
-   Assert(update is {Version:"1.9.0"}&&update.SourceCommit==real,"the real signed release is accepted with the pinned key");
+   Assert(SshSignature.Verify(PublishedTag.Payload,PublishedTag.Signature,ReleaseIdentity.SigningKey),"original published signature remains valid");
+   using var http=Client(f,[]);await Reject(()=>new UpdateDiscovery(http).Check("1.8.0",default));
   });
   await Test("update versions compare numerically rather than lexically",async()=>{var calls=new List<string>();using var http=Client(Fixture("1.10.0"),calls);Assert((await Discovery(http).Check("1.9.99",default))?.Version=="1.10.0","numeric SemVer");});
   foreach(var version in new[]{"1.09.1","1.9","1.9.1-beta","1.9.1+build","v1.9.1","-1.9.1","1.9.1\n"})await Test("reject invalid current update version "+version.Replace("\n","\\n"),async()=>{using var http=Client(Fixture(),[]);await Reject(()=>Discovery(http).Check(version,default));});
@@ -74,6 +75,8 @@ sealed class Suite {
    ["missing installer digest"]=f=>f["release"]!["assets"]![0]!.AsObject().Remove("digest"),
    ["wrong digest type"]=f=>f["release"]!["assets"]![0]!["digest"]="sha512:"+sha,
    ["missing manifest digest"]=f=>f["release"]!["assets"]![1]!.AsObject().Remove("digest"),
+   ["missing checksums asset"]=f=>f["release"]!["assets"]!.AsArray().RemoveAt(2),
+   ["checksums digest differs from signed hash"]=f=>f["release"]!["assets"]![2]!["digest"]="sha256:"+new string('9',64),
    ["lightweight tag"]=f=>f["reference"]!["object"]!["type"]="commit",
    ["wrong ref"]=f=>f["reference"]!["ref"]="refs/tags/v1.9.2",
    ["unverified signature"]=f=>f["tag"]!["verification"]!["verified"]=false,

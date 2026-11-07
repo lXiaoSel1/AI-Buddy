@@ -8,7 +8,7 @@ namespace AiBuddy.Install;
 
 public sealed record UpdateRelease(string Version,string Tag,string ReleaseUrl,string InstallerUrl,string InstallerName,
     long Bytes,string InstallerSha256,string ManifestSha256,string SourceCommit,string TagObjectSha,
-    string? SignedPayload=null,string? Signature=null);
+    string? SignedPayload=null,string? Signature=null,string? ChecksumsSha256=null);
 
 // Discovery selects an installer once, not a resource manifest. The selected installer
 // retains its own embedded manifest pin and all existing transactional install checks.
@@ -41,6 +41,9 @@ public sealed class UpdateDiscovery(HttpClient http,TimeSpan? idleTimeout=null,F
         var manifest=Asset(r,"install-manifest-"+version+".json",16L*1024*1024,
             Web+"/releases/download/"+tag+"/install-manifest-"+version+".json");
 
+        var checksums=Asset(r,"SHA256SUMS-"+version+".txt",16L*1024*1024,
+            Web+"/releases/download/"+tag+"/SHA256SUMS-"+version+".txt");
+
         using var reference=await GetJson(new Uri(Api+"/git/ref/tags/"+tag),cancel);
         var rf=reference.RootElement;
         if(String(rf,"ref")!="refs/tags/"+tag)throw Invalid("Tag reference differs");
@@ -59,14 +62,16 @@ public sealed class UpdateDiscovery(HttpClient http,TimeSpan? idleTimeout=null,F
         var payload=String(verification,"payload");
         var separator=payload.IndexOf("\n\n",StringComparison.Ordinal);
         if(separator<0||String(t,"message")!=payload[(separator+2)..]+signature)throw Invalid("Tag message is not the verified signed payload");
-        var selected=new UpdateRelease(version,tag,Web+"/releases/tag/"+tag,installer.Url,name,installer.Bytes,installer.Hash,manifest.Hash,source,tagSha,payload,signature);
+        var selected=new UpdateRelease(version,tag,Web+"/releases/tag/"+tag,installer.Url,name,installer.Bytes,installer.Hash,manifest.Hash,source,tagSha,payload,signature,checksums.Hash);
         VerifySelected(selected);
         return selected;
     }
 
     // Persist the signed proof with the selection so prepare/apply never look up
     // latest again, and a prepared update can be applied offline.
-    public bool VerifySelected(UpdateRelease release) {
+    public bool VerifySelected(UpdateRelease release)=>VerifyProof(release,false);
+    public bool VerifyBootstrapSelected(UpdateRelease release)=>VerifyProof(release,true);
+    bool VerifyProof(UpdateRelease release,bool bootstrap) {
         Validate(release);
         var payload=release.SignedPayload;var signature=release.Signature;
         if(payload is null||payload.Length>ApiLimit||signature is null||signature.Length>16384||
@@ -81,9 +86,11 @@ public sealed class UpdateDiscovery(HttpClient http,TimeSpan? idleTimeout=null,F
         var bindings=UniqueLines(payload[(separator+2)..],": ");
         if(!bindings.TryGetValue("Source",out var boundSource)||boundSource!=release.SourceCommit||
             !bindings.TryGetValue("Installer SHA-256",out var installerSha)||installerSha!=release.InstallerSha256||
-            !bindings.TryGetValue("Manifest SHA-256",out var manifestSha)||manifestSha!=release.ManifestSha256)
+            !bindings.TryGetValue("Manifest SHA-256",out var manifestSha)||manifestSha!=release.ManifestSha256||
+            !bindings.TryGetValue("Checksums SHA-256",out var checksumsSha)||checksumsSha!=release.ChecksumsSha256)
             throw Invalid("Signed release hashes or source differ from release assets");
-        return bindings.TryGetValue("App Update Protocol",out var protocol)&&protocol=="1";
+        return bindings.TryGetValue("App Update Protocol",out var protocol)&&protocol=="1"&&
+            (!bootstrap||bindings.TryGetValue("App Bootstrap Protocol",out var bootstrapProtocol)&&bootstrapProtocol=="1");
     }
 
     public async Task<string> Download(UpdateRelease release,string cache,IProgress<InstallProgress>? progress,CancellationToken cancel) {
@@ -170,7 +177,7 @@ public sealed class UpdateDiscovery(HttpClient http,TimeSpan? idleTimeout=null,F
     }
     static int Compare(BigInteger[] a,BigInteger[] b){for(int n=0;n<3;n++){var compared=a[n].CompareTo(b[n]);if(compared!=0)return compared;}return 0;}
     static void Validate(UpdateRelease r) {
-        VersionParts(r.Version);RequireSha(r.InstallerSha256,64,"installer");RequireSha(r.ManifestSha256,64,"manifest");RequireSha(r.SourceCommit,40,"source");RequireSha(r.TagObjectSha,40,"tag");
+        VersionParts(r.Version);RequireSha(r.ChecksumsSha256??"",64,"checksums");RequireSha(r.InstallerSha256,64,"installer");RequireSha(r.ManifestSha256,64,"manifest");RequireSha(r.SourceCommit,40,"source");RequireSha(r.TagObjectSha,40,"tag");
         if(r.Tag!="v"+r.Version||r.InstallerName!="AI-Buddy-Setup-"+r.Version+"-win-x64.exe"||r.Bytes<=0||r.Bytes>InstallerLimit||
             r.ReleaseUrl!=Web+"/releases/tag/"+r.Tag||r.InstallerUrl!=Web+"/releases/download/"+r.Tag+"/"+r.InstallerName)throw Invalid("Invalid selected update identity");
     }

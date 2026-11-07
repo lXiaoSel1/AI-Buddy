@@ -17,7 +17,7 @@ const members=['claude','deepseek','chatgpt','hunyuan'];
 const names={claude:'Claude',deepseek:'DeepSeek',chatgpt:'GPT',hunyuan:'Hunyuan'};
 const auto=overrides=>({id:'current-auto',status:'active',mode:'rounds',roundLimit:6,roundIndex:1,opportunityIndex:1,members,completed:{},pending:null,...overrides});
 function state(autoValue=auto(),overrides={}){
- return {activeGroupId:'group',groups:[{id:'group',name:'Group',memberIds:members,personaId:'default'}],characters:members.map(id=>({id,name:names[id]})),personas:[],groupMessages:[{id:'user',role:'user',text:'Start.'},reply],groupRuntime:{status:'idle',queue:[],currentMessage:reply,streaming:null,canRetry:false,canContinue:false},r95:{scope,groupId:'group',settings:{auto:true},lines:[],auto:autoValue},...overrides};
+ return {activeGroupId:'group',groups:[{id:'group',name:'Group',memberIds:members,personaId:'default'}],characters:members.map(id=>({id,name:names[id]})),personas:[],groupMessages:[{id:'user',role:'user',text:'Start.'},reply],groupRuntime:{status:'idle',queue:[],currentMessage:reply,streaming:null,canRetry:false,canContinue:false},r95:{scope,autoPresentation:{scope,messageId:reply.id,autoRequestId:reply.autoRequestId,characterId:reply.characterId},groupId:'group',settings:{auto:true},lines:[],auto:autoValue},...overrides};
 }
 const props=value=>({state:value,request:async()=>({ok:true}),chat:{enabled:true}});
 async function settle(){for(let i=0;i<16;i++)await Promise.resolve();}

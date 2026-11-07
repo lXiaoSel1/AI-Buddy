@@ -60,3 +60,8 @@ test('resource reuse accepts only the current version or one explicitly declared
  assert.throws(()=>checkResourceVersion('1.9.0','1.8.0',{version:'1.8.0',resourceBaseVersion:'1.8.0'}),/does not match source/);
  assert.throws(()=>checkResourceVersion('1.9.0','1.8.0',{version:'1.9.0'}),/declared resourceBaseVersion/);
 });
+
+test('runtime provenance is independent from media and rejects malformed or future declarations',t=>{
+ const f=fixture(t);f.patch('release.json',value=>({...value,runtimeBaseVersion:'1.7.0'}));assert.equal(checkReleaseVersion(f.root).ok,true);
+ for(const runtimeBaseVersion of[null,'v1.7.0','2.0.0']){f.patch('release.json',value=>({...value,runtimeBaseVersion}));assert.throws(()=>checkReleaseVersion(f.root),/Invalid runtime base/);}
+});
