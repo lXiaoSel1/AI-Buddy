@@ -74,3 +74,58 @@ test('Galgame Live stop is limited to normal chat while General Settings retains
     assert.deepEqual(calls.filter(row=>row.op==='stop').at(-1),{op:'stop',args:undefined});
   }finally{await release();}
 });
+
+function pendingCaptureFixture(){
+  let completeCapture,enteredCapture;
+  const captureGate=new Promise(resolve=>{completeCapture=resolve;}),entered=new Promise(resolve=>{enteredCapture=resolve;}),calls=[];
+  const state={...configuration,preparation:{state:'ready',target:'live'},live:false,capture:null};
+  const api={action:async(op,args)=>{
+    calls.push({op,args});
+    if(op==='state')return state;
+    if(op==='capture-start'){enteredCapture();await captureGate;return {id:'pending-capture',mode:args.mode};}
+    return {accepted:true};
+  },onEvent:()=>()=>{}};
+  const session=voice.ensureVoiceSession(api,{createContext:({sampleRate})=>({sampleRate,state:'running',resume:async()=>{},close:async()=>{}}),captureOptions:{workletURL:'fixture',getMedia:async()=>{throw Error('cancelled capture must not open the microphone');}}}),release=session.retain();
+  return {api,session,release,calls,entered,completeCapture};
+}
+
+test('a remounted Galgame can cancel pending Live without treating settings recording as Live',async()=>{
+  for(const mode of ['live','record']){
+    const f=pendingCaptureFixture();let started;
+    try{
+      await f.session.refresh();
+      const off=f.session.subscribe(()=>{});
+      started=f.session.start(mode);
+      await f.entered;
+      off();
+      const reopened=voice.ensureVoiceSession(f.api);
+      assert.equal(reopened,f.session);
+      const remounted=renderLive(reopened.snapshot());
+      if(mode==='live'){
+        assert.match(remounted,/取消 Live · 初始化中…/);
+        assert.doesNotMatch(remounted,/disabled/);
+        assert.equal(reopened.snapshot().captureMode,'live');
+      }else{
+        assert.match(remounted,/开启 Live/);
+        assert.match(remounted,/disabled/);
+        assert.equal(reopened.snapshot().captureMode,'record');
+      }
+      await reopened.stopChat();
+      assert.equal(reopened.snapshot().captureMode,null);
+    }finally{await f.session.stopChat();f.completeCapture();await started;await f.release();}
+  }
+});
+
+test('a Live capture acknowledgement arriving after cancellation cannot issue a global stop',async()=>{
+  const f=pendingCaptureFixture();let started;
+  try{
+    await f.session.refresh();
+    started=f.session.start('live');
+    await f.entered;
+    await f.session.stopChat();
+    f.completeCapture();await started;
+    const stops=f.calls.filter(row=>row.op==='stop');
+    assert.ok(stops.length>0);
+    assert.ok(stops.every(row=>row.args?.channel==='app-chat'),JSON.stringify(stops));
+  }finally{await f.session.stopChat();f.completeCapture();await started;await f.release();}
+});

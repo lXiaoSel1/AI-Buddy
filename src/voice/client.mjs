@@ -184,11 +184,11 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
   if(!api)return null;
   if(rendererSessions.has(api))return rendererSessions.get(api);
   const output=ensureVoiceOutput(api,{createContext}),subscribers=new Set(),draftListeners=new Set(),drafts=[];
-  let value={state:null,captureState:'idle',partial:'',error:'',working:false,pendingDraft:null},revision=0,generation=0,operations=0,owners=0;
+  let value={state:null,captureState:'idle',captureMode:null,partial:'',error:'',working:false,pendingDraft:null},revision=0,generation=0,operations=0,owners=0;
   const publish=patch=>{value={...value,...patch};for(const listener of subscribers)listener(value);};
   const onError=error=>publish({error:String(error?.message??error)});
   const action=(...args)=>api.action(...args);
-  const capture=createHostVoiceCapture({...captureOptions,action,onState:captureState=>publish({captureState,...(captureState==='idle'?{partial:''}:{})}),onError});
+  const capture=createHostVoiceCapture({...captureOptions,action:(op,payload)=>action(op,op==='stop'?{...payload,channel:'app-chat'}:payload),onState:captureState=>publish({captureState,...(captureState==='idle'?{captureMode:null,partial:''}:{})}),onError});
   let refreshing;
   function refresh(){
     if(refreshing&&refreshing.revision===revision)return refreshing.task;
@@ -229,7 +229,7 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
       if(!enabled)capture.release();
       return perform(async()=>{await unlocked;if(ticket!==generation)return;await action('configure',patch);if(ticket!==generation)return;if(enabled)await action('prepare',{target:'speech'});});
     },
-    start(mode){const ticket=++generation,unlocked=output.prepare(rate());publish({captureState:'preparing'});
+    start(mode){const ticket=++generation,unlocked=output.prepare(rate());publish({captureState:'preparing',captureMode:mode});
       return perform(async()=>{try{await unlocked;if(ticket!==generation)return;if(mode==='live')await action('prepare',{target:'live'});if(ticket!==generation)return;return await capture.start(mode);}catch(error){if(ticket===generation)capture.release();throw error;}});
     },
     finish:()=>perform(()=>capture.finish()),
@@ -279,7 +279,7 @@ const canStartLive=(snapshot,scope)=>['app-private','app-group'].includes(scope?
 export function VoiceChatControls({snapshot,session,scope}){
   const [pending,setPending]=useState(null),flight=useRef(null),scopeKey=[scope?.channel,scope?.characterId,scope?.personaId,scope?.conversationId].join(':');
   useEffect(()=>{flight.current=null;setPending(null);return()=>{flight.current=null;};},[scopeKey]);
-  const operation=pending?.scopeKey===scopeKey?pending.kind:null,matching=['app-private','app-group'].includes(scope?.channel)&&matchesChat(scope,snapshot?.state?.scope),phase=snapshot?.state?.preparation,loading=phase?.target==='live'&&['checking','verifying','loading'].includes(phase.state),active=matching&&(operation==='starting'||snapshot?.state?.live===true||snapshot?.state?.capture?.mode==='live'||loading),preparing=active&&(operation==='starting'||snapshot?.captureState==='preparing'||loading),stopping=operation==='stopping';
+  const operation=pending?.scopeKey===scopeKey?pending.kind:null,matching=['app-private','app-group'].includes(scope?.channel)&&matchesChat(scope,snapshot?.state?.scope),phase=snapshot?.state?.preparation,loading=phase?.target==='live'&&['checking','verifying','loading'].includes(phase.state),active=matching&&(operation==='starting'||snapshot?.captureMode==='live'||snapshot?.state?.live===true||snapshot?.state?.capture?.mode==='live'||loading),preparing=active&&(operation==='starting'||snapshot?.captureState==='preparing'||loading),stopping=operation==='stopping';
   function run(kind,fn){
     const current={kind,scopeKey};flight.current=current;setPending(current);
     const done=()=>{if(flight.current===current){flight.current=null;setPending(null);}};
