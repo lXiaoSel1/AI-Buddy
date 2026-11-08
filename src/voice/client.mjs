@@ -234,6 +234,7 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
     },
     finish:()=>perform(()=>capture.finish()),
     stop(){generation++;capture.release();return perform(()=>output.stop());},
+    stopChat(){generation++;capture.release();return perform(()=>output.stopChat());},
     runAction:(op,payload)=>perform(()=>action(op,payload)),
     retain(){const releaseOutput=output.retain();owners++;let released=false;return async()=>{
       if(released)return;released=true;
@@ -273,16 +274,39 @@ export function VoiceToggle({snapshot,onToggle}){
     h('span',{role:snapshot?.error||state?.preparation?.state==='failed'?'alert':'status','aria-live':'polite'},voiceStatus(snapshot)));
 }
 
+const canStartLive=(snapshot,scope)=>['app-private','app-group'].includes(scope?.channel)&&matchesChat(scope,snapshot?.state?.scope)&&snapshot.state.settings?.enabled===true&&snapshot.state.packages?.some(row=>row.id===snapshot.state.selectedPackageId&&row.installed&&row.usable&&row.enabled!==false&&row.trusted!==false)&&(snapshot.captureState??'idle')==='idle'&&!snapshot.working;
+
+export function VoiceChatControls({snapshot,session,scope}){
+  const [pending,setPending]=useState(null),flight=useRef(null),scopeKey=[scope?.channel,scope?.characterId,scope?.personaId,scope?.conversationId].join(':');
+  useEffect(()=>{flight.current=null;setPending(null);return()=>{flight.current=null;};},[scopeKey]);
+  const operation=pending?.scopeKey===scopeKey?pending.kind:null,matching=['app-private','app-group'].includes(scope?.channel)&&matchesChat(scope,snapshot?.state?.scope),phase=snapshot?.state?.preparation,loading=phase?.target==='live'&&['checking','verifying','loading'].includes(phase.state),active=matching&&(operation==='starting'||snapshot?.state?.live===true||snapshot?.state?.capture?.mode==='live'||loading),preparing=active&&(operation==='starting'||snapshot?.captureState==='preparing'||loading),stopping=operation==='stopping';
+  function run(kind,fn){
+    const current={kind,scopeKey};flight.current=current;setPending(current);
+    const done=()=>{if(flight.current===current){flight.current=null;setPending(null);}};
+    try{return Promise.resolve(fn()).then(done,done);}catch{done();}
+  }
+  function toggleLive(){
+    if(stopping||flight.current?.kind==='stopping')return;
+    const latest=session?.snapshot?.()??snapshot;
+    if(active){if(!matchesChat(scope,latest?.state?.scope))return;return run('stopping',()=>session?.stopChat());}
+    if(flight.current||!canStartLive(latest,scope))return;
+    return run('starting',()=>session?.start('live'));
+  }
+  return h('div',{'data-voice-chat-controls':true,style:{display:'flex',flexWrap:'wrap',gap:6,alignItems:'center'}},
+    h(VoiceToggle,{snapshot,onToggle:enabled=>session?.configure({enabled})}),
+    h('button',{type:'button',role:'switch','aria-label':t('Live 轮流交谈'),'aria-checked':active&&!preparing,'aria-busy':preparing||stopping,'data-voice-live':true,className:'gx-gbtn',disabled:stopping||!active&&!canStartLive(snapshot,scope),onClick:toggleLive},t(stopping?'正在停止 Live…':preparing?'取消 Live · 初始化中…':active?'停止 Live':'开启 Live')));
+}
+
 export function useVoiceClient(scopeKey,onDraft){
   const {session,snapshot}=useVoiceSession(),[presentation,setPresentation]=useState({subtitle:null,speaking:false,requests:[]}),draft=useRef(onDraft);draft.current=onDraft;
   const api=globalThis.whale?.voice;
+  const [characterId,personaId,conversationId,groupId]=String(scopeKey??'').split(':'),expected={characterId,personaId,conversationId:groupId||conversationId,channel:groupId?'app-group':'app-private'};
   useEffect(()=>{
     const current=session.current;if(!current)return;
-    const [characterId,personaId,conversationId,groupId]=String(scopeKey??'').split(':'),expected={characterId,personaId,conversationId:groupId||conversationId,channel:groupId?'app-group':'app-private'};
     const off=current.output.subscribe(expected,setPresentation),draftOff=current.onDraft(expected,event=>draft.current?.(event));
     return()=>{off();draftOff();};
   },[api,scopeKey]);
-  return {controls:h(VoiceToggle,{snapshot:presentation.error?{...snapshot,error:presentation.error}:snapshot,onToggle:enabled=>session.current?.configure({enabled})}),subtitle:presentation.subtitle,speaking:presentation.speaking,presentation};
+  return {controls:h(VoiceChatControls,{snapshot:presentation.error?{...snapshot,error:presentation.error}:snapshot,session:session.current,scope:expected}),subtitle:presentation.subtitle,speaking:presentation.speaking,presentation};
 }
 
 export function VoiceSettingsPanel({snapshot,session,onPlugins,onChat}){
@@ -292,10 +316,9 @@ export function VoiceSettingsPanel({snapshot,session,onPlugins,onChat}){
   return h('section',{className:'ws-card ws-set settings-voice','data-settings-voice':true},h('h2',{className:'ws-sec'},t('语音设置')),
     h(VoiceToggle,{snapshot,onToggle:value=>session?.configure({enabled:value})}),
     !installed.length&&button('安装语音插件',onPlugins),
-    h('p',{className:'settings-note'},t('开启后等待所选模型加载完成。Live 会在配音、识别和麦克风均准备好后开始。')),
+    h('p',{className:'settings-note'},t('开启后等待所选模型加载完成。请在 Galgame 开启 Live，配音、识别和麦克风均准备好后开始。')),
     h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},
       button(captureState==='recording'?'结束录音到草稿':'录音输入',()=>captureState==='recording'?session?.finish():session?.start('record'),!enabled||!usable||!idle&&captureState!=='recording'),
-      button('Live 轮流交谈',()=>session?.start('live'),!enabled||!usable||!idle),
       h('button',{type:'button',className:'ui-btn sm',onClick:()=>session?.stop()},t('停止并释放'))),
     partial&&h('p',{role:'status'},partial),
     pendingDraft&&h('div',{className:'settings-note'},h('label',null,t('录音草稿'),h('textarea',{readOnly:true,value:pendingDraft.text,rows:3})),h('p',null,t('打开对应对话后，录音文字会填入草稿。')),button('打开对话',onChat)),

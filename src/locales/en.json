@@ -3121,5 +3121,10 @@
   "正在播放配音…": "Playing speech…",
   "配音已完成": "Speech completed",
   "配音失败，回复文字已保留": "Speech failed; the reply text has been kept",
-  "配音准备超时，已停止；回复文字已保留": "Speech preparation timed out and stopped; the reply text has been kept"
+  "配音准备超时，已停止；回复文字已保留": "Speech preparation timed out and stopped; the reply text has been kept",
+  "开启 Live": "Start Live",
+  "取消 Live · 初始化中…": "Cancel Live · initializing…",
+  "停止 Live": "Stop Live",
+  "正在停止 Live…": "Stopping Live…",
+  "开启后等待所选模型加载完成。请在 Galgame 开启 Live，配音、识别和麦克风均准备好后开始。": "After enabling voice, wait for the selected model to load. Start Live in Galgame; it begins when speech, recognition, and the microphone are ready."
 }

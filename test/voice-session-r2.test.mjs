@@ -56,14 +56,14 @@ test('Live stays preparing until the microphone worklet actually opens',async()=
   }finally{completeWorklet();await captureSession.stop();await releaseCapture();await session.stop();await release();}
 });
 
-test('chat exposes one master switch while General Settings retains recording and full voice configuration',()=>{
+test('the master switch remains unchanged while General Settings retains recording and full voice configuration',()=>{
   const snapshot={state:{...configuration,packages:[{id:'ai-buddy.voice-breeze',installed:true,usable:true}],profile:{label:'Voice'},assets:{tts:{state:'ready'}},engine:'breeze'},captureState:'idle',working:false,error:''};
   const chat=renderToStaticMarkup(React.createElement(voice.VoiceToggle,{snapshot}));
   assert.equal((chat.match(/<button\b/g)??[]).length,1);
   assert.match(chat,/role="switch"/);
   assert.doesNotMatch(chat,/录音输入|Live 轮流交谈|<details|<select|API Key/);
   const settings=renderToStaticMarkup(React.createElement(voice.VoiceSettingsPanel,{snapshot}));
-  assert.match(settings,/录音输入/);assert.match(settings,/Live 轮流交谈/);assert.match(settings,/配音插件/);assert.match(settings,/参考音逐字稿/);
+  assert.match(settings,/录音输入/);assert.doesNotMatch(settings,/<button\b[^>]*>Live 轮流交谈<\/button>/);assert.match(settings,/配音插件/);assert.match(settings,/参考音逐字稿/);
   const cold=renderToStaticMarkup(React.createElement(voice.VoiceToggle,{snapshot:{...snapshot,state:{...snapshot.state,preparation:{state:'idle',target:null}}}}));
   assert.match(cold,/启动语音/);assert.match(cold,/语音尚未启动/);assert.doesNotMatch(cold,/语音模型已就绪/);assert.match(cold,/aria-checked="false"/);
 });
