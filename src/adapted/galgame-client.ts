@@ -2,6 +2,7 @@ import {useVoiceClient,VoiceDialogueLine,voiceDialogueState} from '../voice/clie
 import {affectionText,dialogueLineRoom} from '../companion-display.mjs'
 import {t} from '../i18n.mjs';
 import {visibleCompanionText,visibleInterruptedText} from '../companion-presentation.mjs';
+import {createPrivatePresentation,privatePresentationKey} from '../private-presentation.mjs';
 import {GalgameTitle} from '../galgame-title.mjs';
 import {GroupHeader} from '../group-header.mjs';
 import {GroupCgCSS} from '../group-cg-ui.mjs';
@@ -754,6 +755,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     setViewState((previous: any) => {
       const base = previous && previous.key === cacheKey ? previous.value : cachedView(cacheKey)
       const next = typeof nextOrUpdater === 'function' ? nextOrUpdater(base) : nextOrUpdater
+      if (Object.is(next, base)) return previous
       if (base?.companion && next?.companion && Number(next.companion.revision) < Number(base.companion.revision)) return previous
       rememberView(cacheKey, next)
       return { key: cacheKey, value: next }
@@ -771,17 +773,6 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   }, [cacheKey])
   const [open, setOpen] = useState(false)
   const [companionPanel, setCompanionPanel] = useState<string | null>(null)
-  const privatePresentation=useRef(new Set<string>())
-  useEffect(()=>{
-    const companion=s?.companion
-    if(!companion||companion.activeGroupId||companionPanel||document.hidden||document.querySelector('dialog[open]'))return
-    const last=companion.messages?.at(-1)
-    if(last?.role!=='assistant'||last.presentation!=='pending'||privatePresentation.current.has(last.id))return
-    privatePresentation.current.add(last.id)
-    let cancelled=false
-    const frame=requestAnimationFrame(()=>{if(cancelled||document.hidden){privatePresentation.current.delete(last.id);return}callApi('companion-private-present',{conversationId:companion.activeConversationId,id:last.id}).then(result=>{if(result?.view)setS(result.view)}).catch(()=>privatePresentation.current.delete(last.id))})
-    return()=>{cancelled=true;cancelAnimationFrame(frame);privatePresentation.current.delete(last.id)}
-  })
   const [groupBrowseRequest,setGroupBrowseRequest] = useState<any>(null)
   const [groupPanelRequest,setGroupPanelRequest] = useState<any>(null)
   const [groupToolbarTarget,setGroupToolbarTarget] = useState<HTMLElement|null>(null)
@@ -917,6 +908,11 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     if(event.scope?.conversationId!==draftConversation.current)return;
     setText((old:string)=>old+(old&&event.text?'\n':'')+event.text);
   });
+  const privatePresentation=useRef<any>(null);if(!privatePresentation.current)privatePresentation.current=createPrivatePresentation()
+  const privatePresentationInput=useRef<any>(null);privatePresentationInput.current={sessionId:cacheKey,companion:s?.companion,waiting:voiceClient.presentation.requests?.some((row:any)=>row.requestId===s?.companion?.messages?.at(-1)?.requestId),isVisible:()=>!companionPanel&&!document.hidden&&!document.querySelector('dialog[open]'),present:(args:any)=>callApi('companion-private-present',args),apply:(view:any,key:string)=>setS((previous:any)=>privatePresentationKey({sessionId:cacheKey,companion:previous?.companion})===key?view:previous)}
+  const refreshPrivatePresentation=()=>{const input=privatePresentationInput.current;privatePresentation.current.update({...input,visible:input.isVisible()})}
+  useEffect(()=>{document.addEventListener('visibilitychange',refreshPrivatePresentation);return()=>{document.removeEventListener('visibilitychange',refreshPrivatePresentation);privatePresentation.current.leave()}},[cacheKey])
+  useEffect(()=>{refreshPrivatePresentation()})
   const group = activeCompanionGroup(s?.companion)
   useEffect(() => { props.onDisplayMode?.(group ? 'group' : 'private') }, [group?.id, props.onDisplayMode])
   const currentStory = s?.sideStory?.scene

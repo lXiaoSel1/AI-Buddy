@@ -39,7 +39,17 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
   let microphone=false,closed=false,cardEpoch=0,cardAdmissions=0,cardTail=Promise.resolve(),voiceEpoch=0,stopping=null,stopFailure;
   const cloudOperations=new Set();
   const tableHands=new Map();
-  const publish=value=>{if(value.type==='capture')microphone=['recording','listening'].includes(value.state);if(value.type==='invalidate'){microphone=false;getGame()?.voiceCancel?.();if(value.reason==='scope-changed')void cards.reconcile?.().catch(error=>audit({type:'card-voice',code:error.code}));}send(value);};
+  const publish=value=>{
+    if(value.type==='phase'){
+      // Persist only request correlation and bounded phase metadata. Never log
+      // the speech, reference transcript/path, credentials or complete envelope.
+      audit({type:'voice-phase',requestId:value.requestId,segmentId:value.segmentId,index:value.index,
+        engine:value.engine,stage:value.stage,elapsedMs:value.elapsedMs,...(value.code?{code:value.code}:{})});
+    }
+    if(value.type==='capture')microphone=['recording','listening'].includes(value.state);
+    if(value.type==='invalidate'){microphone=false;getGame()?.voiceCancel?.();if(value.reason==='scope-changed')void cards.reconcile?.().catch(error=>audit({type:'card-voice',code:error.code}));}
+    send(value);
+  };
   const controller=components.controller??createVoiceController({getScope:()=>getGame()?.voiceScope(),submit:args=>getGame().voiceSubmit(args),send:publish,
     listPackages:()=>getPlatform()?.voicePackageStatus()??[],runtime:chatRuntime,assets,profiles,settings});
   async function cardSelection(){

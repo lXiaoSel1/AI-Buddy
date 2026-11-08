@@ -10,18 +10,19 @@ const stateText={idle:'尚未开始录音',preparing:'正在准备模型与麦�
 const base64=bytes=>{if(typeof bytes==='string')return bytes;let out='';for(const value of bytes)out+=String.fromCharCode(value);return btoa(out);};
 const rendererOutputs=new WeakMap();
 const matchesChat=(scope,envelope)=>!!scope&&!!envelope&&scope.channel===envelope.channel&&scope.personaId===envelope.personaId&&scope.conversationId===envelope.conversationId&&(scope.channel==='app-group'||scope.characterId===envelope.characterId);
+const phaseText={queue:'正在等待配音队列…','reference-check':'正在检查角色声线…','component-check':'正在检查配音组件…','model-loading':'正在加载语音模型…','speak-sent':'配音请求已发送，等待音频…','first-pcm':'已收到音频，等待播放…','playback-start':'正在播放配音…',done:'配音已完成',error:'配音失败，回复文字已保留'};
 
 export function voiceDialogueState(presentation,requestId){
   const pending=presentation?.requests?.find(row=>row.requestId===requestId);
   if(!pending)return null;
   const subtitle=pending.subtitle?.envelope?.requestId===requestId?pending.subtitle:null;
-  return {waiting:!subtitle,subtitle};
+  return {waiting:!subtitle,subtitle,status:phaseText[pending.phase?.stage]??(pending.hasSegments?'正在准备配音…':'正在等待回复语段…')};
 }
 
 export function VoiceDialogueLine({presentation,requestId,children,...props}){
   const current=voiceDialogueState(presentation,requestId);
   return h('div',{...props,...(current?{'data-voice-subtitle':!!current.subtitle,'data-voice-waiting':current.waiting,'aria-busy':current.waiting}:{} )},
-    current?.waiting?h('span',{role:'status'},t('正在准备配音…')):current?.subtitle?.text??children);
+    current?.waiting?h('span',{role:'status'},t(current.status)):current?.subtitle?.text??children);
 }
 
 // The trusted dashboard owns playback; page hooks only observe it and own capture.
@@ -32,7 +33,7 @@ export function ensureVoiceOutput(api=globalThis.whale?.voice,{createContext}={}
   const terminal=new Set(['audioCompleted','explicitlySkipped','interrupted','failed']);
   let owners=0,closed=false,active,scope,subtitle=null,speaking=false,error=null;
   const snapshot=expected=>{const matches=matchesChat(expected,scope);return {subtitle:matches?subtitle:null,speaking:matches&&speaking,error:matches?error:null,
-    requests:[...requests.values()].filter(row=>matchesChat(expected,row.envelope)).map(row=>({requestId:row.id,envelope:row.envelope,subtitle:active===row&&subtitle?.envelope?.requestId===row.id?subtitle:null}))};};
+    requests:[...requests.values()].filter(row=>matchesChat(expected,row.envelope)).map(row=>({requestId:row.id,envelope:row.envelope,phase:row.phase,hasSegments:row.segments.size>0,subtitle:active===row&&subtitle?.envelope?.requestId===row.id?subtitle:null}))};};
   const notify=()=>{for(const row of subscribers)row.listener(snapshot(row.scope));};
   const action=(...args)=>api.action(...args);
   const onError=value=>{error=String(value?.message??value);notify();};
@@ -70,6 +71,11 @@ export function ensureVoiceOutput(api=globalThis.whale?.voice,{createContext}={}
     const id=event.envelope?.requestId??event.requestId;
     if(!id||retired.has(id))return Promise.resolve();
     let row=requests.get(id);
+    if(event.type==='phase'){
+      const segment=row?.segments.get(event.envelope?.segmentId);
+      if(!segment||!Object.keys(segment).every(key=>segment[key]===event.envelope?.[key])||!phaseText[event.stage])return Promise.resolve();
+      row.phase={stage:event.stage,elapsedMs:event.elapsedMs,...(event.code?{code:event.code}:{})};notify();return Promise.resolve();
+    }
     if(event.type==='segment'&&event.state==='failed'||event.type==='turn'&&event.failed){
       if(event.message)onError(Error(event.message));return cancel(value=>value.id===id,event.type==='segment'?'failed':'interrupted');
     }
@@ -183,11 +189,26 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
   const onError=error=>publish({error:String(error?.message??error)});
   const action=(...args)=>api.action(...args);
   const capture=createHostVoiceCapture({...captureOptions,action,onState:captureState=>publish({captureState,...(captureState==='idle'?{partial:''}:{})}),onError});
-  async function refresh(){const ticket=revision;const state=await action('state');if(ticket===revision){publish({state});if(drafts.length)deliverDrafts();}return state;}
+  let refreshing;
+  function refresh(){
+    if(refreshing&&refreshing.revision===revision)return refreshing.task;
+    const row=refreshing={revision};
+    row.task=(async()=>{try{const state=await action('state');if(row.revision===revision){publish({state});if(drafts.length)deliverDrafts();}return state;}catch(error){if(error?.code==='VOICE_STATE_CANCELLED')return value.state;throw error;}})().finally(()=>{if(refreshing===row)refreshing=undefined;});return row.task;
+  }
   function deliverDrafts(){const trusted=value.state?.scope;for(let i=0;i<drafts.length;){const event=drafts[i],listener=trusted&&[...draftListeners].find(row=>matchesChat(row.scope,event.scope)&&matchesChat(row.scope,trusted)&&['lifeId','operationId'].every(key=>!trusted[key]||trusted[key]===event.scope?.[key]));if(!listener){i++;continue;}listener.callback(event);drafts.splice(i,1);}publish({pendingDraft:drafts.at(-1)??null});}
   const off=output.onEvent(event=>{
     if(event.type==='invalidate'&&event.reason==='scope-changed'&&event.channel!=='card-table'){generation++;revision++;}
+    if(event.type==='invalidate'&&event.channel!=='card-table')publish({phase:null});
+    if(event.type==='turn'&&event.state==='admitted')publish({phase:null});
+    if(event.type==='phase'&&matchesChat(value.state?.scope,event.envelope)&&['lifeId','operationId'].every(key=>value.state.scope[key]===event.envelope[key])){
+      publish({phase:{requestId:event.requestId,stage:event.stage}});
+      if(event.stage==='error')onError({message:event.code==='VOICE_PREFLIGHT_TIMEOUT'?'配音准备超时，已停止；回复文字已保留':phaseText.error});
+    }
     if(event.type==='state'){revision++;publish({state:event.state,...(event.state.preparation?.state==='ready'?{error:''}:{})});if(drafts.length)deliverDrafts();}
+    if(event.type==='preparation'){
+      if(value.state&&event.epoch<value.state.epoch)return;
+      revision++;publish({preparation:event.preparation,...(value.state?{state:{...value.state,epoch:event.epoch,preparation:event.preparation}}:{})});
+    }
     if((event.type==='error'||event.type==='status')&&event.message)onError(event);
     if(event.type==='draft'){drafts.push(event);deliverDrafts();}
     if(event.type==='capture'&&event.partial)publish({partial:event.partial});
@@ -238,9 +259,10 @@ export function voiceStatus(snapshot){
   if(error)return t(error);
   if(!state)return t('正在检查语音插件与组件…');
   if(!state.settings?.enabled)return t('语音已关闭');
-  const preparation=state.preparation??{state:'idle'},labels={checking:'正在检查语音配置…',verifying:'正在校验语音组件…',loading:'正在加载语音模型…',ready:'语音模型已就绪',failed:'语音启动失败，请检查设置',stopping:'正在停止并释放语音…',idle:working?'正在准备语音…':'语音尚未启动'};
+  const preparation=state.preparation??snapshot?.preparation??{state:'idle'},labels={checking:'正在检查语音配置…',verifying:'正在校验语音组件…',loading:'正在加载语音模型…',ready:'语音模型已就绪',failed:'语音启动失败，请检查设置',stopping:'正在停止并释放语音…',idle:working?'正在准备语音…':'语音尚未启动'};
   if(['checking','verifying','loading','failed','stopping'].includes(preparation.state))return t(labels[preparation.state]);
   if(captureState!=='idle')return t(stateText[captureState]??captureState);
+  if(snapshot?.phase&&phaseText[snapshot.phase.stage]&&!['done','error'].includes(snapshot.phase.stage))return t(phaseText[snapshot.phase.stage]);
   return t(labels[preparation.state]??'正在准备语音…');
 }
 

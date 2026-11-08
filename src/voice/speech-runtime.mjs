@@ -1,8 +1,10 @@
+import {waitVoiceOperation,voicePreflight,VOICE_PREFLIGHT_TIMEOUT_MS} from './operation-wait.mjs';
+
 const fail = (code, message) => Object.assign(new Error(message), {code});
 
 // ASR remains the local runtime. Only the explicitly selected TTS provider
 // changes, after the previous provider has confirmed releasing its resources.
-export function createSpeechRuntime({local, cloud}) {
+export function createSpeechRuntime({local, cloud,preflightTimeoutMs=VOICE_PREFLIGHT_TIMEOUT_MS}) {
   let provider;
   let active;
   let closed = false;
@@ -58,17 +60,20 @@ export function createSpeechRuntime({local, cloud}) {
       const selected = request.speechProvider ?? 'local';
       if (!['local','minimax'].includes(selected)) throw fail('VOICE_PROVIDER_INVALID','请选择本地或 MiniMax 云配音');
       if (selected === 'minimax' && !cloud) throw fail('CLOUD_UNAVAILABLE','云配音组件未准备');
-      const controller=new AbortController(),signal=request.signal?AbortSignal.any([request.signal,controller.signal]):controller.signal;
+      const controller=new AbortController(),preflight=voicePreflight(request.signal?AbortSignal.any([request.signal,controller.signal]):controller.signal,preflightTimeoutMs),signal=preflight.signal,started=performance.now();
+      let sent=false,firstPcm=false;
+      const onPhase=value=>{signal.throwIfAborted();if(value.stage==='model-loading')preflight.pause();else if(value.stage==='component-check')preflight.resume();else if(value.stage==='speak-sent'){sent=true;preflight.sent();}if(value.stage==='first-pcm')firstPcm=true;try{request.onPhase?.({...value,elapsedMs:Math.round(performance.now()-started)});}catch{}};
       let release;const released=new Promise(resolve=>{release=resolve;}),previous=queueTail;
       // A cancelled waiter may settle early, but its successor still waits for this predecessor.
       queueTail=previous.then(()=>released);
       const job={source,controller,release};jobs.add(job);
       try{
+        onPhase({stage:'queue'});
         await waitFor(previous,signal);assertOpen();signal.throwIfAborted();
         if(runtimeGeneration!==globalEpoch)throw fail('VOICE_RUNTIME_STOPPED','旧语音任务已停止');
         if(source.closed||generation!==source.epoch)throw fail('VOICE_OWNER_STOPPED','该语音来源已停止');
         active=job;
-        await serialize(async () => {
+        await waitVoiceOperation(()=>serialize(async () => {
         assertOpen();
         signal.throwIfAborted();
         if (provider !== selected) {
@@ -77,15 +82,21 @@ export function createSpeechRuntime({local, cloud}) {
           provider = selected;
         }
         residentOwner=source;
-        });
+        }),signal);
         const runtime = selected === 'local' ? local : cloud;
-        const iterator=job.iterator=runtime.speak({...request,signal});
+        signal.throwIfAborted();
+        const iterator=job.iterator=runtime.speak({...request,signal,onPhase});
         for await (const row of iterator) {
           signal.throwIfAborted();
+          // The existing cloud adapter yields its reference only after start()
+          // has submitted the request. Preserve its post-submit timeout rules.
+          if(!sent&&(selected==='minimax'&&row.type==='reference'||row.type==='pcm'))onPhase({stage:'speak-sent'});
+          if(!firstPcm&&row.type==='pcm')onPhase({stage:'first-pcm'});
           yield row;
           signal.throwIfAborted();
         }
       } finally {
+        preflight.close();
         if (active === job) active = undefined;
         jobs.delete(job);
         release();
@@ -119,7 +130,7 @@ export function createSpeechRuntime({local, cloud}) {
       let result;
       if(selected==='local') {
         if(typeof local.prepare!=='function')throw fail('VOICE_PREPARE_UNAVAILABLE','本地语音组件尚未准备');
-        result=await local.prepare({...request,signal});
+        result=await waitVoiceOperation(()=>local.prepare({...request,signal}),signal);
       } else {
         // Cloud preparation only reads the local binding. It never uploads a
         // reference, starts synthesis or makes a paid provider request.

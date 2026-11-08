@@ -8,6 +8,7 @@ import { assertPluginTreeNoLinks } from '../plugin-archive.mjs';
 import { pluginRelativePath } from '../plugin-manifest.mjs';
 import { renamePluginPath } from '../plugin-files.mjs';
 import {createVoiceAssetVerifier} from './asset-verifier.mjs';
+import {waitVoiceOperation} from './operation-wait.mjs';
 
 const ids = { breeze: 'ai-buddy.voice-breeze', gpt: 'ai-buddy.voice-gpt-sovits' };
 const scripts = { asr: 'asr_worker.py', breeze: 'breeze_worker.py', gpt: 'gpt_worker.py' };
@@ -84,25 +85,27 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
   const descriptors = new Map();
   const verifier=createVoiceAssetVerifier({workerPath:verificationWorker});
 
-  async function plan(kind, engineId) {
+  async function plan(kind, engineId, {signal}={}) {
+    const wait=operation=>waitVoiceOperation(operation,signal);
+    signal?.throwIfAborted();
     if (!Object.hasOwn(scripts, kind)) throw fault('VOICE_ASSET_MANIFEST', '未知语音组件');
     const requested = kind === 'asr' ? engineId : kind;
     const id = ids[requested] ?? requested;
     if (!Object.values(ids).includes(id)) throw fault('VOICE_PLUGIN_REQUIRED', '请启用一个语音插件');
-    const owner = await resolveVoicePackage(id);
+    const owner = await wait(()=>resolveVoicePackage(id,{signal}));
     const record = kind === 'asr' ? owner.shared : owner;
     if (!isAbsolute(record?.directory ?? '') || !isAbsolute(owner.shared?.directory ?? '')) {
       throw fault('VOICE_PLUGIN_REQUIRED', '语音插件共享运行依赖缺失');
     }
     const file = join(record.directory, 'assets.json');
-    await assertPluginTreeNoLinks(file);
-    const info=await lstat(file,{bigint:true});
+    await wait(()=>assertPluginTreeNoLinks(file));
+    const info=await wait(()=>lstat(file,{bigint:true}));
     if(!info.isFile())throw fault('VOICE_ASSET_MANIFEST','语音组件清单类型无效');
     const identity=stamp(info),key=[kind,file,record.sourceId,record.archiveSha256,identity].join('|');
     let cached=descriptors.get(key);
     if(!cached){
-      const bytes=await readFile(file),descriptorHash=digest(bytes);
-      if(identity!==stamp(await lstat(file,{bigint:true})))throw fault('VOICE_ASSET_MANIFEST','语音组件清单在读取中发生变化');
+      const bytes=await wait(()=>readFile(file)),descriptorHash=digest(bytes);
+      if(identity!==stamp(await wait(()=>lstat(file,{bigint:true}))))throw fault('VOICE_ASSET_MANIFEST','语音组件清单在读取中发生变化');
       const descriptor=JSON.parse(bytes),total=validate(kind,descriptor);
       cached={descriptorHash,descriptor,total,bytes:bytes.length};descriptors.set(key,cached);if(descriptors.size>8)descriptors.delete(descriptors.keys().next().value);
     }
@@ -114,11 +117,11 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
     return { descriptor, destination, cacheRoot, proof, total, script: join(record.directory, scripts[kind]), sharedDirectory: owner.shared.directory };
   }
 
-  async function checkMarker(selected) {
+  async function checkMarker(selected,{signal}={}) {
     const marker = join(selected.destination, '.ready');
-    await assertPluginTreeNoLinks(marker);
+    await waitVoiceOperation(()=>assertPluginTreeNoLinks(marker),signal);
     try {
-      if ((await readFile(marker, 'utf8')) !== selected.proof) throw fault('VOICE_ASSET_HASH', '语音组件的准备凭据与安装包不符');
+      if ((await waitVoiceOperation(()=>readFile(marker, 'utf8'),signal)) !== selected.proof) throw fault('VOICE_ASSET_HASH', '语音组件的准备凭据与安装包不符');
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
       throw fault('VOICE_ASSET_MISSING', '语音资源尚未准备');
@@ -126,31 +129,32 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
   }
 
   async function checkReady(selected,options={}) {
-    options.signal?.throwIfAborted();await checkMarker(selected);options.signal?.throwIfAborted();
+    options.signal?.throwIfAborted();await checkMarker(selected,options);options.signal?.throwIfAborted();
     await verifier.verify(selected,options);options.signal?.throwIfAborted();
   }
 
-  async function status(kind, engineId) {
+  async function status(kind, engineId, options={}) {
     try {
-      const selected = await plan(kind, engineId);
+      const selected = await plan(kind, engineId,options);
       const base = { version: selected.descriptor.version, bytes: selected.total };
       if (pending.has(selected.destination)) return { ...base, state: 'preparing' };
       // A settings/status read reports the completed install transaction. Full
       // file identity and hash verification remains mandatory in resolve(),
       // before a worker can execute; do not read gigabytes just to open settings.
-      try { await checkMarker(selected); }
-      catch (error) { return { ...base, state: error.code === 'VOICE_ASSET_MISSING' ? 'missing' : 'error', code: error.code }; }
+      try { await checkMarker(selected,options); }
+      catch (error) { options.signal?.throwIfAborted();return { ...base, state: error.code === 'VOICE_ASSET_MISSING' ? 'missing' : 'error', code: error.code }; }
       return { ...base, state: 'ready',verification:'before-use' };
     } catch (error) {
+      options.signal?.throwIfAborted();
       return { state: 'unavailable', code: error.code ?? 'VOICE_ASSET_MANIFEST' };
     }
   }
 
   async function resolve(kind, engineId, options={}) {
-    options.signal?.throwIfAborted();const selected = await plan(kind, engineId);
+    options.signal?.throwIfAborted();const selected = await plan(kind, engineId,options);
     await checkReady(selected,options);
-    await assertPluginTreeNoLinks(selected.cacheRoot);
-    await mkdir(selected.cacheRoot, { recursive: true });
+    await waitVoiceOperation(()=>assertPluginTreeNoLinks(selected.cacheRoot),options.signal);
+    await waitVoiceOperation(()=>mkdir(selected.cacheRoot, { recursive: true }),options.signal);
     const { descriptor, destination } = selected;
     return { python: join(destination, descriptor.python), script: selected.script, root: destination, assetRoot: destination,
       cacheRoot: selected.cacheRoot, sharedDirectory: selected.sharedDirectory, proof: selected.proof,
@@ -159,7 +163,7 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
 
   async function prepare(kind, { engineId, localRoot, signal, onProgress = () => {} } = {}) {
     if (localRoot != null && !isAbsolute(localRoot)) throw fault('VOICE_ASSET_SOURCE', '本地语音组件目录无效');
-    const selected = await plan(kind, engineId);
+    const selected = await plan(kind, engineId,{signal});
     if (pending.has(selected.destination)) return pending.get(selected.destination);
     const operation = (async () => {
       try { await checkReady(selected,{signal,onProgress}); return { state: 'ready', reused: true }; }
@@ -178,7 +182,7 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
         let marker;try{marker=await readFile(join(previous,'.ready'),'utf8');}catch(error){if(error.code==='ENOENT')continue;throw error;}
         if(marker!==selected.proof)continue;
         await checkReady({...selected,destination:previous},{signal,onProgress});signal?.throwIfAborted();
-        if((await plan(kind,engineId)).proof!==selected.proof)throw fault('VOICE_ASSET_REVOKED','语音组件版本已更改');
+        if((await plan(kind,engineId,{signal})).proof!==selected.proof)throw fault('VOICE_ASSET_REVOKED','语音组件版本已更改');
         await promote(previous,destination,{retryBudgetMs:10000});return {state:'ready',reused:true,resumed:true};
       }
       if (!localRoot && descriptor.files.some(file => !file.url)) {
@@ -220,7 +224,7 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
           onProgress({ kind, receivedBytes: total, totalBytes: selected.total });
         }
         signal?.throwIfAborted();
-        if ((await plan(kind, engineId)).proof !== selected.proof) throw fault('VOICE_ASSET_REVOKED', '语音插件或组件版本已更改');
+        if ((await plan(kind, engineId,{signal})).proof !== selected.proof) throw fault('VOICE_ASSET_REVOKED', '语音插件或组件版本已更改');
         const marker = createWriteStream(join(staging, '.ready'), { flags: 'wx', mode: 0o600 });
         await pipeline(Readable.from([selected.proof]), marker, { signal });
         complete=true;

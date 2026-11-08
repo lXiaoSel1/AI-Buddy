@@ -3111,5 +3111,15 @@
   "已准备，使用前复核": "Installed; verified before use",
   "待准备": "Preparation required",
   "准备本地识别组件": "Prepare local recognition",
-  "准备所选本地配音组件": "Prepare the selected local speech component"
+  "准备所选本地配音组件": "Prepare the selected local speech component",
+  "正在等待回复语段…": "Waiting for the reply segment…",
+  "正在等待配音队列…": "Waiting in the speech queue…",
+  "正在检查角色声线…": "Checking the character voice…",
+  "正在检查配音组件…": "Checking speech components…",
+  "配音请求已发送，等待音频…": "Speech request sent; waiting for audio…",
+  "已收到音频，等待播放…": "Audio received; waiting for playback…",
+  "正在播放配音…": "Playing speech…",
+  "配音已完成": "Speech completed",
+  "配音失败，回复文字已保留": "Speech failed; the reply text has been kept",
+  "配音准备超时，已停止；回复文字已保留": "Speech preparation timed out and stopped; the reply text has been kept"
 }

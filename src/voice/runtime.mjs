@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import {voicePythonEnvironment,pythonFilePath} from './python-environment.mjs';
+import {waitVoiceOperation,voicePreflight,VOICE_PREFLIGHT_TIMEOUT_MS} from './operation-wait.mjs';
 
 const engines = new Set(['breeze', 'gpt']);
 const MAX_LINE = 8 * 1024 * 1024;
@@ -70,7 +71,7 @@ function makeWorker({ kind, assets, supervisor }) {
   let stopping;
   let requestActive = false;
 
-  async function* request(op, payload, signal, timeout = 20000) {
+  async function* request(op, payload, signal, timeout = 20000, onSent) {
     if (requestActive) throw fail('VOICE_WORKER_BUSY', '语音组件正在处理上一条请求');
     if (stopping || process.exitCode !== null) throw fail('VOICE_WORKER_CLOSED', '语音组件已退出');
     if (signal?.aborted) throw aborted();
@@ -79,6 +80,7 @@ function makeWorker({ kind, assets, supervisor }) {
     try {
       await awaitChecked(new Promise((resolve, reject) => {
         process.stdin.write(JSON.stringify({ id, op, ...payload }) + '\n', error => error ? reject(error) : resolve());
+        onSent?.();
       }), signal, timeout);
       for (;;) {
         const next = await awaitChecked(lines.next(), signal, timeout);
@@ -150,7 +152,7 @@ function makeWorker({ kind, assets, supervisor }) {
   return { kind, start, stop, request, result, dead: () => process.exitCode !== null };
 }
 
-export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile }) {
+export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile,preflightTimeoutMs=VOICE_PREFLIGHT_TIMEOUT_MS }) {
   let asr;
   let tts;
   let captureActive = false;
@@ -192,12 +194,17 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile }
   async function ensureWorker(kind, packageId, signal, onProgress) {
     if (signal?.aborted) throw aborted();
     onProgress?.({state:'verifying',component:kind});
-    const assets = await resolveAssets(kind, packageId, {signal,onProgress:value=>onProgress?.({...value,state:value.state??value.phase,component:kind})});
+    // The cancellation race belongs inside the serialized operation. Merely
+    // racing engineOperation() leaves stop queued behind a withheld RPC.
+    const assets = await waitVoiceOperation(()=>resolveAssets(kind, packageId, {signal,onProgress:value=>{if(!signal?.aborted)onProgress?.({...value,state:value.state??value.phase,component:kind});}}),signal);
     if (signal?.aborted) throw aborted();
     const prior = kind === 'asr' ? asr : tts;
     if (prior && (prior.dead() || prior.kind !== kind || prior.proof !== assets.proof)) {
       await (kind === 'asr' ? retireAsr() : retireTts());
     }
+    // Retirement is asynchronous. Preparation/capture progress intentionally
+    // ignores old updates, so it cannot serve as the cancellation fence here.
+    signal?.throwIfAborted();assertOpen();
     let worker = kind === 'asr' ? asr : tts;
     if (!worker) {
       onProgress?.({state:'loading',component:kind});
@@ -208,6 +215,7 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile }
         await worker.start(signal);
         if (signal?.aborted) throw aborted();
         worker.initialized = true;
+        onProgress?.({state:'loaded',component:kind});
       } catch (error) {
         await (kind === 'asr' ? retireAsr() : retireTts());
         throw error;
@@ -301,27 +309,33 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile }
     });
   }
 
-  async function* speak({ engine, packageId, characterId, profileId, profileVersion, text, instruction = '', performance, referenceStyle, signal }) {
+  async function* speak({ engine, packageId, characterId, profileId, profileVersion, text, instruction = '', performance, referenceStyle, signal,onPhase }) {
     assertOpen();
     if (!engines.has(engine) || typeof text !== 'string' || !text.trim() || Array.from(text).length > 240 ||
         typeof instruction !== 'string' || Array.from(instruction).length > 500) throw fail('VOICE_TTS_INVALID', '配音请求无效');
     if (speakController) throw fail('VOICE_TTS_BUSY', '配音组件正在处理上一段');
     const controller = speakController = new AbortController();
-    const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const preflight=voicePreflight(signal?AbortSignal.any([signal,controller.signal]):controller.signal,preflightTimeoutMs),combined=preflight.signal,started=globalThis.performance.now();
+    const phase=stage=>{combined.throwIfAborted();if(stage==='model-loading')preflight.pause();else if(stage==='component-check')preflight.resume();else if(stage==='speak-sent')preflight.sent();try{onPhase?.({stage,engine,elapsedMs:Math.round(globalThis.performance.now()-started)});}catch{}};
     let completed = false;
     try {
       if (combined.aborted) throw aborted();
-      const reference = await resolveProfile({ characterId, profileId, profileVersion, engine, performance, referenceStyle });
-      await engineOperation(()=>ensureWorker(engine,packageId,combined));
+      phase('reference-check');
+      const reference = await waitVoiceOperation(()=>resolveProfile({ characterId, profileId, profileVersion, engine, performance, referenceStyle,signal:combined }),combined);
+      phase('component-check');
+      await waitVoiceOperation(()=>engineOperation(()=>ensureWorker(engine,packageId,combined,value=>{if(value.state==='loading')phase('model-loading');else if(value.state==='loaded')phase('component-check');})),combined);
+      combined.throwIfAborted();
       yield { type: 'reference', style: reference.referenceStyle, source: reference.referenceSource };
+      combined.throwIfAborted();let first=true;
       for await (const event of tts.request('speak', {
         text, instruction, reference: { path: reference.path, text: reference.text, language: reference.language },
-      }, combined, 120000)) {
+      }, combined, 120000,()=>phase('speak-sent'))) {
         if (event.type === 'pcm') {
           if (!Number.isSafeInteger(event.sample_rate) || event.sample_rate < 8000 || event.sample_rate > 192000 ||
               typeof event.pcm !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(event.pcm)) throw fail('VOICE_PCM_INVALID', '配音组件返回了无效音频');
           const pcm = Buffer.from(event.pcm, 'base64');
           if (!pcm.length || pcm.length % 2) throw fail('VOICE_PCM_INVALID', '配音组件返回了无效音频');
+          if(first){first=false;phase('first-pcm');}
           yield { type: 'pcm', pcm, sampleRate: event.sample_rate, elapsed: event.elapsed };
         } else {
           const { id, type, ...metrics } = event;
@@ -330,6 +344,7 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile }
         }
       }
     } finally {
+      preflight.close();
       try { if (!completed) await engineOperation(retireTts); }
       finally { speakController = undefined; }
     }
