@@ -352,6 +352,7 @@ export function VoiceChatControls({snapshot,session,scope,placement='legacy',pre
     if(active&&!preparing){const livePhase=presentation?.subtitle?'say':snapshot?.captureState==='processing'?'hear':snapshot?.captureState==='waiting-playback'||presentation?.speaking?'think':'you';return h(VoiceLiveStrip,{phase:livePhase,name:characterName??voiceName(scope?.characterId),partial:snapshot?.partial,onEnd:toggleLive,disabled:stopping});}
     return null;
   }
+  if(placement==='alerts'&&snapshot?.state?.packages?.some(row=>row.installed&&VOICE_PLUGINS.some(plugin=>plugin.id===row.id))===false)return null;
   if(placement==='alerts')return h(VoiceLiveAlert,{kind:microphoneError?'mic':preparing?'loading':replyError&&active?'reply':null,message:snapshot?.error,onRetry:()=>{const latest=session?.snapshot?.()??snapshot;if(canStartLive(latest,scope)){const mode=captureAttempt??snapshot?.captureMode??snapshot?.state?.capture?.mode??'live';onCaptureAttempt?.(mode);return run('starting',()=>session?.start(mode));}},onCancel,onOpen:openSettings});
   if(placement==='legacy')return h('div',{'data-voice-chat-controls':true,style:{display:'flex',flexWrap:'wrap',gap:6,alignItems:'center'}},
     h(VoiceToggle,{snapshot,onToggle:enabled=>session?.configure({enabled})}),

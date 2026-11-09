@@ -16,7 +16,7 @@
 
 **AI Buddy app** (this repository) · [Bilibili Companion plugin](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ Connect plugin](https://github.com/lXiaoSel1/AI-Buddy-QQ) · [Card Games plugin](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) · [Voice plugins](https://github.com/lXiaoSel1/AI-Buddy-Voice)
 
-<!-- ai-buddy-source-version: 2.0.9 -->
+<!-- ai-buddy-source-version: 2.0.10 -->
 **Current release: [v2.0.9](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.9)** · 2.0 added the Extensions center with official plugins, points with a shop, backpack and feeding, and Social & mood; group chat can now run in Auto, with the characters taking turns on their own. 2.0.4 added the table service, so you can install Card Games from Extensions and play Dou Dizhu and Texas Hold'em with your characters. 2.0.5 fixes that page sticking on "Starting" when you switch from the Bilibili or QQ page. 2.0.6 fixes an installer freeze while verifying old profiles. 2.0.7 fixes Bilibili Companion storyboard acquisition on affected CDN routes. 2.0.8 lets you update the app and plugins from Settings. 2.0.9 adds [voice](#voice): install the Breeze or GPT-SoVITS voice plugin from Extensions and her replies are read aloud; in Galgame you can take turns talking with her in Live or record speech into text; MiniMax cloud voice is also available. The 30fps and 60fps editions have the same features. See the [2.0.9 release notes](docs/RELEASE-2.0.9.en.md).
 
 ## Online installer (recommended)
