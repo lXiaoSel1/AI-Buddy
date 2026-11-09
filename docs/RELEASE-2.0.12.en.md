@@ -11,7 +11,7 @@
 ## Verify existing components
 
 - After a plugin upgrade, unchanged component files may need their verification receipt rebound. The UI offers Verify instead of suggesting a full download. Verification is explicit, never automatic.
-- Verification checks existing files without downloading. A failure offers a new download; a zero-byte download total is hidden. Missing files retain the not-ready message.
+- Verification checks existing files without downloading. A failure offers a new download; a zero-byte download total is hidden while Check again stays available on the right. Missing files retain the not-ready message.
 - Components of the other installed engine can be inspected and verified without changing the active engine. Ordinary status reads no longer inspect every model-component file.
 
 ## Extensions and compatibility
