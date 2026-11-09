@@ -16,12 +16,12 @@
 
 **AI Buddy app** (this repository) · [Bilibili Companion plugin](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ Connect plugin](https://github.com/lXiaoSel1/AI-Buddy-QQ) · [Card Games plugin](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) · [Voice plugins](https://github.com/lXiaoSel1/AI-Buddy-Voice)
 
-<!-- ai-buddy-source-version: 2.0.11 -->
-**Current release: [v2.0.11](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.11)** · 2.0 added the Extensions center with official plugins, points with a shop, backpack and feeding, and Social & mood; group chat can now run in Auto, with the characters taking turns on their own. 2.0.4 added the table service, so you can install Card Games from Extensions and play Dou Dizhu and Texas Hold'em with your characters. 2.0.5 fixes that page sticking on "Starting" when you switch from the Bilibili or QQ page. 2.0.6 fixes an installer freeze while verifying old profiles. 2.0.7 fixes Bilibili Companion storyboard acquisition on affected CDN routes. 2.0.8 lets you update the app and plugins from Settings. 2.0.9 adds [voice](#voice): install the Breeze or GPT-SoVITS voice plugin from Extensions and her replies are read aloud; in Galgame you can take turns talking with her in Live or record speech into text; MiniMax cloud voice is also available. The 30fps and 60fps editions have the same features. See the [2.0.11 release notes](docs/RELEASE-2.0.11.en.md).
+<!-- ai-buddy-source-version: 2.0.12 -->
+**Current release: [v2.0.11](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.11)** · 2.0 added the Extensions center with official plugins, points with a shop, backpack and feeding, and Social & mood; group chat can now run in Auto, with the characters taking turns on their own. 2.0.4 added the table service, so you can install Card Games from Extensions and play Dou Dizhu and Texas Hold'em with your characters. 2.0.5 fixes that page sticking on "Starting" when you switch from the Bilibili or QQ page. 2.0.6 fixes an installer freeze while verifying old profiles. 2.0.7 fixes Bilibili Companion storyboard acquisition on affected CDN routes. 2.0.8 lets you update the app and plugins from Settings. 2.0.9 adds [voice](#voice): install the Breeze or GPT-SoVITS voice plugin from Extensions and her replies are read aloud; in Galgame you can take turns talking with her in Live or record speech into text; MiniMax cloud voice is also available. 2.0.10 fixes a voice warning that chat showed when no voice plugin was installed. From 2.0.11 both voice plugins include preset voices for all 11 characters, so she can speak right after setup. 2.0.12 adds a **Her voice** menu to switch back to the preset voice; after a plugin update that keeps the same parts, voice parts already on this PC only need **Verify** instead of a new download; Extensions shows one card per plugin; and Bilibili Companion, QQ Connect and Card Games now declare only the lowest supported app version, so they keep working after app updates. The 30fps and 60fps editions have the same features. See the [2.0.12 release notes](docs/RELEASE-2.0.12.en.md).
 
 ## Online installer (recommended)
 
-**Application version 2.0.11.** Extensions currently offers Bilibili Companion 2.0.14, QQ Connect 2.0.8, Card Games 1.1.3, and the Breeze and GPT-SoVITS voice plugins 1.0.1.
+**Application version 2.0.12.** Extensions currently offers Bilibili Companion 2.0.15, QQ Connect 2.0.9, Card Games 1.1.4, and the Breeze and GPT-SoVITS voice plugins 1.0.2.
 
 [Download the Windows x64 installer 2.0.11](https://github.com/lXiaoSel1/AI-Buddy/releases/download/v2.0.11/AI-Buddy-Setup-2.0.11-win-x64.exe) → choose 30fps / 60fps and characters → it downloads, verifies and installs. The same installer adds characters, repairs files and upgrades.
 
@@ -460,11 +460,11 @@ The Extensions center (sidebar **System → Extensions**) has Discover, Installe
 
 | Plugin | What it does | Guide and source |
 |---|---|---|
-| Bilibili Companion 2.0.14 | Watch Bilibili videos with a character: review the full reading plan first, and after you confirm she reads the sampled frames and the platform subtitles and writes viewing notes. Viewing can be scheduled. New viewings use that character's own chat connection. Posting comments needs separate permission | [AI-Buddy-Bilibili](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) |
-| QQ Connect 2.0.8 | Choose a character to take over your QQ account and answer only the friends and groups you allow; in groups she speaks only when @-mentioned or replied to, by default | [AI-Buddy-QQ](https://github.com/lXiaoSel1/AI-Buddy-QQ) |
-| Card Games 1.1.3 | Play Dou Dizhu and Texas Hold'em (2 to 10 players) with your characters. They use their own bound models, points use the app wallet, and every 3 games add 1 affection. Includes music and table sounds, and with voice on they call out their moves. Requires the app at 2.0.4 or later | [AI-Buddy-Card-Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) |
-| Breeze Voice 1.0.1 | Local voice whose tone follows her mood; needs an NVIDIA GPU with at least 9.5 GiB free memory at start. Can switch to MiniMax cloud voice. Requires the app at 2.0.9 | [AI-Buddy-Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice) |
-| GPT-SoVITS Voice 1.0.1 | Local voice, mainly in a calm tone; needs an NVIDIA GPU with at least 4 GiB free memory at start. Can switch to MiniMax cloud voice. Requires the app at 2.0.9 | [AI-Buddy-Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice) |
+| Bilibili Companion 2.0.15 | Watch Bilibili videos with a character: review the full reading plan first, and after you confirm she reads the sampled frames and the platform subtitles and writes viewing notes. Viewing can be scheduled. New viewings use that character's own chat connection. Posting comments needs separate permission | [AI-Buddy-Bilibili](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) |
+| QQ Connect 2.0.9 | Choose a character to take over your QQ account and answer only the friends and groups you allow; in groups she speaks only when @-mentioned or replied to, by default | [AI-Buddy-QQ](https://github.com/lXiaoSel1/AI-Buddy-QQ) |
+| Card Games 1.1.4 | Play Dou Dizhu and Texas Hold'em (2 to 10 players) with your characters. They use their own bound models, points use the app wallet, and every 3 games add 1 affection. Includes music and table sounds, and with voice on they call out their moves. Requires the app at 2.0.4 or later | [AI-Buddy-Card-Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) |
+| Breeze Voice 1.0.2 | Local voice whose tone follows her mood, with preset voices for all 11 characters; needs an NVIDIA GPU with at least 9.5 GiB free memory at start. Can switch to MiniMax cloud voice. Requires the app at 2.0.11 | [AI-Buddy-Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice) |
+| GPT-SoVITS Voice 1.0.2 | Local voice in a calm tone only, with preset voices for all 11 characters; needs an NVIDIA GPU with at least 4 GiB free memory at start. Can switch to MiniMax cloud voice. Requires the app at 2.0.11 | [AI-Buddy-Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice) |
 
 - The video component Bilibili Companion needs (FFmpeg) is prepared by AI Buddy from a pinned upstream release when you install the plugin, with its source, size and progress shown; a copy that has already been verified is not downloaded again.
 - Use app 2.0.7 for Bilibili Companion's complete reading: earlier versions can fail to get the storyboard from the original video on some CDN routes. Failed viewing records stay. After updating, choose **Watch now** for a new attempt, then review the storyboard and confirm the plan. Media-address, connection and range errors appear under **Technical details**.
@@ -484,7 +484,7 @@ From 2.0.9, AI Buddy can talk. Voice comes from two plugins in Extensions; insta
 
 | | Breeze Voice | GPT-SoVITS Voice |
 |---|---|---|
-| Tone | Follows her mood | Mainly calm |
+| Tone | Follows her mood | Calm only |
 | GPU | NVIDIA, at least 9.5 GiB free memory at start | NVIDIA, at least 4 GiB free memory at start |
 | First download (including the shared speech recognition, decimal GB) | about 11.18 GB | about 6.92 GB |
 
@@ -497,9 +497,9 @@ Once installed and enabled, open **Plugins → Voice** in the sidebar. The pictu
 <img src="docs/images/en-voice-plugin-page.webp" width="720" alt="Voice plugin page: Breeze Voice ready, with character voices, where voices are made (this PC or MiniMax cloud) and parts on this PC (demo data)">
 
 - The tabs at the top switch between the Breeze and GPT-SoVITS pages. Looking does not switch the engine in use.
-- **Character voices**: every character has her own voice. To give her a voice you prepared, switch to her in Galgame first, choose **Use my recording…**, type exactly what is said, then pick a calm WAV recording with only one person speaking. The recording stays on this computer by default and is used only for that character; it is uploaded only if you explicitly agree to cloud cloning. GPT-SoVITS needs a 3–10 second reference (a requirement of the model itself; AI Buddy does not check the length on import).
+- **Character voices**: both plugins include preset voices for all 11 characters, so she can speak right after setup. To give her a voice you prepared instead, switch to her in Galgame first, choose **Use my recording…**, type exactly what is said, then pick a calm WAV recording with only one person speaking. The recording stays on this computer by default and is used only for that character; it is uploaded only if you explicitly agree to cloud cloning. After an import, a **Her voice** menu appears to the left of **Use my recording…**, so you can switch back to the preset voice at any time. GPT-SoVITS needs a 3–10 second reference (a requirement of the model itself; AI Buddy does not check the length on import).
 - **Where voices are made**: "This PC" uploads nothing and costs nothing but uses your GPU; "MiniMax cloud" needs no GPU and is billed by characters.
-- **Parts on this PC**: whether speech recognition and the voice model are ready. Missing parts show "Needs setup"; while preparing, the download progress is shown and continues if you leave the page.
+- **Parts on this PC**: whether speech recognition and the voice model are ready. Missing parts show "Needs setup": click **Download**; progress is shown and continues if you leave the page. After a plugin update that keeps the same parts, files already on this PC show "Needs verification": click **Verify** instead, and nothing is downloaded again. If verification fails (a file is missing or changed), use **Download**.
 
 ### In chat
 
@@ -604,7 +604,7 @@ Development needs Windows x64 and Node.js 24. `npm test` covers pure logic with 
 
 The "installer downloads" badge under the title is updated every 6 hours by [`.github/workflows/installer-download-badge.yml`](.github/workflows/installer-download-badge.yml). It counts only downloads of each version's `AI-Buddy-Setup-*-win-x64.exe`, summed over all versions, and writes the result to the `badges` branch rather than committing to `main`. GitHub does not tell downloaders apart, so test downloads during development count too.
 
-Do not commit `local/`, generated `builds/`, keys, personal CGs or logs. Release notes: [2.0.11](docs/RELEASE-2.0.11.en.md), [2.0.10](docs/RELEASE-2.0.10.en.md), [2.0.9](docs/RELEASE-2.0.9.en.md), [2.0.8](docs/RELEASE-2.0.8.en.md), [2.0.7](docs/RELEASE-2.0.7.en.md), [2.0.6](docs/RELEASE-2.0.6.en.md), [2.0.5](docs/RELEASE-2.0.5.en.md), [2.0.4](docs/RELEASE-2.0.4.en.md), [2.0.3](docs/RELEASE-2.0.3.md), [2.0.2](docs/RELEASE-2.0.2.md), [1.9.2](docs/RELEASE-1.9.2.md), [1.9.0](docs/RELEASE-1.9.0.md). Validation records for earlier versions are also in [`docs/`](docs/).
+Do not commit `local/`, generated `builds/`, keys, personal CGs or logs. Release notes: [2.0.12](docs/RELEASE-2.0.12.en.md), [2.0.11](docs/RELEASE-2.0.11.en.md), [2.0.10](docs/RELEASE-2.0.10.en.md), [2.0.9](docs/RELEASE-2.0.9.en.md), [2.0.8](docs/RELEASE-2.0.8.en.md), [2.0.7](docs/RELEASE-2.0.7.en.md), [2.0.6](docs/RELEASE-2.0.6.en.md), [2.0.5](docs/RELEASE-2.0.5.en.md), [2.0.4](docs/RELEASE-2.0.4.en.md), [2.0.3](docs/RELEASE-2.0.3.md), [2.0.2](docs/RELEASE-2.0.2.md), [1.9.2](docs/RELEASE-1.9.2.md), [1.9.0](docs/RELEASE-1.9.0.md). Validation records for earlier versions are also in [`docs/`](docs/).
 
 ## License and credits
 
