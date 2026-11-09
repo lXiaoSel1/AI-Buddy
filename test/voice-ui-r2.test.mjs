@@ -38,8 +38,23 @@ for(const language of ['zh-CN','en'])test('browsed engine rows show own short pr
   const select=nodes(node).find(row=>row.type==='select');assert.equal(select.props.title,language==='en'?'DeepSeek · Whale-chan · Preset voice':preset.label);assert.equal(React.Children.toArray(select.props.children)[1].props.title,long);
   const failed=nodes(VoiceCharacters({snapshot:{...snapshot,profileSelectionsByPackage:{[id]:{state:'failed'}}},id})).filter(row=>row.props?.className==='vx-cname');assert.ok(failed.every(row=>row.props.children===(language==='en'?'Not checked':'尚未检查')));
   const cases=[['ready','verification-needed',language==='en'?'The GPT-SoVITS voice model needs verification':'GPT-SoVITS 声音模型需要校验'],['verification-needed','ready',language==='en'?'Speech recognition needs verification':'语音识别需要校验'],['verification-needed','verification-needed',language==='en'?'Voice parts need verification':'语音组件需要校验']];
-  for(const [asr,tts,title] of cases){const parts=VoiceParts({snapshot:{...snapshot,componentStatuses:{[id]:{asr:{state:asr,bytes:10},tts:{state:tts,bytes:20}}}},id}),html=renderToStaticMarkup(parts);assert.ok(html.includes(title));assert.ok(html.includes(language==='en'?'Voice works after verification passes; text chat works meanwhile.':'校验通过后才能配音，期间文字聊天照常。'));assert.doesNotMatch(html,/vx-comps-f|Selected download: 0 B|所选组件下载 0 B/);}
+  for(const [asr,tts,title] of cases){const parts=VoiceParts({snapshot:{...snapshot,componentStatuses:{[id]:{asr:{state:asr,bytes:10},tts:{state:tts,bytes:20}}}},id}),html=renderToStaticMarkup(parts);assert.ok(html.includes(title));assert.ok(html.includes(language==='en'?'Voice works after verification passes; text chat works meanwhile.':'校验通过后才能配音，期间文字聊天照常。'));assert.doesNotMatch(html,/Selected download: 0 B|所选组件下载 0 B/);}
   const missing=renderToStaticMarkup(VoiceParts({snapshot:{...snapshot,componentStatuses:{[id]:{asr:{state:'ready'},tts:{state:'missing',downloadBytes:20}}}},id}));assert.ok(missing.includes(language==='en'?'The GPT-SoVITS voice model is not ready':'GPT-SoVITS 声音模型还没准备好'));assert.ok(missing.includes(language==='en'?'Selected download: 20 B':'所选组件下载 20 B'));
+ }finally{setLocale('zh-CN');}
+});
+
+for(const language of ['zh-CN','en'])test('zero-download parts retain an actionable check-again footer without a total in '+language,()=>{
+ setLocale(language);try{
+  const id='ai-buddy.voice-gpt-sovits',calls=[];
+  for(const state of ['ready','verification-needed']){
+   const snapshot={working:false,state:{selectedPackageId:id,settings:{packages:{[id]:{ttsProvider:'local'}}}},componentStatuses:{[id]:{asr:{state,bytes:10,downloadBytes:0},tts:{state,bytes:20,downloadBytes:0}}}};
+   const node=VoiceParts({snapshot,id,onRefresh:()=>calls.push(state)}),footer=nodes(node).find(row=>row.props?.className==='vx-comps-f'),label=language==='en'?'Check again':'重新检查';
+   assert.ok(footer,'checking again remains available when no download is needed');
+   const refresh=nodes(footer).find(row=>row.props?.children===label);assert.ok(refresh);assert.equal(refresh.props.disabled,false);refresh.props.onClick();
+   const html=renderToStaticMarkup(node);assert.ok(html.includes(label));assert.doesNotMatch(html,/Selected download:|所选组件下载|Selected parts, installed:|所选组件展开后/);
+   const working=nodes(VoiceParts({snapshot:{...snapshot,working:true},id})).find(row=>row.props?.children===label);assert.equal(working.props.disabled,true);
+  }
+  assert.deepEqual(calls,['ready','verification-needed']);
  }finally{setLocale('zh-CN');}
 });
 

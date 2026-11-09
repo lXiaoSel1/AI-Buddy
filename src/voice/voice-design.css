@@ -144,6 +144,7 @@
 .vx-comp li>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .vx-comp small{color:var(--buddy-muted);font-size:var(--buddy-fs-cap);line-height:1.45}
 .vx-comps-f{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px}
+.vx-comps-f>.ui-btn{margin-left:auto}
 .vx-tech{margin-top:10px}
 .vx-tech code{display:block;white-space:pre-wrap}
 .vx-compalert{display:flex;align-items:center;gap:12px;margin-top:14px}
