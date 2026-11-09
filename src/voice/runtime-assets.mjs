@@ -9,6 +9,7 @@ import { pluginRelativePath } from '../plugin-manifest.mjs';
 import { renamePluginPath } from '../plugin-files.mjs';
 import {createVoiceAssetVerifier} from './asset-verifier.mjs';
 import {waitVoiceOperation} from './operation-wait.mjs';
+import {voiceAssetRecovery} from './asset-errors.mjs';
 import {voiceAssetDownloadUrl,voiceAssetDownloadStream,parseVoiceAssetDownloads,writeVoiceAsset,checkVoiceAssetDisk,extractVoiceAssetArchive} from './asset-downloads.mjs';
 
 const ids = { breeze: 'ai-buddy.voice-breeze', gpt: 'ai-buddy.voice-gpt-sovits' };
@@ -117,14 +118,7 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
 
   async function checkReady(selected,options={}) {
     options.signal?.throwIfAborted();await checkMarker(selected,options);options.signal?.throwIfAborted();
-    let result;
-    try{result=await verifier.verify(selected,options);}
-    catch(error){
-      if(error.code!=='VOICE_ASSET_CHANGED')throw error;
-      // A just-promoted tree can still have queued Windows notifications.
-      // Retry once from the invalidated proof; continuous change stays closed.
-      options.signal?.throwIfAborted();await checkMarker(selected,options);result=await verifier.verify(selected,options);
-    }
+    const result=await verifier.verify(selected,options);
     options.signal?.throwIfAborted();return result;
   }
 
@@ -136,6 +130,11 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
   }
   const matchingDescriptor=(marker,selected)=>{const old=marker.split(':'),current=selected.proof.split(':');return old.length===4&&old[0]===current[0]&&old[3]===current[3];};
 
+  function rememberFailure(selected,error){
+    const code=error.code==='ENOENT'?'VOICE_ASSET_MISSING':typeof error.code==='string'?error.code:error.name==='AbortError'?'ABORT_ERR':'VOICE_ASSET_VERIFY';
+    verificationFailures.set(selected.proof,{code,...(error.path?{path:error.path}:{})});
+  }
+
   async function status(kind, engineId, options={}) {
     try {
       const selected = await plan(kind, engineId,options);
@@ -145,15 +144,15 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
       // file identity and hash verification remains mandatory in resolve(),
       // before a worker can execute. Settings never enumerate or stat payload
       // members; explicit Verify or the use boundary detects damaged files.
-      const failure=verificationFailures.get(selected.proof);if(failure)return {...base,state:failure==='VOICE_ASSET_MISSING'?'missing':'error',code:failure,verificationFailed:true};
+      const failure=verificationFailures.get(selected.proof);if(failure){const downloadRequired=voiceAssetRecovery(failure.code)==='download';return {...base,...failure,state:downloadRequired?(failure.code==='VOICE_ASSET_MISSING'?'missing':'error'):'verification-needed',verificationFailed:true,downloadRequired};}
       try { await checkMarker(selected,options); }
       catch (error) {
         options.signal?.throwIfAborted();
         if(error.code==='VOICE_ASSET_HASH')try{
           const marker=await installedMarker(selected,options);
-          if(matchingDescriptor(marker,selected))return {...base,state:'verification-needed',code:'VOICE_ASSET_VERIFY_REQUIRED'};
+          if(matchingDescriptor(marker,selected))return {...base,state:'verification-needed',code:'VOICE_ASSET_VERIFY_REQUIRED',downloadRequired:false};
         }catch(cause){options.signal?.throwIfAborted();return {...base,state:cause.code==='ENOENT'||cause.code==='VOICE_ASSET_MISSING'?'missing':'error',code:cause.code};}
-        return { ...base, state: error.code === 'VOICE_ASSET_MISSING' ? 'missing' : 'error', code: error.code };
+        return { ...base, state: error.code === 'VOICE_ASSET_MISSING' ? 'missing' : 'error', code: error.code,downloadRequired:voiceAssetRecovery(error.code)==='download' };
       }
       return { ...base, state: 'ready',verification:'before-use' };
     } catch (error) {
@@ -164,7 +163,7 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
 
   async function resolve(kind, engineId, options={}) {
     options.signal?.throwIfAborted();const selected = await plan(kind, engineId,options);
-    const verificationDetails=await checkReady(selected,options);
+    let verificationDetails;try{verificationDetails=await checkReady(selected,options);verificationFailures.delete(selected.proof);}catch(error){rememberFailure(selected,error);throw error;}
     await waitVoiceOperation(()=>assertPluginTreeNoLinks(selected.cacheRoot),options.signal);
     await waitVoiceOperation(()=>mkdir(selected.cacheRoot, { recursive: true }),options.signal);
     const { descriptor, destination } = selected;
@@ -188,15 +187,16 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
     const report=phase=>reportRow({phase,receivedBytes,totalBytes:selected.total,...(!localRoot?{downloadReceivedBytes,downloadBytes:selected.downloads?.downloadBytes??selected.total}:{})});
     const operation = (async () => {
       if(verifyOnly){
-        const receipt=selected.proofFile+'.'+randomUUID()+'.rebind',temporary=join(selected.destination,'.ready-'+randomUUID()),fresh=createVoiceAssetVerifier({workerPath:verificationWorker});
+        const temporary=join(selected.destination,'.ready-'+randomUUID()),fresh=createVoiceAssetVerifier({workerPath:verificationWorker});
         try{
           const marker=await installedMarker(selected,{signal});if(!matchingDescriptor(marker,selected))throw fault('VOICE_ASSET_HASH','语音组件准备凭据与清单不符');
-          await fresh.verify({...selected,proofFile:receipt},{signal,onProgress:verificationProgress});await flushProgress();await admit();
+          const readProof=marker===selected.proof?undefined:{proof:marker,proofFile:join(dirname(selected.proofFile),digest(Buffer.from(marker+'|'+selected.destination))+'.json')};
+          await fresh.verify({...selected,readProof},{signal,onProgress:verificationProgress});await flushProgress();await admit();
           if(await installedMarker(selected,{signal})!==marker)throw fault('VOICE_ASSET_CHANGED','语音组件凭据在校验中发生变化');
           await writeFile(temporary,selected.proof,{flag:'wx',mode:0o600});await admit();
-          await renamePluginPath(receipt,selected.proofFile);await renamePluginPath(temporary,join(selected.destination,'.ready'));verificationFailures.delete(selected.proof);return {state:'ready',reused:true};
-        }catch(error){if(!signal.aborted)verificationFailures.set(selected.proof,error.code==='ENOENT'?'VOICE_ASSET_MISSING':error.code??'VOICE_ASSET_HASH');throw error;}
-        finally{await fresh.close();await rm(receipt,{force:true});await rm(temporary,{force:true});}
+          await renamePluginPath(temporary,join(selected.destination,'.ready'));verificationFailures.delete(selected.proof);return {state:'ready',reused:true};
+        }catch(error){rememberFailure(selected,error);throw error;}
+        finally{await fresh.close();await rm(temporary,{force:true});}
       }
       try { if(forceDownload)throw fault('VOICE_ASSET_MISSING','需要重新下载');await checkReady(selected,{signal,onProgress:verificationProgress});await flushProgress();await admit();return { state: 'ready', reused: true }; }
       catch (error) {

@@ -1,6 +1,6 @@
 # Build AI Buddy 2.0.11
 
-This guide describes the formal 2.0.12 binary. Development requires Windows x64 and Node.js24. The distributed application does not require a user-installed Node. Use the exact package-lock.json dependency versions.
+This guide describes the formal 2.0.13 binary. Development requires Windows x64 and Node.js24. The distributed application does not require a user-installed Node. Use the exact package-lock.json dependency versions.
 
 ## Application
 

@@ -3384,5 +3384,6 @@
   "所选语音版本缺少相容的共享运行依赖，无法切换": "This voice version has no compatible shared runtime",
   "当前": "Current",
   "回退到 {v}": "Roll back to {v}",
-  "更新方式：自动更新兼容补丁": "Update policy: automatic compatible patches"
+  "更新方式：自动更新兼容补丁": "Update policy: automatic compatible patches",
+  "校验时文件有变动，请再试一次": "Files changed during verification. Please try again."
 }

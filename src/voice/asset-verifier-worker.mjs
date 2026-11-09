@@ -1,14 +1,14 @@
 import {parentPort} from 'node:worker_threads';
 import {createHash,randomUUID} from 'node:crypto';
 import {createReadStream,watch} from 'node:fs';
-import {lstat,readFile,mkdir,writeFile,rename,rm} from 'node:fs/promises';
-import {dirname,join} from 'node:path';
+import {lstat,readFile,mkdir,writeFile,appendFile,rename,rm} from 'node:fs/promises';
+import {dirname,join,relative} from 'node:path';
 import {setImmediate as nextTurn} from 'node:timers/promises';
 import {assertPluginTreeNoLinks} from '../plugin-archive.mjs';
 
 const stamp=info=>[info.dev,info.ino,info.nlink,info.size,info.mtimeNs,info.ctimeNs].join(':');
 const rootIdentity=info=>[info.dev,info.ino].join(':');
-const fault=(code,message)=>Object.assign(Error(message),{code});
+const fault=(code,message,path)=>Object.assign(Error(message),{code,...(path?{path}:{})});
 const plans=new Map(),states=new Map(),controllers=new Map();
 let tail=Promise.resolve();
 
@@ -31,18 +31,39 @@ function observe(destination,identity){
 async function loadProof(selected,state,identity){
   state.loaded=true;
   if(!selected.proofFile)return;
-  try{
-    await assertPluginTreeNoLinks(selected.proofFile);
-    const info=await lstat(selected.proofFile);
-    if(!info.isFile()||info.nlink!==1)return;
-    const value=JSON.parse(await readFile(selected.proofFile,'utf8'));
-    if(value.schemaVersion!==1||value.proof!==selected.proof||value.destination!==selected.destination||value.rootIdentity!==identity||!Array.isArray(value.files)||value.files.length!==selected.files.length)return;
-    const expected=new Map(selected.files.map(file=>[file.path,file.sha256]));
+  const expected=new Map(selected.files.map(file=>[file.path,file.sha256]));
+  const accept=(value,proof,complete)=>{
+    if(value.schemaVersion!==1||value.proof!==proof||value.destination!==selected.destination||value.rootIdentity!==identity||!Array.isArray(value.files)||(complete&&value.files.length!==selected.files.length))return;
+    const accepted=new Map();
     for(const file of value.files){
-      if(!file||expected.get(file.path)!==file.sha256||typeof file.identity!=='string'||state.cache.has(file.path)){state.cache.clear();return;}
-      state.cache.set(file.path,{identity:file.identity,sha256:file.sha256});
+      if(!file||expected.get(file.path)!==file.sha256||typeof file.identity!=='string'||accepted.has(file.path))return;
+      accepted.set(file.path,{identity:file.identity,sha256:file.sha256});
     }
-  }catch{state.cache.clear();}
+    for(const [path,file] of accepted)state.cache.set(path,file);
+  };
+  const read=async path=>{
+    await assertPluginTreeNoLinks(path);const info=await lstat(path);
+    if(!info.isFile()||info.nlink!==1)throw fault('VOICE_ASSET_VERIFY','语音组件校验记录类型无效');
+    return readFile(path,'utf8');
+  };
+  // The only cross-package candidate is derived by the caller from this tree's
+  // exact .ready marker. Never search the receipt directory for a matching hash.
+  if(selected.readProof)try{accept(JSON.parse(await read(selected.readProof.proofFile)),selected.readProof.proof,true);}catch{}
+  try{accept(JSON.parse(await read(selected.proofFile)),selected.proof,true);}catch{}
+  try{
+    const lines=(await read(selected.proofFile+'.partial')).split('\n');
+    // A crash can leave one incomplete final append; earlier lines remain useful.
+    for(const line of lines.slice(0,-1))try{accept(JSON.parse(line),selected.proof,false);}catch{}
+  }catch{}
+}
+
+async function persistProgress(selected,files,identity){
+  if(!selected.proofFile||!files.length)return;
+  const path=selected.proofFile+'.partial';await assertPluginTreeNoLinks(path);await mkdir(dirname(path),{recursive:true});
+  try{const info=await lstat(path);if(!info.isFile()||info.nlink!==1)throw fault('VOICE_ASSET_VERIFY','语音组件校验记录类型无效');}catch(error){if(error.code!=='ENOENT')throw error;}
+  // Append only this batch. Rewriting the accumulated Map every four files is
+  // quadratic for real Python environments with tens of thousands of members.
+  await appendFile(path,JSON.stringify({schemaVersion:1,proof:selected.proof,destination:selected.destination,rootIdentity:identity,files})+'\n',{mode:0o600});
 }
 
 async function persistProof(selected,cache,identity,signal){
@@ -52,7 +73,7 @@ async function persistProof(selected,cache,identity,signal){
   try{
     await writeFile(temporary,JSON.stringify({schemaVersion:1,proof:selected.proof,destination:selected.destination,rootIdentity:identity,
       files:[...cache].map(([path,value])=>({path,...value}))}),{flag:'wx',mode:0o600});
-    signal.throwIfAborted();await rename(temporary,selected.proofFile);
+    signal.throwIfAborted();await rename(temporary,selected.proofFile);await rm(selected.proofFile+'.partial',{force:true});
   }finally{await rm(temporary,{force:true});}
 }
 
@@ -73,36 +94,57 @@ async function verify(id,key,selected,signal){
   const generation=state.generation,cache=new Map(),directories=new Map([[destination,Promise.resolve()]]);
   function directory(path){
     if(directories.has(path))return directories.get(path);
-    const pending=(async()=>{await directory(dirname(path));signal.throwIfAborted();const info=await lstat(path);if(!info.isDirectory()||info.isSymbolicLink())throw fault('VOICE_ASSET_HASH','语音组件目录类型或链接已改变');})();
+    const pending=(async()=>{await directory(dirname(path));signal.throwIfAborted();const info=await lstat(path,{bigint:true});if(!info.isDirectory()||info.isSymbolicLink())throw fault('VOICE_ASSET_HASH','语音组件目录类型或链接已改变',relative(destination,path).replaceAll('\\','/'));return stamp(info);})();
     directories.set(path,pending);return pending;
   }
   let completedFiles=0,receivedBytes=0,lastProgress=0,hashedFiles=0,hashedBytes=0;
   const totalBytes=files.reduce((sum,file)=>sum+file.bytes,0);
   for(let start=0;start<files.length;start+=4){
     signal.throwIfAborted();
+    const completed=[];
     const results=await Promise.allSettled(files.slice(start,start+4).map(async expected=>{
       signal.throwIfAborted();const path=join(destination,expected.path);await directory(dirname(path));
-      let info;try{info=await lstat(path,{bigint:true});}catch(error){if(error.code==='ENOENT')throw fault('VOICE_ASSET_MISSING','语音资源尚未准备');throw error;}
-      if(!info.isFile()||info.nlink!==1n||info.size!==BigInt(expected.bytes))throw fault('VOICE_ASSET_HASH','语音资源大小或类型与清单不符');
+      let info;try{info=await lstat(path,{bigint:true});}catch(error){if(error.code==='ENOENT')throw fault('VOICE_ASSET_MISSING','语音资源尚未准备',expected.path);throw error;}
+      if(!info.isFile()||info.nlink!==1n||info.size!==BigInt(expected.bytes))throw fault('VOICE_ASSET_HASH','语音资源大小或类型与清单不符',expected.path);
       const identity=stamp(info),cached=state.cache.get(expected.path);
       if(cached?.identity!==identity||cached?.sha256!==expected.sha256){
-        const hash=createHash('sha256');for await(const bytes of createReadStream(path,{signal}))hash.update(bytes);
+        const hash=createHash('sha256');try{for await(const bytes of createReadStream(path,{signal}))hash.update(bytes);}catch(error){if(error.code==='ENOENT')throw fault('VOICE_ASSET_CHANGED','语音组件在校验期间发生变化，请重试',expected.path);error.path=expected.path;throw error;}
         signal.throwIfAborted();
-        if(identity!==stamp(await lstat(path,{bigint:true}))||hash.digest('hex')!==expected.sha256)throw fault('VOICE_ASSET_HASH','语音资源摘要与清单不符');
+        let after;try{after=await lstat(path,{bigint:true});}catch(error){if(error.code==='ENOENT')throw fault('VOICE_ASSET_CHANGED','语音组件在校验期间发生变化，请重试',expected.path);throw error;}
+        if(identity!==stamp(after))throw fault('VOICE_ASSET_CHANGED','语音组件在校验期间发生变化，请重试',expected.path);
+        if(hash.digest('hex')!==expected.sha256)throw fault('VOICE_ASSET_HASH','语音资源摘要与清单不符',expected.path);
         hashedFiles++;hashedBytes+=expected.bytes;
       }
-      cache.set(expected.path,{identity,sha256:expected.sha256});completedFiles++;receivedBytes+=expected.bytes;
+      const value={identity,sha256:expected.sha256};cache.set(expected.path,value);state.cache.set(expected.path,value);completed.push({path:expected.path,...value});completedFiles++;receivedBytes+=expected.bytes;
       const now=Date.now();if(completedFiles===1||completedFiles===files.length||now-lastProgress>=100){lastProgress=now;parentPort.postMessage({id,type:'progress',value:{phase:'verifying',completedFiles,totalFiles:files.length,receivedBytes,totalBytes,hashedFiles,hashedBytes}});}
     }));
+    // Finish this small durable append even after cancellation. The parent waits
+    // for our acknowledgement before closing/terminating the worker.
+    await persistProgress(selected,completed,identity);
     const failure=results.find(value=>value.status==='rejected');if(failure){state.checkedGeneration=-1;throw failure.reason;}
   }
   signal.throwIfAborted();
-  const after=await lstat(destination,{bigint:true});await nextTurn();signal.throwIfAborted();
-  if(generation!==state.generation||stamp(root)!==stamp(after)){
-    state.checkedGeneration=-1;throw fault('VOICE_ASSET_CHANGED','语音组件在校验期间发生变化，请重试');
+  await nextTurn();signal.throwIfAborted();
+  const checkedGeneration=state.generation;
+  // Windows reports access-time updates from our own reads. A notification
+  // revokes the fast path, but only non-atime metadata establishes a change.
+  // Unsupported or failed watchers always receive the same closed metadata pass.
+  if(generation!==checkedGeneration||!state.watching){
+    for(const [path,before] of directories)if(path!==destination){
+      signal.throwIfAborted();const name=relative(destination,path).replaceAll('\\','/');let info;
+      try{info=await lstat(path,{bigint:true});}catch(error){if(error.code==='ENOENT')throw fault('VOICE_ASSET_CHANGED','语音组件在校验期间发生变化，请重试',name);throw error;}
+      if(!info.isDirectory()||info.isSymbolicLink()||stamp(info)!==await before)throw fault('VOICE_ASSET_CHANGED','语音组件在校验期间发生变化，请重试',name);
+    }
+    for(const file of files){
+      signal.throwIfAborted();let info;
+      try{info=await lstat(join(destination,file.path),{bigint:true});}catch(error){if(error.code==='ENOENT')throw fault('VOICE_ASSET_CHANGED','语音组件在校验期间发生变化，请重试',file.path);throw error;}
+      if(!info.isFile()||stamp(info)!==cache.get(file.path)?.identity)throw fault('VOICE_ASSET_CHANGED','语音组件在校验期间发生变化，请重试',file.path);
+    }
   }
+  const after=await lstat(destination,{bigint:true});
+  if(stamp(root)!==stamp(after))throw fault('VOICE_ASSET_CHANGED','语音组件在校验期间发生变化，请重试','.');
   await persistProof(selected,cache,identity,signal);signal.throwIfAborted();
-  state.cache=cache;state.identity=identity;state.rootStamp=stamp(after);state.checkedGeneration=generation;
+  state.cache=cache;state.identity=identity;state.rootStamp=stamp(after);state.checkedGeneration=checkedGeneration;
   return {verification:hashedFiles===files.length?'full':'metadata',checkedFiles:completedFiles,hashedFiles,hashedBytes,watching:state.watching};
 }
 parentPort.on('message',message=>{
@@ -114,5 +156,5 @@ parentPort.on('message',message=>{
   tail=tail.then(async()=>{try{
     if(!selected)throw fault('VOICE_ASSET_VERIFY','语音组件校验计划缺失');
     const value=await verify(message.id,message.key,selected,controller.signal);parentPort.postMessage({id:message.id,type:'done',value});
-  }catch(error){const state=states.get(message.key);if(state)state.checkedGeneration=-1;parentPort.postMessage({id:message.id,type:'error',error:{name:error.name,code:error.code??'VOICE_ASSET_VERIFY',message:error.message}});}finally{controllers.delete(message.id);}});
+  }catch(error){const state=states.get(message.key);if(state)state.checkedGeneration=-1;parentPort.postMessage({id:message.id,type:'error',error:{name:error.name,code:error.code??'VOICE_ASSET_VERIFY',message:error.message,...(error.path?{path:error.path}:{})}});}finally{controllers.delete(message.id);}});
 });

@@ -1,3 +1,4 @@
+import {voiceAssetFailureMessage} from './asset-errors.mjs';
 import {join} from 'node:path';
 import {createVoiceRuntime} from './runtime.mjs';
 import {createVoiceAssets} from './runtime-assets.mjs';
@@ -203,7 +204,8 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
         if(row.controller.signal.aborted||row.generation!==assetEpoch||closed||['VOICE_ASSET_CANCELLED','ABORT_ERR'].includes(error.code)||error.name==='AbortError'){
           if(assetOperation===row)publishAssets({state:'cancelled',engineId,provider});return {cancelled:true};
         }
-        publishAssets({state:'failed',engineId,provider,operation,...(kind?{kind}:{}),code:error.code??'VOICE_ASSET_FAILED',message:verifyOnly?'校验没通过，请重新下载':String(error.message)},row);throw verifyOnly?fault('校验没通过，请重新下载','VOICE_ASSET_VERIFY_FAILED'):error;
+        const code=error.code??(verifyOnly?'VOICE_ASSET_VERIFY':'VOICE_ASSET_FAILED'),message=verifyOnly?voiceAssetFailureMessage(code):String(error.message),details=typeof error.path==='string'?{path:error.path}:{};
+        publishAssets({state:'failed',engineId,provider,operation,...(kind?{kind}:{}),code,message,...details},row);throw verifyOnly?Object.assign(fault(message,code),details):error;
       }finally{if(assetOperation===row)assetOperation=undefined;}
     })();return row.task;
   }

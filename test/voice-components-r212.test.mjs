@@ -53,7 +53,7 @@ for(const language of ['zh-CN','en'])test('existing parts show primary Verify be
   const html=renderToStaticMarkup(node);assert.match(html,language==='en'?/Needs verification/:/需要校验/);assert.match(html,language==='en'?/Selected download: 20 B/:/所选组件下载 20 B/);
   const progress={...snapshot,state:{...snapshot.state,assetProgress:{state:'preparing',operation:'verify',phase:'verifying',kind:'asr',engineId:id,receivedBytes:5,totalBytes:10}}};
   assert.match(renderToStaticMarkup(VoiceParts({snapshot:progress,id})),language==='en'?/Verifying · 5 B \/ 10 B/:/正在校验 · 5 B \/ 10 B/);
-  const failed={...snapshot,state:{...snapshot.state,assetProgress:{state:'failed',operation:'verify',kind:'asr',engineId:id},assets:{...snapshot.state.assets,asr:{...snapshot.state.assets.asr,state:'error',verificationFailed:true}}}};
+  const failed={...snapshot,state:{...snapshot.state,assetProgress:{state:'failed',operation:'verify',kind:'asr',engineId:id},assets:{...snapshot.state.assets,asr:{...snapshot.state.assets.asr,state:'error',code:'VOICE_ASSET_HASH',verificationFailed:true}}}};
   assert.match(renderToStaticMarkup(VoiceParts({snapshot:failed,id})),language==='en'?/Verification failed, please download again/:/校验没通过，请重新下载/);
  }finally{setLocale('zh-CN');}
 });
