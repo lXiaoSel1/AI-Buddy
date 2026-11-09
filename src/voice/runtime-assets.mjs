@@ -117,8 +117,15 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
   }
 
   async function checkReady(selected,options={}) {
-    options.signal?.throwIfAborted();await checkMarker(selected,options);options.signal?.throwIfAborted();
-    const result=await verifier.verify(selected,options);
+    options.signal?.throwIfAborted();
+    try{await checkMarker(selected,options);}catch(error){
+      if(error.code==='VOICE_ASSET_HASH'){
+        const marker=await installedMarker(selected,options);
+        if(marker!==selected.proof&&matchingDescriptor(marker,selected))throw fault('VOICE_ASSET_VERIFY_REQUIRED','这台电脑上已经有这些文件，请先校验');
+      }
+      throw error;
+    }
+    options.signal?.throwIfAborted();const result=await verifier.verify(selected,options);
     options.signal?.throwIfAborted();return result;
   }
 
@@ -200,9 +207,6 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
       }
       try { if(forceDownload)throw fault('VOICE_ASSET_MISSING','需要重新下载');await checkReady(selected,{signal,onProgress:verificationProgress});await flushProgress();await admit();return { state: 'ready', reused: true }; }
       catch (error) {
-        if(error.code==='VOICE_ASSET_HASH'){
-          const marker=await installedMarker(selected,{signal});if(marker!==selected.proof&&matchingDescriptor(marker,selected))throw fault('VOICE_ASSET_VERIFY_REQUIRED','这台电脑上已经有这些文件，请先校验');throw error;
-        }
         if (error.code !== 'VOICE_ASSET_MISSING') throw error;
       }
       const { descriptor, destination } = selected;

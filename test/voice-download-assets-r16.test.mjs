@@ -62,7 +62,7 @@ test('cloud first-use downloads only shared runtime and status exposes a small d
 test('same assets in a newly signed plugin reuse verified file identities without a download',async t=>{
   const f=await fixture(t);await f.assets.prepare('asr',{engineId:'breeze'});const original=await f.assets.resolve('asr','breeze'),identity=await stat(original.python);
   f.records.asr.archiveSha256='package-2';
-  await assert.rejects(f.assets.resolve('asr','breeze'),{code:'VOICE_ASSET_HASH'});
+  await assert.rejects(f.assets.resolve('asr','breeze'),{code:'VOICE_ASSET_VERIFY_REQUIRED'});
   const progress=[],result=await f.assets.prepare('asr',{engineId:'breeze',verifyOnly:true,onProgress:row=>progress.push(row)});
   assert.deepEqual(result,{state:'ready',reused:true});assert.equal(f.requests.length,1);
   assert.ok(progress.some(row=>row.phase==='verifying'&&row.completedFiles===2&&row.hashedFiles===0));

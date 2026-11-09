@@ -142,3 +142,57 @@ if(!existsSync(${JSON.stringify(sentinel)})){writeFileSync(${JSON.stringify(sent
   const failed=await assets.status('asr','breeze');assert.equal(failed.state,'verification-needed');assert.equal(failed.downloadRequired,false);assert.equal(failed.code,'VOICE_ASSET_VERIFY');assert.equal(failed.verificationFailed,true);
   await assets.prepare('asr',{engineId:'breeze',verifyOnly:true});assert.equal((await assets.status('asr','breeze')).state,'ready');
 });
+
+test('starting after a registration change requests verification without declaring intact files damaged',async t=>{
+  const f=await fixture(t,{members:8});await f.assets.resolve('asr','breeze');
+  f.record.sourceId='official';f.record.archiveSha256='archive-2';
+  await assert.rejects(f.assets.resolve('asr','breeze'),{code:'VOICE_ASSET_VERIFY_REQUIRED'});
+  const status=await f.assets.status('asr','breeze');assert.equal(status.state,'verification-needed');assert.equal(status.downloadRequired,false);
+  const progress=[];await f.assets.prepare('asr',{engineId:'breeze',verifyOnly:true,onProgress:row=>progress.push(row)});
+  assert.equal(progress.at(-1).hashedFiles,0);assert.equal((await f.assets.status('asr','breeze')).state,'ready');
+});
+
+test('a payload changed after its final metadata read is rejected in the same verification',async t=>{
+  const f=await fixture(t,{members:8,bytes:4096}),verificationWorker=join(f.root,'late-change-worker.mjs'),receipt=join(f.root,'late-change.json');
+  const python=join(f.destination,'python.exe'),later=join(f.destination,'lib/member-1.bin');
+  await writeFile(verificationWorker,`import fs from 'node:fs';import promises from 'node:fs/promises';import {syncBuiltinESMExports} from 'node:module';
+const watch=fs.watch,stat=promises.lstat;let watcher,pythonStats=0,injected=false;
+fs.watch=(...args)=>(watcher=watch(...args));
+promises.lstat=async(path,...args)=>{
+  const value=await stat(path,...args);
+  if(String(path)===${JSON.stringify(python)}&&++pythonStats===2)watcher.emit('change','change','python.exe');
+  if(String(path)===${JSON.stringify(later)}&&pythonStats>=3&&!injected){
+    injected=true;let timer;
+    const notified=new Promise((resolve,reject)=>{timer=setTimeout(()=>reject(Error('No real late-write notification')),2000);watcher.once('change',(type,name)=>resolve({type,path:String(name)}));});
+    await promises.writeFile(${JSON.stringify(python)},Buffer.alloc(4096,99));
+    const event=await notified;clearTimeout(timer);await promises.writeFile(${JSON.stringify(receipt)},JSON.stringify({pythonStats,injected,event}));
+  }
+  return value;
+};syncBuiltinESMExports();await import(${JSON.stringify(new URL('../src/voice/asset-verifier-worker.mjs',import.meta.url).href)});`);
+  const assets=f.open({verificationWorker});let error;
+  try{await assets.prepare('asr',{engineId:'breeze',verifyOnly:true});}catch(cause){error=cause;}
+  const evidence=JSON.parse(await readFile(receipt,'utf8'));t.diagnostic(JSON.stringify(evidence));
+  assert.equal(evidence.injected,true);assert.ok(evidence.pythonStats>=3);assert.equal(evidence.event.type,'change');assert.equal(evidence.event.path,'python.exe');
+  assert.equal(error?.code,'VOICE_ASSET_CHANGED');assert.equal(error?.path,'python.exe');
+});
+
+test('continuous final-pass notifications fail within a bounded number of metadata reviews',{timeout:5000},async t=>{
+  const f=await fixture(t,{members:8,bytes:4096}),verificationWorker=join(f.root,'continuous-change-worker.mjs'),receipt=join(f.root,'continuous-change.json');
+  const python=join(f.destination,'python.exe'),later=join(f.destination,'lib/member-1.bin'),marker=join(f.destination,'.ready');
+  await writeFile(verificationWorker,`import fs from 'node:fs';import promises from 'node:fs/promises';import {syncBuiltinESMExports} from 'node:module';
+const watch=fs.watch,stat=promises.lstat;let watcher,pythonStats=0,passes=0;
+fs.watch=(...args)=>(watcher=watch(...args));
+promises.lstat=async(path,...args)=>{
+  const value=await stat(path,...args);
+  if(String(path)===${JSON.stringify(python)}&&++pythonStats===2)watcher.emit('change','change','python.exe');
+  if(String(path)===${JSON.stringify(later)}&&pythonStats>=3){
+    let timer;const notified=new Promise((resolve,reject)=>{timer=setTimeout(()=>reject(Error('No continuous write notification')),2000);watcher.once('change',(type,name)=>resolve({type,path:String(name)}));});
+    await promises.writeFile(${JSON.stringify(marker)},${JSON.stringify(f.proof)});const event=await notified;clearTimeout(timer);
+    await promises.writeFile(${JSON.stringify(receipt)},JSON.stringify({passes:++passes,event}));
+  }
+  return value;
+};syncBuiltinESMExports();await import(${JSON.stringify(new URL('../src/voice/asset-verifier-worker.mjs',import.meta.url).href)});`);
+  const assets=f.open({verificationWorker});await assert.rejects(assets.prepare('asr',{engineId:'breeze',verifyOnly:true}),{code:'VOICE_ASSET_CHANGED'});
+  const evidence=JSON.parse(await readFile(receipt,'utf8'));t.diagnostic(JSON.stringify(evidence));
+  assert.ok(evidence.passes>0&&evidence.passes<16);assert.equal(evidence.event.type,'change');assert.equal(evidence.event.path,'.ready');
+});

@@ -125,11 +125,10 @@ async function verify(id,key,selected,signal){
   }
   signal.throwIfAborted();
   await nextTurn();signal.throwIfAborted();
-  const checkedGeneration=state.generation;
   // Windows reports access-time updates from our own reads. A notification
   // revokes the fast path, but only non-atime metadata establishes a change.
   // Unsupported or failed watchers always receive the same closed metadata pass.
-  if(generation!==checkedGeneration||!state.watching){
+  async function metadata(){
     for(const [path,before] of directories)if(path!==destination){
       signal.throwIfAborted();const name=relative(destination,path).replaceAll('\\','/');let info;
       try{info=await lstat(path,{bigint:true});}catch(error){if(error.code==='ENOENT')throw fault('VOICE_ASSET_CHANGED','语音组件在校验期间发生变化，请重试',name);throw error;}
@@ -141,9 +140,25 @@ async function verify(id,key,selected,signal){
       if(!info.isFile()||stamp(info)!==cache.get(file.path)?.identity)throw fault('VOICE_ASSET_CHANGED','语音组件在校验期间发生变化，请重试',file.path);
     }
   }
-  const after=await lstat(destination,{bigint:true});
-  if(stamp(root)!==stamp(after))throw fault('VOICE_ASSET_CHANGED','语音组件在校验期间发生变化，请重试','.');
+  let checkedGeneration=generation,reviewPasses=0;
+  async function settle(recheck=false){
+    // Recheck if a later lstat yielded while an already-checked member changed.
+    // Continuous notifications must never turn this into an unbounded retry.
+    while(reviewPasses++<4){
+      signal.throwIfAborted();const observed=state.generation;
+      if(recheck||observed!==checkedGeneration||!state.watching)await metadata();
+      const after=await lstat(destination,{bigint:true});
+      if(stamp(root)!==stamp(after))throw fault('VOICE_ASSET_CHANGED','语音组件在校验期间发生变化，请重试','.');
+      await nextTurn();signal.throwIfAborted();
+      if(observed===state.generation){checkedGeneration=observed;return after;}
+      recheck=true;
+    }
+    throw fault('VOICE_ASSET_CHANGED','语音组件在校验期间持续发生变化，请重试','.');
+  }
+  let after=await settle();
   await persistProof(selected,cache,identity,signal);signal.throwIfAborted();
+  // Receipt I/O also yields. Do not admit changes queued during that write.
+  if(state.generation!==checkedGeneration||!state.watching)after=await settle(true);
   state.cache=cache;state.identity=identity;state.rootStamp=stamp(after);state.checkedGeneration=checkedGeneration;
   return {verification:hashedFiles===files.length?'full':'metadata',checkedFiles:completedFiles,hashedFiles,hashedBytes,watching:state.watching};
 }
