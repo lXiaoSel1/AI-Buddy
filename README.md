@@ -16,12 +16,12 @@
 
 **AI 酱本体**（本仓库） · [B站陪伴插件](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ连接插件](https://github.com/lXiaoSel1/AI-Buddy-QQ) · [一起玩牌插件](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) · [语音插件](https://github.com/lXiaoSel1/AI-Buddy-Voice)
 
-<!-- ai-buddy-source-version: 2.0.11 -->
-**当前版本：[v2.0.11](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.11)** · 2.0 加入了扩展中心和官方插件，还有积分、商店与背包、投喂，以及社交与心情；群聊可以开 Auto，让角色们自己轮流接话。2.0.4 加入了牌桌服务，可以从扩展中心安装「一起玩牌」，和角色打斗地主、德州。2.0.5 修好了它和 B站、QQ 页面切换时卡在「启动中」的问题。2.0.6 修复安装器校验旧存档时卡住的问题。2.0.7 修复 B站陪伴在部分线路无法采集原视频分镜的问题。2.0.8 可以直接在通用设置里更新本体和插件。2.0.9 加入[语音](#语音)：从扩展中心装 Breeze 或 GPT-SoVITS 语音插件，她的回复会读出来；Galgame 里可以开 Live 和她轮流说话，也能录音转成文字；还能改用 MiniMax 云配音。30fps 和 60fps 两版功能相同。见 [2.0.11 更新说明](docs/RELEASE-2.0.11.md)。
+<!-- ai-buddy-source-version: 2.0.12 -->
+**当前版本：[v2.0.11](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.11)** · 2.0 加入了扩展中心和官方插件，还有积分、商店与背包、投喂，以及社交与心情；群聊可以开 Auto，让角色们自己轮流接话。2.0.4 加入了牌桌服务，可以从扩展中心安装「一起玩牌」，和角色打斗地主、德州。2.0.5 修好了它和 B站、QQ 页面切换时卡在「启动中」的问题。2.0.6 修复安装器校验旧存档时卡住的问题。2.0.7 修复 B站陪伴在部分线路无法采集原视频分镜的问题。2.0.8 可以直接在通用设置里更新本体和插件。2.0.9 加入[语音](#语音)：从扩展中心装 Breeze 或 GPT-SoVITS 语音插件，她的回复会读出来；Galgame 里可以开 Live 和她轮流说话，也能录音转成文字；还能改用 MiniMax 云配音。2.0.10 修好了没装语音插件时，聊天页仍显示语音警告的问题。2.0.11 起，两个语音插件都自带 11 位角色的预制声线，装好就能说话。2.0.12 可以在「她的声音」里换回预制声线；插件更新后组件没变时，已经下载过的语音组件点一下「校验」就能继续用，不用重新下载；扩展中心每个插件只显示一张卡；B站陪伴、QQ连接、一起玩牌改成只写最低支持的本体版本，本体升级后照常能用。30fps 和 60fps 两版功能相同。见 [2.0.12 更新说明](docs/RELEASE-2.0.12.md)。
 
 ## 在线安装（推荐）
 
-**本体 2.0.11。** 扩展中心目前提供 B站陪伴 2.0.14、QQ连接 2.0.8、一起玩牌 1.1.3，以及 Breeze 语音和 GPT-SoVITS 语音 1.0.1。
+**本体 2.0.12。** 扩展中心目前提供 B站陪伴 2.0.15、QQ连接 2.0.9、一起玩牌 1.1.4，以及 Breeze 语音和 GPT-SoVITS 语音 1.0.2。
 
 [下载 Windows x64 安装器 2.0.11](https://github.com/lXiaoSel1/AI-Buddy/releases/download/v2.0.11/AI-Buddy-Setup-2.0.11-win-x64.exe) → 选择 30fps / 60fps 和角色 → 自动下载、校验、安装。补装角色、修复和升级也用这个安装器。
 
@@ -460,11 +460,11 @@ AI 酱能找到桌面端运行缓存、Microsoft Store 安装、常见独立安�
 
 | 插件 | 能做什么 | 说明与源码 |
 |---|---|---|
-| B站陪伴 2.0.14 | 和角色一起看 B站视频：先看完整的阅读计划，确认后她按抽帧画面和平台字幕读完，写下观看笔记；也能预约观看。新的观看用这位角色自己的聊天连接。发评论要另外授权 | [AI-Buddy-Bilibili](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) |
-| QQ连接 2.0.8 | 选一位角色接管你的 QQ，只回复你允许的好友和群；群里默认只在被 @ 或被引用时说话 | [AI-Buddy-QQ](https://github.com/lXiaoSel1/AI-Buddy-QQ) |
-| 一起玩牌 1.1.3 | 和角色打斗地主和德州（2 到 10 人）。她们用各自绑定的模型出牌，积分走本体钱包，每打完 3 局好感 +1。有背景音乐、牌桌音效，开了语音还会喊出来。需要本体 2.0.4 或更新 | [AI-Buddy-Card-Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) |
-| Breeze 语音 1.0.1 | 本机配音，能跟着情绪变语气；需要 NVIDIA 显卡，启动时至少 9.5 GiB 空闲显存。也能改用 MiniMax 云配音。需要本体 2.0.9 | [AI-Buddy-Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice) |
-| GPT-SoVITS 语音 1.0.1 | 本机配音，以平静的语气为主；需要 NVIDIA 显卡，启动时至少 4 GiB 空闲显存。也能改用 MiniMax 云配音。需要本体 2.0.9 | [AI-Buddy-Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice) |
+| B站陪伴 2.0.15 | 和角色一起看 B站视频：先看完整的阅读计划，确认后她按抽帧画面和平台字幕读完，写下观看笔记；也能预约观看。新的观看用这位角色自己的聊天连接。发评论要另外授权 | [AI-Buddy-Bilibili](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) |
+| QQ连接 2.0.9 | 选一位角色接管你的 QQ，只回复你允许的好友和群；群里默认只在被 @ 或被引用时说话 | [AI-Buddy-QQ](https://github.com/lXiaoSel1/AI-Buddy-QQ) |
+| 一起玩牌 1.1.4 | 和角色打斗地主和德州（2 到 10 人）。她们用各自绑定的模型出牌，积分走本体钱包，每打完 3 局好感 +1。有背景音乐、牌桌音效，开了语音还会喊出来。需要本体 2.0.4 或更新 | [AI-Buddy-Card-Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) |
+| Breeze 语音 1.0.2 | 本机配音，能跟着情绪变语气，自带 11 位角色的预制声线；需要 NVIDIA 显卡，启动时至少 9.5 GiB 空闲显存。也能改用 MiniMax 云配音。需要本体 2.0.11 | [AI-Buddy-Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice) |
+| GPT-SoVITS 语音 1.0.2 | 本机配音，只有平静的语气，自带 11 位角色的预制声线；需要 NVIDIA 显卡，启动时至少 4 GiB 空闲显存。也能改用 MiniMax 云配音。需要本体 2.0.11 | [AI-Buddy-Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice) |
 
 - B站陪伴需要的视频组件（FFmpeg）在安装插件时由 AI 酱从固定的上游发布版准备，会显示来源、大小和进度；已经核对过的副本不会重复下载。
 - B站陪伴的完整精读建议用本体 2.0.7：更早的版本在部分线路上采集不到原视频分镜。之前失败的观看记录会保留，更新后重新点「现在看」，再预览分镜、确认计划。视频地址、连接和分段响应的故障代码显示在「技术详情」里。
@@ -484,7 +484,7 @@ AI 酱能找到桌面端运行缓存、Microsoft Store 安装、常见独立安�
 
 | | Breeze 语音 | GPT-SoVITS 语音 |
 |---|---|---|
-| 语气 | 能跟着情绪变语气 | 以平静的语气为主 |
+| 语气 | 能跟着情绪变语气 | 只有平静的语气 |
 | 显卡 | NVIDIA，启动时至少 9.5 GiB 空闲显存 | NVIDIA，启动时至少 4 GiB 空闲显存 |
 | 第一次准备时下载（含共用的语音识别，十进制 GB） | 约 11.18 GB | 约 6.92 GB |
 
@@ -497,9 +497,9 @@ AI 酱能找到桌面端运行缓存、Microsoft Store 安装、常见独立安�
 <img src="docs/images/voice-plugin-page.webp" width="720" alt="语音插件页：Breeze 语音已就绪；角色声音列表、在哪里配音（这台电脑 / MiniMax 云端）和本机组件三块（演示数据）">
 
 1. 顶部切换 Breeze 和 GPT-SoVITS 的页面。只是看，不会切换正在用的引擎。
-2. **角色声音**：每位角色有自己的声音。想让她用你准备的声音，先在 Galgame 切到这位角色，再点 **换成我的录音…**：填上录音里说了什么，点 **换成这段录音**，选一段只有一个人说话、语气平静的 WAV 录音。录音默认只保存在这台电脑上，只给这位角色用；只有你明确同意云端克隆时才会上传。GPT-SoVITS 的参考录音要 3–10 秒（这是模型本身的要求，导入时 AI 酱不会替你检查长度）。
+2. **角色声音**：两个插件都自带 11 位角色的预制声线，装好就能说话。想换成你准备的声音，先在 Galgame 切到这位角色，再点 **换成我的录音…**：填上录音里说了什么，点 **换成这段录音**，选一段只有一个人说话、语气平静的 WAV 录音。录音默认只保存在这台电脑上，只给这位角色用；只有你明确同意云端克隆时才会上传。导入以后，**换成我的录音…** 左边会出现 **她的声音** 下拉，随时可以换回预制声线。GPT-SoVITS 的参考录音要 3–10 秒（这是模型本身的要求，导入时 AI 酱不会替你检查长度）。
 3. **在哪里配音**：「这台电脑」不上传、不花钱，用你的显卡；「MiniMax 云端」不占显卡，按字数计费。
-4. **本机组件**：语音识别和声音模型是否就绪。缺组件时，这里会显示「需要准备」；准备时显示下载进度，离开这一页也会继续。
+4. **本机组件**：语音识别和声音模型是否就绪。缺组件时显示「需要准备」，点 **下载** 开始下载，会显示进度，离开这一页也会接着下。插件更新后，如果新版用的还是同一套组件、文件也都在这台电脑上，会显示「需要校验」，点 **校验** 就行，不会重新下载；校验没通过（文件缺了或被改过），再点 **下载**。
 
 ### 在聊天里用
 
@@ -604,7 +604,7 @@ npm start
 
 标题下的「安装器下载」徽章由 [`.github/workflows/installer-download-badge.yml`](.github/workflows/installer-download-badge.yml) 每 6 小时统计一次，只计各版本 `AI-Buddy-Setup-*-win-x64.exe` 的下载次数，累计所有版本；结果写在 `badges` 分支，不会往 `main` 提交。GitHub 不区分下载者，开发测试的下载也算在内。
 
-不要提交 `local/`、生成的 `builds/`、密钥、个人 CG 或日志。更新说明：[2.0.11](docs/RELEASE-2.0.11.md)、[2.0.10](docs/RELEASE-2.0.10.md)、[2.0.9](docs/RELEASE-2.0.9.md)、[2.0.8](docs/RELEASE-2.0.8.md)、[2.0.7](docs/RELEASE-2.0.7.md)、[2.0.6](docs/RELEASE-2.0.6.md)、[2.0.5](docs/RELEASE-2.0.5.md)、[2.0.4](docs/RELEASE-2.0.4.md)、[2.0.3](docs/RELEASE-2.0.3.md)、[2.0.2](docs/RELEASE-2.0.2.md)、[1.9.2](docs/RELEASE-1.9.2.md)、[1.9.0](docs/RELEASE-1.9.0.md)。旧版的验收记录也在 [`docs/`](docs/) 里。
+不要提交 `local/`、生成的 `builds/`、密钥、个人 CG 或日志。更新说明：[2.0.12](docs/RELEASE-2.0.12.md)、[2.0.11](docs/RELEASE-2.0.11.md)、[2.0.10](docs/RELEASE-2.0.10.md)、[2.0.9](docs/RELEASE-2.0.9.md)、[2.0.8](docs/RELEASE-2.0.8.md)、[2.0.7](docs/RELEASE-2.0.7.md)、[2.0.6](docs/RELEASE-2.0.6.md)、[2.0.5](docs/RELEASE-2.0.5.md)、[2.0.4](docs/RELEASE-2.0.4.md)、[2.0.3](docs/RELEASE-2.0.3.md)、[2.0.2](docs/RELEASE-2.0.2.md)、[1.9.2](docs/RELEASE-1.9.2.md)、[1.9.0](docs/RELEASE-1.9.0.md)。旧版的验收记录也在 [`docs/`](docs/) 里。
 
 ## 许可与致谢
 
