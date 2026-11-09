@@ -14,14 +14,14 @@
 
 [简体中文](README.md) · **English**
 
-**AI Buddy app** (this repository) · [Bilibili Companion plugin](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ Connect plugin](https://github.com/lXiaoSel1/AI-Buddy-QQ) · [Card Games plugin](https://github.com/lXiaoSel1/AI-Buddy-Card-Games)
+**AI Buddy app** (this repository) · [Bilibili Companion plugin](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ Connect plugin](https://github.com/lXiaoSel1/AI-Buddy-QQ) · [Card Games plugin](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) · [Voice plugins](https://github.com/lXiaoSel1/AI-Buddy-Voice)
 
 <!-- ai-buddy-source-version: 2.0.9 -->
-**Current release: [v2.0.9](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.9)** · 2.0 added the Extensions center with official plugins, points with a shop, backpack and feeding, and Social & mood; group chat can now run in Auto, with the characters taking turns on their own. 2.0.4 added the table service, so you can install Card Games from Extensions and play Dou Dizhu and Texas Hold'em with your characters. 2.0.5 fixes that page sticking on "Starting" when you switch from the Bilibili or QQ page. 2.0.6 fixes an installer freeze while verifying old profiles. 2.0.7 fixes Bilibili Companion storyboard acquisition on affected CDN routes. The 30fps and 60fps editions have the same features. 2.0.8 connects application and plugin updates in Settings. See the [2.0.9 release notes](docs/RELEASE-2.0.9.en.md).
+**Current release: [v2.0.9](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.9)** · 2.0 added the Extensions center with official plugins, points with a shop, backpack and feeding, and Social & mood; group chat can now run in Auto, with the characters taking turns on their own. 2.0.4 added the table service, so you can install Card Games from Extensions and play Dou Dizhu and Texas Hold'em with your characters. 2.0.5 fixes that page sticking on "Starting" when you switch from the Bilibili or QQ page. 2.0.6 fixes an installer freeze while verifying old profiles. 2.0.7 fixes Bilibili Companion storyboard acquisition on affected CDN routes. 2.0.8 lets you update the app and plugins from Settings. 2.0.9 adds [voice](#voice): install the Breeze or GPT-SoVITS voice plugin from Extensions and her replies are read aloud; in Galgame you can take turns talking with her in Live or record speech into text; MiniMax cloud voice is also available. The 30fps and 60fps editions have the same features. See the [2.0.9 release notes](docs/RELEASE-2.0.9.en.md).
 
 ## Online installer (recommended)
 
-**Application version 2.0.9.** This version supports Card Games 1.0.0 from Extensions.
+**Application version 2.0.9.** Extensions currently offers Bilibili Companion 2.0.14, QQ Connect 2.0.8, Card Games 1.1.3, and the Breeze and GPT-SoVITS voice plugins 1.0.1.
 
 [Download the Windows x64 installer 2.0.9](https://github.com/lXiaoSel1/AI-Buddy/releases/download/v2.0.9/AI-Buddy-Setup-2.0.9-win-x64.exe) → choose 30fps / 60fps and characters → it downloads, verifies and installs. The same installer adds characters, repairs files and upgrades.
 
@@ -46,7 +46,8 @@ AI Buddy (AI 酱) is a Windows desktop app. It only reads your local AI-tool log
 - **Social & mood**: characters have a mood that changes with real interaction. Proactive chat, talking to herself and group Auto are all off by default; turn them on if you want them. When you are busy, you can ask her not to disturb you.
 - **More work, closer bonds**: while AI Buddy runs, new work tokens slowly turn into affection for the current character, and a level-up can produce a commemorative CG.
 - **A transparent desktop pet for each of the 11 characters**: 24 actions each, at 30fps or 60fps. Pat her and she makes a face, she falls asleep after 5 quiet minutes, left-drag walks her along and right-drag throws her. She jumps when a task finishes and reacts when one fails.
-- **Extensions and official plugins**: install [Bilibili Companion](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) (watch Bilibili videos with a character) or [QQ Connect](https://github.com/lXiaoSel1/AI-Buddy-QQ) (let a character answer the QQ friends and groups you allow) or [Card Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) (play Dou Dizhu and Texas Hold'em with your characters) from the Extensions center. Installed plugins are not enabled automatically, and they never sign in, post or call a model on their own.
+- **Extensions and official plugins**: install [Bilibili Companion](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) (watch Bilibili videos with a character), [QQ Connect](https://github.com/lXiaoSel1/AI-Buddy-QQ) (let a character answer the QQ friends and groups you allow), [Card Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) (play Dou Dizhu and Texas Hold'em with your characters) or the [voice plugins](https://github.com/lXiaoSel1/AI-Buddy-Voice) from the Extensions center. Installed plugins are not enabled automatically, and they never sign in, post or call a model on their own.
+- **Voice**: with the Breeze or GPT-SoVITS voice plugin, her replies are read aloud in her own voice, with the text following the playback. In Galgame you can take turns talking with her in Live, or record a few sentences into text and edit them before sending. Each character can use a recording you provide, and MiniMax cloud voice is there when you would rather not use your GPU.
 - **11 character themes, Chinese and English**: colors, backgrounds and ornaments come from each portrait, 5 dark and 6 light. Keep one fixed or let it follow the current character.
 
 ## Quick start
@@ -57,7 +58,7 @@ Five steps get you from the installer to your first chat. The orange numbers in 
 
 <img src="docs/images/en-step-1-installer.webp" width="420" alt="Installer: installation folder, animation edition and initial character, character resources and the Install / Add / Repair button">
 
-**2. Open the app directly.** The r1 installer initializes a fresh local profile automatically and preserves the existing profile during an in-place update. The welcome screen below applies only to a first portable launch. Use the app's import entry when bringing in a different save.
+**2. Open the app directly.** The installer initializes a fresh local profile automatically and preserves the existing profile during an in-place update. The welcome screen below applies only to a first portable launch. Use the app's import entry when bringing in a different save.
 
 <img src="docs/images/step-2-welcome-new-save.webp" width="620" alt="Welcome page (Chinese interface): Create a new save, Import an old save, and the Create a new save and start button">
 
@@ -69,9 +70,9 @@ Five steps get you from the installer to your first chat. The orange numbers in 
 
 ![The "online chat is off" notice in the Galgame dialogue box and the Enable online chat button (Chinese interface)](docs/images/step-4-turn-on-online-chat.webp)
 
-**5. (Optional) Install a plugin.** In the sidebar open ① **Extensions** → ② **Discover**, click ③ **Install…** next to Bilibili Companion, QQ Connect or Card Games, and tick the permissions you want to grant. AI Buddy prepares the components a plugin needs during installation or when you connect; you do not install Node or enter ports. To connect your Bilibili or QQ account afterwards, see each plugin's guide: [Bilibili Companion](https://github.com/lXiaoSel1/AI-Buddy-Bilibili#english) · [QQ Connect](https://github.com/lXiaoSel1/AI-Buddy-QQ#english).
+**5. (Optional) Install a plugin.** In the sidebar open ① **Extensions** → ② **Discover**, click ③ **Install…** next to the plugin you want, and tick the permissions you want to grant. AI Buddy prepares the components a plugin needs during installation, when you connect or when you start it; you do not install Node or enter ports. How to use each plugin afterwards: [Bilibili Companion](https://github.com/lXiaoSel1/AI-Buddy-Bilibili#english) · [QQ Connect](https://github.com/lXiaoSel1/AI-Buddy-QQ#english) · [Card Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games#english) · [Voice](#voice).
 
-<img src="docs/images/step-5-extension-center.webp" width="620" alt="Extensions center, Discover tab (Chinese interface): the official Bilibili Companion 2.0.11 and QQ Connect 2.0.6 plugins with their Install buttons">
+<img src="docs/images/step-5-extension-center.webp" width="620" alt="Extensions center, Discover tab (Chinese interface): official plugins including Bilibili Companion, QQ Connect, Card Games, Breeze Voice and GPT-SoVITS Voice, with their Install buttons (demo data)">
 
 ## What it does
 
@@ -291,6 +292,8 @@ Folder layout after installation:
 ### Update and remove
 
 - Add characters, repair files or switch frame rate: click **Manage character resources** in General settings to open the maintenance tool, or run the same-version installer again. Characters that are not installed show as "Not installed" and open the installer only after you confirm; nothing downloads automatically.
+- In-app updates (since 2.0.8): in General settings, **Version and updates** checks, downloads and prepares a new version; then choose Later or Install and restart. You can keep using the app while it prepares, and it waits for running activity to finish before switching. A very old version without migration support needs one installer run first.
+- Plugin updates: use **Extensions → Updates and maintenance**. Updates are manual by default; you can turn on automatic compatible patches per plugin. An update keeps the plugin's enabled state and data, and new permissions still need your OK. After upgrading from 2.0.8 to 2.0.9, update the voice plugins there from 1.0.0 to 1.0.1; 1.0.0 only works with 2.0.8.
 - Upgrade: run the newer installer. It waits for chat and CG to finish, closes AI Buddy normally, and keeps the previous program version and your personal data.
 - Roll back: click **Roll back** in the installer. It restores the program and launch pointer only and never overwrites newer progress with old saves. An older program that does not support newer data refuses to write it and does not convert or delete it.
 - Remove: click **Uninstall…** in the installer. Personal data is kept by default; you can also tick deleting the default personal data (irreversible). A custom data folder is never deleted. The download cache `%LOCALAPPDATA%\AI Buddy\InstallerCache` stays for resuming and repair; delete it manually if you no longer need it.
@@ -457,9 +460,11 @@ The Extensions center (sidebar **System → Extensions**) has Discover, Installe
 
 | Plugin | What it does | Guide and source |
 |---|---|---|
-| Bilibili Companion 2.0.11 | Watch Bilibili videos with a character: review the full reading plan first, and after you confirm she reads the sampled frames and the platform subtitles and writes viewing notes. Viewing can be scheduled. Posting comments needs separate permission | [AI-Buddy-Bilibili](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) |
-| QQ Connect 2.0.6 | Choose a character to take over your QQ account and answer only the friends and groups you allow; in groups she speaks only when @-mentioned or replied to, by default | [AI-Buddy-QQ](https://github.com/lXiaoSel1/AI-Buddy-QQ) |
-| Card Games 1.0.0 | Play Dou Dizhu and Texas Hold'em (2 to 10 players) with your characters. They use their own bound models, points use the app wallet, and every 3 games add 1 affection. Requires the app at 2.0.4 or later | [AI-Buddy-Card-Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) |
+| Bilibili Companion 2.0.14 | Watch Bilibili videos with a character: review the full reading plan first, and after you confirm she reads the sampled frames and the platform subtitles and writes viewing notes. Viewing can be scheduled. New viewings use that character's own chat connection. Posting comments needs separate permission | [AI-Buddy-Bilibili](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) |
+| QQ Connect 2.0.8 | Choose a character to take over your QQ account and answer only the friends and groups you allow; in groups she speaks only when @-mentioned or replied to, by default | [AI-Buddy-QQ](https://github.com/lXiaoSel1/AI-Buddy-QQ) |
+| Card Games 1.1.3 | Play Dou Dizhu and Texas Hold'em (2 to 10 players) with your characters. They use their own bound models, points use the app wallet, and every 3 games add 1 affection. Includes music and table sounds, and with voice on they call out their moves. Requires the app at 2.0.4 or later | [AI-Buddy-Card-Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) |
+| Breeze Voice 1.0.1 | Local voice whose tone follows her mood; needs an NVIDIA GPU with at least 9.5 GiB free memory at start. Can switch to MiniMax cloud voice. Requires the app at 2.0.9 | [AI-Buddy-Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice) |
+| GPT-SoVITS Voice 1.0.1 | Local voice, mainly in a calm tone; needs an NVIDIA GPU with at least 4 GiB free memory at start. Can switch to MiniMax cloud voice. Requires the app at 2.0.9 | [AI-Buddy-Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice) |
 
 - The video component Bilibili Companion needs (FFmpeg) is prepared by AI Buddy from a pinned upstream release when you install the plugin, with its source, size and progress shown; a copy that has already been verified is not downloaded again.
 - Use app 2.0.7 for Bilibili Companion's complete reading: earlier versions can fail to get the storyboard from the original video on some CDN routes. Failed viewing records stay. After updating, choose **Watch now** for a new attempt, then review the storyboard and confirm the plan. Media-address, connection and range errors appear under **Technical details**.
@@ -467,8 +472,73 @@ The Extensions center (sidebar **System → Extensions**) has Discover, Installe
 - Both plugins connect their accounts by scanning a QR code under **Extensions → Accounts**. Credentials are encrypted by the system on this computer, and a plugin only receives a reference, never the password or cookie itself.
 - Installing, updating or scanning never starts watching, commenting, sending QQ messages or calling a model.
 - Each AI move in Card Games is one model request, sent only when you click "Ask X to play" or turn on AI auto. Rules and settlement live in the app: a model can only propose a move, and an illegal one is never played.
+- Both voice plugins can be installed, but only one runs at a time. An installed voice plugin shows **Start** on the **Installed** tab and **Open** once it is running; turning voice on in Galgame also starts it.
 
 <img src="docs/images/card-games-table.webp" width="720" alt="A ten-seat Card Games Hold'em table: portraits along the top row, round portraits at both ends and the board, with an end-seat character appearing at the lower right on her turn (demo data)">
+
+<img src="docs/images/extension-installed.webp" width="620" alt="Extensions center, Installed tab (Chinese interface): Bilibili Companion, QQ Connect, Card Games and Breeze Voice running, GPT-SoVITS Voice not started with a Start button (demo data)">
+
+## Voice
+
+From 2.0.9, AI Buddy can talk. Voice comes from two plugins in Extensions; install either one:
+
+| | Breeze Voice | GPT-SoVITS Voice |
+|---|---|---|
+| Tone | Follows her mood | Mainly calm |
+| GPU | NVIDIA, at least 9.5 GiB free memory at start | NVIDIA, at least 4 GiB free memory at start |
+| First download (including the shared speech recognition, decimal GB) | about 11.18 GB | about 6.92 GB |
+
+Both plugins share one speech recognizer (CPU only). Both can be installed, but only one local voice engine runs at a time: switching stops the current engine before starting the other. The GPU memory figures are start-up checks, not a promise that every computer can load the model. To keep your GPU free, set "Where voices are made" on the plugin page to **MiniMax cloud**, billed by characters and using your own API key. Components are prepared when first needed: local mode prepares the chosen engine and the shared recognizer, cloud mode prepares only the shared parts and loads no local voice engine, and verified components are reused. Download sizes and component sources are in [AI-Buddy-Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice).
+
+### The voice plugin page
+
+Once installed and enabled, open **Plugins → Voice** in the sidebar. The picture shows local voice with everything ready; missing parts show a setup page first, and MiniMax cloud mode shows cloud voice management:
+
+<img src="docs/images/en-voice-plugin-page.webp" width="720" alt="Voice plugin page: Breeze Voice ready, with character voices, where voices are made (this PC or MiniMax cloud) and parts on this PC (demo data)">
+
+- The tabs at the top switch between the Breeze and GPT-SoVITS pages. Looking does not switch the engine in use.
+- **Character voices**: every character has her own voice. To give her a voice you prepared, switch to her in Galgame first, choose **Use my recording…**, type exactly what is said, then pick a calm WAV recording with only one person speaking. The recording stays on this computer by default and is used only for that character; it is uploaded only if you explicitly agree to cloud cloning. GPT-SoVITS needs a 3–10 second reference (a requirement of the model itself; AI Buddy does not check the length on import).
+- **Where voices are made**: "This PC" uploads nothing and costs nothing but uses your GPU; "MiniMax cloud" needs no GPU and is billed by characters.
+- **Parts on this PC**: whether speech recognition and the voice model are ready. Missing parts show "Needs setup"; while preparing, the download progress is shown and continues if you leave the page.
+
+### In chat
+
+<img src="docs/images/en-voice-chat-speaking.webp" width="720" alt="Galgame private chat: DeepSeek is speaking, the part already read is dimmed, and the voice status at the top right says Speaking (demo data)">
+
+- **Voice** at the right of the top bar shows the state (ready, speaking, Live on). Click it to turn voice on or off and choose the plugin and where voices are made.
+- The microphone left of the input box is **voice input**: when you finish, the recognized text goes into the input box marked as from a recording, so you can edit it first. Nothing is sent automatically.
+- **Live** right of the input box lets you take turns talking with her (below).
+- While the model is still generating, this button is **Stop reply**; once generation ends and she is still reading, it becomes **Stop reading**.
+
+A voiced reply appears in step with the actual playback, and the part already read is dimmed; if voicing fails or times out, the text is shown anyway. Group chat uses the same voice entry, and group Auto waits until the current line's text and audio have finished before the next speaker. Switching between private and group chat stops the line being read but leaves voice switched on.
+
+### Live: take turns talking
+
+After **Live**, you say a line and she answers. The strip shows four stages: you, recognizing, thinking, speaking.
+
+<img src="docs/images/voice-live.webp" width="720" alt="Live in progress (Chinese interface): DeepSeek is speaking, the stage strip is on 'she speaks', with End Live at the right (demo data)">
+
+- ① The current stage. When she finishes, it is your turn again.
+- ② **End Live** ends Live only; it does not send another message.
+
+Live needs a working microphone that Windows allows AI Buddy to use. After you click Live, the needed parts are prepared before the microphone opens, and you can type meanwhile; while the voice model is still loading, the Live button is disabled. If voicing fails or a reply cannot start, Live may end and you need to start it again; replies already saved are kept. Switching chats or pages never reopens the microphone for you.
+
+### Voice in Card Games
+
+With AI Buddy 2.0.9, the Card Games sound menu gains a **Voice** volume. With voice on, an engine prepared and character voices set, the characters call out things like "All in" and "three of a kind" in synthesized speech. Table text waits up to 15 seconds for the audio to start. See [Card Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games#english).
+
+### MiniMax cloud voice
+
+Set "Where voices are made" to **MiniMax cloud** on the plugin page and add a cloud voice configuration (name, model, API key). The key is encrypted on this computer and never shown again; saving a configuration uploads no voices.
+
+- **Change a character's cloud voice**: search the system, cloned and designed voices already in that MiniMax account; only the current character changes.
+- **Prepare cloud voices in bulk**: clone several characters' recordings at once. Before anything starts, a confirmation lists which characters will be uploaded, how many new clones there are and the estimated cost.
+
+<img src="docs/images/voice-cloud-cost.webp" width="420" alt="Confirmation (Chinese interface): upload 3 characters' voices to MiniMax, 3 new clones, clone fee about ¥29.70, activation text synthesis billed separately by characters (demo data)">
+
+No character is selected for paid cloning at first; only the ones you explicitly select and confirm are uploaded. Under MiniMax's official mainland pricing, the standard pay-as-you-go reference price is ¥9.90 per cloned voice, charged the first time it is used; text synthesis is billed separately under MiniMax's character rules, and your account's actual charges are what count. Cancelling only stops later steps; clones or synthesis already submitted may still finish and be charged.
+
+All voice screenshots above are interface demos: the voice state comes from test data, no voice model was loaded and MiniMax was not contacted.
 
 ## Data and privacy
 
@@ -480,6 +550,7 @@ All runtime data lives under `local/data-v003` in the app folder. Treat it as pr
 - `usage-ledger-v2/`: request history (local SQLite), read page by page on demand.
 - `galgame/companion.json`: character cards, personas, conversations, group chats (members, logs, group CGs and backgrounds), long-term memory and personality growth.
 - `galgame/storages/dsh-whale-galgame/global.json`: the Galgame save, including each character's affection, level, CG gallery and background.
+- `voice/`: `settings.json` (voice settings and cloud voice configurations), `profiles/` (your imported reference recordings), `components/` (local voice components, which can take more than ten GB), `cloud/` (cloud voice bindings and preparation records) and `credentials.json` (MiniMax keys encrypted by the system).
 - `galgame/media/`: images stored by content hash, including the avatars, portraits and backgrounds you uploaded.
 - `galgame/drafts.json`: messages you have not sent yet.
 - `galgame/life-archives/`: life archive ZIPs.
@@ -488,6 +559,8 @@ All runtime data lives under `local/data-v003` in the app folder. Treat it as pr
 - `chromium/`, `crash-reports/`: interface cache and crash reports.
 
 Points, food, plugin data and account connections are also kept on this computer. The online installer's download cache is `%LOCALAPPDATA%\AI Buddy\InstallerCache`; it holds only install packages, no personal data.
+
+**When data is written**: from 2.0.9 the two large saves, `companion.json` and `global.json`, are written hourly when they have changed, and also on normal exit and before save inspection, export and import. Settings, drafts, request records, the wallet and the usage databases are still saved immediately. A power cut or a forced kill can lose changes to these two saves made since their last write, so quit AI Buddy with **Exit** in the tray menu.
 
 What leaves your machine:
 
@@ -499,11 +572,12 @@ What leaves your machine:
 - CG prompts go to the image connection you chose. Automatic generation is off by default; with online chat on, designing a CG theme uses one extra chat request carrying the last few lines of conversation and the character profile.
 - A group CG sends the group conversation shown so far, with speaker names, to the prompt planning model and puts it into the image prompt; an uploaded group background is sent to the image connection as a reference image (unless that connection has references turned off).
 - Plugins reach Bilibili or QQ only after you grant permission and enable them; see each plugin's guide for what they send.
+- Local voice and speech recognition run on this computer, and voice input audio is not sent to a voice cloud service; text you send from it goes through the character's chat connection like any message. With MiniMax cloud voice, the text to be read is sent to MiniMax. Reference recordings are uploaded only when you explicitly agree to cloud cloning (for one character or in bulk), with verification text when the API requires it, which may cost money. Voice components are downloaded from a pinned inventory and checked against their sizes and SHA-256.
 - Online quotas only query services you enabled.
 - The price catalog downloads public prices from models.dev only when you update manually or enable daily updates. No logs are sent.
 - External requests from the interface renderer are always blocked.
 
-Release packages contain no developer profile, keys, chats, personal CGs, logs or browser data. The 2.0.3 screenshots in this README come from an independent demo profile: usage figures and project names are synthetic, chat replies come from a local test service, and the installer's folder shows an example path. Pictures marked "1.9.2 screenshot" are kept from the earlier README; their CGs were generated on the spot with the developer's local Codex. None of them reflect real account usage or conversations. Check project paths and account details before sharing logs, exports or screenshots. If you keep AI Buddy inside a Git repository, add `local/` to that repository's `.gitignore`.
+Release packages contain no developer profile, keys, chats, personal CGs, logs, private recordings or browser data. The 2.0.9 voice and Extensions screenshots in this README were taken with the 2.0.9 interface code and demo data: the voice state comes from test data, and no voice model was loaded and MiniMax was not contacted. The 2.0.3 screenshots come from an independent demo profile: usage figures and project names are synthetic, chat replies come from a local test service, and the installer's folder shows an example path. Pictures marked "1.9.2 screenshot" are kept from the earlier README; their CGs were generated on the spot with the developer's local Codex. None of them reflect real account usage or conversations. Check project paths and account details before sharing logs, exports or screenshots. If you keep AI Buddy inside a Git repository, add `local/` to that repository's `.gitignore`.
 
 ## Known limitations
 
@@ -513,6 +587,8 @@ Release packages contain no developer profile, keys, chats, personal CGs, logs o
 - The **Work tasks** page and the "Work and collaboration" plugin in the Extensions center are still being polished; this release does not publish their source or packages. Existing local task records are kept on upgrade.
 - Card Games has been run in a real window with a synthetic model, including official installation and full games. Real-model playing strength, lines and waiting times have not had a full review.
 - The 2.0.7 Bilibili route fix was checked in a real window with the official plugin, a local CDN stub and real FFmpeg. It has not yet been retested on the network where the problem was reported.
+- Local voice needs an NVIDIA GPU (CUDA). After release, discovering the plugins from the catalog, installing the shared parts and the Breeze plugin, and fully preparing the shared speech recognition were checked in a fresh isolated profile. A full trial on a fresh physical computer, real loading and synthesis with both voice models, MiniMax billing, microphones and long listening sessions have not been accepted yet. The 15-second wait for audio at the card table still needs calibrating on real computers.
+- A report that the pet disappears after being clicked while a Bilibili video is full screen, needing an AI Buddy restart, has not been reproduced yet. Dragging, landing and docking the pet across stacked displays or displays with different scaling still need real multi-monitor checks.
 - The app is not commercially code-signed.
 
 ## Development
