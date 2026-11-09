@@ -3,13 +3,14 @@ import {t} from '../i18n.mjs';
 import {VoiceIcon} from './design-icons.mjs';
 import {PET_CHARACTERS} from '../pet-characters.mjs';
 import {themeAsset} from '../appearance.mjs';
+import {voiceProfileLabel} from './profile-label.mjs';
 
 const h=React.createElement;
 export function cloudIcon(name,size=16){
   return VoiceIcon(name,{size});
 }
 export const cloudCharacterId=row=>row?.characterId??row?.id;
-export const cloudCharacterLabel=row=>row?.label??row?.name??t(PET_CHARACTERS.find(item=>item.id===cloudCharacterId(row))?.name??cloudCharacterId(row)??'角色');
+export const cloudCharacterLabel=row=>voiceProfileLabel(row)??row?.name??t(PET_CHARACTERS.find(item=>item.id===cloudCharacterId(row))?.name??cloudCharacterId(row)??'角色');
 export function CloudCharacterFace({row}){
   const id=cloudCharacterId(row),builtin=PET_CHARACTERS.some(item=>item.id===id);
   return h('span',{className:'mk-face vx-cface','aria-hidden':true},builtin?h('img',{src:'./'+themeAsset(id,'head.webp'),alt:''}):cloudCharacterLabel(row).slice(0,1));

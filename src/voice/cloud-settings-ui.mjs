@@ -88,7 +88,7 @@ export function CloudVoiceBatchStatus({batch,design=false}){
   return h('div',{'data-cloud-batch':true,'aria-live':'polite'},
     h('p',{role:'status'},stageLabel(batch.state??batch.status),total>0?' · '+t('本批角色：{count}').replace('{count}',String(total)):''),
     Object.keys(counts).length>0&&h('p',{className:'ws-muted'},...Object.entries(counts).filter(([,count])=>typeof count==='number'&&count>0).map(([stage,count],i)=>h('span',{key:stage},(i?' · ':'')+stageLabel(stage)+' '+count))),
-    items.length>0&&h('ul',{className:'settings-note'},...items.map((row,i)=>h('li',{key:row.characterId??row.id??i},(row.label??row.name??row.characterId??t('角色'))+' · '+((row.state??row.status??row.stage)==='reuse-existing'?t('已复用'):stageLabel(row.state??row.status??row.stage)),(row.message||row.code)?' · '+(row.message||accountReasons[row.code]?cloudVoiceError(row):row.code):''))),
+    items.length>0&&h('ul',{className:'settings-note'},...items.map((row,i)=>h('li',{key:row.characterId??row.id??i},cloudCharacterLabel(row)+' · '+((row.state??row.status??row.stage)==='reuse-existing'?t('已复用'):stageLabel(row.state??row.status??row.stage)),(row.message||row.code)?' · '+(row.message||accountReasons[row.code]?cloudVoiceError(row):row.code):''))),
     batch.message&&h('p',{role:batch.state==='failed'?'alert':'status',className:'settings-note'},cloudVoiceError(batch)));
 }
 

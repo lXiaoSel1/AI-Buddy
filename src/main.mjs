@@ -729,7 +729,7 @@ app.whenReady().then(async()=>{
   provider=new ModelRouter({codex,dataRoot,crypto:safeStorage,outputLimit:()=>settings.preferences?.maxOutputTokens??8192,searchPolicy:request=>game?.r95?.searchPolicy(request)??false,onNativeSearch:event=>game?.r95?.recordNativeSearch(event),legacy:existsSync(settingsStore.target+'.snapshots'),onActivity:internalActivity,onChange:()=>broadcastSettings(),onUsage:usage=>{appendFileSync(join(dataRoot,'api-usage.jsonl'),JSON.stringify(usage)+'\n');worker?.postMessage({type:'refresh'});},audit});
   await provider.ready;
   chatPreferences=createChatPreferences({provider,read:()=>settings.preferences,write:preferences=>settingsStore.writeText(JSON.stringify({...settings,preferences})),apply:preferences=>{settings.preferences=preferences;},serialize:serializeSettings,audit});
-  const publishPlugins=value=>{const snapshot=plugins?.snapshot()??value;if(panel&&!panel.isDestroyed())panel.webContents.send('plugins:update',snapshot);if(Array.isArray(snapshot?.dsh?.installed))pluginEmbed?.recordsChanged(snapshot.dsh.installed);};
+  const publishPlugins=value=>{const snapshot=plugins?.snapshot()??value;if(panel&&!panel.isDestroyed())panel.webContents.send('plugins:update',snapshot);if(Array.isArray(snapshot?.dsh?.installed))pluginEmbed?.recordsChanged(snapshot.dsh.installed);void voiceHost?.refreshPresetPackages();};
   const legacyPlugins=await createPluginMaintenanceClient({runnerPath:join(build,'plugin-maintenance.cjs'),root,dataRoot,appVersion,busy:async()=>!!agents?.busy(),onUpdate:publishPlugins});
   pluginUsage=createPluginUsageRecorder({dataRoot,onRecorded:()=>worker?.postMessage({type:'refresh'})});
   agents=createWorkPluginGate({dataRoot,build,verifyOwnerAuthority:(...args)=>{if(!game?.r95)throw Error('主人授权服务尚未就绪');return game.r95.owner.verifyProof(...args);},getPlatform:()=>plugins,getGame:()=>game,getProvider:()=>provider,binaryResolver:binary,audit,automaticWorkAllowed,
@@ -753,6 +753,7 @@ app.whenReady().then(async()=>{
     onNotification:async value=>{audit({type:'plugin-notification',...value});if(value.kind==='social-activity'&&!value.clear&&value.title){const title=String(value.title).slice(0,80),seen=recentPluginActivity.findIndex(row=>row.pluginId===value.pluginId&&row.title===title);if(seen>=0)recentPluginActivity.splice(seen,1);recentPluginActivity.unshift({pluginId:value.pluginId,title,at:Date.now()});recentPluginActivity.splice(5);}if(value.kind==='social-activity'&&settings.preferences?.petVisible!==false)petEvent({kind:'social-activity',value});if(panel&&!panel.isDestroyed())panel.webContents.send('plugins:notification',value);},
   });
   plugins.setWorkClientOpener(()=>agents.open());
+  void voiceHost.refreshPresetPackages();
   const embedRecord=target=>plugins.snapshot().dsh.installed.find(value=>value.packageName===EMBED_TARGETS[target].packageName);
   pluginEmbed=createPluginEmbed({WebContentsView,getPanel:()=>panel,recordFor:embedRecord,backgroundColor:()=>windowBackground(resolvedTheme(settings.preferences,themeCharacter)),
     onState:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send(EMBED_EVENT,value);},

@@ -173,7 +173,7 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
     if(closed)throw error('插件平台已关闭','PLUGIN_CLOSED');
     const prior=bridge.grants.get(id);bridge.grants.set({pluginId:id,declared:record.declaredCapabilities??[],granted:record.grantedCapabilities??[],enabled:true,generation:Math.max((prior?.generation??0)+1,record.generation??1)});grantStates.set(id,state);
   }
-  const voiceAuthority=voice&&createVoicePackageAuthority({manager:legacyManager,runnerPath:join(build,'plugin-runner.cjs'),voiceTestFingerprint,quiesce:voice.quiesce});
+  const voiceAuthority=voice&&createVoicePackageAuthority({manager:legacyManager,runnerPath:join(build,'plugin-runner.cjs'),voiceTestFingerprint,quiesce:voice.quiesce,onChanged:()=>onUpdate(platform?.snapshot())});
   const voiceStatus=()=>voiceAuthority?.status()??[];
   const communityManager=voiceAuthority?{...legacyManager,action:voiceAuthority.action,prepareOffline:voiceAuthority.prepareOffline}:legacyManager;
   const community=await createCommunityService({root,dataRoot,legacyManager:communityManager,voiceEnabled:!!voiceAuthority,voiceTestFingerprint,dshBackend,automaticWorkAllowed,maintenanceAdmission,hostDependencies:{plan:value=>dependencyCoordinator.plan(value),run:value=>dependencyCoordinator.run(value)},busy:(key,ref,activationPlugin)=>dependencyCoordinator?.preparing()||componentChanging||(activationPlugin?communityCalls>0||bridge.busy(activationPlugin)||[...taskToolBackends].some(b=>b.usesPlugin(activationPlugin)):inflight>0||taskToolBackends.size>0||bridge.busy()||busy()),onUpdate:value=>onUpdate(platform?.snapshot()??value),onPackageState,onOpenClient:(descriptor,{external=false}={})=>external?clientHost.external(descriptor):clientHost.open(descriptor,{surface:embedScope.getStore()?.surface??null,panel:embedScope.getStore()?.panel??null}),onOpenExternal:openExternal});
@@ -350,6 +350,7 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
     // Host-only read ports. These are not renderer action names or plugin RPCs.
     voicePackageStatus:voiceStatus,
     async resolveVoicePackage(id,options){if(!voiceAuthority)throw error('语音宿主未启用','VOICE_HOST_UNAVAILABLE');return voiceAuthority.resolveVoicePackage(id,options);},
+    async resolveVoicePresetPackage(id){if(!voiceAuthority)throw error('语音宿主未启用','VOICE_HOST_UNAVAILABLE');return voiceAuthority.resolveVoicePresetPackage(id);},
     resolveDshInstalled:packageKey=>community.resolveDshInstalled(packageKey),
     resolveTrustedSource:sourceId=>community.resolveTrustedSource(sourceId),
     snapshot:()=>({...withLocalCard(community.snapshot()),...voiceSnapshot(),hostDependencies:dependencyCoordinator.snapshot(),mediaComponents:{ffmpeg:ffmpegManager.snapshot()},dshComponent:dshComponentState,platform:{version:'buddy-bridge-v1',activeCalls:inflight,activeTaskToolRuntimes:taskToolBackends.size,registeredPages:[...pages.values()].map(v=>({pluginId:v.pluginId,id:v.descriptor.id,title:v.descriptor.title??v.descriptor.id})),nativeClients:[...clientHost.snapshot(),...cardClientHost.snapshot()],workClients:workClientHost?.snapshot()??[]}}),

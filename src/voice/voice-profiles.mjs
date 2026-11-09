@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { assertPluginTreeNoLinks } from '../plugin-archive.mjs';
-import { writeAtomic } from '../atomic-write.mjs';
+import { writeAtomic, writeAtomicAsync } from '../atomic-write.mjs';
+import { PET_CHARACTERS } from '../pet-characters.mjs';
 
 const styles = ['calm', 'happy', 'sad', 'angry'];
 const engines = ['breeze', 'gpt'];
@@ -11,6 +12,7 @@ const maxReferenceBytes = 16 * 1024 * 1024;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const invalid = (message, code = 'VOICE_PROFILE_INVALID') => Object.assign(new Error(message), { code });
 const validId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(value) && !['__proto__', 'constructor', 'prototype'].includes(value);
+export const voicePresetReceiptKey = row => JSON.stringify([row.sourceId,row.id,row.version,row.archiveSha256]);
 
 function validateWav(bytes) {
   if (bytes.length < 44 || bytes.toString('ascii', 0, 4) !== 'RIFF' || bytes.toString('ascii', 8, 12) !== 'WAVE') {
@@ -42,7 +44,8 @@ function validateWav(bytes) {
 function publicProfile(row) {
   return { id: row.id, version: row.version, characterId: row.characterId, engine: row.engine, label: row.label,
     availableReferences: styles.filter(style => Object.hasOwn(row.references, style)),
-    ...(row.cloudVoiceId ? { cloudVoiceId: row.cloudVoiceId } : {}) };
+    ...(row.cloudVoiceId ? { cloudVoiceId: row.cloudVoiceId } : {}),
+    ...(row.bundledPreset ? { bundledPreset: { bundleId: row.bundledPreset.bundleId, version: row.bundledPreset.version } } : {}) };
 }
 
 export function createVoiceProfiles({ dataRoot }) {
@@ -77,6 +80,86 @@ export function createVoiceProfiles({ dataRoot }) {
     scope(params);
     const state = await load();
     return Object.values(state.profiles).filter(row => row.characterId === params.characterId && row.engine === params.engine).map(publicProfile);
+  }
+
+  async function hasBundledPresets(receiptKey) {
+    return Object.hasOwn((await load()).bundledPresets??{},receiptKey);
+  }
+
+  // Only the trusted host supplies this non-activating, signed-package lease.
+  // The index is the sole visibility boundary for rows, selections and receipt.
+  function ensureBundledPresets({lease,receiptKey}) {
+    return serialize(async()=>{
+      const fail=message=>invalid(message,'VOICE_PRESET_INVALID');
+      lease.assertCurrent();
+      if(receiptKey!==voicePresetReceiptKey({sourceId:lease.sourceId,id:lease.manifest.id,version:lease.version,archiveSha256:lease.archiveSha256}))throw fail('预制声线包身份无效');
+      if(await hasBundledPresets(receiptKey))return {imported:0,reused:true};
+      const manifest=lease.manifest,engine=manifest.id==='ai-buddy.voice-breeze'?'breeze':manifest.id==='ai-buddy.voice-gpt-sovits'?'gpt':null;
+      if(!engine)throw fail('预制声线引擎无效');
+      const declared=manifest.files.find(row=>row.path==='presets/index.json');
+      if(!declared)return {imported:0,missing:true};
+      async function boundFile(file,maximum){
+        const binding=manifest.files.find(row=>row.path===file);
+        if(!binding||!Number.isSafeInteger(binding.bytes)||binding.bytes<1||binding.bytes>maximum)throw fail('预制声线文件未绑定到签名清单');
+        const location=join(lease.directory,file);await assertPluginTreeNoLinks(location);
+        const info=await lstat(location);if(!info.isFile()||info.nlink!==1||info.size!==binding.bytes)throw fail('预制声线文件大小无效');
+        const bytes=await readFile(location);if(bytes.length!==binding.bytes||digest(bytes)!==binding.sha256)throw fail('预制声线文件校验失败');
+        lease.assertCurrent();return {bytes,binding};
+      }
+      const {bytes:indexBytes}=await boundFile('presets/index.json',1024*1024);
+      let index;try{index=JSON.parse(indexBytes.toString('utf8'));}catch{throw fail('预制声线清单无效');}
+      if(index?.schemaVersion!==1||index.bundleId!=='ai-buddy.character-voices-r04'||index.version!==1||index.engine!==engine||!Array.isArray(index.profiles)||index.profiles.length!==PET_CHARACTERS.length)throw fail('预制声线清单身份无效');
+      const seen=new Set(),prepared=[];
+      for(const input of index.profiles){
+        const {characterId,label,references,cloudReference}=input??{};
+        if(!PET_CHARACTERS.some(row=>row.id===characterId)||seen.has(characterId)||typeof label!=='string'||!label.trim()||label.length>80||!references?.calm||Object.keys(references).length!==1||!cloudReference)throw fail('预制声线角色或参考无效');
+        seen.add(characterId);const stored={},audio={};
+        for(const [style,ref] of [['calm',references.calm],['cloud',cloudReference]]){
+          if(!ref||typeof ref.file!=='string'||!/^presets\/audio\/[a-zA-Z0-9_-]+\.wav$/.test(ref.file)||typeof ref.text!=='string'||!ref.text.trim()||ref.text.length>500||!languages.includes(ref.language)||!Number.isFinite(ref.durationMs)||ref.durationMs<=0)throw fail('预制声线参考路径或文字无效');
+          const {bytes,binding}=await boundFile(ref.file,maxReferenceBytes);
+          if(ref.bytes!==binding.bytes||ref.sha256!==binding.sha256)throw fail('预制声线参考与签名清单不匹配');
+          let durationMs;try{({durationMs}=validateWav(bytes));}catch{throw fail('预制声线 WAV 无效');}
+          if(Math.abs(durationMs-ref.durationMs)>1||(engine==='gpt'&&style==='calm'&&(durationMs<3000||durationMs>10000)))throw fail('预制声线参考时长无效');
+          stored[style]={text:ref.text.trim(),language:ref.language,bytes:bytes.length,sha256:binding.sha256,durationMs};audio[style]=bytes;
+        }
+        const identity=[index.bundleId,index.version,engine,characterId],id='preset-'+digest(JSON.stringify(identity));
+        const contentSha256=digest(JSON.stringify([label.trim(),stored]));
+        prepared.push({row:{id,version:1,characterId,engine,label:label.trim(),references:stored,bundledPreset:{bundleId:index.bundleId,version:index.version,engine,contentSha256,packageId:manifest.id,packageVersion:lease.version,sourceId:lease.sourceId,archiveSha256:lease.archiveSha256}},audio});
+      }
+      lease.assertCurrent();
+      const state=await load(),newRows=[];
+      for(const item of prepared){
+        const existing=state.profiles[item.row.id];
+        if(existing){if(existing.bundledPreset?.contentSha256!==item.row.bundledPreset.contentSha256)throw fail('同一预制声线版本的内容已改变');}
+        else newRows.push(item);
+      }
+      await assertPluginTreeNoLinks(root);await mkdir(root,{recursive:true});
+      const staging=join(root,'.presets-'+randomUUID()),promoted=[];let committed=false;
+      await mkdir(staging);
+      try{
+        for(const {row,audio} of newRows){
+          const dir=join(staging,row.id);await mkdir(dir);
+          for(const [style,bytes] of Object.entries(audio))await writeFile(join(dir,style+'.wav'),bytes,{flag:'wx',mode:0o600});
+        }
+        lease.assertCurrent();
+        for(const {row} of newRows){
+          const dir=join(root,row.id);await assertPluginTreeNoLinks(dir);
+          // Never overwrite an existing (including abandoned) profile directory.
+          // A unique storage suffix makes interrupted imports safely retryable.
+          row.storageId='preset-data-'+randomUUID();const destination=join(root,row.storageId);
+          await rename(join(staging,row.id),destination);promoted.push(destination);
+          const key=scope(row),empty=!Object.hasOwn(state.selections,key)&&!Object.values(state.profiles).some(old=>old.characterId===row.characterId&&old.engine===row.engine);
+          state.profiles[row.id]=row;if(empty)state.selections[key]=row.id;
+        }
+        state.bundledPresets??={};state.bundledPresets[receiptKey]={bundleId:index.bundleId,version:index.version,engine,profileIds:prepared.map(item=>item.row.id)};
+        lease.assertCurrent();
+        await writeAtomicAsync(indexPath,JSON.stringify(state),{renameImpl:async(source,target)=>{lease.assertCurrent();await rename(source,target);}});
+        committed=true;return {imported:newRows.length,reused:newRows.length===0};
+      }finally{
+        await rm(staging,{recursive:true,force:true});
+        if(!committed)for(const dir of promoted)await rm(dir,{recursive:true,force:true});
+      }
+    });
   }
 
   async function current(params) {
@@ -158,13 +241,14 @@ export function createVoiceProfiles({ dataRoot }) {
     const source = params.engine === 'breeze' ? 'performance' :
       eligible && manual ? 'manual' : eligible && params.performance?.source === 'model' ? 'automatic' : 'neutral-fallback';
     const ref = row.references[style];
-    const file = join(root, id, style + '.wav');
+    const storageId=validId(row.storageId)?row.storageId:id;
+    const file = join(root, storageId, style + '.wav');
     await assertPluginTreeNoLinks(file);
     const info = await lstat(file);
     if (!info.isFile() || info.size !== ref.bytes || info.size > maxReferenceBytes ||
         digest(await readFile(file)) !== ref.sha256) throw invalid('声音参考文件校验失败', 'VOICE_REFERENCE_CHANGED');
     const cloud=row.references.cloud??row.references.calm;
-    const cloudPath=join(root,id,(row.references.cloud?'cloud':'calm')+'.wav');
+    const cloudPath=join(root,storageId,(row.references.cloud?'cloud':'calm')+'.wav');
     await assertPluginTreeNoLinks(cloudPath);
     const cloudInfo=await lstat(cloudPath),cloudBytes=await readFile(cloudPath);
     if(!cloudInfo.isFile()||cloudInfo.size!==cloud.bytes||digest(cloudBytes)!==cloud.sha256)throw invalid('云声音参考校验失败','VOICE_REFERENCE_CHANGED');
@@ -175,5 +259,5 @@ export function createVoiceProfiles({ dataRoot }) {
       referenceStyle:style,referenceSource:source };
   }
 
-  return { list, current, select, importProfile, resolve };
+  return { list, current, select, importProfile, resolve, hasBundledPresets, ensureBundledPresets };
 }

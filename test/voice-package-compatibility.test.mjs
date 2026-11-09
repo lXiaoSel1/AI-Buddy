@@ -79,10 +79,14 @@ test('both 1.0.0 voice engines remain supported with their exact 1.0.0 shared de
 
 test('voice engine support rejects other generations and inexact or mismatched shared dependencies', () => {
   for (const id of [breeze, gpt]) {
-    for (const [version, dependency] of [['1.0.0', '1.0.1'], ['1.0.1', '1.0.0'], ['1.0.0', '^1.0.0'], ['1.0.1', '^1.0.1'], ['1.0.2', '1.0.2']]) {
+    for (const [version, dependency] of [['1.0.0', '1.0.1'], ['1.0.1', '1.0.0'], ['1.0.0', '^1.0.0'], ['1.0.1', '^1.0.1'], ['1.0.2', '1.0.1'], ['1.0.2', '^1.0.2'], ['1.0.3', '1.0.3']]) {
       assert.equal(supportsVoiceManifest(manifest(id, version, dependency)), false, `${id}@${version} -> ${dependency}`);
     }
   }
+});
+
+test('both 1.0.2 voice engines are supported only with their exact 1.0.2 shared dependency', () => {
+  for (const id of [breeze, gpt]) assert.equal(supportsVoiceManifest(manifest(id, '1.0.2')), true, id);
 });
 
 for (const version of ['1.0.0', '1.0.1']) test(`the host can enable and lease both ${version} engines with their ${version} shared runtime`, async t => {

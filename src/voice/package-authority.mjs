@@ -8,7 +8,7 @@ const packageIds=Object.keys(VOICE_ENGINES);
 
 /** Runtime leases are scoped to the signed Buddy package and its exact shared
  * dependency. Maintenance revokes leases before touching the registry. */
-export function createVoicePackageAuthority({manager,runnerPath,processFactory,voiceTestFingerprint,quiesce=async()=>{}}) {
+export function createVoicePackageAuthority({manager,runnerPath,processFactory,voiceTestFingerprint,quiesce=async()=>{},onChanged=()=>{}}) {
   let closed=false;
   const generations=new Map(),changing=new Set(),plans=new Map(),commands=new Map();
   const host=runnerPath ? createPluginHost({runnerPath,processFactory,services:{commands:{register({id},callback){
@@ -36,11 +36,11 @@ export function createVoicePackageAuthority({manager,runnerPath,processFactory,v
               !satisfiesVersionRange(snapshot.apiVersion,current.manifest.apiRange))state='incompatible';
       else if(!shared || shared.current!==current.manifest.dependencies[VOICE_SHARED_PACKAGE] || (shared.sourceId??LEGACY_SOURCE_ID)!==sourceId)state='missing-dependency';
       else if(row.activation && !row.activation.usable)state=row.activation.state==='disabled'?'verification-failed':row.activation.state;
-      return {id,engine:VOICE_ENGINES[id].engine,installed:!!row,enabled:row?.enabled===true,usable:state==='ready',state,sourceId,version,archiveSha256:current?.archive?.sha256??null};
+      return {id,engine:VOICE_ENGINES[id].engine,installed:!!row,enabled:row?.enabled===true,usable:state==='ready',state,sourceId,version,archiveSha256:current?.archive?.sha256??null,generation:generations.get(id)??0};
     });
   }
 
-  async function resolveVoicePackage(id,{provider='local'}={}) {
+  async function resolvePackage(id,{provider='local',preset=false}={}) {
     if(!isVoiceEnginePackage(id))throw fault('未知的语音包身份','VOICE_PACKAGE_INVALID');
     if(!VOICE_PROVIDERS.includes(provider))throw fault('不支持的配音方式','VOICE_PROVIDER_INVALID');
     const generation=generations.get(id)??0;
@@ -51,7 +51,7 @@ export function createVoicePackageAuthority({manager,runnerPath,processFactory,v
     const current=status().find(row=>row.id===id);
     if(current.state==='source-untrusted')throw fault('此来源未获准运行语音引擎','VOICE_SOURCE_UNAUTHORIZED');
     if(current.state==='source-disabled')throw fault('扩展来源已停用或移除','PLUGIN_SOURCE_DISABLED');
-    const packageRecord=await manager.resolveInstalled(id,{requireEnabled:true});
+    const packageRecord=await manager.resolveInstalled(id,{requireEnabled:!preset});
     checkGeneration();
     if(!supportsVoiceManifest(packageRecord.manifest))throw fault('语音包接口与宿主不匹配','VOICE_PACKAGE_INVALID');
     if(packageRecord.sourceId!==LEGACY_SOURCE_ID){
@@ -67,14 +67,19 @@ export function createVoicePackageAuthority({manager,runnerPath,processFactory,v
       throw fault('共享语音运行包不匹配','VOICE_PACKAGE_INVALID');
     if(provider==='minimax' && !shared.manifest.files.some(file=>file.path===VOICE_CLOUD_WORKER))
       throw fault('共享运行包不包含签名的云配音模块，请更新语音插件','VOICE_CLOUD_UNAVAILABLE');
+    if(preset){
+      const snapshot=manager.snapshot();
+      if(![packageRecord,shared].every(row=>satisfiesVersionRange(snapshot.appVersion,row.manifest.appRange)&&satisfiesVersionRange(snapshot.apiVersion,row.manifest.apiRange)))
+        throw fault('预制声线包与宿主版本不匹配','VOICE_PACKAGE_INVALID');
+    }
     const assertCurrent=()=>{
       checkGeneration();
       const visible=status().find(row=>row.id===id);
-      if(!visible.usable || visible.sourceId!==packageRecord.sourceId || visible.version!==packageRecord.version || visible.archiveSha256!==packageRecord.archiveSha256)
+      if(!(preset?['ready','disabled'].includes(visible.state):visible.usable) || visible.sourceId!==packageRecord.sourceId || visible.version!==packageRecord.version || visible.archiveSha256!==packageRecord.archiveSha256)
         throw fault('语音包状态已改变','VOICE_PACKAGE_CHANGED');
     };
     assertCurrent();
-    if(host){
+    if(host&&!preset){
       const spec=VOICE_ENGINES[id];
       try {
         await host.activate({manifest:packageRecord.manifest,directory:packageRecord.directory,dataDirectory:packageRecord.dataDirectory,event:`onCommand:voice.${spec.engine}`});
@@ -92,6 +97,9 @@ export function createVoicePackageAuthority({manager,runnerPath,processFactory,v
     }
     return {...packageRecord,shared,provider,assertCurrent};
   }
+
+  const resolveVoicePackage=(id,{provider='local'}={})=>resolvePackage(id,{provider});
+  const resolveVoicePresetPackage=id=>resolvePackage(id,{preset:true});
 
   function affected(request) {
     const {action,id,sourceId,planId}=request;
@@ -129,6 +137,9 @@ export function createVoicePackageAuthority({manager,runnerPath,processFactory,v
       return await manager.action(request);
     } finally {
       for(const id of targets)changing.delete(id);
+      // Manager updates can arrive before the maintenance fence is released.
+      // Publish once more now so the host can import the settled generation.
+      try{onChanged();}catch{}
     }
   }
 
@@ -145,5 +156,5 @@ export function createVoicePackageAuthority({manager,runnerPath,processFactory,v
     finally { await host?.stopAll(); }
   }
 
-  return {action,prepareOffline,resolveVoicePackage,status,close};
+  return {action,prepareOffline,resolveVoicePackage,resolveVoicePresetPackage,status,close};
 }

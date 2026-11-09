@@ -1,7 +1,7 @@
 import {join} from 'node:path';
 import {createVoiceRuntime} from './runtime.mjs';
 import {createVoiceAssets} from './runtime-assets.mjs';
-import {createVoiceProfiles} from './voice-profiles.mjs';
+import {createVoiceProfiles,voicePresetReceiptKey} from './voice-profiles.mjs';
 import {createVoiceSettings,mergeVoiceSettings} from './settings.mjs';
 import {createCloudVoiceGateway} from './cloud-host.mjs';
 import {createVoiceCredentials} from './credentials.mjs';
@@ -40,7 +40,42 @@ export function trustedVoiceSender(event,panel){
  * companion service; neither a voice package nor an IPC payload supplies them. */
 export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=()=>{},chooseAssets,chooseReference,audit=()=>{},components={}}){
   const settings=components.settings??createVoiceSettings({dataRoot});
-  const profiles=components.profiles??createVoiceProfiles({dataRoot});
+  const storedProfiles=components.profiles??createVoiceProfiles({dataRoot});
+  const presetTasks=new Map(),presetPending=new Set(),presetResults=new Map();let presetsStarted=false,presetsClosed=false;
+  function refreshPresetPackages(){
+    presetsStarted=true;
+    const platform=getPlatform();
+    if(presetsClosed||!storedProfiles.ensureBundledPresets||!platform?.resolveVoicePresetPackage)return Promise.resolve([]);
+    // Cache failures for one maintenance generation; persistent receipts keep their package identity.
+    const tasks=[],rows=platform.voicePackageStatus()??[],taskKey=row=>JSON.stringify([...JSON.parse(voicePresetReceiptKey(row)),row.generation??0]);
+    const current=new Set(rows.map(taskKey));
+    for(const key of presetTasks.keys())if(!current.has(key)){presetTasks.delete(key);presetResults.delete(JSON.parse(key)[1]);}
+    for(const row of rows){
+      if(!row.installed||!['ready','disabled'].includes(row.state))continue;
+      const key=taskKey(row),receiptKey=voicePresetReceiptKey(row);
+      if(!presetTasks.has(key)){
+        const publish=result=>{if(presetTasks.get(key)===task)presetResults.set(row.id,result);};
+        const task=Promise.resolve().then(async()=>{
+          if(presetsClosed)return;
+          if(await storedProfiles.hasBundledPresets(receiptKey)){publish({state:'ready'});return;}
+          const lease=await platform.resolveVoicePresetPackage(row.id),assertCurrent=lease.assertCurrent;
+          lease.assertCurrent=()=>{if(presetsClosed)throw fault('语音预制声线导入已取消','VOICE_PACKAGE_CHANGED');assertCurrent();};
+          const result=await storedProfiles.ensureBundledPresets({lease,receiptKey});
+          publish({state:result.missing?'not-provided':'ready'});
+        }).catch(error=>{publish({state:'failed',code:error.code??'VOICE_PRESET_INVALID'});audit({type:'voice-presets',packageId:row.id,code:error.code??'VOICE_PRESET_INVALID'});});
+        presetTasks.set(key,task);presetPending.add(task);void task.then(()=>presetPending.delete(task),()=>presetPending.delete(task));
+      }
+      tasks.push(presetTasks.get(key));
+    }
+    return Promise.all(tasks);
+  }
+  async function waitForPresets(engine){
+    if(!presetsStarted)refreshPresetPackages();
+    const id=ids.find(id=>engineFor(id)===engine);
+    // Await only already scheduled work. State polling and synthesis never scan packages.
+    await Promise.all([...presetTasks].filter(([key])=>!id||JSON.parse(key)[1]===id).map(([,task])=>task));
+  }
+  const profiles={...storedProfiles,...Object.fromEntries(['list','current','resolve'].filter(op=>typeof storedProfiles[op]==='function').map(op=>[op,async params=>{await waitForPresets(params?.engine);return storedProfiles[op](params);}]))};
   const credentials=components.credentials??createVoiceCredentials({dataRoot,crypto});
   const supervisor=components.supervisor??createManagedProcessSupervisor({guardPath:join(build,'managed-process-guard.exe'),statePath:join(dataRoot,'voice','processes.json'),onState:value=>audit({type:'voice-process',...value})});
   const resolvePackage=(...args)=>getPlatform().resolveVoicePackage(...args);
@@ -268,7 +303,7 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
       const profile=scope&&engine?await profiles.current({characterId:scope.characterId,engine}):null;
       let cloudState={state:'not-selected'};
       if(value.speechProvider==='minimax'&&scope&&profile)cloudState=await cloud.status({...scope,engine,packageId:value.selectedPackageId,profileId:profile.id,profileVersion:profile.version});
-      return {...publicResult(value),profile,cloud:cloudState,...await cloudGateway.state(),assetProgress};
+      return {...publicResult(value),profile,cloud:cloudState,...await cloudGateway.state(),assetProgress,presetPackages:Object.fromEntries(presetResults)};
     }
     if(op==='assets-cancel'){await Promise.allSettled([cancelAssets()]);return {cancelled:true};}
     if(cloudGateway.handles(op))return cloudGateway.action(op,payload);
@@ -324,11 +359,11 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
     let available=true;try{assertVoiceOpen();await cardSelection();}catch{available=false;}
     return {available,...cards.presentation?.(request)};
   }
-  return {action,controller,assets,profiles,settings,runtime,cloud,cardEvent,cardPresentation,
+  return {action,controller,assets,profiles,settings,runtime,cloud,cardEvent,cardPresentation,refreshPresetPackages,
     busy:()=>!!stopping||!!stopFailure||!!assetOperation||cloudOperations.size>0||cardAdmissions>0||cards.busy()||controller.busy?.()===true,
     microphoneAllowed:()=>microphone,
     snapshot:()=>({microphoneAuthorized:microphone,cardSpeechBusy:cards.busy()}),
     quiesce:()=>stopAll('package-maintenance'),
-    async close(){try{closed=true;voiceEpoch++;microphone=false;cardEpoch++;const pendingAssets=cancelAssets('closed');await runtime.stopEngine?.();await Promise.allSettled([...cloudOperations,pendingAssets]);await cardTail;const results=await Promise.allSettled([cards.close(),controller.close()]);const failed=results.find(value=>value.status==='rejected');if(failed)throw failed.reason;await runtime.close?.();await supervisor.close();}finally{await assets.close?.();}},
+    async close(){try{presetsClosed=true;closed=true;voiceEpoch++;microphone=false;cardEpoch++;const pendingAssets=cancelAssets('closed');await Promise.allSettled(presetPending);await runtime.stopEngine?.();await Promise.allSettled([...cloudOperations,pendingAssets]);await cardTail;const results=await Promise.allSettled([cards.close(),controller.close()]);const failed=results.find(value=>value.status==='rejected');if(failed)throw failed.reason;await runtime.close?.();await supervisor.close();}finally{await assets.close?.();}},
   };
 }
