@@ -66,7 +66,7 @@ test('community update row identifies the compatible release needed after a host
 });
 
 const officialFixture = new URL('./fixtures/official-registration/', import.meta.url);
-async function officialSetup(t, {legacy = false, tamper, interruptMigration = false, mutateAfterInterruption} = {}) {
+async function officialSetup(t, {legacy = false, tamper, interruptMigration = false, mutateAfterInterruption, trustedKeys, remote = new Map()} = {}) {
   const root = await mkdtemp(join(tmpdir(), 'official-registration-212-')), dataRoot = join(root, 'data');
   const control = join(root, 'local/plugins'), id = 'ai-buddy.voice-shared-runtime';
   await mkdir(dataRoot, {recursive: true});
@@ -88,7 +88,8 @@ async function officialSetup(t, {legacy = false, tamper, interruptMigration = fa
     await writeFile(join(dataRoot, 'plugins', id, 'keep.json'), 'original voice settings');
   }
   let downloads = 0, manager;
-  const config = {root, dataRoot, appVersion: '2.0.12', fetchImpl: async url => {
+  const config = {root, dataRoot, appVersion: '2.0.12', trustedKeys, fetchImpl: async url => {
+    if(remote.has(url))return Response.json(remote.get(url));
     if (url === OFFICIAL_SOURCE_CATALOG_URL) return Response.json(envelope);
     const item = catalog.packages.find(item => item.archive.url === url);
     if (!item) return new Response('', {status: 404});
@@ -108,6 +109,29 @@ async function officialSetup(t, {legacy = false, tamper, interruptMigration = fa
   t.after(async () => {await manager.close(); await rm(root, {recursive: true, force: true});});
   return {root, dataRoot, id, envelope, config, get downloads() {return downloads;}, get manager() {return manager;}, async restart() {await manager.close(); manager = await createPluginManager(config);}};
 }
+
+test('old-extension search filters voice before pagination and keeps official Kimi plus third-party and legacy packages',async t=>{
+  const {privateKey,publicKey}=generateKeyPairSync('ed25519'),key='ssh-ed25519 '+Buffer.concat([field('ssh-ed25519'),field(publicKey.export({type:'spki',format:'der'}).subarray(-32))]).toString('base64');
+  const signed=(id,packages)=>{const payload={schemaVersion:1,id,generatedAt:'2026-11-09T00:00:00Z',packages:packages.map(({bytes,...item})=>item)};return {payload,signature:{algorithm:'ed25519',keyId:'fixture',value:sign(null,Buffer.from(canonicalPluginJson(payload)),privateKey).toString('base64')}};};
+  const remote=new Map(),f=await officialSetup(t,{trustedKeys:{fixture:publicKey},remote});
+  const old=fixturePackage('1.0.0','^1.9.0');old.manifest={...old.manifest,id:'example.legacy-tool',name:'Legacy tool'};
+  await f.manager.loadCatalog(signed('old.fixture',[old]));
+  await f.manager.loadCatalog(f.envelope);
+  remote.set('https://old-third.example/source.json',{schemaVersion:1,id:'third.fixture',name:'Third-party old extensions',keyId:'fixture',publicKey:key,catalogUrl:'https://old-third.example/catalog.json'});
+  remote.set('https://old-third.example/catalog.json',signed('third.fixture',[fixturePackage('1.0.0','^1.9.0')]));
+  const preview=await f.manager.action({action:'sources-preview',url:'https://old-third.example/source.json'});
+  await f.manager.action({action:'sources-add',previewId:preview.previewId,keyFingerprint:preview.source.keyFingerprint});
+  const expected=[['official','ai-buddy.kimi-engine'],['official','ai-buddy.kimi-runtime'],['legacy','example.legacy-tool'],[preview.source.sourceId,'ai-buddy.kimi-engine']].sort();
+  const pages=[];
+  for(let page=1;page<=4;page++){
+    const value=await f.manager.action({action:'search',excludeVoice:true,page,pageSize:1});
+    assert.equal(value.total,4);assert.equal(value.items.length,1);pages.push([value.items[0].sourceId,value.items[0].manifest.id]);
+  }
+  assert.deepEqual(pages.sort(),expected);
+  const official=await f.manager.action({action:'search',excludeVoice:true,sourceId:'official'});
+  assert.deepEqual(official.items.map(row=>row.manifest.id).sort(),['ai-buddy.kimi-engine','ai-buddy.kimi-runtime']);
+  assert.equal((await f.manager.action({action:'search'})).items.filter(row=>row.manifest.id.startsWith('ai-buddy.voice-')).length,2,'unfiltered APIs retain both 2.x engines');
+});
 
 test('verified old official registration migrates with enabled previous and original data across restart', async t => {
   const f = await officialSetup(t, {legacy: true});

@@ -3381,5 +3381,8 @@
   "已安装的另一语音引擎没有相容的成套版本，无法切换": "The other installed voice engine has no matching release; this version cannot be selected",
   "语音引擎存在重复来源登记，不能安全切换成套版本": "The voice engine is registered under multiple sources; a coordinated version change is unsafe",
   "此版本不在当前已验证来源目录中，无法切换": "This version is absent from the current verified source catalog",
-  "所选语音版本缺少相容的共享运行依赖，无法切换": "This voice version has no compatible shared runtime"
+  "所选语音版本缺少相容的共享运行依赖，无法切换": "This voice version has no compatible shared runtime",
+  "当前": "Current",
+  "回退到 {v}": "Roll back to {v}",
+  "更新方式：自动更新兼容补丁": "Update policy: automatic compatible patches"
 }

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { PluginCenter } from "./plugin-center.mjs";
+import { PluginCenter, PluginInstallPlanDialog } from "./plugin-center.mjs";
+import { InstalledVoicePluginRow } from "./community-installed-voice.mjs";
 import { SocialAccounts } from "./social-accounts-ui.mjs";
 import { pluginErrorText, pluginResult } from "./plugin-center-helpers.mjs";
 import { locale, t as coreT } from "./i18n.mjs";
@@ -15,7 +16,7 @@ import { pluginName, workText, releaseNotes, legacyText, formatBytes } from "./c
 import { EMBED_TARGETS, embedCapable, embedTargetFor } from "./plugin-embed-targets.mjs";
 import { isVoiceEnginePackage, VOICE_SHARED_PACKAGE } from './voice/package-contract.mjs';
 import {useVoiceSession} from './voice/client.mjs';
-import {VoicePackageRow,CommunityMaintenanceConfirmation} from './voice/shell-design.mjs';
+import {CommunityMaintenanceConfirmation} from './voice/shell-design.mjs';
 const h = React.createElement;
 const t = (value) => locale() === "en" ? communityMessages[value] ?? coreT(value) : coreT(value);
 const tn = (key, n) => communityCount(key, n, t);
@@ -159,6 +160,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
   const [offlinePreview, setOfflinePreview] = useState(null), [reviewCandidates, setReviewCandidates] = useState(null), [catalogLoading, setCatalogLoading] = useState(false);
   const mediaChecked=useRef(false),mounted = useRef(false), searchGeneration = useRef(0), detailGeneration = useRef(0), continuation = useRef(null);
   const [legacyUpdate, setLegacyUpdate] = useState(null);
+  const [voiceVersionPlan, setVoiceVersionPlan] = useState(null);
   const updateSummary = state?.community?.pluginUpdates;
   const checkedAt = updateSummary?.checkedAt ?? null, updates = checkedAt ? updateSummary.updates ?? [] : null;
   const say = (text, values) => setNotice(fill(t(text), values));
@@ -520,9 +522,16 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
           open && h(Menu, { label: t("更多"), className: "ext-menu-r", onClose: () => setMenuFor(null), items }))));
   }
   // B4 keep: an installed 1.9-era extension is listed as it is (Kimi 1.0.0 stays 「不兼容」 and is managed under Sources).
+  async function prepareVoiceVersion(version) {
+    setVoiceVersionPlan(await call({action:'plan',sourceId:version.sourceId??'legacy',requests:[{id:version.manifest.id,version:version.manifest.version}]}));
+  }
+  async function installVoiceVersion() {
+    const selected=voiceVersionPlan;setVoiceVersionPlan(null);
+    await call({action:'install',planId:selected.planId});
+  }
   function legacyRow(row) {
     const m = row.manifest, key = legacyUpdateKey(row.sourceId ?? "legacy", m.id), policy = state?.community?.updatePolicies?.[key] ?? "manual", pending = updates?.find(value => value.packageKey === key), text = legacyText(m, { official: ["official", "legacy"].includes(row.sourceId ?? "legacy") }), incompatible = row.compatible === false;
-    if(isVoiceEnginePackage(m.id))return h(VoicePackageRow,{key,row:{...row,updatePolicy:policy},record:installedRecord(m.id,row.sourceId),snapshot:voiceSession.snapshot,session:voiceSession.session.current,call,run,busy,menuOpen:menuFor===key,onMenu:open=>setMenuFor(open?key:null),onOpen:id=>openPage({packageName:id}),onConfirm:setConfirm,onUpdate:pending?()=>setTab('updates'):null});
+    if(isVoiceEnginePackage(m.id))return h(InstalledVoicePluginRow,{key,row:{...row,updatePolicy:policy},record:installedRecord(m.id,row.sourceId),snapshot:voiceSession.snapshot,session:voiceSession.session.current,call,run,busy,menuOpen:menuFor===key,onMenu:open=>setMenuFor(open?key:null),onOpen:id=>openPage({packageName:id}),onConfirm:setConfirm,onVersionSelect:version=>void run(()=>prepareVoiceVersion(version)),onUpdate:pending?()=>setTab('updates'):null});
     return h("article", { className: "ws-card ext-irow", key: key, "data-legacy-installed": m.id },
       h("span", { className: "ext-logo", style: { "--pl": "44px" }, "aria-hidden": true }, Icon(m.kind === "runtime" ? "terminal" : "bolt", { size: 22 })),
       h("div", { className: "ext-ir-main" }, h("div", { className: "ext-row" }, h("b", null, text.name), h("span", { className: "ext-cap" }, m.version), incompatible ? h(StatusPill, { tone: "warn" }, t("不兼容")) : h(StatusPill, { tone: row.enabled ? "ok" : "idle" }, t(row.enabled ? "已启用" : "已安装")), h("span", { className: "ws-tag" }, t("旧扩展")), pending && h("button", { type: "button", className: "ws-tag ext-tagbtn", onClick: () => setTab("updates") }, t("有更新 {v}").replace("{v}", pending.to))),
@@ -626,7 +635,8 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
       onCheck: () => void run(async () => { const value = await call({ action: "community-find-review", draftId: reviewDraft.id }); setReviewStatus(value.status); setReviewCandidates(value.candidates ?? null); }),
       onCheckLink: (url) => void run(async () => { const value = await call({ action: "community-check-review", ...refs(detail.work), url }); setReviewStatus(value.status === "indexed" ? "indexed" : "submitted-pending-sync"); }) }),
     author && h(AuthorDialog, { author: author.author, followed: author.followed, works: author.works, busy, onClose: () => setAuthor(null), onFollow: (enabled) => void run(() => follow(author.sourceId + ":" + author.author.id, enabled)), onOpen: (work) => { setAuthor(null); void run(() => showDetails(work)); } }),
-    confirm && h(CommunityMaintenanceConfirmation,{confirm:{...confirm,record:{...confirm.record,displayName:pluginName(confirm.record.packageName)}},busy,run,call,onClose:()=>setConfirm(null)})
+    confirm && h(CommunityMaintenanceConfirmation,{confirm:{...confirm,record:{...confirm.record,displayName:pluginName(confirm.record.packageName)}},busy,run,call,onClose:()=>setConfirm(null)}),
+    voiceVersionPlan&&h(PluginInstallPlanDialog,{plan:voiceVersionPlan,sources:state?.sources??[],busy,onClose:()=>setVoiceVersionPlan(null),onInstall:()=>void run(installVoiceVersion)})
   );
 }
 export {

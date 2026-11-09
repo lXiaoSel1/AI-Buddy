@@ -479,6 +479,11 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
     ensureOpen();
     if(op==='prepare')return prepare(payload.target);
     if(op==='receipt')return receipt(payload);
+    if(op==='profile-selections'){
+      const chosen=await selected(undefined,{management:true,packageId:payload.packageId});
+      if(!profiles?.selectedProfiles)throw fault('声音档案未就绪','VOICE_PROFILE_SCOPE');
+      return {packageId:chosen.row.id,engine:chosen.engine,selections:await profiles.selectedProfiles({engine:chosen.engine})};
+    }
     if(op==='profiles'||op==='profile-select'){
       const chosen=await selected(undefined,{management:true,packageId:payload.packageId}),scope=current();
       if(!scope||!profiles)throw fault('声音档案未就绪','VOICE_PROFILE_SCOPE');

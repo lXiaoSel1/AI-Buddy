@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {setLocale} from '../src/i18n.mjs';
-import {VoicePopover,VoiceCharacters} from '../src/voice/design-ui.mjs';
+import {VoicePopover} from '../src/voice/design-ui.mjs';
 import {cloudCharacterLabel} from '../src/voice/cloud-design-ui.mjs';
 import {CloudVoiceBatchStatus} from '../src/voice/cloud-settings-ui.mjs';
 
@@ -22,9 +22,10 @@ const defaults=[
   ['glm','GLM · 预制声线','GLM · Preset voice'],
   ['hunyuan','混元 · 预制声线','Hunyuan · Preset voice'],
 ];
+// The r2 character list uses short preset labels, covered in voice-ui-r2.test.mjs.
 function displays(profile){
   const id=profile.engine==='gpt'?'ai-buddy.voice-gpt-sovits':'ai-buddy.voice-breeze',snapshot={state:{scope:{characterId:profile.characterId},selectedPackageId:id,preparation:{state:'ready'},settings:{enabled:true},profile,packages:[]}};
-  return [renderToStaticMarkup(h(VoicePopover,{snapshot})),renderToStaticMarkup(h(VoiceCharacters,{snapshot,id})),...[false,true].map(design=>renderToStaticMarkup(h(CloudVoiceBatchStatus,{batch:{items:[{...profile,status:'activated'}]},design}))),cloudCharacterLabel(profile)];
+  return [renderToStaticMarkup(h(VoicePopover,{snapshot})),...[false,true].map(design=>renderToStaticMarkup(h(CloudVoiceBatchStatus,{batch:{items:[{...profile,status:'activated'}]},design}))),cloudCharacterLabel(profile)];
 }
 for(const language of ['zh-CN','en'])test(`bundled preset labels follow ${language} in all profile displays and custom labels stay unchanged`,()=>{
   setLocale(language);

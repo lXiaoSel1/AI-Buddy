@@ -8,6 +8,10 @@ import {canonicalPluginJson} from '../src/plugin-manifest.mjs';
 import {buildPluginArchive} from '../src/plugin-archive.mjs';
 import {createPluginManager} from '../src/plugin-manager.mjs';
 import {pluginSourceFingerprint} from '../src/plugin-sources.mjs';
+import React from 'react';
+import {VoiceInstalledMoreMenu} from '../src/community-installed-voice.mjs';
+import {PluginVersionMenu,PluginInstallPlanDialog} from '../src/plugin-center.mjs';
+import {setLocale} from '../src/i18n.mjs';
 
 const shared = 'ai-buddy.voice-shared-runtime', breeze = 'ai-buddy.voice-breeze', gpt = 'ai-buddy.voice-gpt-sovits';
 const sha = value => createHash('sha256').update(value).digest('hex');
@@ -64,4 +68,26 @@ test('version switch without a matching installed sibling release fails during p
   await assert.rejects(f.manager.action({action: 'plan', sourceId: f.sourceId, requests: [{id: breeze, version: '1.0.1'}]}), {code: 'PLUGIN_DEPENDENCY_ERROR'});
   for (const id of [shared, breeze, gpt]) assert.equal(f.manager.snapshot().installed[id].current, '1.0.2');
   await assert.rejects(f.manager.action({action: 'plan', sourceId: f.sourceId, requests: [{id: breeze, version: '1.0.1'}, {id: gpt, version: '1.0.2'}]}), {code: 'PLUGIN_DEPENDENCY_ERROR'});
+});
+
+test('installed more-menu switch and rollback review the real coordinated plan before changing either engine',async t=>{
+  setLocale('zh-CN');
+  const f=await setup(t),elements=node=>!node||typeof node!=='object'?[]:[node,...React.Children.toArray(node.props?.children).flatMap(elements),...React.Children.toArray(node.props?.footer).flatMap(elements)];
+  let review=null;
+  const select=async version=>{review=await f.manager.action({action:'plan',sourceId:version.sourceId,requests:[{id:version.manifest.id,version:version.manifest.version}]});};
+  async function menu(){const result=await f.manager.action({action:'search',kind:'installed',sourceId:f.sourceId});return VoiceInstalledMoreMenu({row:result.items.find(row=>row.manifest.id===breeze),versionsOpen:true,onVersionSelect:select});}
+  async function confirm(version){
+    assert.deepEqual(review.packages.map(row=>[row.manifest.id,row.manifest.version]).sort(),[shared,breeze,gpt].map(id=>[id,version]).sort());
+    const dialog=PluginInstallPlanDialog({plan:review,onInstall:()=>f.manager.action({action:'install',planId:review.planId})});
+    await elements(dialog).find(value=>value.type==='button'&&value.props.children==='安装').props.onClick();
+    for(const id of [shared,breeze,gpt])assert.equal(f.manager.snapshot().installed[id].current,version);
+  }
+  const initial=await menu(),branch=elements(initial).find(value=>value.type===PluginVersionMenu);
+  await PluginVersionMenu(branch.props).props.items.find(value=>value.label==='1.0.1').onSelect();
+  for(const id of [shared,breeze,gpt])assert.equal(f.manager.snapshot().installed[id].current,'1.0.2','selecting a release only opens the review');
+  await confirm('1.0.1');
+  const updated=await menu(),rollback=elements(updated).find(value=>value.props?.items).props.items.find(value=>value.label==='回退到 1.0.2');
+  assert.equal(rollback.disabled,false);await rollback.onSelect();
+  for(const id of [shared,breeze,gpt])assert.equal(f.manager.snapshot().installed[id].current,'1.0.1','rollback also awaits the coordinated confirmation');
+  await confirm('1.0.2');
 });

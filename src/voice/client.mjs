@@ -221,6 +221,13 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
       catch(error){if(!['VOICE_DISABLED','VOICE_PACKAGE_UNAVAILABLE','VOICE_PROFILE_SCOPE','VOICE_STOPPING'].includes(error?.code))throw error;return [packageId,[]];}
     })));
   }
+  async function readProfileSelections(state){
+    const targets=(state?.packages??[]).filter(row=>row.installed&&VOICE_PLUGINS.some(plugin=>plugin.id===row.id)&&state.settings?.packages?.[row.id]?.ttsProvider!=='minimax');
+    return Object.fromEntries(await Promise.all(targets.map(async({id})=>{
+      try{const result=await action('profile-selections',{packageId:id});return [id,Array.isArray(result?.selections)?{...result,state:'ready'}:{state:'failed'}];}
+      catch(error){return [id,{state:'failed',code:error?.code??'VOICE_PROFILE_INVALID'}];}
+    })));
+  }
   async function readComponentStatuses(state){
     const targets=(state?.packages??[]).filter(row=>row.installed&&VOICE_PLUGINS.some(plugin=>plugin.id===row.id));
     const rows=await Promise.all(targets.map(async({id})=>{
@@ -232,7 +239,7 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
   function refresh(){
     if(refreshing&&refreshing.revision===revision)return refreshing.task;
     const row=refreshing={revision};
-    row.task=(async()=>{try{const state=await action('state'),[profilesByPackage,componentStatuses]=await Promise.all([readProfiles(state),readComponentStatuses(state)]);if(row.revision===revision){output.setCardMix(state?.cardVoiceMix);publish({state,profiles:profilesByPackage[state?.selectedPackageId]??[],profilesByPackage,componentStatuses,...(state?.cloudBatch?{cloudBatch:state.cloudBatch}:{})});if(drafts.length)deliverDrafts();}return state;}catch(error){if(error?.code==='VOICE_STATE_CANCELLED')return value.state;throw error;}})().finally(()=>{if(refreshing===row)refreshing=undefined;});return row.task;
+    row.task=(async()=>{try{const state=await action('state'),[profilesByPackage,componentStatuses,profileSelectionsByPackage]=await Promise.all([readProfiles(state),readComponentStatuses(state),readProfileSelections(state)]);if(row.revision===revision){output.setCardMix(state?.cardVoiceMix);publish({state,profiles:profilesByPackage[state?.selectedPackageId]??[],profilesByPackage,componentStatuses,profileSelectionsByPackage,...(state?.cloudBatch?{cloudBatch:state.cloudBatch}:{})});if(drafts.length)deliverDrafts();}return state;}catch(error){if(error?.code==='VOICE_STATE_CANCELLED')return value.state;throw error;}})().finally(()=>{if(refreshing===row)refreshing=undefined;});return row.task;
   }
   function deliverDrafts(){const trusted=value.state?.scope;for(let i=0;i<drafts.length;){const event=drafts[i],listener=trusted&&[...draftListeners].find(row=>matchesChat(row.scope,event.scope)&&matchesChat(row.scope,trusted)&&['lifeId','operationId'].every(key=>!trusted[key]||trusted[key]===event.scope?.[key]));if(!listener){i++;continue;}listener.callback(event);drafts.splice(i,1);}publish({pendingDraft:drafts.at(-1)??null});}
   const off=output.onEvent(event=>{

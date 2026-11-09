@@ -70,13 +70,13 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
     }
     return Promise.all(tasks);
   }
-  async function waitForPresets(engine){
-    if(!presetsStarted)refreshPresetPackages();
+  async function waitForPresets(engine,{start=true}={}){
+    if(start&&!presetsStarted)refreshPresetPackages();
     const id=ids.find(id=>engineFor(id)===engine);
     // Await only already scheduled work. State polling and synthesis never scan packages.
     await Promise.all([...presetTasks].filter(([key])=>!id||JSON.parse(key)[1]===id).map(([,task])=>task));
   }
-  const profiles={...storedProfiles,...Object.fromEntries(['list','current','resolve'].filter(op=>typeof storedProfiles[op]==='function').map(op=>[op,async params=>{await waitForPresets(params?.engine);return storedProfiles[op](params);}]))};
+  const profiles={...storedProfiles,...Object.fromEntries(['list','selectedProfiles','current','resolve'].filter(op=>typeof storedProfiles[op]==='function').map(op=>[op,async params=>{await waitForPresets(params?.engine,{start:op!=='selectedProfiles'});return storedProfiles[op](params);}]))};
   const credentials=components.credentials??createVoiceCredentials({dataRoot,crypto});
   const supervisor=components.supervisor??createManagedProcessSupervisor({guardPath:join(build,'managed-process-guard.exe'),statePath:join(dataRoot,'voice','processes.json'),onState:value=>audit({type:'voice-process',...value})});
   const resolvePackage=(...args)=>getPlatform().resolveVoicePackage(...args);
@@ -298,7 +298,7 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
       if(Object.keys(payload).some(key=>key!=='packageId'))throw fault('语音参数无效','VOICE_ACTION_INVALID');
       return componentStatus(payload.packageId);
     }
-    if(['characterId','personaId','lifeId','operationId','conversationId','engine',...(!['profiles','profile-select','assets-prepare','assets-import','assets-verify'].includes(op)?['packageId']:[])].some(key=>Object.hasOwn(payload,key)))throw fault('语音身份只能由宿主指定','VOICE_SCOPE_FORGED');
+    if(['characterId','personaId','lifeId','operationId','conversationId','engine',...(!['profiles','profile-select','profile-selections','assets-prepare','assets-import','assets-verify'].includes(op)?['packageId']:[])].some(key=>Object.hasOwn(payload,key)))throw fault('语音身份只能由宿主指定','VOICE_SCOPE_FORGED');
     if(op==='stop'){
       if(payload.channel==='card-table')return stopCards('user-stop');
       if(payload.channel==='app-chat'){const pendingAssets=cancelAssets('user-stop');getGame()?.voiceCancel?.();await controller.recoverStop?.();await Promise.all([controller.invalidate('user-stop'),pendingAssets]);return;}

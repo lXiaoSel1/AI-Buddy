@@ -437,7 +437,7 @@ ipcMain.handle('voice:action',async(event,op,payload)=>{
  assertImportIdle();if(!voiceHost)return {__buddyError:true,code:'VOICE_HOST_UNAVAILABLE',message:'语音服务尚未就绪'};
  try{
   // Existing capture/audio must settle even after the updater reserves new work.
-  const continuing=['state','profiles','component-status','cloud-status','cloud-prepare-preview','cloud-batch-preview','cloud-batch-reconcile','cloud-batch-cancel','assets-cancel','capture-feed','capture-finish','receipt','stop'].includes(op);
+  const continuing=['state','profiles','profile-selections','component-status','cloud-status','cloud-prepare-preview','cloud-batch-preview','cloud-batch-reconcile','cloud-batch-cancel','assets-cancel','capture-feed','capture-finish','receipt','stop'].includes(op);
   const result=await (continuing?voiceHost.action(op,payload):updateGuard('voice',()=>voiceHost.action(op,payload)));
   return op==='state'?{...result,cardVoiceMix}:result;
  }catch(error){return {__buddyError:true,code:error.code??'VOICE_FAILED',message:String(error.message).slice(0,400)};}

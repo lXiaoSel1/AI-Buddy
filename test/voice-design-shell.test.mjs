@@ -22,7 +22,7 @@ test('an unstarted installed voice engine starts through its existing shared ses
  const start=elements(component).find(value=>value.props?.['data-voice-start']);
  assert.ok(start,'an installed unstarted engine needs Start');
  try{await start.props.onClick();
- assert.deepEqual(calls.filter(row=>!['state','component-status'].includes(row.op)),[{op:'configure',payload:{enabled:true,selectedPackageId:gpt}}]);
+ assert.deepEqual(calls.filter(row=>!['state','component-status','profile-selections'].includes(row.op)),[{op:'configure',payload:{enabled:true,selectedPackageId:gpt}}]);
  assert.equal(session.snapshot().state.selectedPackageId,gpt);
  const html=renderToStaticMarkup(component);
  assert.match(html,/未启动/);

@@ -27,7 +27,7 @@ export function voicePackagePresentation(snapshot,packageId,record){
 }
 // This is the installed row used by CommunityCenter. It deliberately keeps legacy
 // package actions and keys; its appearance does not turn it into a DSH package.
-export function VoicePackageRow({row,record,snapshot,session,call,run=fn=>fn(),busy=false,menuOpen=false,onMenu,onOpen,onConfirm,onUpdate}){
+export function VoicePackageRow({row,record,snapshot,session,call,run=fn=>fn(),busy=false,menuOpen=false,onMenu,onOpen,onConfirm,onUpdate,menu}){
  const m=row.manifest,value=VOICE_PAGES.find(value=>value.id===m.id),key=legacyUpdateKey(row.sourceId??'legacy',m.id),policy=row.updatePolicy??'manual',view=voicePackagePresentation(snapshot,m.id,record),active=view.status==='ready',openParts=['verification-needed','needsSetup'].includes(view.status),phaseBusy=view.status==='starting',enabled=!!row.enabled;
  const unavailable=record?.usable!==true,canEnable=row.compatible!==false&&row.activation?.supported===true;
  const action=action=>run(()=>call({action,id:m.id,sourceId:row.sourceId}));
@@ -45,7 +45,7 @@ export function VoicePackageRow({row,record,snapshot,session,call,run=fn=>fn(),b
   h('div',{className:'ext-ir-main'},h('div',{className:'ext-row'},h('b',null,voicePackageLabel(m.id)),h('span',{className:'ext-cap'},m.version),h(StatusPill,{tone:view.tone},label),onUpdate&&h('button',{type:'button',className:'ws-tag ext-tagbtn',onClick:onUpdate},t('有更新'))),h('small',{className:'ext-cap'},situation)),
   h('div',{className:'ext-row'},h('span',{className:'ext-cap'},L('启用','Enabled')),h(Switch,{checked:enabled,disabled:busy||!enabled&&!canEnable,label:t(enabled?'停用':'启用')+' · '+voicePackageLabel(m.id),'data-voice-enable':m.id,onChange:()=>action(enabled?'disable':'enable')}),
    h('button',{type:'button',className:'ui-btn'+(!active?' primary':''),disabled:busy||!enabled||unavailable||phaseBusy||!session,'data-voice-start':!active&&!openParts?m.id:undefined,'data-voice-open':active||openParts?m.id:undefined,onClick:()=>active||openParts?onOpen?.(m.id):run(()=>session.configure({enabled:true,selectedPackageId:m.id}))},VoiceIcon(active||openParts?'external':'play',{size:16}),active||openParts?L('打开','Open'):phaseBusy?L('启动中','Starting'):L('启动','Start')),
-   h('div',{className:'ext-menuwrap'},h('button',{type:'button',className:'ui-icon-btn','aria-haspopup':'menu','aria-expanded':menuOpen,'aria-label':t('更多')+' · '+voicePackageLabel(m.id),title:t('更多'),onClick:()=>onMenu?.(!menuOpen)},VoiceIcon('more',{size:16})),menuOpen&&h(Menu,{label:t('更多'),className:'ext-menu-r vx-menu',onClose:()=>onMenu?.(false),items}))));
+   h('div',{className:'ext-menuwrap'},h('button',{type:'button',className:'ui-icon-btn','aria-haspopup':'menu','aria-expanded':menuOpen,'aria-label':t('更多')+' · '+voicePackageLabel(m.id),title:t('更多'),onClick:()=>onMenu?.(!menuOpen)},VoiceIcon('more',{size:16})),menuOpen&&(menu??h(Menu,{label:t('更多'),className:'ext-menu-r vx-menu',onClose:()=>onMenu?.(false),items})))));
 }
 
 export function CommunityMaintenanceConfirmation({confirm,busy=false,run=fn=>fn(),call,onClose}){

@@ -91,6 +91,15 @@ export function createVoiceProfiles({ dataRoot }) {
     }));
   }
 
+  async function selectedProfiles({engine}){
+    if(!engines.includes(engine))throw invalid('声音档案角色或引擎无效');
+    const state=await load();
+    return PET_CHARACTERS.map(({id:characterId})=>{
+      const row=state.profiles[state.selections[characterId+':'+engine]];
+      return {characterId,profile:row?.characterId===characterId&&row.engine===engine?publicProfile(row):null};
+    });
+  }
+
   async function hasBundledPresets(receiptKey) {
     return Object.hasOwn((await load()).bundledPresets??{},receiptKey);
   }
@@ -268,5 +277,5 @@ export function createVoiceProfiles({ dataRoot }) {
       referenceStyle:style,referenceSource:source };
   }
 
-  return { list, current, select, importProfile, resolve, hasBundledPresets, ensureBundledPresets };
+  return { list, selectedProfiles, current, select, importProfile, resolve, hasBundledPresets, ensureBundledPresets };
 }
