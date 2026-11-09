@@ -66,7 +66,7 @@ Five steps get you from the installer to your first chat. The orange numbers in 
 
 <img src="docs/images/step-3-add-chat-api.webp" width="460" alt="Add connection dialog (Chinese interface): provider DeepSeek, an empty API key field, Load model list and Save and use">
 
-**4. Turn on online chat and start talking.** Click **Galgame** in the sidebar. So that no model is called without you knowing, **online chat is off after every start**: click ① **Enable online chat** in the dialogue box (or use the **Web** switch at the right end of the toolbar), then type. With an empty input box, press 1, 2 or 3 to pick a reply.
+**4. Turn on online chat and start talking.** Click **Galgame** in the sidebar. Right after you connect your first model, the dialogue box says online chat is off: click ① **Enable online chat** (or use the **Web** switch at the right end of the toolbar), then type. The switch is remembered, so it stays on after a restart. With an empty input box, press 1, 2 or 3 to pick a reply.
 
 ![The "online chat is off" notice in the Galgame dialogue box and the Enable online chat button (Chinese interface)](docs/images/step-4-turn-on-online-chat.webp)
 
@@ -343,7 +343,7 @@ Portable editors, WSL or other users' folders must be added manually: in **Token
 | Statistics time zone | System local time |
 | Update prices daily | Off |
 
-Two switches live outside this table: **Online chat** is off after every restart and must be turned on manually, and **Generate CG automatically** is off on a fresh install. When it is on, besides level-up keepsakes it draws a daily CG of the current character at 10:00 and 22:00 (the app's time zone); missed times are not made up. **Restore default settings** resets every option above: the language goes back to Simplified Chinese and a hidden pet is shown again. The chat and image connection choices and Token detection sources are not affected, and the pet position, usage and Galgame data are kept.
+Two switches live outside this table: **Online chat** is on by default and keeps its last setting across restarts (it stays off while no chat connection is usable, so turn it on once after connecting your first model), and **Generate CG automatically** is off on a fresh install. When it is on, besides level-up keepsakes it draws a daily CG of the current character at 10:00 and 22:00 (the app's time zone); missed times are not made up. **Restore default settings** resets every option above: the language goes back to Simplified Chinese, a hidden pet is shown again and online chat is turned back on. The chat and image connection choices and Token detection sources are not affected, and the pet position, usage and Galgame data are kept.
 
 ### Character and chat model
 
@@ -390,7 +390,7 @@ The finished picture goes into the group's own CG gallery:
 
 ### Long-term memory, personality growth and life archives
 
-- **Long-term memory**: chat text is kept in full. Every night at midnight (local time), AI Buddy writes each character's summary of the day, Guide and core memories. Consolidation uses that character's chat connection and only runs while online chat is on; missed days are caught up the next time you turn online chat on (it is off after every start). The memory page is read-only: if something is remembered wrong, correct it in chat, or say something like "don't bring that up again"; the original text is still kept. Ordinary memories are not deleted over time. Personas do not share memories; in a group chat she only knows that group, while in private chat she can recall the groups she shared with you under the same persona.
+- **Long-term memory**: chat text is kept in full. Every night at midnight (local time), AI Buddy writes each character's summary of the day, Guide and core memories. Consolidation uses that character's chat connection and only runs while online chat is on; missed days are caught up the next time you turn online chat on. The memory page is read-only: if something is remembered wrong, correct it in chat, or say something like "don't bring that up again"; the original text is still kept. Ordinary memories are not deleted over time. Personas do not share memories; in a group chat she only knows that group, while in private chat she can recall the groups she shared with you under the same persona.
 - **Personality growth**: off by default; turn it on from its page, starting from the current profile or from a blank slate as a new life. While it is on, her persona changes slowly with your real conversations; name, persona and example dialogue become read-only, while appearance, chat connection and talkativeness can still be changed. The personality is shared per character; relationships stay separate per persona.
 - **Life archives**: save a character's whole "life" (her card, her memories, and each persona's relationship and progress) as one archive that you can preview read-only, export as a ZIP, import, reset or restore. Reset and restore first save the current life as another archive and ask you to type the character's name to confirm; they do not roll back other characters or account usage. One archive can be up to 512 MiB; there is no limit on their number and they do not expire.
 
@@ -565,7 +565,7 @@ Points, food, plugin data and account connections are also kept on this computer
 What leaves your machine:
 
 - Monitoring only reads logs. It makes no model calls and never modifies other tools' files.
-- Chat messages go to the chat connection this character uses. Besides the conversation, a request carries your current persona's details and relevant memory snippets of this character. Online chat is off by default and after every restart.
+- Chat messages go to the chat connection this character uses. Besides the conversation, a request carries your current persona's details and relevant memory snippets of this character. Online chat is on by default and keeps its last setting after a restart; to stop sending, turn it off under **Web** at the right end of the Galgame toolbar.
 - In group chat, every member who speaks sends one request through her own connection; group Auto calls the model on every turn.
 - **Nightly memory consolidation**: while online chat is on, once a day for each character and each knowledge scope (private chat under each persona, each group chat) the day's text is sent to that character's chat connection; a very long day is consolidated in several parts. When you turn online chat on, days that piled up and were not consolidated yet are all caught up, which can mean many requests.
 - Mood evaluation, proactive chat, talking to herself and the affection rating after a meal call the current character's chat connection, and only while online chat is on.

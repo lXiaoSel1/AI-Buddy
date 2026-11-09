@@ -63,7 +63,7 @@ After saving, the connection is marked **Active** in the list. Keys are encrypte
 ## 4. Turn on online chat and start talking
 
 1. Click **Galgame** in the sidebar.
-2. So that no model is called without you knowing, **online chat is off after every start**. Click ① **Enable online chat** in the dialogue box, or use **Web** at the right end of the toolbar.
+2. Right after you connect your first model, online chat is still off. Click ① **Enable online chat** in the dialogue box, or use **Web** at the right end of the toolbar. The switch is remembered, so it stays on after a restart.
 
 ![The "online chat is off" notice and ① Enable online chat (Chinese interface)](images/step-4-turn-on-online-chat.webp)
 
