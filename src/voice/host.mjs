@@ -1,6 +1,7 @@
 import {join} from 'node:path';
 import {createVoiceRuntime} from './runtime.mjs';
 import {createVoiceAssets} from './runtime-assets.mjs';
+import {voiceComponentSummary} from './component-state.mjs';
 import {createVoiceProfiles,voicePresetReceiptKey} from './voice-profiles.mjs';
 import {createVoiceSettings,mergeVoiceSettings} from './settings.mjs';
 import {createCloudVoiceGateway} from './cloud-host.mjs';
@@ -168,40 +169,41 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
     if(row){row.controller.abort(fault('组件准备已取消','VOICE_ASSET_CANCELLED'));publishAssets({...assetProgress,state:'cancelled',reason});}
     return row?.task;
   }
-  const assetIdentity=config=>{
-    const packageId=config.selectedPackageId,row=(getPlatform()?.voicePackageStatus()??[]).find(value=>value.id===packageId);
-    return JSON.stringify([config.enabled,packageId,config.packages[packageId]?.ttsProvider,row?.sourceId,row?.version,row?.archiveSha256,row?.installed,row?.enabled,row?.usable,row?.trusted]);
+  const assetIdentity=(config,packageId=config.selectedPackageId)=>{
+    const row=(getPlatform()?.voicePackageStatus()??[]).find(value=>value.id===packageId);
+    return JSON.stringify([config.enabled,config.selectedPackageId,packageId,config.packages[packageId]?.ttsProvider,row?.sourceId,row?.version,row?.archiveSha256,row?.installed,row?.enabled,row?.usable,row?.trusted]);
   };
   async function checkAssetSelection(row){
     if(closed||row.generation!==assetEpoch||row.controller.signal.aborted)throw fault('组件准备已取消','VOICE_ASSET_CANCELLED');
     const config=await settings.get();
-    if(closed||row.generation!==assetEpoch||row.controller.signal.aborted||assetIdentity(config)!==row.identity)throw fault('组件准备已取消','VOICE_ASSET_CANCELLED');
+    if(closed||row.generation!==assetEpoch||row.controller.signal.aborted||assetIdentity(config,row.engineId)!==row.identity)throw fault('组件准备已取消','VOICE_ASSET_CANCELLED');
     return config;
   }
-  async function prepareAssets({kind,importLocal=false}={}){
+  async function prepareAssets({kind,packageId,importLocal=false,verifyOnly=false,forceDownload=false}={}){
     if(assetOperation)throw fault('语音组件正在准备','VOICE_ASSET_BUSY');
     const generation=assetEpoch,config=await settings.get();
     if(closed||generation!==assetEpoch) return {cancelled:true};
     if(assetOperation)throw fault('语音组件正在准备','VOICE_ASSET_BUSY');
-    const engineId=config.selectedPackageId,engine=engineFor(engineId),provider=config.packages[engineId]?.ttsProvider??'local';
+    const engineId=packageId??config.selectedPackageId,engine=engineFor(engineId),provider=config.packages[engineId]?.ttsProvider??'local';
     const selected=(getPlatform()?.voicePackageStatus()??[]).find(row=>row.id===engineId);
     if(!engine||!selected?.installed||!selected.enabled||!selected.usable||selected.trusted===false)throw fault('选中的语音插件未安装、已停用或未通过校验','VOICE_PACKAGE_UNAVAILABLE');
     if(kind&&(!['asr',engine].includes(kind)||provider==='minimax'&&kind!=='asr'))throw fault('组件与所选插件不匹配','VOICE_ASSET_INVALID');
-    const row=assetOperation={generation,identity:assetIdentity(config),engineId,provider,controller:new AbortController()};
-    publishAssets({state:'preparing',phase:'checking',engineId,provider,...(kind?{kind}:{})},row);
+    const row=assetOperation={generation,identity:assetIdentity(config,engineId),engineId,provider,controller:new AbortController()};
+    const operation=verifyOnly?'verify':importLocal?'import':'download';
+    publishAssets({state:'preparing',phase:'checking',operation,engineId,provider,...(kind?{kind}:{})},row);
     row.task=(async()=>{
       try{
         let localRoot;
         if(importLocal){localRoot=await chooseAssets?.(kind);await checkAssetSelection(row);if(!localRoot){publishAssets({state:'cancelled',engineId,provider},row);return {cancelled:true};}}
         await checkAssetSelection(row);
-        const onProgress=value=>publishAssets({engineId,provider,...value},row);
-        const result=kind?await assets.prepare(kind,{engineId,...(localRoot?{localRoot}:{}),signal:row.controller.signal,onProgress}):await assets.prepareSelected({engineId,provider,signal:row.controller.signal,onProgress});
-        await checkAssetSelection(row);publishAssets({state:'ready',engineId,provider,...(kind?{kind}:{})},row);return result;
+        const onProgress=value=>publishAssets({engineId,provider,operation,...value},row);
+        const result=kind?await assets.prepare(kind,{engineId,...(localRoot?{localRoot}:{}),verifyOnly,forceDownload,signal:row.controller.signal,onProgress}):await assets.prepareSelected({engineId,provider,signal:row.controller.signal,onProgress});
+        await checkAssetSelection(row);publishAssets({state:'ready',engineId,provider,operation,...(kind?{kind}:{})},row);return result;
       }catch(error){
         if(row.controller.signal.aborted||row.generation!==assetEpoch||closed||['VOICE_ASSET_CANCELLED','ABORT_ERR'].includes(error.code)||error.name==='AbortError'){
           if(assetOperation===row)publishAssets({state:'cancelled',engineId,provider});return {cancelled:true};
         }
-        publishAssets({state:'failed',engineId,provider,...(kind?{kind}:{}),code:error.code??'VOICE_ASSET_FAILED',message:String(error.message)},row);throw error;
+        publishAssets({state:'failed',engineId,provider,operation,...(kind?{kind}:{}),code:error.code??'VOICE_ASSET_FAILED',message:verifyOnly?'校验没通过，请重新下载':String(error.message)},row);throw verifyOnly?fault('校验没通过，请重新下载','VOICE_ASSET_VERIFY_FAILED'):error;
       }finally{if(assetOperation===row)assetOperation=undefined;}
     })();return row.task;
   }
@@ -283,9 +285,20 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
     catch(error){return {...result,sharedWithOtherPlugin:false,otherPluginCode:error.code??'VOICE_CLOUD_BIND_PENDING'};}
   }
   cloudGateway=createCloudVoiceGateway({settings,profiles,credentials,cloud,getGame,resolvePackage,publish,assertOpen:()=>{assertVoiceOpen();return voiceEpoch;},stopAll,track:task=>{cloudOperations.add(task);void task.finally(()=>cloudOperations.delete(task)).catch(()=>{});return task;}});
+  async function componentStatus(packageId){
+    const engine=engineFor(packageId),installed=(getPlatform()?.voicePackageStatus()??[]).find(row=>row.id===packageId);
+    if(!engine||!installed?.installed)throw fault('选中的语音插件未安装、已停用或未通过校验','VOICE_PACKAGE_UNAVAILABLE');
+    const config=await settings.get(),provider=config.packages[packageId]?.ttsProvider??'local';
+    const [asr,tts]=await Promise.all([assets.status('asr',packageId),provider==='minimax'?{state:'not-required'}:assets.status(engine,packageId)]);
+    return voiceComponentSummary({asr,tts});
+  }
   async function action(op,payload={}){
     if(!payload||typeof payload!=='object'||Array.isArray(payload))throw fault('语音参数无效','VOICE_ACTION_INVALID');
-    if(['characterId','personaId','lifeId','operationId','conversationId','engine','packageId'].some(key=>Object.hasOwn(payload,key)))throw fault('语音身份只能由宿主指定','VOICE_SCOPE_FORGED');
+    if(op==='component-status'){
+      if(Object.keys(payload).some(key=>key!=='packageId'))throw fault('语音参数无效','VOICE_ACTION_INVALID');
+      return componentStatus(payload.packageId);
+    }
+    if(['characterId','personaId','lifeId','operationId','conversationId','engine',...(!['profiles','profile-select','assets-prepare','assets-import','assets-verify'].includes(op)?['packageId']:[])].some(key=>Object.hasOwn(payload,key)))throw fault('语音身份只能由宿主指定','VOICE_SCOPE_FORGED');
     if(op==='stop'){
       if(payload.channel==='card-table')return stopCards('user-stop');
       if(payload.channel==='app-chat'){const pendingAssets=cancelAssets('user-stop');getGame()?.voiceCancel?.();await controller.recoverStop?.();await Promise.all([controller.invalidate('user-stop'),pendingAssets]);return;}
@@ -314,10 +327,12 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
       await settings.update({packages:Object.fromEntries(ids.map(id=>[id,{credentialRef:saved.ref}]))});
       cloudGateway.invalidateState();return {configured:true};
     }
-    if(op==='assets-prepare'||op==='assets-import'){
+    if(op==='assets-prepare'||op==='assets-import'||op==='assets-verify'){
       if(!['asr','breeze','gpt'].includes(payload.kind))throw fault('未知语音组件','VOICE_ASSET_INVALID');
-      await stopAll('component-preparing');
-      assertVoiceOpen();return prepareAssets({kind:payload.kind,importLocal:op==='assets-import'});
+      const config=await settings.get(),packageId=payload.packageId??config.selectedPackageId;
+      if(!engineFor(packageId)||(getPlatform()?.voicePackageStatus()??[]).find(row=>row.id===packageId)?.installed!==true)throw fault('选中的语音插件未安装、已停用或未通过校验','VOICE_PACKAGE_UNAVAILABLE');
+      if(packageId===config.selectedPackageId||payload.kind==='asr')await stopAll('component-preparing');
+      assertVoiceOpen();return prepareAssets({kind:payload.kind,packageId,importLocal:op==='assets-import',verifyOnly:op==='assets-verify',forceDownload:op!=='assets-verify'});
     }
     if(op==='prepare')return prepareSelectedVoice(payload.target);
     if(op==='profile-import'){
@@ -346,20 +361,21 @@ export function createVoiceHost({dataRoot,build,crypto,getGame,getPlatform,send=
         assertCurrent(ctx);await checkCurrent?.();return mirrorBinding(ctx,result,generation,checkCurrent);
       });
     }
+    const activeProfileSelection=op==='profile-select'&&(payload.packageId==null||payload.packageId===(await settings.get()).selectedPackageId);
     if(op==='configure'){
       if(Object.hasOwn(payload,'cloudConnections')||Object.values(payload.packages??{}).some(row=>row&&Object.hasOwn(row,'credentialRef')))throw fault('云配音配置和密钥引用只能通过配置管理器修改','VOICE_SCOPE_FORGED');
       const current=await settings.get(),next=mergeVoiceSettings(current,payload),signature=value=>JSON.stringify([value.enabled,value.selectedPackageId,value.packages[value.selectedPackageId]?.ttsProvider,value.packages[value.selectedPackageId]?.credentialRef]);
       if(signature(current)!==signature(next)){const generation=voiceEpoch+1;await stopAll('configuration-changed');assertVoiceOpen(generation);}
-    }else if(op==='profile-select'){if(cloudOperations.size)await stopAll('profile-changed');else{cardEpoch++;await cards.invalidate('profile-changed');}}
-    const generation=voiceEpoch,result=await controller.action(op,payload);if(op==='configure'||op==='profile-select')cloudGateway.invalidateState();
+    }else if(activeProfileSelection){if(cloudOperations.size)await stopAll('profile-changed');else{cardEpoch++;await cards.invalidate('profile-changed');}}
+    const generation=voiceEpoch,result=await controller.action(op,payload);if(op==='configure'||activeProfileSelection)cloudGateway.invalidateState();
     if(op==='configure'&&result.enabled){if(closed||generation!==voiceEpoch)return {cancelled:true};await prepareSelectedVoice('speech');}
-    return publicResult(result);
+    return op==='profiles'?result:publicResult(result);
   }
   async function cardPresentation(request){
     let available=true;try{assertVoiceOpen();await cardSelection();}catch{available=false;}
     return {available,...cards.presentation?.(request)};
   }
-  return {action,controller,assets,profiles,settings,runtime,cloud,cardEvent,cardPresentation,refreshPresetPackages,
+  return {action,controller,assets,profiles,settings,runtime,cloud,cardEvent,cardPresentation,refreshPresetPackages,componentStatus,
     busy:()=>!!stopping||!!stopFailure||!!assetOperation||cloudOperations.size>0||cardAdmissions>0||cards.busy()||controller.busy?.()===true,
     microphoneAllowed:()=>microphone,
     snapshot:()=>({microphoneAuthorized:microphone,cardSpeechBusy:cards.busy()}),

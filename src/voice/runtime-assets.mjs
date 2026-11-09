@@ -56,6 +56,7 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
   const root = join(dataRoot, 'voice', 'components');
   const pending = new Map();
   const descriptors = new Map();
+  const verificationFailures = new Map();
   const verifier=createVoiceAssetVerifier({workerPath:verificationWorker});
   const lifetime=new AbortController();
 
@@ -127,6 +128,14 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
     options.signal?.throwIfAborted();return result;
   }
 
+  async function installedMarker(selected,{signal}={}){
+    const marker=join(selected.destination,'.ready');await waitVoiceOperation(()=>assertPluginTreeNoLinks(marker),signal);
+    const info=await waitVoiceOperation(()=>lstat(marker),signal);
+    if(!info.isFile()||info.nlink!==1)throw fault('VOICE_ASSET_HASH','语音组件准备凭据类型无效');
+    return waitVoiceOperation(()=>readFile(marker,'utf8'),signal);
+  }
+  const matchingDescriptor=(marker,selected)=>{const old=marker.split(':'),current=selected.proof.split(':');return old.length===4&&old[0]===current[0]&&old[3]===current[3];};
+
   async function status(kind, engineId, options={}) {
     try {
       const selected = await plan(kind, engineId,options);
@@ -134,9 +143,18 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
       if (pending.has(selected.destination)) return { ...base, state: 'preparing' };
       // A settings/status read reports the completed install transaction. Full
       // file identity and hash verification remains mandatory in resolve(),
-      // before a worker can execute; do not read gigabytes just to open settings.
+      // before a worker can execute. Settings never enumerate or stat payload
+      // members; explicit Verify or the use boundary detects damaged files.
+      const failure=verificationFailures.get(selected.proof);if(failure)return {...base,state:failure==='VOICE_ASSET_MISSING'?'missing':'error',code:failure,verificationFailed:true};
       try { await checkMarker(selected,options); }
-      catch (error) { options.signal?.throwIfAborted();return { ...base, state: error.code === 'VOICE_ASSET_MISSING' ? 'missing' : 'error', code: error.code }; }
+      catch (error) {
+        options.signal?.throwIfAborted();
+        if(error.code==='VOICE_ASSET_HASH')try{
+          const marker=await installedMarker(selected,options);
+          if(matchingDescriptor(marker,selected))return {...base,state:'verification-needed',code:'VOICE_ASSET_VERIFY_REQUIRED'};
+        }catch(cause){options.signal?.throwIfAborted();return {...base,state:cause.code==='ENOENT'||cause.code==='VOICE_ASSET_MISSING'?'missing':'error',code:cause.code};}
+        return { ...base, state: error.code === 'VOICE_ASSET_MISSING' ? 'missing' : 'error', code: error.code };
+      }
       return { ...base, state: 'ready',verification:'before-use' };
     } catch (error) {
       options.signal?.throwIfAborted();
@@ -155,7 +173,7 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
       ...(descriptor.ffmpegDirectory ? { ffmpegDirectory: join(destination, descriptor.ffmpegDirectory) } : {}) };
   }
 
-  async function prepare(kind, { engineId, localRoot, signal, onProgress = () => {} } = {}) {
+  async function prepare(kind, { engineId, localRoot, verifyOnly=false,forceDownload=false,signal, onProgress = () => {} } = {}) {
     signal=signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal;
     signal.throwIfAborted();
     if (localRoot != null && !isAbsolute(localRoot)) throw fault('VOICE_ASSET_SOURCE', '本地语音组件目录无效');
@@ -169,21 +187,21 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
     const verificationProgress=value=>reportRow(value);
     const report=phase=>reportRow({phase,receivedBytes,totalBytes:selected.total,...(!localRoot?{downloadReceivedBytes,downloadBytes:selected.downloads?.downloadBytes??selected.total}:{})});
     const operation = (async () => {
-      try { await checkReady(selected,{signal,onProgress:verificationProgress});await flushProgress();await admit();return { state: 'ready', reused: true }; }
+      if(verifyOnly){
+        const receipt=selected.proofFile+'.'+randomUUID()+'.rebind',temporary=join(selected.destination,'.ready-'+randomUUID()),fresh=createVoiceAssetVerifier({workerPath:verificationWorker});
+        try{
+          const marker=await installedMarker(selected,{signal});if(!matchingDescriptor(marker,selected))throw fault('VOICE_ASSET_HASH','语音组件准备凭据与清单不符');
+          await fresh.verify({...selected,proofFile:receipt},{signal,onProgress:verificationProgress});await flushProgress();await admit();
+          if(await installedMarker(selected,{signal})!==marker)throw fault('VOICE_ASSET_CHANGED','语音组件凭据在校验中发生变化');
+          await writeFile(temporary,selected.proof,{flag:'wx',mode:0o600});await admit();
+          await renamePluginPath(receipt,selected.proofFile);await renamePluginPath(temporary,join(selected.destination,'.ready'));verificationFailures.delete(selected.proof);return {state:'ready',reused:true};
+        }catch(error){if(!signal.aborted)verificationFailures.set(selected.proof,error.code==='ENOENT'?'VOICE_ASSET_MISSING':error.code??'VOICE_ASSET_HASH');throw error;}
+        finally{await fresh.close();await rm(receipt,{force:true});await rm(temporary,{force:true});}
+      }
+      try { if(forceDownload)throw fault('VOICE_ASSET_MISSING','需要重新下载');await checkReady(selected,{signal,onProgress:verificationProgress});await flushProgress();await admit();return { state: 'ready', reused: true }; }
       catch (error) {
         if(error.code==='VOICE_ASSET_HASH'){
-          // A newly signed plugin can carry exactly the same resources. Its
-          // old marker is never trusted as a content proof for the new owner.
-          const marker=join(selected.destination,'.ready');await assertPluginTreeNoLinks(marker);
-          const old=await readFile(marker,'utf8');
-          if(old===selected.proof||!old.startsWith(kind+':')||!old.endsWith(':'+selected.proof.split(':').at(-1)))throw error;
-          const fresh=createVoiceAssetVerifier({workerPath:verificationWorker}),receipt=selected.proofFile+'.'+randomUUID()+'.rebind',temporary=join(selected.destination,'.ready-'+randomUUID());
-          try{
-            await fresh.verify({...selected,proofFile:receipt},{signal,onProgress:verificationProgress});await flushProgress();await admit();
-            await assertPluginTreeNoLinks(marker);const markerInfo=await lstat(marker);if(!markerInfo.isFile()||markerInfo.nlink!==1)throw fault('VOICE_ASSET_HASH','语音组件准备凭据类型无效');
-            await writeFile(temporary,selected.proof,{flag:'wx',mode:0o600});await admit();
-            await renamePluginPath(receipt,selected.proofFile);await renamePluginPath(temporary,marker);return {state:'ready',reused:true};
-          }finally{await fresh.close();await rm(receipt,{force:true});await rm(temporary,{force:true});}
+          const marker=await installedMarker(selected,{signal});if(marker!==selected.proof&&matchingDescriptor(marker,selected))throw fault('VOICE_ASSET_VERIFY_REQUIRED','这台电脑上已经有这些文件，请先校验');throw error;
         }
         if (error.code !== 'VOICE_ASSET_MISSING') throw error;
       }
@@ -193,7 +211,7 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
       await mkdir(parent,{recursive:true});
       // A completed tree remains unadmitted after a failed Windows rename.
       // Recheck its signed bytes and ownership before retrying that promotion.
-      for(const entry of await readdir(parent,{withFileTypes:true})){
+      for(const entry of forceDownload?[]:await readdir(parent,{withFileTypes:true})){
         if(!entry.isDirectory()||!/^stage-[a-f0-9-]{36}$/.test(entry.name))continue;
         const previous=join(parent,entry.name);await assertPluginTreeNoLinks(previous);
         let marker;try{marker=await readFile(join(previous,'.ready'),'utf8');}catch(error){if(error.code==='ENOENT')continue;throw error;}
@@ -244,7 +262,13 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
         const marker = createWriteStream(join(staging, '.ready'), { flags: 'wx', mode: 0o600 });
         await pipeline(Readable.from([selected.proof]), marker, { signal });
         await admit();complete=true;
-        await promote(staging, destination,{retryBudgetMs:10000});
+        if(forceDownload){
+          const previous=join(parent,'replaced-'+randomUUID());let moved=false;
+          try{await assertPluginTreeNoLinks(destination);try{await renamePluginPath(destination,previous);moved=true;}catch(error){if(error.code!=='ENOENT')throw error;}await promote(staging,destination,{retryBudgetMs:10000});}
+          catch(error){if(moved)await renamePluginPath(previous,destination);throw error;}
+          if(moved)await rm(previous,{recursive:true,force:true});
+        }else await promote(staging, destination,{retryBudgetMs:10000});
+        verificationFailures.delete(selected.proof);
         return { state: 'ready', reused: false };
       } finally {
         await assertPluginTreeNoLinks(staging);

@@ -3,7 +3,7 @@ import {lstat, mkdir, readFile, rm} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {writeAtomic} from '../atomic-write.mjs';
 import {assertPluginTreeNoLinks} from '../plugin-archive.mjs';
-import {canonicalPluginJson, compareVersions, satisfiesVersionRange} from '../plugin-manifest.mjs';
+import {canonicalPluginJson, compareVersions, satisfiesHostVersionRange, satisfiesVersionRange} from '../plugin-manifest.mjs';
 import {stablePatchUpdate, legacyUpdateKey} from '../plugin-update-policy.mjs';
 import {fetchPluginJson, isVoiceSourceAuthorized} from '../plugin-sources.mjs';
 import {isVoiceCommunityWork} from '../voice/package-contract.mjs';
@@ -200,7 +200,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     const savedDigest = registry.releaseDigests[packageKey + '@' + packageRef.exactVersion]; if (savedDigest && savedDigest !== packageRef.sourceDigest) fail('Same source/version cannot replace installed content', 'COMMUNITY_RELEASE_CHANGED');
     const source = await trustedSource(work.sourceId); if (!source.enabled || source.removed) fail('Source is disabled', 'PLUGIN_SOURCE_DISABLED');
     const appVersion = legacyManager.snapshot().appVersion;
-    if (!appVersion || !satisfiesVersionRange(appVersion, packageRef.compatibility.app) || !satisfiesVersionRange(bridgeCompatibilityVersion, packageRef.compatibility.bridge)) fail('Plugin is incompatible with this app or Buddy bridge version', 'PLUGIN_INCOMPATIBLE');
+    if (!appVersion || !satisfiesHostVersionRange(appVersion, packageRef.compatibility.app) || !satisfiesVersionRange(bridgeCompatibilityVersion, packageRef.compatibility.bridge)) fail('Plugin is incompatible with this app or Buddy bridge version', 'PLUGIN_INCOMPATIBLE');
     const value={schemaVersion:1,operation:'install',workId:work.id,packageKey,packageRef,catalogDigest:work.catalogDigest,sourceFingerprint:source.keyFingerprint,sourceGeneration:source.generation,declaredCapabilities:packageRef.capabilities,priorGrantedCapabilities:installed?.grantedCapabilities??[],priorEnabled:installed?.enabled===true,priorDataSchemaVersion:installed?.dataSchemaVersion??null,expectedInstalled:installed?communityDigest(installed):null,...(request.updateFrom!==undefined?{updateFrom:request.updateFrom}:{}),profileId:request.profileId??'buddy-community-v1',createdAt:new Date(now()).toISOString()};
     return value;
   }
@@ -208,7 +208,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     if(closed)fail('Community is closed','COMMUNITY_CLOSED');const source=await availableSource(value.packageRef.sourceId),installed=registry.packages[value.packageKey];
     if(source.keyFingerprint!==value.sourceFingerprint||source.generation!==value.sourceGeneration)fail('Pinned source changed; review the plan again','PLUGIN_SOURCE_CHANGED');
     if((installed?communityDigest(installed):null)!==value.expectedInstalled)fail('Installed package changed; review the plan again','COMMUNITY_INSTALLATION_CHANGED');
-    const appVersion=legacyManager.snapshot().appVersion;if(!appVersion||!satisfiesVersionRange(appVersion,value.packageRef.compatibility.app)||!satisfiesVersionRange(bridgeCompatibilityVersion,value.packageRef.compatibility.bridge))fail('Plugin compatibility changed','PLUGIN_INCOMPATIBLE');
+    const appVersion=legacyManager.snapshot().appVersion;if(!appVersion||!satisfiesHostVersionRange(appVersion,value.packageRef.compatibility.app)||!satisfiesVersionRange(bridgeCompatibilityVersion,value.packageRef.compatibility.bridge))fail('Plugin compatibility changed','PLUGIN_INCOMPATIBLE');
     if(value.operation==='install'){
       const work=workFor(value.packageRef.sourceId,value.workId),release=currentRelease(work,value.packageRef.exactVersion),ref=parseDshPackageRef(release.package,{sourceId:work.sourceId});
       if(work.catalogDigest!==value.catalogDigest||communityDigest({...ref,hostPluginId:pluginIdentity(ref)})!==communityDigest(value.packageRef)||(work.status??'published')!=='published')fail('Catalog or package changed; review the plan again','COMMUNITY_PLAN_CHANGED');
@@ -219,7 +219,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     const checkpoint=async()=>{signal?.throwIfAborted();await assertInstallationIntent(value);if(check)await check();signal?.throwIfAborted();};
     await checkpoint();const runtime=await backends.invoke('dsh','probe');await checkpoint();nativeState=safeNativeResult(runtime);update();
     if(!runtime.ready)fail(runtime.message??'Prepare the verified DSH runtime component before installing this plugin',runtime.code??'DSH_RUNTIME_NOT_READY');
-    if(!runtime.version||!satisfiesVersionRange(runtime.version,value.packageRef.compatibility.dsh))fail('Plugin is incompatible with this DSH runtime version','PLUGIN_INCOMPATIBLE');
+    if(!runtime.version||!satisfiesHostVersionRange(runtime.version,value.packageRef.compatibility.dsh))fail('Plugin is incompatible with this DSH runtime version','PLUGIN_INCOMPATIBLE');
     const offline=value.packageRef.spec.kind==='tarball'?offlineArtifacts.get(value.packageRef.sourceDigest):null;nativeState={...nativeState,phase:'checking-plugin'};update();let backendPlan;
     try{await checkpoint();backendPlan=await backends.invoke('dsh','planInstall',{packageRef:value.packageRef,profileId:value.profileId,...(signal?{signal}:{}),...(offline?{spec:offline.path}:{})});await checkpoint();}finally{nativeState={...nativeState,phase:'inspection-finished'};update();}
     await checkpoint();return {...value,backendPlan};

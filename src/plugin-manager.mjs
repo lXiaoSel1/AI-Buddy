@@ -289,7 +289,12 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
   // transaction-owned staging recovery needs the shared installation lock.
   recoveryStarted = Date.now(); await startRecovery();
   return {snapshot, loadCatalog, refreshCatalog, plan, install, enable, disable, activate, resolveInstalled, rollback, uninstall, importOffline, prepareOffline, installOffline, cancel, close, action,
-    [PLUGIN_SOURCE_BACKEND]: {mutation, fetchImpl, availableBytes, busy, host, catalogDigest: () => catalog?.verified.payloadSha256, async assertCatalogPublisher(prior) {
+    [PLUGIN_SOURCE_BACKEND]: {mutation, fetchImpl, availableBytes, busy, host, catalogDigest: () => catalog?.verified.payloadSha256,
+      registrySnapshot: () => structuredClone(registry),
+      async replaceRegistry(expected, next) {
+        if (canonicalPluginJson(registry) !== canonicalPluginJson(expected)) fail('Legacy registration changed during source migration', 'PLUGIN_SOURCE_MIGRATION_CHANGED');
+        await persist(next);
+      }, async assertCatalogPublisher(prior) {
       const proof = await savedProof(prior);
       if (proof.verified.keyId !== catalog?.verified.keyId)
         fail('Installed plugin publisher differs from the verified catalog', 'PLUGIN_SOURCE_CHANGED');

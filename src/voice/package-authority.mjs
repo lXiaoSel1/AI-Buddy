@@ -1,6 +1,6 @@
 import {createPluginHost} from '../plugin-host.mjs';
 import {isVoiceSourceAuthorized, LEGACY_SOURCE_ID} from '../plugin-sources.mjs';
-import {satisfiesVersionRange} from '../plugin-manifest.mjs';
+import {satisfiesVersionRange,satisfiesHostVersionRange} from '../plugin-manifest.mjs';
 import {VOICE_CLOUD_WORKER, VOICE_ENGINES, VOICE_PROVIDERS, VOICE_SHARED_PACKAGE, isVoiceEnginePackage, isVoicePackage, supportsVoiceManifest} from './package-contract.mjs';
 
 const fault=(message,code)=>Object.assign(Error(message),{code});
@@ -32,7 +32,7 @@ export function createVoicePackageAuthority({manager,runnerPath,processFactory,v
       else if(source?.removed || source?.enabled===false)state='source-disabled';
       else if(!isVoiceSourceAuthorized(sourceId,source?.keyFingerprint,voiceTestFingerprint))state='source-untrusted';
       else if(!row.enabled)state='disabled';
-      else if(!satisfiesVersionRange(snapshot.appVersion,current.manifest.appRange) ||
+      else if(!satisfiesHostVersionRange(snapshot.appVersion,current.manifest.appRange) ||
               !satisfiesVersionRange(snapshot.apiVersion,current.manifest.apiRange))state='incompatible';
       else if(!shared || shared.current!==current.manifest.dependencies[VOICE_SHARED_PACKAGE] || (shared.sourceId??LEGACY_SOURCE_ID)!==sourceId)state='missing-dependency';
       else if(row.activation && !row.activation.usable)state=row.activation.state==='disabled'?'verification-failed':row.activation.state;
@@ -69,7 +69,7 @@ export function createVoicePackageAuthority({manager,runnerPath,processFactory,v
       throw fault('共享运行包不包含签名的云配音模块，请更新语音插件','VOICE_CLOUD_UNAVAILABLE');
     if(preset){
       const snapshot=manager.snapshot();
-      if(![packageRecord,shared].every(row=>satisfiesVersionRange(snapshot.appVersion,row.manifest.appRange)&&satisfiesVersionRange(snapshot.apiVersion,row.manifest.apiRange)))
+      if(![packageRecord,shared].every(row=>satisfiesHostVersionRange(snapshot.appVersion,row.manifest.appRange)&&satisfiesVersionRange(snapshot.apiVersion,row.manifest.apiRange)))
         throw fault('预制声线包与宿主版本不匹配','VOICE_PACKAGE_INVALID');
     }
     const assertCurrent=()=>{

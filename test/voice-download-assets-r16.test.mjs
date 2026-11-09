@@ -59,11 +59,11 @@ test('cloud first-use downloads only shared runtime and status exposes a small d
   assert.equal((await f.assets.status('gpt','gpt')).state,'missing');
 });
 
-test('same assets in a newly signed plugin are fully checked and reused in place without a download',async t=>{
+test('same assets in a newly signed plugin are fully checked by explicit verification and reused without a download',async t=>{
   const f=await fixture(t);await f.assets.prepare('asr',{engineId:'breeze'});const original=await f.assets.resolve('asr','breeze'),identity=await stat(original.python);
   f.records.asr.archiveSha256='package-2';
   await assert.rejects(f.assets.resolve('asr','breeze'),{code:'VOICE_ASSET_HASH'});
-  const progress=[],result=await f.assets.prepare('asr',{engineId:'breeze',onProgress:row=>progress.push(row)});
+  const progress=[],result=await f.assets.prepare('asr',{engineId:'breeze',verifyOnly:true,onProgress:row=>progress.push(row)});
   assert.deepEqual(result,{state:'ready',reused:true});assert.equal(f.requests.length,1);
   assert.ok(progress.some(row=>row.phase==='verifying'&&row.hashedFiles===2));
   const renewed=await f.assets.resolve('asr','breeze');assert.equal((await stat(renewed.python)).ino,identity.ino);assert.ok(renewed.proof.includes('package-2'));
@@ -124,7 +124,7 @@ test('revocation during extraction prevents promotion and cleans the active stag
 test('same-assets rebind never admits altered files or hardlinks',async t=>{
   const f=await fixture(t);await f.assets.prepare('asr',{engineId:'breeze'});const original=await f.assets.resolve('asr','breeze');
   f.records.asr.archiveSha256='package-2';await link(original.python,join(f.root,'linked-python'));
-  await assert.rejects(f.assets.prepare('asr',{engineId:'breeze'}),{code:'VOICE_ASSET_HASH'});assert.equal(f.requests.length,1);
+  await assert.rejects(f.assets.prepare('asr',{engineId:'breeze',verifyOnly:true}),{code:'VOICE_ASSET_HASH'});assert.equal(f.requests.length,1);
 });
 
 test('closing assets cancels an in-flight header request without leaving a ready component',async t=>{

@@ -22,7 +22,7 @@ test('an unstarted installed voice engine starts through its existing shared ses
  const start=elements(component).find(value=>value.props?.['data-voice-start']);
  assert.ok(start,'an installed unstarted engine needs Start');
  try{await start.props.onClick();
- assert.deepEqual(calls.filter(row=>row.op!=='state'),[{op:'configure',payload:{enabled:true,selectedPackageId:gpt}}]);
+ assert.deepEqual(calls.filter(row=>!['state','component-status'].includes(row.op)),[{op:'configure',payload:{enabled:true,selectedPackageId:gpt}}]);
  assert.equal(session.snapshot().state.selectedPackageId,gpt);
  const html=renderToStaticMarkup(component);
  assert.match(html,/未启动/);
@@ -80,4 +80,12 @@ test('general settings direct users without a voice engine to Extensions',()=>{
  const panel=VoiceGeneralSettingsPanel({snapshot:{state:{packages:[]}},onPlugins:()=>opened++});
  elements(panel).find(value=>value.props?.['data-voice-settings-open']).props.onClick();
  assert.equal(opened,1);assert.match(renderToStaticMarkup(panel),/去扩展中心安装语音插件/);
+});
+
+test('installed voice rows open component verification instead of claiming ready or starting it',()=>{
+ const calls=[],current={...snapshot,state:{...snapshot.state,selectedPackageId:gpt,assets:{asr:{state:'verification-needed'},tts:{state:'ready'}}}};
+ const node=VoicePackageRow({row,record,snapshot:current,session:{configure:()=>calls.push('start')},onOpen:id=>calls.push(id)}),html=renderToStaticMarkup(node);
+ assert.match(html,/需要校验/);assert.doesNotMatch(html,/已就绪/);elements(node).find(value=>value.props?.['data-voice-open']).props.onClick();assert.deepEqual(calls,[gpt]);
+ const other=VoicePackageRow({row,record,snapshot:{...snapshot,componentStatuses:{[gpt]:{ready:false,state:'verification-needed'}}},session:{}});
+ assert.match(renderToStaticMarkup(other),/需要校验/);
 });

@@ -114,6 +114,15 @@ export function satisfiesVersionRange(version, range) {
   });
 }
 
+/** Host/DSH single lower bounds admit every later semver, including prereleases.
+ * Historical bounded declarations and interface/dependency ranges retain the
+ * generic same-core prerelease opt-in rule.
+ */
+export function satisfiesHostVersionRange(version, range) {
+  if (typeof range === 'string' && /^>=\S+$/.test(range)) return compareVersions(version, range.slice(2)) >= 0;
+  return satisfiesVersionRange(version, range);
+}
+
 /** Portable relative path rules also reject NTFS streams and Windows aliases. */
 export function pluginRelativePath(value) {
   text(value, 'package path', 1024);
@@ -188,7 +197,7 @@ export function parsePluginManifest(input) {
 export function pluginCompatibility(input, {appVersion, apiVersion = PLUGIN_API_VERSION, platform = 'win32', arch = 'x64'} = {}) {
   const manifest = parsePluginManifest(input), reasons = [];
   if (manifest.platform !== platform || manifest.arch !== arch) reasons.push('platform');
-  if (!appVersion || !satisfiesVersionRange(appVersion, manifest.appRange)) reasons.push('app-version');
+  if (!appVersion || !satisfiesHostVersionRange(appVersion, manifest.appRange)) reasons.push('app-version');
   if (!apiVersion || !satisfiesVersionRange(apiVersion, manifest.apiRange)) reasons.push('api-version');
   return {compatible: reasons.length === 0, reasons};
 }

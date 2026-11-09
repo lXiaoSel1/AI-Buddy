@@ -34,28 +34,29 @@ const field = value => {
   return Buffer.concat([size, bytes]);
 };
 
-function archive(id, version, dependency) {
+function archive(id, version, dependency, appRange) {
   const runtime = id === shared;
   const spec = runtime ? {schemaVersion: 1, id, name: id, description: 'Voice shared generation', version,
     kind: 'runtime', appRange: '^2.0.9', apiRange: '^1.0.0', platform: 'win32', arch: 'x64', entry: 'asr_worker.py',
     activationEvents: [], capabilities: [], dependencies: {}, files: [{path: 'asr_worker.py'}, {path: 'assets.json'}]} : manifest(id, version, dependency);
+  if(appRange)spec.appRange=appRange;
   const files = new Map(spec.files.map(({path}) => [path, Buffer.from(path === 'assets.json' ? '{}' : '# Signed archive fixture')]));
   spec.files = [...files].map(([path, bytes]) => ({path, bytes: bytes.length, sha256: hash(bytes)}));
   const bytes = buildPluginArchive(spec, files);
   return {bytes, item: {manifest: spec, archive: {url: `${origin}/${id}/${version}.zip`, bytes: bytes.length, sha256: hash(bytes)}, publishedAt: '2026-11-08T00:00:00Z'}};
 }
 
-async function setup(t, {dependency = (id, version) => version} = {}) {
+async function setup(t, {dependency = (id, version) => version,appVersion='2.0.9',appRange} = {}) {
   const root = await mkdtemp(join(tmpdir(), 'buddy-voice-generation-')), dataRoot = join(root, 'profile');
   await mkdir(dataRoot);
   const {privateKey, publicKey} = generateKeyPairSync('ed25519');
   const ssh = 'ssh-ed25519 ' + Buffer.concat([field('ssh-ed25519'), field(publicKey.export({type: 'spki', format: 'der'}).subarray(-32))]).toString('base64');
   const voiceTestFingerprint = pluginSourceFingerprint(ssh);
-  const packages = ['1.0.0', '1.0.1'].flatMap(version => [breeze, gpt, shared].map(id => archive(id, version, dependency(id, version))));
+  const packages = ['1.0.0', '1.0.1'].flatMap(version => [breeze, gpt, shared].map(id => archive(id, version, dependency(id, version),appRange)));
   const payload = {schemaVersion: 1, id: 'voice-generation-fixture', generatedAt: '2026-11-08T00:00:00Z', packages: packages.map(row => row.item)};
   const descriptor = {schemaVersion: 1, id: payload.id, name: 'Voice generation fixture', catalogUrl: `${origin}/catalog.json`, publicKey: ssh, keyId: 'voice-generation-test'};
   const envelope = {payload, signature: {keyId: descriptor.keyId, algorithm: 'ed25519', value: sign(null, Buffer.from(canonicalPluginJson(payload)), privateKey).toString('base64')}};
-  const manager = await createPluginManager({root, dataRoot, appVersion: '2.0.9', voiceTestFingerprint, fetchImpl: async url => {
+  const manager = await createPluginManager({root, dataRoot, appVersion, voiceTestFingerprint, fetchImpl: async url => {
     if (url === `${origin}/source.json`) return Response.json(descriptor);
     if (url === descriptor.catalogUrl) return Response.json(envelope);
     const row = packages.find(row => row.item.archive.url === url);
@@ -108,4 +109,13 @@ for (const [version, dependency] of [['1.0.0', '1.0.1'], ['1.0.1', '1.0.0']]) te
     await assert.rejects(f.authority.action({action: 'enable', sourceId: f.sourceId, id}), {code: 'PLUGIN_ACTIVATION_UNSUPPORTED'});
     assert.equal(f.manager.snapshot().installed[id].enabled, false);
   }
+});
+
+// Synthetic, separately signed fixture; published voice manifests stay immutable.
+test('voice package authority admits a later host preview for a single lower-bound app declaration',async t=>{
+  const {authority,sourceId,install}=await setup(t,{appVersion:'3.0.0-rc.1',appRange:'>=2.0.9'});
+  await install([breeze,gpt],'1.0.1');
+  for(const id of [breeze,gpt])await authority.action({action:'enable',sourceId,id});
+  for(const row of authority.status())assert.equal(row.state,'ready',row.id);
+  assert.equal((await authority.resolveVoicePresetPackage(breeze)).version,'1.0.1');
 });

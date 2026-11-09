@@ -1,4 +1,4 @@
-import {compareVersions, parsePluginVersion, satisfiesVersionRange} from '../plugin-manifest.mjs';
+import {compareVersions, parsePluginVersion, satisfiesHostVersionRange, satisfiesVersionRange} from '../plugin-manifest.mjs';
 import {selectStableUpdate, stablePatchUpdate} from '../plugin-update-policy.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -35,10 +35,11 @@ export function createPluginUpdateCoordinator({
       const releases = automatic ? work.releases.filter(({version, package: ref}) =>
         stablePatchUpdate(record.exactVersion, version) && ref.dataSchemaVersion === record.dataSchemaVersion &&
         ref.capabilities.every(capability => record.grantedCapabilities.includes(capability))) : work.releases;
-      const selected = selectStableUpdate(releases, record.exactVersion, ({package: ref}) =>
-        !!appVersion && satisfiesVersionRange(appVersion, ref.compatibility.app) &&
+      const compatibleRef = ref =>
+        !!appVersion && satisfiesHostVersionRange(appVersion, ref.compatibility.app) &&
         satisfiesVersionRange(bridgeCompatibilityVersion, ref.compatibility.bridge) &&
-        (!dshVersion || satisfiesVersionRange(dshVersion, ref.compatibility.dsh)));
+        (!dshVersion || satisfiesHostVersionRange(dshVersion, ref.compatibility.dsh));
+      const selected = selectStableUpdate(releases, record.exactVersion, ({package: ref}) => compatibleRef(ref));
       if (!selected) continue;
       const {target: release, compatible} = selected, requested = release.package;
       const addedCapabilities = requested.capabilities.filter(capability => !record.grantedCapabilities.includes(capability));
@@ -54,7 +55,7 @@ export function createPluginUpdateCoordinator({
       const priorFailure = failedPluginUpdates[record.packageKey], sameFailure = priorFailure?.digest === requested.sourceDigest && priorFailure.to === release.version && priorFailure.from === record.exactVersion;
       const knownState = ['queued', 'running', 'failed', 'interrupted-needs-user', 'needs-user', 'cancelled'].includes(matching?.state) ? matching.state : sameFailure ? 'failed' : null;
       const pinnedState = ['queued', 'running', 'interrupted-needs-user'].includes(knownState);
-      output.push({backend: 'dsh', packageKey: record.packageKey, packageName: record.packageName, from: record.exactVersion, to: release.version, digest: requested.sourceDigest, policy, addedCapabilities, incompatibleData, state: pinnedState || state === 'available' ? knownState ?? state : state, workId: work.id, sourceId: work.sourceId, changes, ...(matching?.error || error || sameFailure ? {error: matching?.error ?? error ?? priorFailure.error} : {}), ...(matching?.waitingReason ? {waitingReason: matching.waitingReason} : {})});
+      output.push({backend: 'dsh', packageKey: record.packageKey, packageName: record.packageName, from: record.exactVersion, to: release.version, digest: requested.sourceDigest, policy, addedCapabilities, incompatibleData, requiresCompatibilityUpdate: !unavailable && !incompatibleData && !compatibleRef(record), state: pinnedState || state === 'available' ? knownState ?? state : state, workId: work.id, sourceId: work.sourceId, changes, ...(matching?.error || error || sameFailure ? {error: matching?.error ?? error ?? priorFailure.error} : {}), ...(matching?.waitingReason ? {waitingReason: matching.waitingReason} : {})});
     }
     return output;
   }

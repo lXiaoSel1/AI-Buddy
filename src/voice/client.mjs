@@ -208,15 +208,31 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
   let value={state:null,captureState:'idle',captureMode:null,partial:'',error:'',working:false,cloudBatchWorking:false,cloudBatchCancelling:false,cloudBatch:null,cloudSelectionRevision:0,pendingDraft:null},revision=0,generation=0,operations=0,owners=0;
   const cloudSelection=state=>JSON.stringify([state?.scope,state?.selectedPackageId,state?.engine,state?.profile?.id,state?.profile?.version,state?.cloudConnections]);
   const publish=patch=>{if(patch.state&&cloudSelection(patch.state)!==cloudSelection(value.state))patch={...patch,cloudSelectionRevision:value.cloudSelectionRevision+1};value={...value,...patch};for(const listener of subscribers)listener(value);};
-  const onError=error=>{if(['VOICE_ASSET_CANCELLED','VOICE_PREPARATION_CANCELLED','VOICE_ACTION_REVOKED','ABORT_ERR'].includes(error?.code)||error?.name==='AbortError')return;publish({error:typeof error?.code==='string'&&error.code.startsWith('CLOUD_')?cloudVoiceError(error):String(error?.message??error)});};
+  const onError=error=>{if(['VOICE_ASSET_CANCELLED','VOICE_PREPARATION_CANCELLED','VOICE_ACTION_REVOKED','ABORT_ERR'].includes(error?.code)||error?.name==='AbortError')return;publish({error:error?.code==='VOICE_ASSET_VERIFY_FAILED'?L('校验没通过，请重新下载','Verification failed, please download again'):error?.code==='VOICE_ASSET_VERIFY_REQUIRED'?L('这台电脑上已经有这些文件，请先校验','These files are already on this PC. Verify them first.'):typeof error?.code==='string'&&error.code.startsWith('CLOUD_')?cloudVoiceError(error):String(error?.message??error)});};
   const offOutputError=output.onError(onError);
   const action=(...args)=>api.action(...args);
   const capture=createHostVoiceCapture({...captureOptions,action:(op,payload)=>action(op,op==='stop'?{...payload,channel:'app-chat'}:payload),onState:captureState=>publish({captureState,...(captureState==='idle'?{captureMode:null,partial:''}:{})}),onError});
   let refreshing;
+  async function readProfiles(state){
+    if(!state?.scope)return {};
+    const targets=[...new Set([state.selectedPackageId,...(state.packages??[]).filter(row=>row.installed).map(row=>row.id)])].filter(id=>VOICE_PLUGINS.some(row=>row.id===id)&&state.settings?.packages?.[id]?.ttsProvider!=='minimax');
+    return Object.fromEntries(await Promise.all(targets.map(async packageId=>{
+      try{const listed=await action('profiles',packageId===state.selectedPackageId?undefined:{packageId});return [packageId,Array.isArray(listed)?listed:[]];}
+      catch(error){if(!['VOICE_DISABLED','VOICE_PACKAGE_UNAVAILABLE','VOICE_PROFILE_SCOPE','VOICE_STOPPING'].includes(error?.code))throw error;return [packageId,[]];}
+    })));
+  }
+  async function readComponentStatuses(state){
+    const targets=(state?.packages??[]).filter(row=>row.installed&&VOICE_PLUGINS.some(plugin=>plugin.id===row.id));
+    const rows=await Promise.all(targets.map(async({id})=>{
+      try{const status=await action('component-status',{packageId:id});return status&&typeof status.state==='string'&&typeof status.ready==='boolean'?[id,status]:null;}
+      catch(error){return [id,{ready:false,state:'unavailable',code:error?.code??'VOICE_ASSET_MANIFEST'}];}
+    }));
+    return Object.fromEntries(rows.filter(Boolean));
+  }
   function refresh(){
     if(refreshing&&refreshing.revision===revision)return refreshing.task;
     const row=refreshing={revision};
-    row.task=(async()=>{try{const state=await action('state');if(row.revision===revision){output.setCardMix(state?.cardVoiceMix);publish({state,...(state?.cloudBatch?{cloudBatch:state.cloudBatch}:{})});if(drafts.length)deliverDrafts();}return state;}catch(error){if(error?.code==='VOICE_STATE_CANCELLED')return value.state;throw error;}})().finally(()=>{if(refreshing===row)refreshing=undefined;});return row.task;
+    row.task=(async()=>{try{const state=await action('state'),[profilesByPackage,componentStatuses]=await Promise.all([readProfiles(state),readComponentStatuses(state)]);if(row.revision===revision){output.setCardMix(state?.cardVoiceMix);publish({state,profiles:profilesByPackage[state?.selectedPackageId]??[],profilesByPackage,componentStatuses,...(state?.cloudBatch?{cloudBatch:state.cloudBatch}:{})});if(drafts.length)deliverDrafts();}return state;}catch(error){if(error?.code==='VOICE_STATE_CANCELLED')return value.state;throw error;}})().finally(()=>{if(refreshing===row)refreshing=undefined;});return row.task;
   }
   function deliverDrafts(){const trusted=value.state?.scope;for(let i=0;i<drafts.length;){const event=drafts[i],listener=trusted&&[...draftListeners].find(row=>matchesChat(row.scope,event.scope)&&matchesChat(row.scope,trusted)&&['lifeId','operationId'].every(key=>!trusted[key]||trusted[key]===event.scope?.[key]));if(!listener){i++;continue;}listener.callback(event);drafts.splice(i,1);}publish({pendingDraft:drafts.at(-1)??null});}
   const off=output.onEvent(event=>{
@@ -238,6 +254,7 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
     }
     if(event.type==='asset-progress'){
       revision++;publish({assetProgress:event,...(value.state?{state:{...value.state,assetProgress:event}}:{})});
+      if(['ready','failed','cancelled'].includes(event.state))void refresh().catch(onError);
     }
     if((event.type==='error'||event.type==='status')&&event.message)onError(event);
     if(event.type==='draft'){drafts.push(event);deliverDrafts();}
@@ -385,8 +402,8 @@ export function VoiceSettingsPanel({snapshot,session,onPlugins,onChat,selectedPa
   const openImport=()=>{importRun.current++;setImporting(true);};
   useEffect(()=>{importRun.current++;setImporting(false);setText('');setFullSettings(false);},[scopeIdentity,id]);
   const choose=value=>{setLocalSelection(value);onSelectPackage?.(value);},configure=patch=>session?.configure(patch),ensureSelected=async()=>{if(id!==state?.selectedPackageId){await configure({selectedPackageId:id});return session?.snapshot?.()?.state?.selectedPackageId===id;}return true;},start=()=>configure({enabled:true,selectedPackageId:id}),where=h(VoiceWhere,{provider:options.ttsProvider,disabled:working,onChange:ttsProvider=>configure({packages:{[id]:{ttsProvider}}})});
-  const prepare=async(kind,op='assets-prepare')=>{if(!await ensureSelected())return;setFullSettings(false);return session?.runAction(op,{kind});};
-  const parts=()=>h(VoiceParts,{snapshot,id,onPrepare:prepare,onImport:kind=>prepare(kind,'assets-import'),onCancel:()=>session?.runAction('assets-cancel'),onRefresh:()=>session?.refresh()});
+  const prepare=async(kind,op='assets-prepare')=>{setFullSettings(false);return session?.runAction(op,{kind,packageId:id});};
+  const parts=()=>h(VoiceParts,{snapshot,id,onPrepare:prepare,onVerify:kind=>prepare(kind,'assets-verify'),onImport:kind=>prepare(kind,'assets-import'),onCancel:()=>session?.runAction('assets-cancel'),onRefresh:()=>session?.refresh()});
   const importRecording=async()=>{
     const ticket=++importRun.current,expectedScope=scopeIdentity,expectedId=id,transcript=text;
     const valid=()=>importMounted.current&&ticket===importRun.current&&importContext.current?.open&&importContext.current.id===expectedId&&importContext.current.scope===expectedScope&&scopeStamp(session?.snapshot?.()?.state?.scope??state?.scope)===expectedScope;
@@ -396,13 +413,13 @@ export function VoiceSettingsPanel({snapshot,session,onPlugins,onChat,selectedPa
     const result=await session?.runAction('profile-import',{text:transcript,label:t('我的声音')});
     if(valid()&&result&&!result.cancelled)closeImport();
   };
-  const localPartsNeedAttention=state?.assetProgress?.state==='preparing'||['missing','error','unavailable','preparing'].includes(state?.assets?.asr?.state)||options.ttsProvider==='local'&&id===state?.selectedPackageId&&['missing','error','unavailable','preparing'].includes(state?.assets?.tts?.state);
+  const browsedAssets=snapshot?.componentStatuses?.[id]??state?.assets,localPartsNeedAttention=state?.assetProgress?.state==='preparing'||['missing','verification-needed','error','unavailable','preparing'].includes(browsedAssets?.asr?.state)||options.ttsProvider==='local'&&['missing','verification-needed','error','unavailable','preparing'].includes(browsedAssets?.tts?.state);
   if(localPartsNeedAttention&&!fullSettings)return h('div',{className:'ws-page vx-page vx-narrow settings-voice','data-settings-voice':true},parts(),h(VoiceButton,{kind:'ghost sm',onClick:()=>setFullSettings(true),'data-voice-full-settings':true},L('返回完整语音设置','Open all voice settings')),error&&h('p',{role:'alert',className:'settings-error'},error));
   return h('div',{className:'ws-page vx-page settings-voice','data-settings-voice':true},
     !selectedPackageId&&h('div',{className:'ui-seg vx-pagetabs',role:'tablist','aria-label':L('语音插件','Voice plugins')},VOICE_PLUGINS.map(row=>h('button',{type:'button',role:'tab','aria-selected':id===row.id,key:row.id,onClick:()=>choose(row.id)},VoiceIcon(row.icon,14),row.short))),
     !installed.length&&h('p',{className:'settings-note'},L('去扩展中心安装语音插件','Install a voice plugin in Extensions'),' ',h(VoiceButton,{onClick:onPlugins},L('安装语音插件','Install voice plugin'))),
     h(VoiceEngineCard,{snapshot,id,onStart:start,onStop:()=>session?.stop(),onPlugins,onOther:()=>configure({enabled:true,selectedPackageId:VOICE_PLUGINS.find(row=>row.id!==id).id})}),
-    options.ttsProvider==='minimax'?h(React.Fragment,null,h(CloudVoiceSettings,{key:id,snapshot,session,whereControl:where,browsedPackageId:id}),parts()):h('div',{className:'vx-cols'},h(VoiceCharacters,{snapshot,id,onImport:openImport}),h('div',{className:'vx-side'},where,parts())),
+    options.ttsProvider==='minimax'?h(React.Fragment,null,h(CloudVoiceSettings,{key:id,snapshot,session,whereControl:where,browsedPackageId:id}),parts()):h('div',{className:'vx-cols'},h(VoiceCharacters,{snapshot,id,onImport:openImport,onSelect:profileId=>session?.runAction('profile-select',{profileId,packageId:id})}),h('div',{className:'vx-side'},where,parts())),
     pendingDraft&&h('div',{className:'settings-note'},h('label',null,t('录音草稿'),h('textarea',{readOnly:true,value:pendingDraft.text,rows:3})),h('p',null,t('打开对应对话后，录音文字会填入草稿。')),h(VoiceButton,{kind:'sm',onClick:onChat},t('打开对话'))),
     error&&h('p',{role:'alert',className:'settings-error'},error),
     importing&&h(VoiceImportDialog,{name:voiceName(current),text,onText:setText,onClose:closeImport,onConfirm:importRecording,working,error}));

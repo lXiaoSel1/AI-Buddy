@@ -3367,5 +3367,19 @@
   "聊天配音": "Chat voice",
   "她的回复会读出来，也能用 Live 轮流说话。": "Her replies are read aloud, and Live lets you take turns talking.",
   "角色声音、本机组件和云配音都在语音插件页里。": "Character voices, local parts and cloud voice are on the voice plugin page.",
-  "先启动此插件，再为它选择云端音色；浏览页签不会切换当前引擎。": "Start this plugin before choosing its cloud voice. Browsing tabs does not switch the active engine."
+  "先启动此插件，再为它选择云端音色；浏览页签不会切换当前引擎。": "Start this plugin before choosing its cloud voice. Browsing tabs does not switch the active engine.",
+  "只支持 {v}": "Only supports {v}",
+  "本体版本不兼容": "Incompatible app version",
+  "接口版本不兼容": "Incompatible API version",
+  "当前版本不兼容": "Incompatible with the current version",
+  "要更新到 {v} 才能继续用": "Update to {v} to keep using this plugin",
+  "语音组件待准备": "Voice components need preparation",
+  "需要校验": "Needs verification",
+  "校验没通过，请重新下载": "Verification failed, please download again",
+  "这台电脑上已经有这些文件，请先校验": "These files are already on this PC. Verify them first.",
+  "依赖组件不兼容": "The required components are incompatible",
+  "已安装的另一语音引擎没有相容的成套版本，无法切换": "The other installed voice engine has no matching release; this version cannot be selected",
+  "语音引擎存在重复来源登记，不能安全切换成套版本": "The voice engine is registered under multiple sources; a coordinated version change is unsafe",
+  "此版本不在当前已验证来源目录中，无法切换": "This version is absent from the current verified source catalog",
+  "所选语音版本缺少相容的共享运行依赖，无法切换": "This voice version has no compatible shared runtime"
 }

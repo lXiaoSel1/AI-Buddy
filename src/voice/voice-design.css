@@ -121,8 +121,13 @@
 .vx-cface{flex:none;width:34px!important;height:34px!important}
 .vx-cface img{width:100%;height:100%}
 .vx-cst{display:inline-flex;align-items:center;gap:6px;color:var(--buddy-muted);font-size:var(--buddy-fs-cap)}
-.vx-voices-f{display:flex;align-items:center;gap:14px;margin-top:12px;padding-top:12px;border-top:1px solid var(--buddy-border);font-size:var(--buddy-fs-cap);line-height:1.5}
+.vx-voices-f{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin-top:12px;padding-top:12px;border-top:1px solid var(--buddy-border);font-size:var(--buddy-fs-cap);line-height:1.5}
+.vx-voices-f>.ws-muted{flex:1 1 220px}
 .vx-voices-f .ui-btn{flex:none}
+.vx-voice-select{display:flex;align-items:center;gap:8px;min-width:0;margin:0}
+.vx-voice-select>span{white-space:nowrap}
+.vx-voice-select select{height:var(--buddy-h-sm);max-width:280px;min-width:0;font:inherit}
+@media(max-width:600px){.vx-voice-select{flex:1 1 100%}.vx-voice-select select{flex:1;max-width:100%}}
 .vx-choices{display:grid;gap:8px}
 .vx-choice{display:flex;align-items:flex-start;gap:12px;width:100%;padding:12px 14px;border:0;border-radius:12px;background:var(--buddy-surface2);box-shadow:inset 0 0 0 1px var(--buddy-border);color:var(--buddy-text);font:inherit;text-align:left;cursor:pointer}
 .vx-choice.on{background:color-mix(in srgb,var(--buddy-accent) 10%,var(--buddy-surface2));box-shadow:inset 0 0 0 2px var(--buddy-accent)}

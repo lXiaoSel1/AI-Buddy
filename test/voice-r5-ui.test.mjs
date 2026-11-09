@@ -109,7 +109,7 @@ test('cloud configuration editing exposes only supported choices and never echoe
 test('batch progress distinguishes activation evidence and unknown outcomes with one row per character',()=>{
   const results=[{characterId:'deepseek',status:'activated'},{characterId:'deepseek',status:'activated'},{characterId:'claude',status:'activation-confirmed-query-pending'},{characterId:'gemini',status:'prepared-awaiting-activation'},{characterId:'qwen',status:'unknown',code:'CLOUD_REMOTE_UNKNOWN'}];
   const html=renderToStaticMarkup(React.createElement(CloudVoiceBatchStatus,{batch:{state:'completed',total:4,results}}));
-  assert.equal((html.match(/deepseek/g)??[]).length,1);
+  assert.equal((html.match(/DeepSeek/g)??[]).length,1);
   assert.match(html,/本批角色：4/);
   assert.match(html,/首次合成已确认，待查询核对/);
   assert.match(html,/已准备，待激活/);

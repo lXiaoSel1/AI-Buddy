@@ -1,0 +1,215 @@
+{
+  "payload": {
+    "schemaVersion": 1,
+    "id": "ai-buddy-local-voice-208",
+    "generatedAt": "2026-11-07T21:47:02.346Z",
+    "packages": [
+      {
+        "manifest": {
+          "activationEvents": [
+            "onCommand:voice.breeze"
+          ],
+          "apiRange": "^1.0.0",
+          "appRange": "2.0.8",
+          "arch": "x64",
+          "author": "lXiaoSel1",
+          "capabilities": [
+            "commands.register"
+          ],
+          "category": "voice",
+          "compatibleDataVersions": [
+            1
+          ],
+          "dataSchemaVersion": 1,
+          "dependencies": {
+            "ai-buddy.voice-shared-runtime": "1.0.0"
+          },
+          "description": "选择本地 Breeze 或 MiniMax 云配音。共用本地流式识别、录音、轮流 Live 和播放。",
+          "entry": "entry.mjs",
+          "files": [
+            {
+              "path": "ASSET-NOTICES.md",
+              "bytes": 1822,
+              "sha256": "e1a67c2870e80193cfaae60a177cc2901617100179264e6fa3bc06d2c200362a"
+            },
+            {
+              "path": "assets.json",
+              "bytes": 5152097,
+              "sha256": "2ac28cbb5632d3fcd250536fa30710ff2539d4ffda0235fa35a74aad3a212d37"
+            },
+            {
+              "path": "breeze_worker.py",
+              "bytes": 3981,
+              "sha256": "9bae23e9f853ffb153f47d12e7a99038e2a709f20a1541dd512b17a4a958ddbd"
+            },
+            {
+              "path": "cadence.py",
+              "bytes": 809,
+              "sha256": "67fb5c4740e231252245d72e01e34e4bd9cda189014c7661cd6baa80b674978f"
+            },
+            {
+              "path": "entry.mjs",
+              "bytes": 279,
+              "sha256": "d28fabfa5ebbd013e0b1fd3a05e1cd7c99ebb26a5d29455a6236100913de476a"
+            },
+            {
+              "path": "LICENSE.md",
+              "bytes": 13663,
+              "sha256": "743e12419085102e444fd36c1df870d9fcd64badcc03cc551ae0fae81f517b3a"
+            }
+          ],
+          "id": "ai-buddy.voice-breeze",
+          "kind": "plugin",
+          "license": "Apache-2.0 + Commons Clause",
+          "name": "Breeze 语音",
+          "platform": "win32",
+          "schemaVersion": 1,
+          "version": "1.0.0"
+        },
+        "archive": {
+          "url": "https://127.0.0.1:48591/local-voice/ai-buddy.voice-breeze-1.0.0.zip",
+          "bytes": 1467347,
+          "sha256": "b838987a7a61d99f151a8333222064340ad3226500c60f9a7028b9dd32771456"
+        },
+        "publishedAt": "2026-11-07T21:47:02.173Z"
+      },
+      {
+        "manifest": {
+          "activationEvents": [
+            "onCommand:voice.gpt-sovits"
+          ],
+          "apiRange": "^1.0.0",
+          "appRange": "2.0.8",
+          "arch": "x64",
+          "author": "lXiaoSel1",
+          "capabilities": [
+            "commands.register"
+          ],
+          "category": "voice",
+          "compatibleDataVersions": [
+            1
+          ],
+          "dataSchemaVersion": 1,
+          "dependencies": {
+            "ai-buddy.voice-shared-runtime": "1.0.0"
+          },
+          "description": "选择本地 GPT-SoVITS V5 Turbo 或 MiniMax 云配音。共用本地流式识别、录音、轮流 Live 和播放。",
+          "entry": "entry.mjs",
+          "files": [
+            {
+              "path": "ASSET-NOTICES.md",
+              "bytes": 1822,
+              "sha256": "e1a67c2870e80193cfaae60a177cc2901617100179264e6fa3bc06d2c200362a"
+            },
+            {
+              "path": "assets.json",
+              "bytes": 4662018,
+              "sha256": "0174e12240469f16e0bfb0630f5a6337c2c63f58ba4717443968b9a32f44657d"
+            },
+            {
+              "path": "entry.mjs",
+              "bytes": 288,
+              "sha256": "b8d6156541d74a7d030e9a49ba23881cf9025492dc66427773ec412acf1bdb66"
+            },
+            {
+              "path": "gpt_worker.py",
+              "bytes": 4499,
+              "sha256": "35d3c22bacea917904b7c663753c2544bacfcafc49d1aa6cd74b4446210b1bda"
+            },
+            {
+              "path": "LICENSE.md",
+              "bytes": 13663,
+              "sha256": "743e12419085102e444fd36c1df870d9fcd64badcc03cc551ae0fae81f517b3a"
+            }
+          ],
+          "id": "ai-buddy.voice-gpt-sovits",
+          "kind": "plugin",
+          "license": "Apache-2.0 + Commons Clause",
+          "name": "GPT-SoVITS 语音",
+          "platform": "win32",
+          "schemaVersion": 1,
+          "version": "1.0.0"
+        },
+        "archive": {
+          "url": "https://127.0.0.1:48591/local-voice/ai-buddy.voice-gpt-sovits-1.0.0.zip",
+          "bytes": 1337386,
+          "sha256": "42a3d285487ad01d1a6642dbd99bcf14930e3b9dfebc3fd294a2b62c023896b9"
+        },
+        "publishedAt": "2026-11-07T21:47:02.276Z"
+      },
+      {
+        "manifest": {
+          "activationEvents": [],
+          "apiRange": "^1.0.0",
+          "appRange": "2.0.8",
+          "arch": "x64",
+          "author": "lXiaoSel1",
+          "capabilities": [],
+          "category": "voice",
+          "compatibleDataVersions": [
+            1
+          ],
+          "dataSchemaVersion": 1,
+          "dependencies": {},
+          "description": "两种语音引擎共用的识别、云配音 worker 与运行协议；自动管理的内部依赖。",
+          "entry": "asr_worker.py",
+          "files": [
+            {
+              "path": "asr.py",
+              "bytes": 4490,
+              "sha256": "19ddc7b7ffa1e3d58614caecbe26df94efe93ae9793166d972acbb398b7ba2e9"
+            },
+            {
+              "path": "asr_worker.py",
+              "bytes": 1698,
+              "sha256": "7401a00522cff5ade2f00853d1edd2b20c10b1e6c47f75810c6809556b1926f8"
+            },
+            {
+              "path": "ASSET-NOTICES.md",
+              "bytes": 1822,
+              "sha256": "e1a67c2870e80193cfaae60a177cc2901617100179264e6fa3bc06d2c200362a"
+            },
+            {
+              "path": "assets.json",
+              "bytes": 675616,
+              "sha256": "36402e36a0e3249db75d6d93995bfd696f1759b0c1c8620300ab8a3df92b5eee"
+            },
+            {
+              "path": "cloud_speech.py",
+              "bytes": 12163,
+              "sha256": "617c795e3e7b79c14445a4ea6bf36fb1d6cfe29876c27ca435ebae2c6f5da729"
+            },
+            {
+              "path": "LICENSE.md",
+              "bytes": 13663,
+              "sha256": "743e12419085102e444fd36c1df870d9fcd64badcc03cc551ae0fae81f517b3a"
+            },
+            {
+              "path": "worker_protocol.py",
+              "bytes": 2921,
+              "sha256": "204769ac9411983c6522402a6f0b8b5fce74519a6675ad07bbf152925afc2455"
+            }
+          ],
+          "id": "ai-buddy.voice-shared-runtime",
+          "kind": "runtime",
+          "license": "Apache-2.0 + Commons Clause",
+          "name": "AI Buddy 共享语音运行依赖",
+          "platform": "win32",
+          "schemaVersion": 1,
+          "version": "1.0.0"
+        },
+        "archive": {
+          "url": "https://127.0.0.1:48591/local-voice/ai-buddy.voice-shared-runtime-1.0.0.zip",
+          "bytes": 221930,
+          "sha256": "4484b22da11f1c7ebd3c616ea9b9f9193bfd4e8eeae181b3c1443c87d5efdcc8"
+        },
+        "publishedAt": "2026-11-07T21:47:02.341Z"
+      }
+    ]
+  },
+  "signature": {
+    "keyId": "ai-buddy-release",
+    "algorithm": "ed25519",
+    "value": "yyNi8yVwNBb5AWfOIELogJc6HDIV2lK+YJ4P6XhszIR6/LWYBtTpcBFMA6s7Sp0ERKmMp0QM4CEqdwqrfKwJBA=="
+  }
+}

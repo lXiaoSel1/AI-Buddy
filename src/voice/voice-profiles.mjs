@@ -43,6 +43,7 @@ function validateWav(bytes) {
 
 function publicProfile(row) {
   return { id: row.id, version: row.version, characterId: row.characterId, engine: row.engine, label: row.label,
+    ...(Number.isFinite(Date.parse(row.importedAt)) ? {importedAt:row.importedAt,...(row.importedAtSource?{importedAtSource:row.importedAtSource}:{})} : {}),
     availableReferences: styles.filter(style => Object.hasOwn(row.references, style)),
     ...(row.cloudVoiceId ? { cloudVoiceId: row.cloudVoiceId } : {}),
     ...(row.bundledPreset ? { bundledPreset: { bundleId: row.bundledPreset.bundleId, version: row.bundledPreset.version } } : {}) };
@@ -79,7 +80,15 @@ export function createVoiceProfiles({ dataRoot }) {
   async function list(params) {
     scope(params);
     const state = await load();
-    return Object.values(state.profiles).filter(row => row.characterId === params.characterId && row.engine === params.engine).map(publicProfile);
+    const rows=Object.values(state.profiles).filter(row => row.characterId === params.characterId && row.engine === params.engine);
+    return Promise.all(rows.map(async row=>{
+      if(row.bundledPreset||Number.isFinite(Date.parse(row.importedAt)))return publicProfile(row);
+      // Older imports predate import timestamps. Report the existing directory's
+      // creation date without rewriting their index, references or selection.
+      const directory=join(root,validId(row.storageId)?row.storageId:row.id);
+      try{await assertPluginTreeNoLinks(directory);const info=await lstat(directory),at=info.birthtimeMs>0?info.birthtimeMs:info.mtimeMs;return publicProfile({...row,importedAt:new Date(at).toISOString(),importedAtSource:'filesystem'});}
+      catch(error){if(error.code!=='ENOENT')throw error;return publicProfile(row);}
+    }));
   }
 
   async function hasBundledPresets(receiptKey) {
@@ -216,7 +225,7 @@ export function createVoiceProfiles({ dataRoot }) {
         await writeFile(join(dir, style + '.wav'), bytes, { flag: 'wx', mode: 0o600 });
         stored[style] = { text, language, bytes: bytes.length, sha256: digest(bytes), durationMs };
       }
-      const row = { id, version: 1, characterId, engine, label: label.trim(), references: stored, ...(cloudVoiceId ? { cloudVoiceId } : {}) };
+      const row = { id, version: 1, characterId, engine, label: label.trim(), importedAt:new Date().toISOString(), references: stored, ...(cloudVoiceId ? { cloudVoiceId } : {}) };
       state.profiles[id] = row;
       state.selections[key] = id;
       writeAtomic(indexPath, JSON.stringify(state));

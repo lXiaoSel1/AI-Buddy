@@ -4,6 +4,7 @@ import {StatusPill,Switch,Menu} from '../ui-controls.mjs';
 import {Dialog} from '../ui-dialog.mjs';
 import {legacyUpdateKey} from '../plugin-update-policy.mjs';
 import {VoiceIcon} from './design-icons.mjs';
+import {voiceComponentSummary} from './component-state.mjs';
 
 const h=React.createElement;
 const L=(zh,en)=>locale()==='en'?en:zh;
@@ -19,14 +20,15 @@ export function VoiceLogo({packageId,size=44}){
 export function voicePackagePresentation(snapshot,packageId,record){
  const state=snapshot?.state,current=record??state?.packages?.find(row=>row.id===packageId),selected=state?.selectedPackageId===packageId,phase=state?.preparation?.state??snapshot?.preparation?.state??'idle';
  const disabled=current&&(current.enabled===false||current.usable===false);
- const status=disabled?'disabled':!selected?'idleOther':!state?.settings?.enabled?'off':['checking','verifying','loading','stopping'].includes(phase)?'starting':phase==='ready'?'ready':phase==='failed'?'failed':'off';
- const labels={ready:['ok',L('已就绪','Ready')],starting:['busy',L('启动中','Starting')],failed:['err',L('没能启动','Could not start')],off:['idle',L('未启动','Not started')],idleOther:['idle',L('没在使用','Not in use')],disabled:['idle',L('已停用','Disabled')]};
+ const components=snapshot?.componentStatuses?.[packageId]??state?.componentStatuses?.[packageId]??(selected&&state?.assets?voiceComponentSummary(state.assets):null),needsParts=components&&!components.ready;
+ const status=disabled?'disabled':needsParts?(components.state==='preparing'?'starting':components.state==='verification-needed'?'verification-needed':'needsSetup'):!selected?'idleOther':!state?.settings?.enabled?'off':['checking','verifying','loading','stopping'].includes(phase)?'starting':phase==='ready'?'ready':phase==='failed'?'failed':'off';
+ const labels={ready:['ok',L('已就绪','Ready')],starting:['busy',L('启动中','Starting')],failed:['err',L('没能启动','Could not start')],off:['idle',L('未启动','Not started')],idleOther:['idle',L('没在使用','Not in use')],disabled:['idle',L('已停用','Disabled')],'verification-needed':['warn',L('需要校验','Needs verification')],needsSetup:['warn',L('需要准备','Needs setup')]};
  return {status,selected,tone:labels[status][0],label:labels[status][1]};
 }
 // This is the installed row used by CommunityCenter. It deliberately keeps legacy
 // package actions and keys; its appearance does not turn it into a DSH package.
 export function VoicePackageRow({row,record,snapshot,session,call,run=fn=>fn(),busy=false,menuOpen=false,onMenu,onOpen,onConfirm,onUpdate}){
- const m=row.manifest,value=VOICE_PAGES.find(value=>value.id===m.id),key=legacyUpdateKey(row.sourceId??'legacy',m.id),policy=row.updatePolicy??'manual',view=voicePackagePresentation(snapshot,m.id,record),active=view.status==='ready',phaseBusy=view.status==='starting',enabled=!!row.enabled;
+ const m=row.manifest,value=VOICE_PAGES.find(value=>value.id===m.id),key=legacyUpdateKey(row.sourceId??'legacy',m.id),policy=row.updatePolicy??'manual',view=voicePackagePresentation(snapshot,m.id,record),active=view.status==='ready',openParts=['verification-needed','needsSetup'].includes(view.status),phaseBusy=view.status==='starting',enabled=!!row.enabled;
  const unavailable=record?.usable!==true,canEnable=row.compatible!==false&&row.activation?.supported===true;
  const action=action=>run(()=>call({action,id:m.id,sourceId:row.sourceId}));
  const label=active?view.label+L(' · 聊天在用',' · used in chat'):view.status==='idleOther'?L('未启动','Not started'):view.label;
@@ -42,7 +44,7 @@ export function VoicePackageRow({row,record,snapshot,session,call,run=fn=>fn(),b
  return h('article',{className:'ws-card ext-irow',key,'data-voice-installed':m.id},h(VoiceLogo,{packageId:m.id}),
   h('div',{className:'ext-ir-main'},h('div',{className:'ext-row'},h('b',null,voicePackageLabel(m.id)),h('span',{className:'ext-cap'},m.version),h(StatusPill,{tone:view.tone},label),onUpdate&&h('button',{type:'button',className:'ws-tag ext-tagbtn',onClick:onUpdate},t('有更新'))),h('small',{className:'ext-cap'},situation)),
   h('div',{className:'ext-row'},h('span',{className:'ext-cap'},L('启用','Enabled')),h(Switch,{checked:enabled,disabled:busy||!enabled&&!canEnable,label:t(enabled?'停用':'启用')+' · '+voicePackageLabel(m.id),'data-voice-enable':m.id,onChange:()=>action(enabled?'disable':'enable')}),
-   h('button',{type:'button',className:'ui-btn'+(!active?' primary':''),disabled:busy||!enabled||unavailable||phaseBusy||!session,'data-voice-start':!active?m.id:undefined,'data-voice-open':active?m.id:undefined,onClick:()=>active?onOpen?.(m.id):run(()=>session.configure({enabled:true,selectedPackageId:m.id}))},VoiceIcon(active?'external':'play',{size:16}),active?L('打开','Open'):phaseBusy?L('启动中','Starting'):L('启动','Start')),
+   h('button',{type:'button',className:'ui-btn'+(!active?' primary':''),disabled:busy||!enabled||unavailable||phaseBusy||!session,'data-voice-start':!active&&!openParts?m.id:undefined,'data-voice-open':active||openParts?m.id:undefined,onClick:()=>active||openParts?onOpen?.(m.id):run(()=>session.configure({enabled:true,selectedPackageId:m.id}))},VoiceIcon(active||openParts?'external':'play',{size:16}),active||openParts?L('打开','Open'):phaseBusy?L('启动中','Starting'):L('启动','Start')),
    h('div',{className:'ext-menuwrap'},h('button',{type:'button',className:'ui-icon-btn','aria-haspopup':'menu','aria-expanded':menuOpen,'aria-label':t('更多')+' · '+voicePackageLabel(m.id),title:t('更多'),onClick:()=>onMenu?.(!menuOpen)},VoiceIcon('more',{size:16})),menuOpen&&h(Menu,{label:t('更多'),className:'ext-menu-r vx-menu',onClose:()=>onMenu?.(false),items}))));
 }
 

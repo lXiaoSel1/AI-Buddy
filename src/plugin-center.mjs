@@ -1,11 +1,12 @@
 import React,{useCallback,useEffect,useRef,useState} from 'react';
 import {t,locale} from './i18n.mjs';
 import {Icon} from './ui-icons.mjs';
-import {StatusPill,EmptyState} from './ui-controls.mjs';
+import {StatusPill,EmptyState,Menu} from './ui-controls.mjs';
 import {Dialog} from './ui-dialog.mjs';
-import {pluginResult,pluginErrorText,pluginSourceId,pluginRowKey,filterLegacyPlugins,pluginActivation,installedPluginRows} from './plugin-center-helpers.mjs';
+import {pluginResult,pluginErrorText,pluginSourceId,pluginRowKey,filterLegacyPlugins,pluginActivation,installedPluginRows,pluginSourcesNeedRefresh} from './plugin-center-helpers.mjs';
 import {legacyText,formatBytes} from './community-capabilities.mjs';
 import {communityCount} from './community/messages.mjs';
+import {isVoiceEnginePackage,VOICE_SHARED_PACKAGE} from './voice/package-contract.mjs';
 const tn=(key,n)=>communityCount(key,n,t);
 const h=React.createElement;
 const size=bytes=>formatBytes(bytes)||'0 KB';
@@ -14,9 +15,17 @@ export function rangeCeiling(range){const text=String(range??''),le=/<=\s*v?(\d+
 const button=(text,onClick,props={})=>h('button',{type:'button',className:'ui-btn'+(props.kind?' '+props.kind:''),onClick,...props,kind:undefined},t(text));
 const phases={preparing:'准备中',downloading:'下载中',extracting:'解压中',committing:'提交中',recovering:'正在恢复扩展事务'};
 const services={initializing:'扩展服务初始化中','waiting-installation':'等待安装完成后恢复扩展',recovering:'正在恢复扩展事务',failed:'扩展服务暂不可用',closing:'扩展服务已关闭',closed:'扩展服务已关闭'};
-const activations={'not-installed':'尚未安装',disabled:'已安装，尚未启用','missing-dependency':'缺少同源依赖组件',ready:'引擎就绪',dependency:'依赖组件，无独立启动',unsupported:'本版本尚不支持此扩展的激活能力',unverified:'尚未验证可用性'};
+const activations={'verification-needed':'需要校验','components-needed':'语音组件待准备','not-installed':'尚未安装',disabled:'已安装，尚未启用','missing-dependency':'缺少同源依赖组件',ready:'引擎就绪',dependency:'依赖组件，无独立启动',unsupported:'本版本尚不支持此扩展的激活能力',unverified:'尚未验证可用性'};
 const mutations=new Set(['sources-add','sources-refresh','sources-disable','sources-remove','refresh','install','install-offline','enable','disable','rollback','uninstall']);
 const isSnapshot=value=>value?.service||value?.installed;
+export function PluginVersionMenu({row,onSelect,onClose,disabled=false}){
+ const items=(row.versions??[]).map(version=>{
+  const incompatible=version.compatible===false||version.switchCompatible===false,range=version.manifest.appRange,exact=/^=?\s*(\d+\.\d+\.\d+)$/.exec(range??'');
+  const reason=version.compatible!==false&&version.switchCompatible===false?t(version.switchReason??'依赖组件不兼容'):exact?t('只支持 {v}').replace('{v}',exact[1]):(version.reasons??[]).includes('app-version')?t('本体版本不兼容'):(version.reasons??[]).includes('api-version')?t('接口版本不兼容'):t('当前版本不兼容');
+  return {label:version.manifest.version+(incompatible?' · '+t('不兼容')+' · '+reason:''),checked:version.current===true,disabled:disabled||version.current===true||incompatible,onSelect:()=>onSelect?.(version)};
+ });
+ return h(Menu,{label:t('切换版本'),items,onClose});
+}
 const safeLink=value=>{try{const url=new URL(value);return url.protocol==='https:'?url.href:null;}catch{return null;}};
 const Logo=({icon='bolt',size:px=36})=>h('span',{className:'ext-logo',style:{'--pl':px+'px'},'aria-hidden':true},Icon(icon,{size:Math.round(px*.5)}));
 
@@ -44,26 +53,35 @@ function SourceManager({sources,action,usable,committing,onClose}){
 
 /** The view renders signed metadata only; no plugin entry or model is executed. */
 // extras (from the Extensions page, B6): the community catalog row, the signed plugin file import and the favourites files.
-export function PluginCenter({api=globalThis.window?.whale?.plugins,onManage,embedded=false,extras=null}={}){
- const [state,setState]=useState(null),[sources,setSources]=useState([]),[error,setError]=useState(''),[query,setQuery]=useState(''),[kind,setKind]=useState('all'),[sourceId,setSourceId]=useState(''),[page,setPage]=useState(1),[result,setResult]=useState({items:[],total:0}),[loading,setLoading]=useState(true),[searchError,setSearchError]=useState(''),[revision,setRevision]=useState(0),[working,setWorking]=useState(false),[sourceOpen,setSourceOpen]=useState(false),[selected,setSelected]=useState(null),[detailLoading,setDetailLoading]=useState(false),[detailError,setDetailError]=useState(''),[plan,setPlan]=useState(null);
+export function PluginCenter({api=globalThis.window?.whale?.plugins,voiceApi=globalThis.window?.whale?.voice,onManage,embedded=false,extras=null}={}){
+ const [state,setState]=useState(null),[sources,setSources]=useState([]),[error,setError]=useState(''),[query,setQuery]=useState(''),[kind,setKind]=useState('all'),[sourceId,setSourceId]=useState(''),[page,setPage]=useState(1),[result,setResult]=useState({items:[],total:0}),[loading,setLoading]=useState(true),[searchError,setSearchError]=useState(''),[revision,setRevision]=useState(0),[working,setWorking]=useState(false),[sourceOpen,setSourceOpen]=useState(false),[selected,setSelected]=useState(null),[detailLoading,setDetailLoading]=useState(false),[detailError,setDetailError]=useState(''),[plan,setPlan]=useState(null),[versionMenu,setVersionMenu]=useState(null),[components,setComponents]=useState({});
  const mounted=useRef(false),searchSeq=useRef(0),detailSeq=useRef(0),autoRefreshed=useRef(false),workCount=useRef(0);
  const service=state?.service,usable=!!state&&service?.usable!==false,committing=state?.operation?.phase==='committing';
  const adopt=useCallback(value=>{if(!mounted.current||!value)return;if(isSnapshot(value))setState(value);if(Array.isArray(value.sources))setSources(value.sources);},[]);
  const action=useCallback(async request=>{if(!api)throw Error(t('扩展服务尚未就绪'));const value=pluginResult(await api.action(request));adopt(value);if(mutations.has(request.action)&&mounted.current)setRevision(value=>value+1);return value;},[api,adopt]);
  async function run(fn){workCount.current++;setWorking(true);setError('');try{return await fn();}catch(e){if(mounted.current)setError(pluginErrorText(e));}finally{workCount.current--;if(mounted.current)setWorking(workCount.current>0);}}
  useEffect(()=>{mounted.current=true;if(!api)return()=>{mounted.current=false;};
-  void action({action:'status'}).then(async value=>{if(!mounted.current)return;const uncached=Array.isArray(value.sources)?value.sources.some(source=>source.sourceId!=='legacy'&&source.enabled!==false&&!source.removed&&!source.cachedAt):!value.catalogAvailable;if(uncached&&value.service?.usable!==false&&!autoRefreshed.current){autoRefreshed.current=true;try{await action({action:Array.isArray(value.sources)?'sources-refresh':'refresh'});}catch(e){if(mounted.current)setSearchError(pluginErrorText(e));}}}).catch(e=>mounted.current&&setError(pluginErrorText(e)));
+  void action({action:'status'}).then(async value=>{if(!mounted.current)return;const uncached=pluginSourcesNeedRefresh(value);if(uncached&&value.service?.usable!==false&&!autoRefreshed.current){autoRefreshed.current=true;try{await action({action:Array.isArray(value.sources)?'sources-refresh':'refresh'});}catch(e){if(mounted.current)setSearchError(pluginErrorText(e));}}}).catch(e=>mounted.current&&setError(pluginErrorText(e)));
   const off=api.onUpdate?.(value=>{if(mounted.current){try{adopt(pluginResult(value));setRevision(value=>value+1);}catch(e){setError(pluginErrorText(e));}}});return()=>{mounted.current=false;searchSeq.current++;detailSeq.current++;off?.();};
  },[api,action,adopt]);
- useEffect(()=>{if(!state||!usable||autoRefreshed.current)return;const uncached=Array.isArray(state.sources)?state.sources.some(source=>source.sourceId!=='legacy'&&source.enabled!==false&&!source.removed&&!source.cachedAt):!state.catalogAvailable;if(uncached){autoRefreshed.current=true;void action({action:Array.isArray(state.sources)?'sources-refresh':'refresh'}).catch(e=>mounted.current&&setSearchError(pluginErrorText(e)));}},[action,!!state,usable,revision]);
+ useEffect(()=>{if(!state||!usable||autoRefreshed.current)return;const uncached=pluginSourcesNeedRefresh(state);if(uncached){autoRefreshed.current=true;void action({action:Array.isArray(state.sources)?'sources-refresh':'refresh'}).catch(e=>mounted.current&&setSearchError(pluginErrorText(e)));}},[action,!!state,usable,revision]);
  useEffect(()=>{setPage(1);},[query,kind,sourceId]);
  useEffect(()=>{const seq=++searchSeq.current;if(!state||!usable){setLoading(!!api);return;}setLoading(true);setSearchError('');const timer=setTimeout(async()=>{const request={action:'search',query,kind,...(sourceId?{sourceId}:{}),page,pageSize:50};try{let value;try{value=await action(request);}catch(e){if(Array.isArray(state.sources)||!/UNKNOWN_ACTION|Unknown.*action|未知.*操作/i.test(e.code??e.message))throw e;const unique=[...new Map([...(state.packages??[]),...installedPluginRows(state)].map(row=>[pluginRowKey(row),row])).values()];value=filterLegacyPlugins(unique,request);}if(mounted.current&&searchSeq.current===seq){setResult(value);if(page>1&&!value.items.length&&value.total)setPage(Math.ceil(value.total/50));}}catch(e){if(mounted.current&&searchSeq.current===seq){setResult({items:[],total:0});setSearchError(pluginErrorText(e));}}finally{if(mounted.current&&searchSeq.current===seq)setLoading(false);}},100);return()=>clearTimeout(timer);},[api,action,query,kind,sourceId,page,revision,!!state,usable]);
+ useEffect(()=>{
+  let cancelled=false;
+  const rows=result.items.filter(row=>row.current&&isVoiceEnginePackage(row.manifest.id));
+  if(!voiceApi?.action||!rows.length)return;
+  const refresh=async()=>{const values=await Promise.all(rows.map(async row=>{try{return [pluginRowKey(row),pluginResult(await voiceApi.action('component-status',{packageId:row.manifest.id}))];}catch{return [pluginRowKey(row),{}];}}));if(!cancelled&&mounted.current)setComponents(Object.fromEntries(values));};
+  void refresh();
+  const off=voiceApi.onEvent?.(event=>{if(event.type==='asset-progress'&&['ready','failed','cancelled'].includes(event.state))void refresh();});
+  return()=>{cancelled=true;off?.();};
+ },[voiceApi,result.items]);
  async function details(row){const seq=++detailSeq.current;setSelected(row);setDetailLoading(true);setDetailError('');try{const value=await action({action:'details',sourceId:pluginSourceId(row),id:row.manifest.id,version:row.manifest.version});if(mounted.current&&seq===detailSeq.current)setSelected(value.item??value);}catch(e){if(mounted.current&&seq===detailSeq.current)setDetailError(pluginErrorText(e));}finally{if(mounted.current&&seq===detailSeq.current)setDetailLoading(false);}}
  async function prepare(row){setPlan(await action({action:'plan',sourceId:pluginSourceId(row),requests:[{id:row.manifest.id,version:row.manifest.version}]}));}
  async function offline(){const value=pluginResult(await api.choose({kind:'offline'}));if(value?.plan)setPlan({...value.plan,selectionId:value.selectionId});}
   async function installPlan(){const selectedPlan=plan;setPlan(null);await action(selectedPlan.selectionId?{action:'install-offline',planId:selectedPlan.planId,selectionId:selectedPlan.selectionId}:{action:'install',planId:selectedPlan.planId});}
  function sourceLabel(row){const source=row.source??sources.find(value=>value.sourceId===pluginSourceId(row));return t(pluginSourceId(row)==='legacy'?'旧版来源':source?.official?'官方来源':'第三方来源')+' · '+(source?.name??pluginSourceId(row))+(source?.removed?' · '+t('来源已移除，安装证明保留'):source?.enabled===false?' · '+t('来源已禁用'):'');}
- function card(row){const m=row.manifest,a=pluginActivation(row),canEnable=m.kind==='plugin'&&a.supported===true,incompatible=row.compatible===false,source=sources.find(value=>value.sourceId===pluginSourceId(row)),text=legacyText(m,{official:pluginSourceId(row)==='legacy'||!!source?.official}),ceiling=incompatible&&rangeCeiling(m.appRange);
+ function card(row){const m=row.manifest,a=pluginActivation(row,isVoiceEnginePackage(row.manifest.id)?components[pluginRowKey(row)]??{}:undefined),canEnable=m.kind==='plugin'&&a.supported===true,incompatible=row.compatible===false,source=sources.find(value=>value.sourceId===pluginSourceId(row)),text=legacyText(m,{official:pluginSourceId(row)==='legacy'||!!source?.official}),ceiling=incompatible&&rangeCeiling(m.appRange),previous=row.versions?.find(version=>version.manifest.version===row.previous);
   return h('article',{key:pluginRowKey(row),className:'ws-card ext-ext','data-plugin-package':m.id,'data-plugin-source':pluginSourceId(row)},
    h('div',{className:'ext-row'},h(Logo,{icon:m.kind==='runtime'?'terminal':m.kind==='asset'?'image':'bolt'}),h('div',{className:'ext-ir-main'},h('button',{type:'button',className:'ext-pc-n',onClick:()=>void details(row)},text.name),h('small',{className:'ext-cap','data-source-badge':pluginSourceId(row)},[sourceLabel(row),m.version,row.archive?.bytes!=null&&size(row.archive.bytes)].filter(Boolean).join(' · '))),
     incompatible?h(StatusPill,{tone:'warn'},t('不兼容')):row.current?h(StatusPill,{tone:row.enabled?'ok':'idle'},t(row.enabled?'已启用':'已安装')):null),
@@ -73,7 +91,8 @@ export function PluginCenter({api=globalThis.window?.whale?.plugins,onManage,emb
    m.id==='ai-buddy.kimi-engine'&&h('small',{className:'ext-cap'},t('选择 Kimi 连接后，再到工作任务页明确开始。')),
    h('div',{className:'ws-row-btns'},!row.current&&button(row.installed?'切换版本':'安装',()=>run(()=>prepare(row)),{disabled:loading||working||!usable||incompatible,kind:incompatible?'':'primary'}),incompatible&&!row.current&&h('span',{className:'ext-cap'},t('需要扩展先支持当前版本')),
     row.current&&m.kind==='plugin'&&button(row.enabled?'停用':'启用',()=>run(()=>action({action:row.enabled?'disable':'enable',sourceId:pluginSourceId(row),id:m.id})),{disabled:loading||working||!usable||!row.enabled&&!canEnable}),
-    row.current&&row.previous&&button('回退',()=>run(()=>action({action:'rollback',sourceId:pluginSourceId(row),id:m.id})),{disabled:loading||working||!usable,kind:'ghost'}),
+    (row.versions?.length??0)>1&&h('div',{className:'ext-menuwrap'},button('切换版本',()=>setVersionMenu(versionMenu===pluginRowKey(row)?null:pluginRowKey(row)),{disabled:loading||working||!usable,kind:'ghost sm'}),versionMenu===pluginRowKey(row)&&h(PluginVersionMenu,{row,disabled:loading||working||!usable,onClose:()=>setVersionMenu(null),onSelect:version=>run(()=>prepare(version))})),
+    row.current&&row.previous&&(!row.versions||previous&&previous.compatible!==false&&previous.switchCompatible!==false)&&button('回退',()=>run(()=>previous?prepare(previous):action({action:'rollback',sourceId:pluginSourceId(row),id:m.id})),{disabled:loading||working||!usable,kind:'ghost'}),
     row.current&&button('卸载并保留数据',()=>run(()=>action({action:'uninstall',sourceId:pluginSourceId(row),id:m.id})),{disabled:loading||working||!usable,kind:'ghost'}),
     m.id==='ai-buddy.kimi-engine'&&button('配置模型连接',()=>onManage?.(),{disabled:typeof onManage!=='function',kind:'ghost'}),
     incompatible&&row.reasons?.length>0&&h('details',{className:'ext-tech'},h('summary',null,t('技术详情')),h('code',null,t('不兼容')+': '+row.reasons.join(', ')))));}
@@ -97,7 +116,7 @@ export function PluginCenter({api=globalThis.window?.whale?.plugins,onManage,emb
     extras&&h('div',{className:'ws-card ext-card ext-between','data-preferences-files':true},h('div',null,h('b',null,t('收藏与关注')),h('small',{className:'ext-cap',style:{display:'block'}},t('换电脑时可以带走'))),h('div',{className:'ext-row'},h('button',{type:'button',className:'ui-btn sm',disabled:extras.busy,onClick:extras.onExport},Icon('download',{size:14}),t('导出文件')),h('button',{type:'button',className:'ui-btn sm',disabled:extras.busy,onClick:extras.onImportPreferences},Icon('upload',{size:14}),t('导入文件'))))),
    h('div',{className:'ext-col'},h('h3',{className:'ws-sec'},t('旧扩展')),h('p',{className:'ext-cap'},t('1.9 时代的扩展。能装的照常装，不兼容的照实写原因。')),
     h('div',{className:'ext-filters'},h('label',{className:'ws-inp ext-search'},Icon('search',{size:16}),h('input',{type:'search',value:query,onChange:e=>setQuery(e.target.value),placeholder:t('搜索扩展'),'aria-label':t('搜索扩展')})),h('select',{className:'ext-select',value:kind,onChange:e=>setKind(e.target.value),'aria-label':t('扩展分类')},...[['all','全部'],['installed','已安装'],['plugin','功能'],['runtime','运行引擎'],['asset','素材']].map(([value,label])=>h('option',{key:value,value},t(label)))),h('select',{className:'ext-select',value:sourceId,onChange:e=>setSourceId(e.target.value),'aria-label':t('扩展来源')},h('option',{value:''},t('全部来源')),...sources.filter(source=>!source.removed||kind==='installed').map(source=>h('option',{key:source.sourceId,value:source.sourceId},source.name+(source.enabled===false?' · '+t('已禁用'):''))))),
-    loading&&h('p',{role:'status',className:'ext-cap'},t('正在读取扩展目录…')),...(result.items??[]).map(card),!loading&&usable&&!(result.items??[]).length&&h('div',{className:'ws-card'},h(EmptyState,{icon:'archive',title:t(query||sourceId||kind!=='all'?'没有符合条件的扩展。':'暂无扩展；可刷新官方目录或导入签名离线包。')})),
+    loading&&h('p',{role:'status',className:'ext-cap'},t('正在读取扩展目录…')),...(result.items??[]).filter(row=>row.manifest.id!==VOICE_SHARED_PACKAGE).map(card),!loading&&usable&&!(result.items??[]).length&&h('div',{className:'ws-card'},h(EmptyState,{icon:'archive',title:t(query||sourceId||kind!=='all'?'没有符合条件的扩展。':'暂无扩展；可刷新官方目录或导入签名离线包。')})),
     (result.total??0)>50&&h('nav',{'aria-label':t('扩展分页'),className:'ext-pager'},button('上一页',()=>setPage(value=>value-1),{disabled:loading||page<=1}),h('span',{className:'ext-cap'},`${page} / ${pageCount} · ${result.total}`),button('下一页',()=>setPage(value=>value+1),{disabled:loading||page>=pageCount})))),
   sourceOpen&&h(SourceManager,{sources,action,usable,committing,onClose:()=>setSourceOpen(false)}),
   selected&&h(Dialog,{title:selected.manifest.name,label:t('扩展详情'),subtitle:sourceLabel(selected),onClose:()=>{detailSeq.current++;setSelected(null);}},detailLoading&&h('p',{role:'status',className:'ext-cap'},t('正在读取扩展详情…')),detailError&&h('p',{role:'alert',className:'ext-err'},t(detailError)),h('p',null,selected.manifest.description),h('p',{className:'ext-cap'},t('版本')+': '+selected.manifest.version),h('p',{className:'ext-cap'},t('能力')+': '+((selected.manifest.capabilities??[]).join(', ')||t('无'))),Object.keys(selected.manifest.dependencies??{}).length>0&&h(React.Fragment,null,h('h3',{className:'ws-sec'},t('依赖组件')),...Object.entries(selected.manifest.dependencies??{}).map(([id,range])=>h('p',{key:id,className:'ext-cap'},id+' · '+range))),selected.releaseNotes&&h('div',{className:'ext-readme'},selected.releaseNotes),safeLink(selected.manifest.feedbackUrl)&&h('a',{href:safeLink(selected.manifest.feedbackUrl),target:'_blank',rel:'noreferrer'},t('作者反馈'))),

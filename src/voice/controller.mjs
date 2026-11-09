@@ -32,12 +32,14 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
     previous?.controller.abort(fault('旧语音状态查询已取消','VOICE_STATE_CANCELLED'));
   }
   function ensureOpen(){if(closed||stopping)throw fault('语音正在停止或已关闭','VOICE_STOPPING');}
-  async function selected(signal){
+  async function selected(signal,{management=false,packageId}={}){
     const config=await waitVoiceOperation(()=>settings.get(),signal);
     const rows=await waitVoiceOperation(()=>listPackages(),signal);
-    const row=rows.find(value=>value.id===config.selectedPackageId);
-    if(!config.enabled)throw fault('语音尚未启用','VOICE_DISABLED');
-    if(!row||!row.installed||!row.enabled||row.trusted===false||!row.usable)throw fault('选中的语音插件未安装、已停用或未通过校验','VOICE_PACKAGE_UNAVAILABLE');
+    const requested=packageId??config.selectedPackageId;
+    if(packageId!=null&&!['ai-buddy.voice-breeze','ai-buddy.voice-gpt-sovits'].includes(packageId))throw fault('选中的语音插件未安装、已停用或未通过校验','VOICE_PACKAGE_UNAVAILABLE');
+    const row=rows.find(value=>value.id===requested);
+    if(!management&&!config.enabled)throw fault('语音尚未启用','VOICE_DISABLED');
+    if(!row||!row.installed||row.trusted===false||!management&&(!row.enabled||!row.usable))throw fault('选中的语音插件未安装、已停用或未通过校验','VOICE_PACKAGE_UNAVAILABLE');
     const engine=normalizeEngine(row.engine);
     if(!['breeze','gpt'].includes(engine))throw fault('未知语音引擎','VOICE_PACKAGE_INVALID');
     return {config,row,engine,options:config.packages[row.id]};
@@ -478,10 +480,14 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
     if(op==='prepare')return prepare(payload.target);
     if(op==='receipt')return receipt(payload);
     if(op==='profiles'||op==='profile-select'){
-      const chosen=await selected(),scope=current();
+      const chosen=await selected(undefined,{management:true,packageId:payload.packageId}),scope=current();
       if(!scope||!profiles)throw fault('声音档案未就绪','VOICE_PROFILE_SCOPE');
-      if(op==='profiles')return profiles.list({characterId:scope.characterId,engine:chosen.engine});
-      await invalidate('profile-changed');
+      if(op==='profiles'){
+        const params={characterId:scope.characterId,engine:chosen.engine},rows=await profiles.list(params);
+        if(payload.packageId==null)return rows;
+        const active=await profiles.current(params);return rows.map(row=>({...row,selected:row.id===active?.id}));
+      }
+      if(chosen.row.id===chosen.config.selectedPackageId)await invalidate('profile-changed');
       return profiles.select({characterId:scope.characterId,engine:chosen.engine,profileId:payload.profileId});
     }
     if(op==='capture-start')return serialCapture(()=>{

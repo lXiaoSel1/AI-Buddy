@@ -20,7 +20,7 @@ test('cloud settings begin with no selected characters and require an explicit e
     assert.doesNotMatch(html,/<input[^>]*type="checkbox"[^>]*checked/);
     assert.match(html,/data-cloud-open-batch="true"/);
     assert.doesNotMatch(html,/准备全部角色云音色|免费/);
-    assert.deepEqual(fixture.calls.filter(row=>row.op!=='state'),[],'opening settings must not query voices, preview, clone, upload or synthesize');
+    assert.deepEqual(fixture.calls.filter(row=>!['state','component-status'].includes(row.op)),[],'opening settings must not query voices, preview, clone, upload or synthesize');
   }finally{await fixture.dispose();}
 });
 
