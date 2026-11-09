@@ -11,13 +11,13 @@ export function measureDesktopDiagnostic(name,run){
   }
 }
 
-const phases=new Set(['idle','message','history','drag']);
-export function startDesktopSample(phase){
+const phases=new Set(['idle','message','history','drag','profile']);
+export function startDesktopSample(phase,{timeoutMs=30_000}={}){
   if(!phases.has(phase)||sample)throw Error('Invalid desktop sample phase');
   const delay=monitorEventLoopDelay({resolution:10}),cpu=process.cpuUsage(),elu=performance.eventLoopUtilization();
   const current={phase,at:performance.now(),delay,cpu,elu,timings:{}};
   sample=current;delay.enable();
-  const timeout=setTimeout(()=>{if(sample===current)stopDesktopSample();},30_000);timeout.unref?.();current.timeout=timeout;
+  const timeout=setTimeout(()=>{if(sample===current)stopDesktopSample();},Math.min(Math.max(Number(timeoutMs)||30_000,1_000),90_000));timeout.unref?.();current.timeout=timeout;
 }
 export function stopDesktopSample(){
   if(!sample)return null;

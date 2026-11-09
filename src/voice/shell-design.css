@@ -1,0 +1,12 @@
+/* secV0/secV spacing, scoped to the host-owned voice surfaces. */
+.community-center.vx-ext>.ui-tabs{display:flex;gap:4px;margin:14px 0 16px;border-bottom:1px solid var(--buddy-border)}
+.community-center.vx-ext>.ui-tabs button{display:inline-flex;align-items:center;gap:6px;margin-bottom:-1px;padding:8px 12px;border:0;border-bottom:2px solid transparent;background:none;color:var(--buddy-muted);font:inherit;font-weight:600}
+.community-center.vx-ext>.ui-tabs button[aria-selected="true"]{border-color:var(--buddy-accent);color:var(--buddy-text)}
+.community-center.vx-ext>.vx-irows{display:grid;gap:10px}
+.vx-plugin-header .vx-head-menu>summary{list-style:none;cursor:pointer}
+.vx-plugin-header .vx-head-menu>summary::-webkit-details-marker{display:none}
+.vx-plugin-header .vx-head-menu>.ui-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:5}
+.vx-plugin-header .vx-pagetabs{flex:none}
+.vx-setcard{max-width:860px}
+
+.general-settings>.vx-setcard{max-width:none}

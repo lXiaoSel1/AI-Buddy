@@ -50,6 +50,11 @@ export function createSpeechRuntime({local, cloud,preflightTimeoutMs=VOICE_PREFL
     }
   }
 
+  async function returnCancelled(target){
+    try{await target?.iterator?.return?.();}
+    catch(error){if(!target?.controller.signal.aborted||error?.name!=='AbortError'&&!['VOICE_OWNER_STOPPED','VOICE_RUNTIME_STOPPED','VOICE_RUNTIME_CLOSED'].includes(error?.code))throw error;}
+  }
+
   function speakFor(source,request = {}) {
     const generation=source.epoch,runtimeGeneration=globalEpoch;
     return (async function*(){
@@ -151,9 +156,10 @@ export function createSpeechRuntime({local, cloud,preflightTimeoutMs=VOICE_PREFL
     const target=active?.source===source?active:null;
     for(const job of jobs)if(job.source===source)job.controller.abort(fail('VOICE_OWNER_STOPPED','该语音来源已停止'));
     source.stopping=serialize(async()=>{
-      if(target||active?.source===source||!active&&residentOwner===source){
-        await allStopped([Promise.resolve().then(()=>local.stopEngine()),Promise.resolve().then(()=>cloud?.stopEngine()),Promise.resolve().then(()=>target?.iterator?.return?.())]);
+      if(stopFailure||target||active?.source===source||!active&&residentOwner===source){
+        await allStopped([Promise.resolve().then(()=>local.stopEngine()),Promise.resolve().then(()=>cloud?.stopEngine()),returnCancelled(target)]);
         provider=undefined;residentOwner=undefined;
+        stopFailure=undefined;
       }
       if(target){if(active===target)active=undefined;target.release();}
     });
@@ -162,14 +168,39 @@ export function createSpeechRuntime({local, cloud,preflightTimeoutMs=VOICE_PREFL
     return result;
   }
 
+  function cancelOwner(source){
+    if(source.stopping)return source.stopping;
+    if(stopFailure)return stopOwner(source);
+    source.epoch++;
+    const target=active?.source===source?active:null;
+    // Revoke the old epoch immediately. Pending PCM is discarded while the
+    // single Python request reader drains the same sequence to its terminal.
+    for(const job of jobs)if(job.source===source)job.controller.abort(fail('VOICE_OWNER_STOPPED','该语音来源已停止'));
+    source.stopping=serialize(async()=>{
+      if(target){
+        const selected=provider==='minimax'?cloud:local;
+        const cleanup=selected?.cancelCurrent?selected.cancelCurrent():selected?.stopEngine?.();
+        await allStopped([cleanup]);
+        await returnCancelled(target);
+        if(active===target)active=undefined;target.release();
+      }
+    });
+    const result=source.stopping;
+    void result.finally(()=>{if(source.stopping===result)source.stopping=null;}).catch(()=>{});
+    return result;
+  }
+
+  function cancelCurrent(){return cancelOwner(owner('chat'));}
+
   function stopEngine() {
     if(closed)return closePromise??Promise.resolve();
     if(globalStopping)return globalStopping;
     globalEpoch++;const target=active;
     for(const job of jobs)job.controller.abort(fail('VOICE_RUNTIME_STOPPED','旧语音任务已停止'));
     globalStopping=serialize(async () => {
-      await allStopped([Promise.resolve().then(() => local.stopEngine()),Promise.resolve().then(() => cloud?.stopEngine()),Promise.resolve().then(()=>target?.iterator?.return?.())]);
+      await allStopped([Promise.resolve().then(() => local.stopEngine()),Promise.resolve().then(() => cloud?.stopEngine()),returnCancelled(target)]);
       provider=undefined;residentOwner=undefined;
+      stopFailure=undefined;
       if(target){if(active===target)active=undefined;target.release();}
     });
     const result=globalStopping;
@@ -183,7 +214,7 @@ export function createSpeechRuntime({local, cloud,preflightTimeoutMs=VOICE_PREFL
     globalEpoch++;const target=active;
     for(const job of jobs)job.controller.abort(fail('VOICE_RUNTIME_CLOSED','语音功能已停止'));
     closePromise=serialize(async()=>{
-      await allStopped([Promise.resolve().then(() => local.close()),Promise.resolve().then(() => cloud?.close()),Promise.resolve().then(()=>target?.iterator?.return?.())]);
+      await allStopped([Promise.resolve().then(() => local.close()),Promise.resolve().then(() => cloud?.close()),returnCancelled(target)]);
       provider=undefined;residentOwner=undefined;
       if(target){if(active===target)active=undefined;target.release();}
     });return closePromise;
@@ -202,11 +233,11 @@ export function createSpeechRuntime({local, cloud,preflightTimeoutMs=VOICE_PREFL
     feedCapture(request) { assertOpen(); return local.feedCapture(request); },
     finishCapture(request) { assertOpen(); return local.finishCapture(request); },
     cancelCapture(request) { return local.cancelCapture(request); },
-    prepare:request=>prepareFor(owner('chat'),request),speak, stopEngine, close,
+    prepare:request=>prepareFor(owner('chat'),request),speak,cancelCurrent, stopEngine, close,
     channel(name){
       if(!['chat','card-table'].includes(name))throw fail('VOICE_OWNER_INVALID','未知语音来源');
       const source=owner(name);
-      return {prepare:request=>prepareFor(source,request),speak:request=>speakFor(source,request),async ready(request){assertOpen();if(source.closed)throw fail('VOICE_OWNER_STOPPED','该语音来源已停止');if(source.stopping)throw fail('VOICE_OWNER_STOPPING','该语音来源正在停止');return root.ready(request);},stopEngine:()=>stopOwner(source),close:()=>{source.closed=true;return stopOwner(source);},
+      return {prepare:request=>prepareFor(source,request),speak:request=>speakFor(source,request),async ready(request){assertOpen();if(source.closed)throw fail('VOICE_OWNER_STOPPED','该语音来源已停止');if(source.stopping)throw fail('VOICE_OWNER_STOPPING','该语音来源正在停止');return root.ready(request);},cancelCurrent:()=>cancelOwner(source),stopEngine:()=>stopOwner(source),close:()=>{source.closed=true;return stopOwner(source);},
         ...(name==='chat'?{startCapture:root.startCapture,feedCapture:root.feedCapture,finishCapture:root.finishCapture,cancelCapture:root.cancelCapture}:{})};
     },
   };

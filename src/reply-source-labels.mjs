@@ -1,3 +1,4 @@
+import {cleanDialogueReferences} from './reply-references.mjs';
 // Legacy host provenance was once prefixed to assistant examples. Only this
 // precise, unquoted leading format is a presentation fallback; raw receipts stay intact.
 const kinds=['character-statement','shared-dialogue','user-report','personal-activity','proactive-expression','selftalk','dream'];
@@ -38,5 +39,5 @@ export function replySourceLiteralRequested(query){
  if(negated||removal||complaint)return false;
  return /(?:^|[。！？\n])\s*(?:原样|逐字|引用|照抄|复制|复述)|(?:请(?:你)?|麻烦(?:你)?|帮我|能否|可以|给我|我要|我想|我需要|务必)\s*(?:原样|逐字|引用|照抄|复制|复述|(?:输出|展示|显示|保留)[^。！？\n]{0,16}(?:标签|前缀))|(?:把|将)[^。！？\n]{0,40}(?:原样|逐字|照抄)|(?:^|\b(?:please|could you|can you|would you|i (?:want|need) you to)\s+)\s*(?:literally\s+)?(?:quote|copy|reproduce|print|output|show|include|keep|return)\b/iu.test(intent);
 }
-export function filterReplySourceLabels(text,{preserveLiteral=false,requestText=''}={}){return visible(String(text??''),true,preserveLiteral||replySourceLiteralRequested(requestText));}
-export function createReplySourceFilter({preserveLiteral=false,requestText=''}={}){let raw='';const keep=preserveLiteral||replySourceLiteralRequested(requestText);return {feed(delta){raw+=String(delta??'');return visible(raw,false,keep);},finish(){return visible(raw,true,keep);}};}
+export function filterReplySourceLabels(text,{preserveLiteral=false,requestText=''}={}){return cleanDialogueReferences(visible(String(text??''),true,preserveLiteral||replySourceLiteralRequested(requestText)),{preserveLiteral,requestText});}
+export function createReplySourceFilter({preserveLiteral=false,requestText=''}={}){let raw='';const keep=preserveLiteral||replySourceLiteralRequested(requestText);return {feed(delta){raw+=String(delta??'');return cleanDialogueReferences(visible(raw,false,keep),{preserveLiteral,requestText,final:false});},finish(){return cleanDialogueReferences(visible(raw,true,keep),{preserveLiteral,requestText});}};}

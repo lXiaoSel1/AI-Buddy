@@ -26,6 +26,7 @@ test('multi-MiB canonical archive imports and exports intact without changing th
  const bytes=f.repository.prepare(snapshot(randomBytes(3*1024*1024).toString('base64'))),base64=bytes.toString('base64');assert.ok(base64.length>4000000);
  const archive=await f.lives.import(base64);assert.equal(archive.sha256,digest(bytes));assert.equal(archive.bytes,bytes.length);assert.equal(f.current(),before);assert.equal(f.validations(),1);assert.equal(f.lives.list('deepseek').length,1);
  const exported=f.lives.export(archive.id);assert.equal(exported.base64,base64);assert.equal(exported.sha256,digest(bytes));assert.equal(f.current(),before);
+ await f.store.flush();
  const reopened=await openCompanionStore(f.root);assert.equal(reopened.state.lifeArchives[archive.id].sha256,archive.sha256);assert.deepEqual(reopened.state.accountLedger,{sentinel:77});
 });
 

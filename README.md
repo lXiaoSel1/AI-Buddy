@@ -16,7 +16,7 @@
 
 **AI 酱本体**（本仓库） · [B站陪伴插件](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ连接插件](https://github.com/lXiaoSel1/AI-Buddy-QQ) · [一起玩牌插件](https://github.com/lXiaoSel1/AI-Buddy-Card-Games)
 
-<!-- ai-buddy-source-version: 2.0.8 -->
+<!-- ai-buddy-source-version: 2.0.9 -->
 **当前版本：[v2.0.8](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.8)** · 2.0 加入了扩展中心和官方插件，还有积分、商店与背包、投喂，以及社交与心情；群聊可以开 Auto，让角色们自己轮流接话。2.0.4 加入了牌桌服务，可以从扩展中心安装「一起玩牌」，和角色打斗地主、德州。2.0.5 修好了它和 B站、QQ 页面切换时卡在「启动中」的问题。2.0.6 修复安装器校验旧存档时卡住的问题。2.0.7 修复 B站陪伴在部分线路无法采集原视频分镜的问题。30fps 和 60fps 两版功能相同。2.0.8 接通设置内的本体和插件更新。见 [2.0.8 更新说明](docs/RELEASE-2.0.8.md)。
 
 ## 在线安装（推荐）

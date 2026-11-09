@@ -27,7 +27,10 @@ import {SocialLoginRequest} from './social-login-ui.mjs';
 import {createSocialLoginRequests} from './social-login-requests.mjs';
 import {PageBoundary} from './page-boundary.mjs';
 import {useGalgameUnread} from './chat-r95-ui.mjs';
-import {useVoiceOutput} from './voice/client.mjs';
+import {useVoiceOutput,useVoiceSession} from './voice/client.mjs';
+import {VoicePluginHeader,VoicePluginPage} from './voice/plugin-page.mjs';
+import {VoiceIcon} from './voice/design-icons.mjs';
+import {voicePackageLabel,voicePackagePresentation} from './voice/shell-design.mjs';
 // Keep native caption controls and their safe area outside the scrolling app.
 const overlay=navigator.windowControlsOverlay;
 function syncWindowChrome(){document.documentElement.classList.toggle('desktop-titlebar',!!overlay?.visible);}
@@ -79,7 +82,7 @@ function pluginStatusRow(record,{accounts=null,activity=null,work=null,now=Date.
 }
 const EMBED_FOOT={waiting:{any:'插件正在处理另一项操作，空闲后会自动重试。'},run:{any:'在独立沙盒里运行'},start:{any:'等 DSH 后台准备好'},off:{bilibili:'停用期间不观看、不发评论',qq:'停用期间不回复消息',any:'停用期间不会运行'},err:{any:'DSH 后台没有响应'},none:{any:'重新安装后接着用原来的记录'},popped:{any:'在单独窗口里运行'},unsupported:{any:'更新到 2.0.1 后可以放进主窗口'}};
 // Sidebar footer (approved design A2): one honest line per page instead of a fixed "zero model calls".
-function SidebarStatus({page,status,character,settings,chat,onPage,activity}){
+function SidebarStatus({page,status,character,settings,chat,onPage,activity,voice}){
  const [open,setOpen]=useState(false),[plugins,setPlugins]=useState(null),[accounts,setAccounts]=useState(null),box=useRef(null);
  useEffect(()=>{if(!open)return;let alive=true;window.whale.plugins.action({action:'community-status'}).then(value=>{if(alive)setPlugins(pluginResult(value)?.dsh?.installed??[]);},()=>alive&&setPlugins([]));window.whale.plugins.action({action:'social-accounts-list'}).then(value=>{if(alive)setAccounts(pluginResult(value)?.accounts??[]);},()=>{});const away=e=>{if(!box.current?.contains(e.target))setOpen(false);},key=e=>{if(e.key==='Escape')setOpen(false);};document.addEventListener('pointerdown',away);document.addEventListener('keydown',key);return()=>{alive=false;document.removeEventListener('pointerdown',away);document.removeEventListener('keydown',key);};},[open]);
  let name=character;try{name=petCharacterName(character);}catch{}
@@ -91,6 +94,7 @@ function SidebarStatus({page,status,character,settings,chat,onPage,activity}){
  else if(page==='agent-tasks'&&status.work){const w=status.work;if(!w.installed){tone='off';line=t('工作与协作未安装');sub=t('安装后在这里打开');}else if(!w.enabled){tone='off';line=t('工作与协作已停用');sub=t('停用期间不会运行任务');}else{if(w.jobs)tone='busy';line=w.jobs?t('工作与协作 · {n} 个任务进行中').replace('{n}',w.jobs):t('工作与协作 · 没有进行中的任务');sub=t('按每个任务绑定的引擎调用模型');}}
  else if(page.startsWith('plugin-')&&status.embed?.target&&EMBED_TARGETS[status.embed.target].page===page){const {target,view}=status.embed,[pill,label]=embedPill(view);tone={ok:'ok',busy:'busy',err:'warn',warn:'warn',info:'busy'}[pill]??'off';line=embedName(target)+' · '+t(label);sub=t(EMBED_FOOT[view]?.[target]??EMBED_FOOT[view]?.any??'');}
  else if(page==='plugins'&&status.plugins){line=t('已装 {n} 个插件').replace('{n}',status.plugins.installed);sub=status.plugins.updates==null?t('还没检查更新'):status.plugins.updates?t('{n} 个可以更新').replace('{n}',status.plugins.updates):t('都是最新版本');if(status.plugins.updates)tone='warn';}
+ else if(page==='voice'){const id=voice?.state?.selectedPackageId,view=voicePackagePresentation(voice,id);tone={ok:'ok',busy:'busy',err:'warn',idle:'off'}[view.tone]??'off';line=(locale()==='en'?'Voice · ':'语音 · ')+voicePackageLabel(id)+' · '+view.label;sub=locale()==='en'?'Used for chat, Live and table calls':'聊天、Live 和牌桌喊话都用它';}
  else{line=t('本机监控');sub=t('只读本机日志，不调用模型');}
  // footer lines and status rows keep their full text on hover (both are cut off when long)
  const row=(dot,label,value,key)=>h('div',{className:'side-status-row',key,title:label+' · '+value},h('span',null,h('span',{className:'offline-dot '+dot}),label),h('small',null,value));
@@ -102,6 +106,7 @@ function SidebarStatus({page,status,character,settings,chat,onPage,activity}){
 }
 function App(){
  useVoiceOutput();
+ const voice=useVoiceSession(),[voiceTab,setVoiceTab]=useState(null);
  const [data,setData]=useState(null),[page,setPage]=useState(normalizeDashboardPage(location.hash.slice(1))),[chat,setChat]=useState({enabled:false}),[query,setQuery]=useState(''),[filter,setFilter]=useState('all'),[vendor,setVendor]=useState('all'),[purpose,setPurpose]=useState('all'),[source,setSource]=useState('all'),[chosen,setChosen]=useState(null),[date,setDate]=useState('');
  const [settings,setSettings]=useState(null),[settingsError,setSettingsError]=useState('');
  setLocale(settings?.preferences.language||'zh-CN');
@@ -111,7 +116,7 @@ function App(){
  const [apiTab,setApiTab]=useState('model');
  const [attributionSource,setAttributionSource]=useState(null);
  const manage=type=>{setApiTab(type);setPage('api');};
- useEffect(()=>{window.whale.game('view',{}).then(v=>{if(v?.current)setCharacter(v.current);}).catch(()=>{});window.whale.status().then(setData);window.whale.chatStatus().then(setChat);window.whale.settings().then(setSettings).catch(e=>setSettingsError(e.message));const a=window.whale.onUpdate(setData),b=window.whale.onPage(p=>setPage(normalizeDashboardPage(p))),c=window.whale.onSettings(setSettings);const hashChanged=()=>setPage(normalizeDashboardPage(location.hash.slice(1)));window.addEventListener('hashchange',hashChanged);return()=>{a();b();c();window.removeEventListener('hashchange',hashChanged);};},[]);
+ useEffect(()=>{window.whale.game('view',{}).then(v=>{if(v?.current)setCharacter(v.current);}).catch(()=>{});window.whale.status().then(setData);window.whale.chatStatus().then(setChat);window.whale.settings().then(setSettings).catch(e=>setSettingsError(e.message));const navigate=p=>{const next=normalizeDashboardPage(p);if(next==='voice')setVoiceTab(null);setPage(next);};const a=window.whale.onUpdate(setData),b=window.whale.onPage(navigate),c=window.whale.onSettings(setSettings);const hashChanged=()=>navigate(location.hash.slice(1));window.addEventListener('hashchange',hashChanged);return()=>{a();b();c();window.removeEventListener('hashchange',hashChanged);};},[]);
  const time=value=>formatActivityTime(value,settings?.preferences.displayTimeZone||'America/New_York');
  useEffect(()=>{window.scrollTo(0,0);document.querySelector('.content')?.scrollTo(0,0);},[page]);
  const toggleChat=async()=>{try{setChat(await window.whale.chat(!chat.enabled));setSettingsError('');}catch(error){setSettingsError(error.message);}};
@@ -124,6 +129,7 @@ function App(){
  const [shellStatus,setShellStatus]=useState({}),reportStatus=useCallback(patch=>setShellStatus(value=>({...value,...patch})),[]);
  const [communityIntent,setCommunityIntent]=useState(null);
  const toCommunity=intent=>{setCommunityIntent({...intent,at:Date.now()});setPage('plugins');};
+ const toVoice=packageId=>{setVoiceTab(packageId??voice.snapshot?.state?.selectedPackageId??null);setPage('voice');setChosen(null);};
  // Approved design C8: while she has an unread line, Galgame in the sidebar shows a dot; hover says who and how many.
  const unread=useGalgameUnread(),navDot=id=>id==='galgame'&&!settings?.safeMode?unread:null;
  const [pluginRecords,setPluginRecords]=useState([]);
@@ -151,6 +157,7 @@ function App(){
  const embedArea=target=>h(EmbedArea,{key:target,target,record:recordOf(target),view:viewOf(target),state:embedStateOf(target),onCommunity:toCommunity,onStatus:reportStatus,logPath});
  // Plugin group (approved design G1): installed, enabled plugins that have their own page, between Companion and System.
  const pluginNav=pluginPageEntries(pluginRecords,pluginDisplayName).map(([id,icon,record])=>{const target=embedTargetFor(record.packageName);return [id,icon,target?embedName(target):pluginDisplayName(record)];});
+ if(voice.snapshot?.state?.packages?.some(record=>record.installed&&record.enabled!==false))pluginNav.push(['voice','wave',nav('语音','Voice')]);
  if(pluginNav.length)navGroups.splice(2,0,[nav('插件','Plugins'),pluginNav]);
  // a plugin version that cannot sit in the main window yet keeps opening its own window
  const goTo=id=>{if(id.startsWith('ext:')){const record=pluginRecords.find(value=>value.packageKey===id.slice(4));if(record)void window.whale.plugins.action({action:'dsh-open-client',packageKey:record.packageKey}).catch(()=>{});return;}
@@ -160,22 +167,23 @@ function App(){
  let content;
  if(['overview','history','projects'].includes(page))content=h(AnalyticsPage,{page,settings,revision:data?.usageRevision,onManage:manage,onSaved:setSettings,monitor:data,onPage:setPage,onAttribution:id=>{setAttributionSource(id);setPage('tokens');}});
  else if(page==='data-import')content=h(DataImportPanel,{onComplete:()=>location.reload(),onClose:()=>setPage('settings')});
- else if(page==='settings')content=settings?h(GeneralSettings,{view:settings,onSaved:setSettings,onPage:setPage,onManage:manage,onPlugins:()=>toCommunity({tab:'installed'})}):h('p',{className:'settings-error',role:'alert'},settingsError||t("正在读取设置…"));
+ else if(page==='settings')content=settings?h(GeneralSettings,{view:settings,onSaved:setSettings,onPage:setPage,onManage:manage,onPlugins:()=>toCommunity({tab:'installed'}),onVoicePage:toVoice}):h('p',{className:'settings-error',role:'alert'},settingsError||t("正在读取设置…"));
+ else if(page==='voice')content=h(VoicePluginPage,{snapshot:voice.snapshot,session:voice.session.current,selectedPackageId:voiceTab??voice.snapshot?.state?.selectedPackageId,onSelectPackage:setVoiceTab,onPlugins:packageName=>toCommunity({tab:'installed',packageName}),onChat:()=>setPage('galgame')});
  else if(page==='tokens')content=h(TokenSettings,{sourceId:attributionSource,timeZone:settings?.preferences.statisticsTimeZone});
  else if(page==='api')content=h(ApiSettings,{view:settings,tab:apiTab,onTab:setApiTab});
   else if(page==='agent-tasks')content=settings?.safeMode?h(SafeModePage,{settings,onPage:setPage,time}):h(WorkTasks,{face:head,onStatus:reportStatus,onCommunity:toCommunity,renderEmbedded:()=>embedArea('work')});
  else if(['r95-shop','r95-inventory','r95-social'].includes(page))content=settings?.safeMode?h(SafeModePage,{settings,onPage:setPage,time}):h(R95CorePage,{page:page.slice(4),language:settings?.preferences.language,onPage:setPage,onStatus:reportStatus,timeZone:settings?.preferences.statisticsTimeZone||settings?.preferences.displayTimeZone});
  else if(pluginTarget)content=embedArea(pluginTarget);
- else if(page==='plugins')content=h(PluginCenter,{onManage:()=>manage('model'),onStatus:reportStatus,onPage:setPage,intent:communityIntent});
+ else if(page==='plugins')content=h(PluginCenter,{onManage:()=>manage('model'),onStatus:reportStatus,onPage:setPage,onVoicePage:toVoice,intent:communityIntent});
  else if(page==='actions')content=h(ActionGallery,{settings});
  else if(page==='safe-mode'||page==='galgame'&&settings?.safeMode)content=h(SafeModePage,{settings,onPage:setPage,time});
  else content=h('div',{className:'game-shell'},settingsError&&h('p',{className:'settings-error',role:'alert'},settingsError),h('style',null,GalgameCSS),h(GalgameApp,{variant:'tab',useSessions:null,hideSpriteOnCg:settings?.preferences.hideSpriteOnCg,onCharacter:setCharacter,onDisplayMode:setGameMode,chat,onToggleChat:toggleChat,onManage:manage}));
- const actionsPage=page==='actions',galgamePage=page==='galgame',hideDiagnostics=actionsPage||galgamePage||!!embedTarget||page.startsWith('plugin-')||['overview','projects','history'].includes(page);
+ const actionsPage=page==='actions',galgamePage=page==='galgame',voicePage=page==='voice',hideDiagnostics=actionsPage||galgamePage||voicePage||!!embedTarget||page.startsWith('plugin-')||['overview','projects','history'].includes(page);
  return h(React.Fragment,null,h('div',{className:'window-titlebar'},h('span',{className:'titlebar-face'},h('img',{src:settings?head:'./'+APP_ICON_PNG,alt:'',draggable:false})),h('span',{className:'titlebar-title'},localizedTitle())),h('div',{className:'layout'+(actionsPage?' actions-page':'')+(galgamePage?' galgame-page':'')+(embedTarget?' embed-page':'')},
    h('aside',null,h('div',{className:'brand'},h('div',{className:'brand-mark'},h('span',{className:'brand-face'},h('img',{src:head,alt:'',width:40,height:40}))),h('div',null,h('strong',null,settings?.preferences.language==='en'?'AI Buddy':'AI 酱'),h('small',null,'AI Buddy'))),
-     h('nav',{className:'nav-groups','aria-label':t('主导航')},...navGroups.flatMap(([title,items])=>[h('p',{key:'g-'+title,className:'nav-h'},title),...items.map(([id,icon,name])=>h('button',{key:id,className:navOn(id)?'active':'','aria-current':navOn(id)?'page':undefined,title:navDot(id)?.title??name,onClick:()=>goTo(id)},Icon(icon,{size:18}),h('span',{className:'nav-l'},name),navDot(id)&&h('i',{className:'nav-dot',role:'img','aria-label':navDot(id).title,'data-nav-unread':navDot(id).count})))])),
-     !actionsPage&&h(SidebarStatus,{page,status:shellStatus,character:galgamePage?character:pet,settings,chat,onPage:setPage,activity:pluginActivity})),
-   h('main',null,!actionsPage&&embedTarget&&h(EmbedBar,{target:embedTarget,record:recordOf(embedTarget),view:viewOf(embedTarget),onCommunity:toCommunity}),!actionsPage&&!embedTarget&&h('header',null,h('span',null,t("你的本地工作空间")),h('div',null,h(StatusPill,{tone:data?.indexing?'busy':'ok','data-live-pill':true},data?.indexing?(data.indexPhase==='checking'?t("核对新增记录…"):t("整理历史记录…")):t("监控中")),h('span',{className:'header-date'},data?.today||''))),
+     h('nav',{className:'nav-groups','aria-label':t('主导航')},...navGroups.flatMap(([title,items])=>[h('p',{key:'g-'+title,className:'nav-h'},title),...items.map(([id,icon,name])=>h('button',{key:id,className:navOn(id)?'active':'','aria-current':navOn(id)?'page':undefined,title:navDot(id)?.title??name,onClick:()=>goTo(id)},id==='voice'?VoiceIcon(icon,{size:18}):Icon(icon,{size:18}),h('span',{className:'nav-l'},name),navDot(id)&&h('i',{className:'nav-dot',role:'img','aria-label':navDot(id).title,'data-nav-unread':navDot(id).count})))])),
+     !actionsPage&&h(SidebarStatus,{page,status:shellStatus,character:galgamePage?character:pet,settings,chat,onPage:setPage,activity:pluginActivity,voice:voice.snapshot})),
+   h('main',null,!actionsPage&&embedTarget&&h(EmbedBar,{target:embedTarget,record:recordOf(embedTarget),view:viewOf(embedTarget),onCommunity:toCommunity}),voicePage&&h(VoicePluginHeader,{snapshot:voice.snapshot,selectedPackageId:voiceTab??voice.snapshot?.state?.selectedPackageId,onSelectPackage:setVoiceTab,onPlugins:packageName=>toCommunity({tab:'installed',packageName}),onChat:()=>setPage('galgame')}),!actionsPage&&!embedTarget&&!voicePage&&h('header',null,h('span',null,t("你的本地工作空间")),h('div',null,h(StatusPill,{tone:data?.indexing?'busy':'ok','data-live-pill':true},data?.indexing?(data.indexPhase==='checking'?t("核对新增记录…"):t("整理历史记录…")):t("监控中")),h('span',{className:'header-date'},data?.today||''))),
      h('div',{className:'content'},settings?.safeMode&&!['safe-mode','galgame'].includes(page)&&h('div',{className:'index-banner safe-mode-banner',role:'status'},h('span',null,t("陪伴功能已停用（安全模式），桌宠和用量监控照常可用。")),h('button',{onClick:()=>setPage('safe-mode')},t("查看原因"))),!hideDiagnostics&&data?.indexing&&h('div',{className:'index-banner'},(data.indexPhase==='checking'?t("正在核对新增记录 · 已检查 "):t("正在建立本地历史索引 · 已读取 "))+(data.progress?.scanned||0)+' / '+(data.progress?.total||'—')+t(" 个文件。完成前用量为部分结果。")),
        page==='tokens'&&data?.missingRequests>0&&h('p',{className:'settings-note'},data.missingRequests+t(" 条请求缺少完整用量，合计为已记录部分。")),!hideDiagnostics&&!data&&h('p',null,t("正在读取本地记录…")),h(PageBoundary,{page},content),
        !hideDiagnostics&&data?.errors?.length>0&&h('details',{className:'read-errors'},h('summary',null,data.errors.length+t(" 个日志读取问题")),...data.errors.slice(0,10).map(e=>h('p',{key:e.path},e.path+' · '+e.message)))))),

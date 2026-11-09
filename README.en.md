@@ -16,7 +16,7 @@
 
 **AI Buddy app** (this repository) · [Bilibili Companion plugin](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ Connect plugin](https://github.com/lXiaoSel1/AI-Buddy-QQ) · [Card Games plugin](https://github.com/lXiaoSel1/AI-Buddy-Card-Games)
 
-<!-- ai-buddy-source-version: 2.0.8 -->
+<!-- ai-buddy-source-version: 2.0.9 -->
 **Current release: [v2.0.8](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.8)** · 2.0 added the Extensions center with official plugins, points with a shop, backpack and feeding, and Social & mood; group chat can now run in Auto, with the characters taking turns on their own. 2.0.4 added the table service, so you can install Card Games from Extensions and play Dou Dizhu and Texas Hold'em with your characters. 2.0.5 fixes that page sticking on "Starting" when you switch from the Bilibili or QQ page. 2.0.6 fixes an installer freeze while verifying old profiles. 2.0.7 fixes Bilibili Companion storyboard acquisition on affected CDN routes. The 30fps and 60fps editions have the same features. 2.0.8 connects application and plugin updates in Settings. See the [2.0.8 release notes](docs/RELEASE-2.0.8.en.md).
 
 ## Online installer (recommended)

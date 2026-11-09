@@ -70,7 +70,7 @@ export async function runR95Model({provider,card,scope,system,input,memory,memor
  if((typeof provider.captureConnection==='function'||dedicated)&&!profile)throw failure(dedicated?'角色专属连接无法捕获；不能回落全局或猜测模型配置':'全局聊天连接不存在','R95_CONNECTION_UNAVAILABLE');
  if(profile&&(profile.enabled===false||profile.capabilities?.chat===false||!profile.model))throw failure('角色聊天连接不可用或不支持聊天','R95_CONNECTION_UNAVAILABLE');
  if(dedicated&&profile?.id&&profile.id!==binding.connectionId)throw failure('角色专属连接与捕获结果不符','R95_CONNECTION_UNAVAILABLE');
- if(images){const capability=imageInputCapability(profile);if(!capability.supported)throw failure(capability.reason,capability.reason);}
+ if(images){const capability=typeof provider.imageCapability==='function'?provider.imageCapability(profile):imageInputCapability(profile);if(!capability.supported)throw failure(capability.reason,capability.reason);}
  if(dedicated&&typeof provider.runCaptured!=='function'&&typeof provider.runProfile!=='function')throw failure('角色专属连接缺少执行入口，不能回落全局连接','R95_CONNECTION_UNAVAILABLE');
  const selected=profile?{provider:profile.id,model:profile.model,reasoningEffort:profileEffort(profile)}:dedicated?{provider:binding.connectionId,model:route?.model,reasoningEffort:null}:{...copy(provider.currentSelection?.()??{}),reasoningEffort:profileEffort(provider.selected?.())};
  if(!selected.provider||!selected.model)throw failure('无法冻结实际聊天连接及模型','R95_CONNECTION_UNAVAILABLE');

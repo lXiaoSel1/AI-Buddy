@@ -8,7 +8,7 @@ const scope={channel:'app-private',characterId:'deepseek',personaId:'p',conversa
 const configuration={settings:{enabled:true,packages:{'ai-buddy.voice-breeze':{ttsProvider:'local'}}},selectedPackageId:'ai-buddy.voice-breeze',preparation:{state:'ready',target:'speech'},scope,packages:[{id:'ai-buddy.voice-breeze',installed:true,usable:true}],profile:{label:'Voice'},assets:{tts:{state:'ready'}},engine:'breeze'};
 const snapshot={state:configuration,captureState:'idle',working:false,error:''};
 
-test('Galgame owns the Live toggle while General Settings retains recording and complete voice configuration',()=>{
+test('Galgame retains Live while the approved voice page owns engine and reference configuration',()=>{
   const chat=renderToStaticMarkup(React.createElement(voice.VoiceChatControls,{snapshot,scope}));
   assert.equal((chat.match(/<button\b/g)??[]).length,2);
   assert.match(chat,/aria-label="语音总开关"/);
@@ -17,10 +17,10 @@ test('Galgame owns the Live toggle while General Settings retains recording and 
   assert.doesNotMatch(chat,/录音输入|<select|API Key/);
   const settings=renderToStaticMarkup(React.createElement(voice.VoiceSettingsPanel,{snapshot}));
   assert.doesNotMatch(settings,/<button\b[^>]*>Live 轮流交谈<\/button>/);
-  assert.match(settings,/录音输入/);
+  assert.doesNotMatch(settings,/录音输入/);assert.match(settings,/在哪里配音/);
   assert.match(settings,/停止并释放/);
-  assert.match(settings,/配音插件/);
-  assert.match(settings,/参考音逐字稿/);
+  assert.match(settings,/语音插件/);
+  assert.match(settings,/换成我的录音/);
 });
 
 const renderLive=(value=snapshot,expected=scope)=>renderToStaticMarkup(React.createElement(voice.VoiceChatControls,{snapshot:value,scope:expected})).match(/<button\b[^>]*data-voice-live="true"[^>]*>[\s\S]*?<\/button>/)?.[0];

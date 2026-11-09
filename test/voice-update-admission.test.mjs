@@ -39,7 +39,7 @@ async function fixture(t){
     send:event=>{events.push(event);if(event.type==='audio'&&event.phase==='end')audioEnded.resolve(event);},
     chooseAssets:async()=>{assetDialog.resolve();return assetChosen.promise;},
     components:{settings,runtime,local:{},cloud:{},credentials:{},supervisor:{async close(){}},
-      assets:{async resolve(){return {};},async status(){return {state:'ready'};}},
+      assets:{async prepareSelected(){return {state:'ready'};},async prepare(kind,{signal}){assetDialog.resolve();return new Promise((resolve,reject)=>{if(signal.aborted)reject(signal.reason);else signal.addEventListener('abort',()=>reject(signal.reason),{once:true});});},async resolve(){return {};},async status(){return {state:'ready'};}},
       profiles:{async current(){return {id:'alice-breeze',version:1,characterId:'alice',engine:'breeze'};}},
     },
   });
@@ -53,7 +53,7 @@ async function fixture(t){
   };
   const guard=main.split(/\r?\n/).find(line=>line.startsWith('function updateGuard('));assert(guard);
   const cardConfig=slice('voice:{quiesce:()=>voiceHost.quiesce()',',pageAppearance:');
-  vm.runInNewContext(slice('const updateReservation=','const bootstrapUrl=')+'\n'+guard+'\n'+
+  vm.runInNewContext(slice('let cardVoiceMix=','const updateReservation=')+slice('const updateReservation=','const bootstrapUrl=')+'\n'+guard+'\n'+
     slice("ipcMain.handle('voice:action',","ipcMain.handle('plugins:action',")+
     '\nglobalThis.reservation=updateReservation;globalThis.cardVoice=({'+cardConfig+'}).voice;',context);
   return {host:voiceHost,reservation:context.reservation,cardVoice:context.cardVoice,assetDialog,assetChosen,audioEnded,scope,events,
@@ -88,8 +88,8 @@ test('update reservation blocks new voice work, drains capture/playback, and wai
   await f.call('stop');assert.equal(f.reservation.status().busy,false);
   assert.equal(f.reservation.release(id),true);
 
-  const preparation=f.call('assets-prepare',{kind:'asr'});await f.assetDialog.promise;
-  assert.equal(f.host.busy(),false,'the asset dialog itself is outside the audio host busy state');
+  const preparation=f.call('assets-import',{kind:'asr'});await f.assetDialog.promise;
+  assert.equal(f.host.busy(),true,'offline preparation owns a cancellable host operation while the dialog is open');
   f.reservation.reserve(id);
   assert.equal(f.reservation.commit(id).ok,false,'a full admitted asset operation must finish before update commitment');
   assert.ok(f.reservation.status().reasons.some(row=>row.capability==='voice'));
@@ -98,7 +98,15 @@ test('update reservation blocks new voice work, drains capture/playback, and wai
   assert.equal((await f.call('state')).settings.enabled,true);
   await assert.rejects(async()=>f.cardVoice.cardEvent({eventId:'new-card-speech'}),{code:'APP_UPDATE_RESERVED'});
   assert.equal((await f.cardVoice.cardEvent({type:'scope-update',tableId:'table',handId:'hand',status:'active'})).reason,'scope-update');
-  await f.cardVoice.quiesce();
-  f.assetChosen.resolve(null);assert.equal((await preparation).cancelled,true);
+  const quiescing=f.cardVoice.quiesce();
+  f.assetChosen.resolve(null);await quiescing;assert.equal((await preparation).cancelled,true);
   assert.equal(f.reservation.commit(id).ok,true,'update can commit after admitted work and continuations settle');
+});
+
+test('component downloads remain cancellable through the real IPC after update reservation',async t=>{
+ const f=await fixture(t),preparing=f.call('assets-prepare',{kind:'asr'});await f.assetDialog.promise;
+ f.reservation.reserve('cancel-download');assert.equal(f.reservation.commit('cancel-download').ok,false);
+ const cancelled=await f.call('assets-cancel');assert.equal(cancelled.cancelled,true);
+ assert.equal((await preparing).cancelled,true);assert.equal(f.host.busy(),false);
+ assert.equal(f.reservation.commit('cancel-download').ok,true);
 });

@@ -32,10 +32,10 @@ export class UsageLedger {
   rebuildRequestIndex(){if(this.repository){const repo=this.repository;this.requestGroups={keys:()=>repo.groups(["codex","claude"]),clear(){},get(key){const kind=key.startsWith("codex:")?"codex":"claude";return {entries:function*(){for(const[k,v]of repo.entries(kind,{group:key,ordered:true}))yield [kind+":"+k,v];},delete(){}};}};return;}this.requestGroups.clear();this.codex=new Map([...this.codex].map(([k,v])=>[v.session+':'+hash([v.timestamp,v.usage.input,v.usage.output,v.usage.cacheRead,v.usage.reasoning]),v]));for(const [k,v]of this.codex)this.indexRequest('codex',k,v);for(const[k,v]of this.claude)this.indexRequest('claude',k,v);}
   indexRequest(kind,key,value){this.snapshotDirty.add(value.session);if(this.repository){this.dirtyRequestSessions.add(value.session);return;}if(!this.requestGroups.has(value.session))this.requestGroups.set(value.session,new Map());this.requestGroups.get(value.session).set(kind+':'+key,value);this.dirtyRequestSessions.add(value.session);}
   requestRows(key){return [...this.iterateRequestRows(key)];}
-  *iterateRequestRows(key){const session=this.sessions.get(key);if(!session)return;const input=this.requestGroups.get(key)?.entries()||[];const samples=this.repository?input:[...input].sort((a,b)=>Date.parse(a[1].timestamp)-Date.parse(b[1].timestamp));let previous=emptyUsage();
-    for(const[id,sample]of samples){let usage=sample.usage;if(session.provider==='codex'){if(usage.total<previous.total){if(sample.startsCounter)previous=emptyUsage();else continue;}const next={...usage,...Object.fromEntries(fields.map(k=>[k,Math.max(0,usage[k]-previous[k])])),requests:1};previous=maxUsage(previous,usage);usage=next;if(!usage.total)continue;}
+  *iterateRequestRows(key,{entries,previous=emptyUsage(),onState=()=>{}}={}){const session=this.sessions.get(key);if(!session)return;const input=entries??this.requestGroups.get(key)?.entries()??[];const samples=this.repository?input:[...input].sort((a,b)=>Date.parse(a[1].timestamp)-Date.parse(b[1].timestamp)||(a[2]??0)-(b[2]??0));let boundary=-Infinity;
+    for(const[id,sample]of samples){boundary=Math.max(boundary,Date.parse(sample.timestamp)||0);let usage=sample.usage;if(session.provider==='codex'){if(usage.total<previous.total){if(sample.startsCounter)previous=emptyUsage();else continue;}const next={...usage,...Object.fromEntries(fields.map(k=>[k,Math.max(0,usage[k]-previous[k])])),requests:1};previous=maxUsage(previous,usage);usage=next;if(!usage.total)continue;}
       yield {requestId:id,nativeRequestId:sample.nativeRequestId,activityOriginId:sample.activityOriginId,scope:sample.scope,sessionId:session.id,tool:session.provider,sourceId:'legacy-'+session.provider,workspace:session.workspace,model:sample.model||'',actualProvider:sample.actualProvider||'unknown',connectionIdentity:sample.connectionIdentity,timestamp:sample.timestamp,usage,knownFields:sample.knownFields||["input","output","total"],totalQuality:sample.totalQuality||'calculated',cacheIncluded:session.provider==='codex',cacheWriteIncluded:false,reasoningIncluded:true,cacheWrite1h:sample.cacheWrite1h,purpose:session.purpose|| (session.companion?(/_cg/.test(session.origin||'')?'cg':'galgame'):'work'),location:{file:session.path}};
-    }
+    }onState({previous,boundary});
   }
   session(provider,id,meta={}) {
     const key=provider+':'+id;
@@ -157,9 +157,12 @@ export class UsageLedger {
       for(const [key,session]of sessions){
         let part=this.snapshotPartitions.get(key);
         if(!part||this.snapshotDirty.has(key)){
-          const buckets=new Map();let previous=emptyUsage(),counterRestarts=0,counterRegressions=0;
-          for(const[,sample]of this.repository.entries(session.provider,{group:key,ordered:true})){
-            let usage=sample.usage;
+          const mutations=part?this.repository.mutationSummary(session.provider,key,part.generation):null,append=!!mutations?.length&&mutations.every(([,sample])=>Date.parse(sample.timestamp)>part.boundary);
+          const buckets=new Map(append?part.buckets.map(row=>[JSON.stringify([dayOf(row.sample.timestamp),row.sample.model||'',Date.parse(row.sample.timestamp)>=startedAt]),structuredClone(row)]):[]);
+          let previous=append?part.previous:emptyUsage(),counterRestarts=append?part.counterRestarts:0,counterRegressions=append?part.counterRegressions:0,boundary=append?part.boundary:-Infinity;
+          const input=append?mutations.sort((a,b)=>Date.parse(a[1].timestamp)-Date.parse(b[1].timestamp)||(a[2]??0)-(b[2]??0)):this.repository.entries(session.provider,{group:key,ordered:true});
+          for(const[,sample]of input){
+            boundary=Math.max(boundary,Date.parse(sample.timestamp)||0);let usage=sample.usage;
             if(session.provider==='codex'){
               if(usage.total<previous.total){if(sample.startsCounter){previous=emptyUsage();counterRestarts++;}else{counterRegressions++;continue;}}
               const delta=Object.fromEntries(fields.map(k=>[k,Math.max(0,usage[k]-previous[k])]));delta.total=delta.input+delta.output;delta.requests=delta.total>0?1:0;previous=maxUsage(previous,usage);usage=delta;
@@ -169,7 +172,7 @@ export class UsageLedger {
             if(!buckets.has(bucket))buckets.set(bucket,{sample:{session:key,timestamp:sample.timestamp,model:sample.model},usage:emptyUsage()});
             plus(buckets.get(bucket).usage,usage);
           }
-          part={buckets:[...buckets.values()],counterRestarts,counterRegressions};this.snapshotPartitions.set(key,part);this.snapshotDirty.delete(key);
+          part={buckets:[...buckets.values()],counterRestarts,counterRegressions,previous,boundary,generation:this.repository.mutationSummary(session.provider,key,this.repository.commitGeneration)?this.repository.commitGeneration:null};this.snapshotPartitions.set(key,part);this.snapshotDirty.delete(key);
         }
         if(part.counterRestarts)session.counterRestarts=part.counterRestarts;
         if(part.counterRegressions)session.counterRegressions=part.counterRegressions;

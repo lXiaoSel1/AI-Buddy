@@ -8,7 +8,7 @@ import {verifyPluginCatalog,resolvePluginInstallPlan,catalogPackages} from './pl
 import {assertPluginTreeNoLinks,inspectPluginArchive,extractPluginArchive,verifyInstalledPlugin} from './plugin-archive.mjs';
 import {defaultPluginSource,OFFICIAL_SOURCE_ID,LEGACY_SOURCE_ID,MAX_PLUGIN_SOURCES,SOURCE_PREVIEW_TTL_MS,pluginSourceFingerprint,pluginSourceUrlIdentity,sourceIsOfficial,isVoiceSourceAuthorized,previewPluginSource,fetchPluginJson} from './plugin-sources.mjs';
 import {renamePluginPath as rename} from './plugin-files.mjs';
-import {isVoicePackage,supportsVoiceManifest} from './voice/package-contract.mjs';
+import {VOICE_SHARED_PACKAGE,isVoiceEnginePackage,isVoicePackage,supportsVoiceManifest} from './voice/package-contract.mjs';
 
 export const PLUGIN_SOURCE_BACKEND=Symbol('AI Buddy source storage boundary');
 const hash=value=>createHash('sha256').update(typeof value==='string'||Buffer.isBuffer(value)?value:canonicalPluginJson(value)).digest('hex');
@@ -142,37 +142,67 @@ export async function createPluginSourceManager({legacy,root,dataRoot,appVersion
   return row;
  }
  async function updateApproval(plan) {
-  const {expected, mode, selected} = plan, row = exactUpdate(expected, mode);
-  const ref = chosen(row.id, row.sourceId), prior = ref.row.versions[row.from];
-  if (ref.row.enabled !== plan.enabled || prior.archive.sha256 !== plan.fromDigest || (ref.legacy ? backend.catalogDigest() : catalogs.get(row.sourceId)?.verified.payloadSha256) !== selected.catalogSha256)
-   fail('Installed plugin or signed catalog changed after review', 'PLUGIN_UPDATE_CHANGED');
-  if (mode === 'auto') {
-   const preferences = join(dataRoot, 'community', 'preferences-v1.json');
-   await assertPluginTreeNoLinks(preferences);
-   const prefs = await json(preferences, {});
-   if (prefs.updatePolicies?.[row.packageKey] !== 'auto') fail('Automatic updates were turned off; review this update manually', 'PLUGIN_AUTO_UPDATE_DISABLED');
+  const {mode, selected} = plan;
+  for (const approval of [plan, ...(plan.siblings ?? [])]) {
+   const row = exactUpdate(approval.expected, mode), ref = chosen(row.id, row.sourceId), prior = ref.row.versions[row.from];
+   if (ref.row.enabled !== approval.enabled || prior.archive.sha256 !== approval.fromDigest || (ref.legacy ? backend.catalogDigest() : catalogs.get(row.sourceId)?.verified.payloadSha256) !== selected.catalogSha256)
+    fail('Installed plugin or signed catalog changed after review', 'PLUGIN_UPDATE_CHANGED');
+   if (mode === 'auto') {
+    const preferences = join(dataRoot, 'community', 'preferences-v1.json');
+    await assertPluginTreeNoLinks(preferences);
+    const prefs = await json(preferences, {});
+    if (prefs.updatePolicies?.[row.packageKey] !== 'auto') fail('Automatic updates were turned off; review this update manually', 'PLUGIN_AUTO_UPDATE_DISABLED');
+   }
   }
+ }
+ function voiceSiblingUpdates(row, ref) {
+  if (!isVoiceEnginePackage(row.id)) return [];
+  const items = ref.legacy ? legacy.snapshot().packages : catalogs.get(row.sourceId)?.packages ?? [];
+  const root = items.find(item => item.manifest.id === row.id && item.manifest.version === row.to && item.archive.sha256 === row.digest);
+  if (!root || !supportsVoiceManifest(root.manifest)) fail('Voice update does not match the supported package contract', 'PLUGIN_DEPENDENCY_ERROR');
+  const sharedVersion = root.manifest.dependencies[VOICE_SHARED_PACKAGE], updates = updateCandidates().updates, siblings = [];
+  for (const sibling of refs()) {
+   if (sibling.sourceId !== row.sourceId || sibling.id === row.id || !isVoiceEnginePackage(sibling.id)) continue;
+   const prior = sibling.row.versions[sibling.row.current].manifest;
+   if (!Object.hasOwn(prior.dependencies, VOICE_SHARED_PACKAGE) || satisfiesVersionRange(sharedVersion, prior.dependencies[VOICE_SHARED_PACKAGE])) continue;
+   const candidate = updates.find(value => value.id === sibling.id && value.sourceId === row.sourceId);
+   const target = candidate && items.find(item => item.manifest.id === sibling.id && item.manifest.version === candidate.to && item.archive.sha256 === candidate.digest);
+   if (!candidate || candidate.state === 'unavailable' || candidate.incompatibleData || !target || !supportsVoiceManifest(target.manifest) || target.manifest.dependencies[VOICE_SHARED_PACKAGE] !== sharedVersion)
+    fail('A compatible signed same-source voice engine update is required for the shared runtime', 'PLUGIN_DEPENDENCY_ERROR');
+   siblings.push(candidate);
+  }
+  return siblings;
  }
  async function planUpdate(request) {
   const mode = request.mode;
   if (!['review', 'manual', 'auto'].includes(mode)) fail('Invalid plugin update mode', 'PLUGIN_UPDATE_CHANGED');
-  const row = exactUpdate(request, mode), ref = chosen(row.id, row.sourceId);
-  if (mode === 'auto' && await inUse(row.id, row.sourceId)) fail('Extension is in use; waiting for an idle update slot', 'PLUGIN_BUSY');
-  const choices = [{id: row.id, version: row.to}], prior = ref.row.versions[row.from];
-  if (ref.legacy) await backend.assertCatalogPublisher(prior);
+  const row = exactUpdate(request, mode), ref = chosen(row.id, row.sourceId), grouped = voiceSiblingUpdates(row, ref);
+  const approvals = [row, ...grouped].map(expected => {
+   const current = chosen(expected.id, expected.sourceId), prior = current.row.versions[expected.from];
+   return {expected, enabled: current.row.enabled, fromDigest: prior.archive.sha256};
+  });
+  for (const approval of approvals) {
+   if (mode === 'auto' && await inUse(approval.expected.id, row.sourceId)) fail('Extension is in use; waiting for an idle update slot', 'PLUGIN_BUSY');
+   if (ref.legacy) await backend.assertCatalogPublisher(chosen(approval.expected.id, row.sourceId).row.versions[approval.expected.from]);
+  }
+  const choices = approvals.map(({expected}) => ({id: expected.id, version: expected.to}));
   const selected = ref.legacy ? await legacy.plan(choices) : await plan(row.sourceId, choices);
+  for (const approval of approvals) {
+   const item = selected.packages.find(value => value.manifest.id === approval.expected.id);
+   if (!item || item.archive.sha256 !== approval.expected.digest) fail('Signed plugin update digest changed', 'PLUGIN_UPDATE_CHANGED');
+  }
   const rootItem = selected.packages.find(value => value.manifest.id === row.id);
-  if (!rootItem || rootItem.archive.sha256 !== row.digest) fail('Signed plugin update digest changed', 'PLUGIN_UPDATE_CHANGED');
   const dependencyChanges = selected.packages.filter(value => value !== rootItem).flatMap(item => {
    const prior = refs(item.manifest.id).find(record => record.sourceId === row.sourceId)?.row;
    return prior?.current === item.manifest.version && prior.versions[prior.current]?.archive.sha256 === item.archive.sha256 ? [] :
     [{id: item.manifest.id, from: prior?.current ?? null, to: item.manifest.version}];
   });
-  const requiresReview = row.addedCapabilities.length > 0 || dependencyChanges.length > 0 || mode === 'auto' && !stablePatchUpdate(row.from, row.to);
-  const planId = randomUUID(), pin = {expected: row, mode, selected, enabled: ref.row.enabled, fromDigest: prior.archive.sha256, requiresReview};
+  const addedCapabilities = [...new Set([row, ...grouped].flatMap(value => value.addedCapabilities))];
+  const requiresReview = addedCapabilities.length > 0 || dependencyChanges.length > 0 || mode === 'auto' && !stablePatchUpdate(row.from, row.to);
+  const planId = randomUUID(), pin = {...approvals[0], mode, selected, siblings: approvals.slice(1), requiresReview};
   if (mode !== 'auto' || !requiresReview) await updateApproval(pin);
   updatePlans.set(planId, pin); while (updatePlans.size > 64) updatePlans.delete(updatePlans.keys().next().value);
-  return {planId, packageKey: row.packageKey, from: row.from, to: row.to, downloadBytes: selected.downloadBytes, unpackedBytes: selected.unpackedBytes, addedCapabilities: row.addedCapabilities, dependencyChanges, requiresReview};
+  return {planId, packageKey: row.packageKey, from: row.from, to: row.to, downloadBytes: selected.downloadBytes, unpackedBytes: selected.unpackedBytes, addedCapabilities, dependencyChanges, requiresReview};
  }
  async function installUpdate(request) {
   const pin = updatePlans.get(request.planId);

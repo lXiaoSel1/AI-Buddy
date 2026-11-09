@@ -1,7 +1,7 @@
 import {createPluginHost} from '../plugin-host.mjs';
 import {isVoiceSourceAuthorized, LEGACY_SOURCE_ID} from '../plugin-sources.mjs';
 import {satisfiesVersionRange} from '../plugin-manifest.mjs';
-import {VOICE_CLOUD_WORKER, VOICE_ENGINES, VOICE_PACKAGE_VERSION, VOICE_PROVIDERS, VOICE_SHARED_PACKAGE, isVoiceEnginePackage, isVoicePackage, supportsVoiceManifest} from './package-contract.mjs';
+import {VOICE_CLOUD_WORKER, VOICE_ENGINES, VOICE_PROVIDERS, VOICE_SHARED_PACKAGE, isVoiceEnginePackage, isVoicePackage, supportsVoiceManifest} from './package-contract.mjs';
 
 const fault=(message,code)=>Object.assign(Error(message),{code});
 const packageIds=Object.keys(VOICE_ENGINES);
@@ -34,7 +34,7 @@ export function createVoicePackageAuthority({manager,runnerPath,processFactory,v
       else if(!row.enabled)state='disabled';
       else if(!satisfiesVersionRange(snapshot.appVersion,current.manifest.appRange) ||
               !satisfiesVersionRange(snapshot.apiVersion,current.manifest.apiRange))state='incompatible';
-      else if(shared?.current!==VOICE_PACKAGE_VERSION || (shared.sourceId??LEGACY_SOURCE_ID)!==sourceId)state='missing-dependency';
+      else if(!shared || shared.current!==current.manifest.dependencies[VOICE_SHARED_PACKAGE] || (shared.sourceId??LEGACY_SOURCE_ID)!==sourceId)state='missing-dependency';
       else if(row.activation && !row.activation.usable)state=row.activation.state==='disabled'?'verification-failed':row.activation.state;
       return {id,engine:VOICE_ENGINES[id].engine,installed:!!row,enabled:row?.enabled===true,usable:state==='ready',state,sourceId,version,archiveSha256:current?.archive?.sha256??null};
     });
@@ -61,7 +61,7 @@ export function createVoicePackageAuthority({manager,runnerPath,processFactory,v
         throw fault('语音包来源证明无效','VOICE_SOURCE_UNAUTHORIZED');
     }else if(packageRecord.sourceProof?.legacyVerified!==true)throw fault('语音包缺少签名证明','VOICE_SOURCE_UNAUTHORIZED');
     const shared=await manager.resolveInstalled(VOICE_SHARED_PACKAGE,{sourceId:packageRecord.sourceId,requireEnabled:false});
-    if(shared.manifest.kind!=='runtime' || shared.version!==VOICE_PACKAGE_VERSION ||
+    if(shared.manifest.kind!=='runtime' || shared.version!==packageRecord.manifest.dependencies[VOICE_SHARED_PACKAGE] ||
        shared.sourceId!==packageRecord.sourceId || shared.manifest.entry!=='asr_worker.py' ||
        !['asr_worker.py','assets.json'].every(path=>shared.manifest.files.some(file=>file.path===path)))
       throw fault('共享语音运行包不匹配','VOICE_PACKAGE_INVALID');

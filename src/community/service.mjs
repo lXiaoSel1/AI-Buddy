@@ -132,13 +132,16 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
       await recheck();
       // From here to the commit there is no await: these checks see exactly the state they replace.
       assertCatalogCurrent(catalog, sourceId);
+      // Local maintenance catalogs must not replace public discovery or advance its replay watermark.
+      // Startup may still read an older cached catalog without persisting it.
+      if (persist && sourceId === 'official' && officialScope(verifiedSource) && catalog.works.some(work => work.releases.some(release => release.package?.spec?.kind === 'tarball' && !publicWebUrl(release.package.spec.value)?.startsWith('https://')))) fail('Official discovery catalogs require public HTTPS tarball URLs; use a custom source for local maintenance packages', 'COMMUNITY_OFFICIAL_LOCAL_CATALOG');
       let reviewIndex = null, reviewSaved = null;
       if (receivedReviews) { try { reviewIndex = reviewsFor(receivedReviews, verifiedSource, catalog, sourceId); reviewSaved = receivedReviews; } catch (cause) { if (!reviewsOptional) throw cause; } }
       else if (prior?.reviewEnvelope) { try { reviewIndex = reviewsFor(prior.reviewEnvelope, verifiedSource, catalog, sourceId, {replay: false}); reviewSaved = prior.reviewEnvelope; } catch {} }
       catalogs.set(sourceId, catalog); if (reviewIndex) reviews.set(sourceId, reviewIndex); else reviews.delete(sourceId); errors.delete(sourceId);
       if (persist) { cache.sources[sourceId] = {url: url ?? prior?.url ?? null, reviewUrl: reviewUrl ?? prior?.reviewUrl ?? null, envelope: incoming, reviewEnvelope: reviewSaved, cachedAt: new Date(now()).toISOString(), watermark: {generatedAt: catalog.generatedAt, digest: catalog.verified.payloadSha256}}; persistCache(); }
       update(); return snapshot();
-    } catch (cause) { if (recordError) { errors.set(sourceId, publicFailure(cause)); update(); } throw cause; }
+    } catch (cause) { if (recordError && !(envelope && cause.code === 'COMMUNITY_OFFICIAL_LOCAL_CATALOG')) { errors.set(sourceId, publicFailure(cause)); update(); } throw cause; }
     finally { metadataRequests.delete(controller); }
   }
   // Opening the center discovers the fixed official endpoint once per source generation. Explicit refresh can retry.

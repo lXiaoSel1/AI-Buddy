@@ -65,7 +65,7 @@ function quietEdges(samples,rate) {
   return {head:head/rate,tail:head===samples.length?samples.length/rate:(samples.length-tail)/rate,all:head===samples.length};
 }
 
-export function createChatPlayer({context,onDisplay=()=>{},onPlayed=()=>{},onDrained=()=>{},onBlocked=()=>{},onError=()=>{},onDiagnostic}) {
+export function createChatPlayer({context,destination=context.destination,onDisplay=()=>{},onPlayed=()=>{},onDrained=()=>{},onBlocked=()=>{},onError=()=>{},onDiagnostic}) {
   const segments=new Map(),sources=new Set();
   let requestId=null,endAt=0,displayed=-1,generated=false,drained=false,timer=null;
   const observe=value=>{if(onDiagnostic)try{onDiagnostic(value);}catch{}};
@@ -132,7 +132,7 @@ export function createChatPlayer({context,onDisplay=()=>{},onPlayed=()=>{},onDra
       if(previous?.end!==null&&previous?.end!==undefined)start=Math.max(start,previous.end+boundaryBreath(previous.speech_text||previous.text)-previous.tailSilence-edges.head);
       segment.breathApplied=true;
     }
-    const source=context.createBufferSource();source.buffer=buffer;source.connect(context.destination);sources.add(source);
+    const source=context.createBufferSource();source.buffer=buffer;source.connect(destination);sources.add(source);
     source.onended=()=>{source.disconnect();sources.delete(source);if(onDiagnostic)observe({type:'source_ended',index:event.index,now:context.currentTime,end:start+buffer.duration});};source.start(start);
     if(onDiagnostic)observe({type:'pcm_schedule',index:event.index,now,start,end:start+buffer.duration,previousEnd,continuingSegment,
       genuineUnderrun:continuingSegment&&previousEnd>0&&previousEnd<now,underrunSeconds:continuingSegment&&previousEnd>0?Math.max(0,now-previousEnd):0,

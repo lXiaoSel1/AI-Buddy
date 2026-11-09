@@ -1,14 +1,10 @@
 import {randomBytes} from 'node:crypto';
+export {imageInputCapability} from './model-image-catalog.mjs';
 const fail=code=>Object.assign(Error(code),{code});
-const MIME=new Set(['image/png','image/jpeg','image/webp']),PROTOCOLS=new Set(['codex','chat-completions','responses','anthropic','gemini']);
+const MIME=new Set(['image/png','image/jpeg','image/webp']);
 const scopeKeys=['pluginId','characterId','personaId','lifeId','operationId','sessionId','accountBindingId','bindingGeneration'];
 const scopeOf=s=>JSON.stringify(scopeKeys.map(k=>s?.[k]??null));
 const tickets=new Map();
-export function imageInputCapability(profile){
- const model=profile?.models?.find(m=>m.id===profile.model||m.model===profile.model),modalities=model?.inputModalities??model?.input_modalities;
- const declared=Array.isArray(modalities)&&modalities.every(v=>typeof v==='string')?modalities:null;
- return {supported:!!declared?.includes('image')&&PROTOCOLS.has(profile?.protocol??profile?.kind),reason:!declared?'MODEL_IMAGE_CAPABILITY_UNKNOWN':!declared.includes('image')?'MODEL_IMAGE_UNSUPPORTED':!PROTOCOLS.has(profile?.protocol??profile?.kind)?'MODEL_IMAGE_TRANSPORT_UNSUPPORTED':null};
-}
 export function imagePart({mimeType,bytes}){
  if(!MIME.has(mimeType)||!(Buffer.isBuffer(bytes)||bytes instanceof Uint8Array)||!bytes.length||bytes.length>4*1024*1024)throw fail('MODEL_IMAGE_INVALID');
  const b=Buffer.from(bytes);if(mimeType==='image/png'&&!b.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))||mimeType==='image/jpeg'&&!(b[0]===255&&b[1]===216&&b[2]===255)||mimeType==='image/webp'&&!(b.subarray(0,4).toString()==='RIFF'&&b.subarray(8,12).toString()==='WEBP'))throw fail('MODEL_IMAGE_INVALID');

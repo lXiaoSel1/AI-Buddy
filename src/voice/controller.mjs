@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {sameVoiceScope} from './conversation.mjs';
-import {createVoiceSettings} from './settings.mjs';
+import {createVoiceSettings,mergeVoiceSettings} from './settings.mjs';
 import {voiceSpeechText,voiceSpeechChunks as speechChunks} from './speech-text.mjs';
 import {waitVoiceOperation,voicePreflight,VOICE_PREFLIGHT_TIMEOUT_MS} from './operation-wait.mjs';
 
@@ -22,6 +22,7 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
   const queued=[],inflight=new Set(),capacityWaiters=new Set();
   let pumping=false,pumpTask=null;
   let stateRead;
+  let cleanupFailure,recoveryTask;
   const emit=event=>{try{send(event);}catch{}};
   const serialCapture=fn=>{const task=captureTail.then(fn);captureTail=task.catch(()=>{});return task;};
   const current=()=>copy(getScope?.());
@@ -62,10 +63,11 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
         if(readiness?.ready!==true)return null;
       }
       else{
-        if(!chosen.options.credentialRef||typeof runtime.ready!=='function')return null;
+        if(!chosen.options.credentialRef)throw fault('请先在云配音配置中保存 MiniMax API Key','CLOUD_KEY_REQUIRED');
+        if(typeof runtime.ready!=='function')throw fault('云配音组件尚未准备','CLOUD_UNAVAILABLE');
         const readiness=await waitVoiceOperation(()=>runtime.ready({engine:chosen.engine,packageId:chosen.row.id,characterId:scope.characterId,profileId:profile.id,profileVersion:profile.version,
           speechProvider:chosen.options.ttsProvider,credentialRef:chosen.options.credentialRef}),signal);
-        if(readiness?.ready!==true)return null;
+        if(readiness?.ready!==true)throw fault(readiness?.message??'当前角色的云声线尚未准备，请检查云配音设置',readiness?.code??'CLOUD_VOICE_REQUIRED');
       }
       if(generation!==epoch||!matches(target))return null;
       const checked=await selected(signal);if(generation!==epoch||!matches(target)||packageProof(checked)!==packageProof(chosen))return null;
@@ -156,6 +158,7 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
   }
   function sealCleanup(error){
     const failure=fault(String(error?.message??error),'VOICE_CLEANUP_FAILED');
+    cleanupFailure=failure;
     stopping=Promise.reject(failure);void stopping.catch(()=>{});
     live=null;captureState('idle');emit({type:'status',state:'error',code:failure.code,message:failure.message});
     return failure;
@@ -262,7 +265,8 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
         if(chosen.options.ttsProvider==='minimax'){
           profile=row.scope&&await waitVoiceOperation(()=>profiles?.current({characterId:row.scope.characterId,engine:chosen.engine}),row.controller.signal);
           assertPreparation(row);
-          if(!profile||!chosen.options.credentialRef)throw fault('请先配置当前角色的云声线','VOICE_CLOUD_VOICE_PENDING');
+          if(!profile)throw fault('当前角色的声音档案尚未准备','VOICE_PROFILE_SCOPE');
+          if(!chosen.options.credentialRef)throw fault('请先在云配音配置中保存 MiniMax API Key','CLOUD_KEY_REQUIRED');
         }
         if(typeof runtime.prepare!=='function')throw fault('语音运行组件尚未准备','VOICE_PREPARE_UNAVAILABLE');
         const result=await waitVoiceOperation(()=>runtime.prepare({engine:chosen.engine,packageId:chosen.row.id,target,
@@ -355,8 +359,30 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
       return {submitted:true,text,accepted};
     }catch(error){await retireCapture(row);throw error;}
   }
-  function invalidate(reason='stopped'){
+  async function retainedSpeech(signature){
+    if(!signature||typeof runtime.ready!=='function')return;
+    const generation=epoch,scope=current(),check=()=>!closed&&generation===epoch&&sameVoiceScope(scope,current());
+    const preflight=voicePreflight(lifecycle.signal,preflightTimeoutMs),signal=preflight.signal;
+    try{
+      const chosen=await selected(signal);
+      if(!check()||packageProof(chosen)!==signature.proof||!scope)return;
+      const profile=await waitVoiceOperation(()=>profiles?.current({characterId:scope.characterId,engine:chosen.engine}),signal);
+      if(!check()||!profile||profile.characterId!==scope.characterId||profile.engine!==chosen.engine)return;
+      // This is a resident-worker query, not a new use: marker status avoids
+      // rehashing components. Admission keeps its existing resolve() verification.
+      if(chosen.options.ttsProvider==='local'&&(await waitVoiceOperation(()=>assets.status(chosen.engine,chosen.row.id,{signal}),signal))?.state!=='ready')return;
+      const ready=await waitVoiceOperation(()=>runtime.ready({engine:chosen.engine,packageId:chosen.row.id,target:'speech',
+        characterId:scope.characterId,profileId:profile.id,profileVersion:profile.version,speechProvider:chosen.options.ttsProvider,credentialRef:chosen.options.credentialRef}),signal);
+      const checked=await selected(signal),currentProfile=await waitVoiceOperation(()=>profiles?.current({characterId:scope.characterId,engine:chosen.engine}),signal);
+      if(check()&&ready?.ready===true&&packageProof(checked)===signature.proof&&currentProfile?.id===profile.id&&currentProfile?.version===profile.version)
+        return {epoch:generation,proof:signature.proof,scope,target:'speech'};
+    }catch{
+      // A missing/replaced proof is cold state, never authority to reload or reopen capture.
+    }finally{preflight.close();}
+  }
+  function invalidate(reason='stopped',{retainEngine=['scope-changed','profile-changed'].includes(reason)}={}){
     if(stopping)return stopping;
+    const retained=reason==='scope-changed'&&retainEngine&&typeof runtime.cancelCurrent==='function'&&!preparationJob&&preparation.state==='ready'&&preparedSignature?.epoch===epoch?preparedSignature:undefined;
     epoch++;live=null;const old=capture;capture=null;
     lifecycle.abort(fault('旧语音操作已取消','VOICE_STALE_TURN'));lifecycle=new AbortController();
     cancelStateRead();
@@ -368,16 +394,53 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
     wakeCapacity();
     // Revoke first, then await the owned workers. A failed cleanup keeps the gate sealed.
     const job=Promise.allSettled([
-      Promise.resolve().then(()=>runtime.cancelCapture?.()),Promise.resolve().then(()=>runtime.stopEngine?.()),pumpTask,captureTail,oldPreparation?.task?.catch(()=>{}),
-    ]).then(results=>{
+      Promise.resolve().then(()=>runtime.cancelCapture?.()),Promise.resolve().then(()=>retainEngine&&runtime.cancelCurrent?runtime.cancelCurrent():runtime.stopEngine?.()),pumpTask,captureTail,oldPreparation?.task?.catch(()=>{}),
+    ]).then(async results=>{
       captureState('idle',old,{reason});emit({type:'invalidate',epoch,reason});
       const failure=results.find(row=>row.status==='rejected');
-      if(failure)throw fault(String(failure.reason?.message??failure.reason),'VOICE_CLEANUP_FAILED');
-      publishPreparation({state:'idle',target:null});
+      if(failure){cleanupFailure=fault(String(failure.reason?.message??failure.reason),'VOICE_CLEANUP_FAILED');throw cleanupFailure;}
+      cleanupFailure=undefined;
+      // Scope revocation ends the sentence and Live microphone, not the user's resident speech engine.
+      for(;;){
+        const scope=current(),unchanged=()=>scope?sameVoiceScope(scope,current()):current()==null;
+        const restored=await retainedSpeech(retained);
+        // A second navigation shares this stop gate. Discard its predecessor's
+        // read-only result and authorize the latest destination before settling.
+        if(!unchanged())continue;
+        if(!restored){publishPreparation({state:'idle',target:null});break;}
+        try{
+          const snapshot=await state();
+          if(!unchanged()||!sameVoiceScope(restored.scope,snapshot.scope))continue;
+          preparedSignature=restored;publishPreparation({state:'ready',target:'speech'});
+          emit({type:'state',state:{...snapshot,stopping:false,preparation:copy(preparation)}});
+        }catch{
+          if(!unchanged())continue;
+          preparedSignature=undefined;publishPreparation({state:'idle',target:null});
+        }
+        break;
+      }
     });
     stopping=job;
     void job.then(()=>{if(stopping===job)stopping=null;},()=>{});
     return job;
+  }
+  function recoverStop(){
+    if(recoveryTask)return recoveryTask;
+    if(closed)return Promise.reject(fault('语音功能已关闭','VOICE_STOPPING'));
+    if(!cleanupFailure)return stopping??Promise.resolve({recovered:false});
+    const task=(async()=>{
+      try{
+        // Only an explicit retry of the real runtime cleanup can clear this
+        // layer. Keep the old rejected gate in place throughout that proof.
+        await Promise.all([runtime.cancelCapture?.(),runtime.stopEngine?.()]);
+        stopping=null;cleanupFailure=undefined;
+        // Revoke all old turns before reopening; this synchronous call seals
+        // the gate again before any new admission can observe the transition.
+        await invalidate('recovered');
+        return {recovered:true};
+      }catch(error){throw sealCleanup(error);}
+    })();
+    recoveryTask=task;void task.finally(()=>{if(recoveryTask===task)recoveryTask=undefined;}).catch(()=>{});return task;
   }
   function state(){
     const scope=current(),sameScope=other=>scope?sameVoiceScope(scope,other):other==null;
@@ -400,9 +463,12 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
   }
   async function action(op,payload={}){
     if(op==='state')return state();
+    if(op==='recover')return recoverStop();
     if(op==='stop')return invalidate('user-stop');
     if(op==='configure'){
-      await invalidate('configuration-changed');
+      const previous=await settings.get(),next=mergeVoiceSettings(previous,payload);
+      const identity=config=>{const options=config.packages[config.selectedPackageId];return JSON.stringify([config.enabled,config.selectedPackageId,options.ttsProvider,options.sttProvider,options.ttsProvider==='minimax'?options.credentialRef:null]);};
+      await invalidate('configuration-changed',{retainEngine:identity(previous)===identity(next)});
       const result=await settings.update(payload);
       // Readers may have started after stop but before the settings commit.
       // Revoke that in-flight snapshot before publishing the new permissions.
@@ -444,5 +510,5 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
     try{await runtime.close?.();}catch(error){failure??=error;}
     if(failure)throw failure;
   }
-  return {admit,segment,finish,action,invalidate,state,close,busy:()=>!!stopping||!!preparationJob||!!capture||!!live||turns.size>0||queued.length>0||inflight.size>0||pumping};
+  return {admit,segment,finish,action,invalidate,recoverStop,state,close,busy:()=>!!stopping||!!recoveryTask||!!preparationJob||!!capture||!!live||turns.size>0||queued.length>0||inflight.size>0||pumping};
 }

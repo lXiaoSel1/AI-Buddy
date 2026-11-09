@@ -87,7 +87,7 @@ function History({state,context,request,resolveArt,onClose}){
 function Settings({state,request,resolveArt,onClose}){
  const [feedback,setFeedback]=useState('');return h(Modal,{title:'群聊设置',wide:true,onClose,kind:'settings'},h(GroupEditor,{state,request,resolveArt,onClose,setFeedback}),feedback&&h('p',{role:'status'},feedback));
 }
-export function GroupHeader({state,request,resolveArt=()=>null,onBrowse,petEnabled,onPetToggle,panelRequest,loadCg,toolbarRef,chat,onToggleChat,r95Action,onOpenSocial}){
+export function GroupHeader({state,request,resolveArt=()=>null,onBrowse,petEnabled,onPetToggle,panelRequest,loadCg,toolbarRef,chat,onToggleChat,r95Action,onOpenSocial,voiceControls}){
  const [panel,setPanel]=useState(null),[cgSelection,setCgSelection]=useState(null),[leaving,setLeaving]=useState(false),[error,setError]=useState(''),context=groupHeaderContext(state),catalog=useGroupCg(context?.group,request);
  useEffect(()=>setPanel(null),[state.activeGroupId]);
  useEffect(()=>{if(panelRequest?.groupId===state.activeGroupId){setPanel(panelRequest.panel);if(panelRequest.panel==='gallery')setCgSelection(panelRequest.cgId||null);}},[panelRequest]);
@@ -109,6 +109,7 @@ export function GroupHeader({state,request,resolveArt=()=>null,onBrowse,petEnabl
     h('button',{type:'button',className:'gx-chip np',title:t('管理群聊'),onClick:()=>setPanel('settings')},h('i',{className:'gx-dot'+(chat&&!chat.enabled?' off':''),'aria-hidden':true}),h('small',null,t('发言方式')),h('strong',null,t(MODE_NAMES[group.mode]||'自然接话'))),
     h('span',{className:'gx-grow'}),
     // approved design C6: one 联网 control for online chat and the model's own search, same state as before
+    voiceControls,
     chat&&(state.r95&&r95Action?h(R95NetButton,{view:state.r95,onAction:r95Action,chat:{enabled:!!chat.enabled,onToggle:()=>onToggleChat?.()}}):h('div',{className:'gx-net','data-group-net':true},Icon('globe',{size:15}),h('span',null,t('联网群聊')),h(Switch,{checked:!!chat.enabled,label:t('联网群聊'),onChange:()=>onToggleChat?.()})))),
    h('div',{ref:toolsRef,className:'gx-tools buddy-group-primary',role:'toolbar','aria-label':t('群聊工具栏'),'data-fit':collapsed?'more':'full'},
     tool('image','群聊背景',()=>setPanel('background')),
@@ -120,7 +121,7 @@ export function GroupHeader({state,request,resolveArt=()=>null,onBrowse,petEnabl
     tool('sliders','管理群聊',()=>setPanel('settings')),
     sep('s2'),
     // approved design C6: mood and Auto move out of the dialogue box into the toolbar
-    state.r95&&r95Action&&h('div',{key:'chips','data-chat-toolbar':'group',className:'r95-toolbar'},h(MoodChip,{view:state.r95,onAction:r95Action,onOpenSocial}),h(AutoChip,{view:{...state.r95,groupId:state.r95.groupId??group.id},onAction:r95Action,nameOf:id=>companionCharacterName(state.characters?.find(c=>c.id===id))||t('成员'),onOpenSocial})),
+    state.r95&&r95Action&&h('div',{key:'chips','data-chat-toolbar':'group',className:'r95-toolbar'},h(MoodChip,{view:state.r95,onAction:r95Action,onOpenSocial,voiceControls}),h(AutoChip,{view:{...state.r95,groupId:state.r95.groupId??group.id},onAction:r95Action,nameOf:id=>companionCharacterName(state.characters?.find(c=>c.id===id))||t('成员'),onOpenSocial})),
     state.r95&&r95Action&&sep('s3'),
     tool('exit','回到私聊',()=>void leave(),{disabled:busy||leaving}),
     h('div',{ref:toolbarRef,className:'buddy-group-stage-controls'})),

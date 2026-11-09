@@ -3,19 +3,67 @@ import {actionPrompt,parseActionResponse,publicChatPrompt,reviewPrompt} from './
 import {createGameModelBindings} from './model-bindings.mjs';
 import {settledHands,settledShowdown} from './game-presentation.mjs';
 import {committedCardSpeechFacts,committedTableChatFact} from '../voice/card-speech-facts.mjs';
+import {CARD_SPEECH_DISPLAY_WAIT_MS} from '../voice/card-speech.mjs';
+import {voiceSpeechText} from '../voice/speech-text.mjs';
 const copy=v=>structuredClone(v),digest=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const fail=(code,message=code)=>Object.assign(Error(message),{code});
 const allowedActionKeys=new Set(['type','cards','raiseTo','factor','pattern','bodyRanks','moveId']);
 const modelCancelled=()=>fail('GAME_MODEL_CANCELLED');
 const moveMethod='games.table.action',leaveMethod='games.table.leave';
 /** This service is composed by Core, never created by a page or a tool-enabled agent. */
-export function createCardGameService({getGame,getProvider,now=Date.now,onCommittedSpeech=null,onSpeechError=()=>{}}){
+export function createCardGameService({getGame,getProvider,now=Date.now,onCommittedSpeech=null,onSpeechPresentation=null,onSpeechError=()=>{}}){
  let economy,models,rules,ruleHash,closed=false,closing=false,closePromise;
  const running=new Map(),auxiliary=new Map(),faults=new Map();
- function announce(facts){if(typeof onCommittedSpeech!=='function')return;for(const fact of facts.filter(Boolean))void Promise.resolve().then(()=>onCommittedSpeech(fact)).catch(error=>{try{onSpeechError(error);}catch{}});}
- function ready(){if(closed||closing)throw fail('GAME_SERVICE_CLOSED');const live=getGame()?.gameEconomy;if(!live)throw fail('GAME_ECONOMY_UNAVAILABLE');if(!rules)throw fail('GAME_RULES_UNAVAILABLE');if(economy!==live){economy=live;economy.registerRules({...rules,versions:rules.RULE_MANIFEST,deck:type=>rules.STANDARD_DECK[type],sourceHash:ruleHash});economy.recover();models=createGameModelBindings({economy,getProvider,getContext:scope=>getGame().gameContext(scope),now});}return economy;}
+ const speechScopes=new Map(),speechKey=(tableId,handId)=>JSON.stringify([tableId,handId]);
+ const tableIdentities=new Map();
+ function announce(facts){
+  if(typeof onCommittedSpeech!=='function')return;
+  for(const fact of facts.filter(Boolean)){
+   let row;
+   if(fact.eventId&&fact.scope&&(['allin','trips','triple'].includes(fact.kind)||voiceSpeechText(fact.text??''))){
+    const key=speechKey(fact.scope.tableId,fact.scope.handId);
+    let rows=speechScopes.get(key);if(!rows){rows=new Map();speechScopes.set(key,rows);if(speechScopes.size>128)speechScopes.delete(speechScopes.keys().next().value);}
+    if(rows.has(fact.eventId))continue;
+    // Register before yielding: view/chat responses cannot escape through the
+    // asynchronous host admission window with uncorrelated visible text.
+    row={eventId:fact.eventId,deadlineAt:now()+CARD_SPEECH_DISPLAY_WAIT_MS,admission:'pending'};rows.set(fact.eventId,row);
+    while(rows.size>256)rows.delete(rows.keys().next().value);
+   }
+   const request=row?{...fact,deadlineAt:row.deadlineAt}:fact;
+   void Promise.resolve().then(()=>onCommittedSpeech(request)).then(result=>{if(row)row.admission=result?.accepted===true||result?.duplicate===true?'accepted':'fallback';}).catch(error=>{if(row)row.admission='fallback';try{onSpeechError(error);}catch{}});
+  }
+ }
+ async function speechPresentation(t){
+  if(typeof onSpeechPresentation!=='function')return null;
+  const rows=speechScopes.get(speechKey(t.id,t.state.handId)),records=rows?[...rows.values()]:[];
+  let remote;try{remote=await onSpeechPresentation({tableId:t.id,handId:t.state.handId,eventIds:records.map(row=>row.eventId)});}catch{remote={available:false};}
+  const current=new Map((remote?.records??[]).map(row=>[row.eventId,row]));
+  return {version:1,tableId:t.id,handId:t.state.handId,records:records.map(row=>{
+   if(!row.state||row.state==='waiting'){
+    const observed=current.get(row.eventId)?.state;
+    row.state=observed==='display'?'display':observed==='fallback'||row.admission==='fallback'||remote?.available===false||now()>=row.deadlineAt?'fallback':'waiting';
+   }
+   return {eventId:row.eventId,state:row.state,deadlineAt:row.deadlineAt};
+  })};
+ }
+ function ready(){if(closed||closing)throw fail('GAME_SERVICE_CLOSED');const live=getGame()?.gameEconomy;if(!live)throw fail('GAME_ECONOMY_UNAVAILABLE');if(!rules)throw fail('GAME_RULES_UNAVAILABLE');if(economy!==live){tableIdentities.clear();economy=live;economy.registerRules({...rules,versions:rules.RULE_MANIFEST,deck:type=>rules.STANDARD_DECK[type],sourceHash:ruleHash});economy.recover();models=createGameModelBindings({economy,getProvider,getContext:scope=>getGame().gameContext(scope),now});}return economy;}
  function persona(){return getGame().context().personaId;}
- function table(id){const t=ready().table(id);if(t.players.find(p=>p.kind==='user')?.personaId!==persona())throw fail('GAME_PERSONA_DENIED');for(const p of t.players.filter(p=>p.kind!=='user')){const current=getGame().pluginScope(p.characterId,p.personaId);for(const k of ['lifeId','operationId'])if(current[k]!==p[k])throw fail('GAME_LIFE_CHANGED');}return t;}
+ function authorizedTable(t){if(t.players.find(p=>p.kind==='user')?.personaId!==persona())throw fail('GAME_PERSONA_DENIED');for(const p of t.players.filter(p=>p.kind!=='user')){const current=getGame().pluginScope(p.characterId,p.personaId);for(const k of ['lifeId','operationId'])if(current[k]!==p[k])throw fail('GAME_LIFE_CHANGED');}return t;}
+ function table(id){
+  const t=authorizedTable(ready().table(id));
+  // Cache only identities and the hand. Chat/cards are never retained here.
+  tableIdentities.set(t.id,{id:t.id,type:t.type,version:t.version,status:t.status,state:{handId:t.state.handId},players:t.players.map(player=>Object.fromEntries(['id','kind','characterId','personaId','lifeId','operationId'].filter(key=>Object.hasOwn(player,key)).map(key=>[key,player[key]])))});
+  if(tableIdentities.size>128)tableIdentities.delete(tableIdentities.keys().next().value);
+  return t;
+ }
+ function tableIdentity(id){
+  const live=ready();if(typeof live.tableMetadata!=='function')return table(id);
+  // Every poll re-reads persisted columns. A mutation/recovery refreshes the
+  // bounded snapshot once; chat-only writes leave its identity/hand unchanged.
+  const metadata=live.tableMetadata(id),snapshot=tableIdentities.get(id);
+  if(!snapshot||['type','version','status'].some(key=>snapshot[key]!==metadata[key]))return table(id);
+  return authorizedTable(snapshot);
+ }
  function voiceScopeValid(scope){
   try{
    if(scope?.channel!=='card-table')return false;
@@ -198,7 +246,7 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
    throw error;
   }finally{if(running.get(t.id)?.task===task)running.delete(t.id);}
  }
- async function invoke(method,payload={},options={}){
+ async function invokeCore(method,payload={},options={}){
   ready();await options.check?.();options.checkSync?.();
   if(method==='games.model.cancel')return cancel(table(payload.tableId),payload.requestId);
   if(method==='games.model.request')return modelAction(payload,options);
@@ -269,6 +317,24 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
    });
   }
   throw fail('GAME_METHOD_UNAVAILABLE');
+ }
+ async function invoke(method,payload={},options={}){
+  if(method==='games.table.read'&&payload.voiceOnly===true){
+   ready();await options.check?.();options.checkSync?.();
+   const t=tableIdentity(payload.tableId);
+   if(typeof payload.handId!=='string'||payload.handId!==t.state.handId)throw fail('GAME_CHAT_HAND_CHANGED');
+   // Same authorization and live table/life checks, without a game projection,
+   // chat copy, outbox flush, or scan of other tables on the 50 ms wait path.
+   const voice=await speechPresentation(t);options.checkSync?.();
+   if(tableIdentity(t.id).state.handId!==payload.handId)throw fail('GAME_CHAT_HAND_CHANGED');
+   return {tableId:t.id,handId:t.state.handId,presentation:{...voice&&{voice}}};
+  }
+  const value=await invokeCore(method,payload,options);
+  const tableId=value?.tableId??(['games.chat.read','games.chat.send'].includes(method)?payload.tableId:null);
+  if(!tableId||typeof onSpeechPresentation!=='function')return value;
+  const t=table(tableId),voice=await speechPresentation(t);options.checkSync?.();
+  if(table(tableId).state.handId!==t.state.handId)throw fail('GAME_CHAT_HAND_CHANGED');
+  return {...value,...(!value.tableId?{tableId,handId:t.state.handId}:{}),presentation:{...value.presentation,voice}};
  }
   return {invoke,flushOutbox,voiceScopeValid,principalScope:()=>({personaId:persona()}),registerRuleArtifact(value){if(!value?.module||!/^[a-f0-9]{64}$/.test(value.sha256??''))throw fail('GAME_RULE_MODULE_INVALID');if(economy)economy.registerRules({...value.module,versions:value.module.RULE_MANIFEST,deck:type=>value.module.STANDARD_DECK[type],sourceHash:value.sha256});rules=value.module;ruleHash=value.sha256;return {registered:true,ruleModuleSha256:ruleHash};},describe(){let gamesReady=false;try{ready();gamesReady=true;}catch{}return {gamesReady,voiceReady:false,aiAiRelationshipReady:false,ruleModuleSha256:ruleHash??null};},async pauseAll(){const tasks=[...running.values(),...auxiliary.values()];for(const row of tasks)row.controller.abort(modelCancelled());await Promise.allSettled(tasks.map(row=>row.task));if(economy){economy.recover();for(const current of economy.list())announce(committedCardSpeechFacts(current,null));}},close(){if(closePromise)return closePromise;closing=true;closePromise=Promise.resolve().then(async()=>{await this.pauseAll();await models?.close();closed=true;});return closePromise;}};
 }

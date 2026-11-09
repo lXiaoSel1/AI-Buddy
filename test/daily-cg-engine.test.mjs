@@ -4,6 +4,7 @@ import {mkdtempSync,mkdirSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {apply} from '../src/adapted/game-core.ts';
+import {createDeferredSaves} from '../src/deferred-saves.mjs';
 import {restrictedFileService,createSnapshotStorage,readJson} from '../src/storage.mjs';
 import {writePortableImages} from '../src/companion-media.mjs';
 const daily={logicalDay:'2026-11-01',slot:'10:00',timeZone:'UTC',triggeredAt:Date.parse('2026-11-01T10:00:00Z'),sourceEventId:'daily:2026-11-01:1000',materialEventIds:['source-1'],materialSourceHashes:[{eventId:'source-1',sha256:'a'.repeat(64)}],fictional:true};
@@ -11,19 +12,19 @@ const scope={characterId:'deepseek',personaId:'p1',lifeId:'life-1',operationId:'
 const image='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=';
 const until=async fn=>{for(let i=0;i<300;i++){if(await fn())return;await new Promise(resolve=>setTimeout(resolve,5));}throw Error('Engine fixture timeout');};
 async function fixture(t,{root=mkdtempSync(join(tmpdir(),'daily-cg-engine-')),fail=false}={}){
- const workspace=join(root,'workspace');mkdirSync(workspace,{recursive:true});const jobs=[],effects=[],listeners=new Set(),globalPath=join(root,'galgame','storages','dsh-whale-galgame','global.json');let referenceChecks=0,currentPersona='p1',currentLife={lifeId:'life-1',operationId:'op-1'};
+ const deferredSaveRegistry=createDeferredSaves();const workspace=join(root,'workspace');mkdirSync(workspace,{recursive:true});const jobs=[],effects=[],listeners=new Set(),globalPath=join(root,'galgame','storages','dsh-whale-galgame','global.json');let referenceChecks=0,currentPersona='p1',currentLife={lifeId:'life-1',operationId:'op-1'};
  const profile={id:'cg-trigger',name:'CG trigger',kind:'custom',model:'image-trigger',keyCiphertext:'PRIVATE-CIPHER'},cg={enabled:true,available:()=>true,selected:()=>profile,job:id=>jobs.find(row=>row.id===id),readAsset:()=>image,trashJob:async()=>{},restoreJob:async()=>{},themePlanner:{capture:()=>({enabled:false,profile:null,language:'zh-CN'})},subscribe:listener=>{listeners.add(listener);return()=>listeners.delete(listener);},
   async enqueue(job){
-   const persisted=await readJson(createSnapshotStorage(globalPath)),found=Object.values(persisted.characters).flatMap(row=>row.cgs??[]).find(row=>row.id===job.id);
+   deferredSaveRegistry.flushSyncAll({scope:root});const persisted=await readJson(createSnapshotStorage(globalPath)),found=Object.values(persisted.characters).flatMap(row=>row.cgs??[]).find(row=>row.id===job.id);
    assert.ok(found,'gallery must exist on disk before enqueue');jobs.push(structuredClone(job));return {id:job.id,status:'queued'};
   },
  };
  const header={id:'fixture',cwd:workspace,events:[]},services={fs:restrictedFileService(workspace),sandboxPolicy:{resolve:()=>({workspaceRoot:workspace})},sessions:{list:()=>[header]},workspaceRegistry:{list:()=>[{path:workspace}]},agentDefaultModel:{currentSelection:()=>({provider:'fixture',model:'fixture'})},sessionQuery:{listSessions:async()=>[header],listEvents:async()=>[]}};
- const ctx={cg,llm:{enabled:false,currentSelection:()=>({provider:'fixture',model:'fixture'})},language:()=> 'zh-CN',companionPersonaId:()=>currentPersona,writePortableImages:files=>writePortableImages(root,bytes=>({png:bytes,thumbnail:bytes}),files),dshHomePath:(...parts)=>join(root,'galgame',...parts),inject:(_keys,fn)=>fn(services),on(){},emit(){},effect(fn){const cleanup=fn();if(typeof cleanup==='function')effects.push(cleanup);},assertCompanionLife(id,token){assert.equal(id,'deepseek');assert.equal(token.lifeId,currentLife.lifeId);assert.equal(token.operationId,currentLife.operationId);referenceChecks++;},companionLifeIds:ids=>Object.fromEntries(ids.map(id=>[id,currentLife.lifeId])),companionCgVisible:()=>true};
+ const ctx={deferredSaveRegistry,deferredSaveScope:root,cg,llm:{enabled:false,currentSelection:()=>({provider:'fixture',model:'fixture'})},language:()=> 'zh-CN',companionPersonaId:()=>currentPersona,writePortableImages:files=>writePortableImages(root,bytes=>({png:bytes,thumbnail:bytes}),files),dshHomePath:(...parts)=>join(root,'galgame',...parts),inject:(_keys,fn)=>fn(services),on(){},emit(){},effect(fn){const cleanup=fn();if(typeof cleanup==='function')effects.push(cleanup);},assertCompanionLife(id,token){assert.equal(id,'deepseek');assert.equal(token.lifeId,currentLife.lifeId);assert.equal(token.operationId,currentLife.operationId);referenceChecks++;},companionLifeIds:ids=>Object.fromEntries(ids.map(id=>[id,currentLife.lifeId])),companionCgVisible:()=>true};
  const engine=apply(ctx,{singleChatSelection:true,chatModel:'fixture'});await engine.handleAction('settings-get',{});
- t.after(async()=>{await engine.flushWorkLedger();for(const cleanup of effects)cleanup();});
+ t.after(async()=>{await engine.flushSaves();engine.releaseDeferredSaves();for(const cleanup of effects)cleanup();});
  const notify=(id,status,extra={})=>{for(const listener of listeners)listener({id,status,error:status==='failed'?'fixture failure':null,...(status==='ready'?{dataUrl:image,thumbnailRef:'cg-assets/fixture/thumbnail.png'}:{}),...extra});};
- const persisted=()=>readJson(createSnapshotStorage(globalPath));
+ const persisted=async()=>{await engine.flushSaves();return readJson(createSnapshotStorage(globalPath));};
  const publish=async(id,status,extra={})=>{notify(id,status,extra);await until(async()=>Object.values((await persisted()).characters).flatMap(row=>row.cgs??[]).find(row=>row.id===id)?.status===status);};
  const payload=()=>({scope:structuredClone(scope),sourceEventId:daily.sourceEventId,daily:structuredClone(daily),profile:structuredClone(profile),materials:{events:[{id:'source-1',text:'当日视频里的一座宁静花园。',sourceHash:'a'.repeat(64),sourceKind:'personal-activity'}]},mood:{overall:{label:'平静'}},preferences:['读书'],language:'zh-CN'});
  return {root,engine,jobs,cg,payload,publish,notify,persisted,referenceChecks:()=>referenceChecks,persona:value=>{currentPersona=value;},life:value=>{currentLife=value;}};
@@ -63,7 +64,7 @@ test('daily access checks both life identity and operation, including portable i
 test('legacy CG subscribe persists a terminal update outside any active workspace context',async t=>{
  const f=await fixture(t),created=await f.engine.handleAction('cg-generate',{characterId:'deepseek',personaId:'p1'});await until(()=>f.jobs.length===1);f.notify(created.cgId,'failed');
  await until(async()=>(await f.engine.handleAction('cg-gallery',{characterId:'deepseek'})).items.find(row=>row.id===created.cgId)?.status==='failed');await new Promise(resolve=>setImmediate(resolve));
- const row=Object.values((await f.persisted()).characters).flatMap(character=>character.cgs??[]).find(row=>row.id===created.cgId);assert.equal(row.status,'failed','a rendered terminal update must be committed before a later flush or shutdown');
+ const row=Object.values((await f.persisted()).characters).flatMap(character=>character.cgs??[]).find(row=>row.id===created.cgId);assert.equal(row.status,'failed','a rendered terminal update must be committed at the explicit save boundary');
 });
 test('legacy level inspiration cannot import private daily themes from another Persona',async t=>{
  const f=await fixture(t),created=await f.engine.handleAction('cg-daily',f.payload());await f.publish(created.cgId,'failed',{prompt:'PRIVATE-DAILY-MATERIAL',theme:{title:'PRIVATE-DAILY-MATERIAL',scene:'PRIVATE-SCENE',compositionPolicy:'daily-v1'}});f.persona('p2');await f.engine.handleAction('cg-generate',{characterId:'deepseek',personaId:'p2'});await until(()=>f.jobs.length===2);assert.doesNotMatch(JSON.stringify(f.jobs[1].themeBrief.history),/PRIVATE-DAILY-MATERIAL|PRIVATE-SCENE/);

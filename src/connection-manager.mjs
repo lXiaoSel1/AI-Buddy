@@ -3,11 +3,13 @@ import React,{useEffect,useRef,useState} from 'react';
 import {CG_PROTOCOL_NAMES} from './cg-presets.mjs';
 import {profileEffort,effortChoices,effortProtocol,effortSupport} from './reasoning-settings.mjs';
 import {DEFAULT_CONTEXT_TOKENS} from './context-capacity.mjs';
+import {imageInputCapability} from './model-image-catalog.mjs';
 import {Icon} from './ui-icons.mjs';
 import {Segmented,StatusPill} from './ui-controls.mjs';
 const h=React.createElement;
 const chatProtocols={get 'chat-completions'(){return t("OpenAI 兼容 Chat Completions")},responses:'OpenAI Responses',get gemini(){return t("Gemini 原生")},anthropic:'Claude Messages'};
 const jobNames={get queued(){return t("排队中")},get generating(){return t("绘制中")},get ready(){return t("已完成")},get failed(){return t("失败")},get cancelled(){return t("已取消")}};
+const imageCapabilityLabel=capability=>t(capability.supported?'图片输入：支持':capability.imageInput==='unsupported'?'图片输入：不支持':capability.imageInput==='supported'?'图片输入：型号支持，当前接口未适配':'图片输入：未知（目录未收录；不会自动试读）');
 export function ConnectionManager({type,initial}){
  const cg=type==='cg',api=cg?window.whale.cg:window.whale.models;
  const [view,setView]=useState(initial),[draft,setDraft]=useState(null),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[error,setError]=useState(''),[models,setModels]=useState([]),[testId,setTestId]=useState(null),[image,setImage]=useState(null);
@@ -50,7 +52,7 @@ export function ConnectionManager({type,initial}){
  if(!view)return h('p',null,t("正在读取配置…"));
  const presetName=profile=>t(view.presets.find(row=>row.kind===profile.kind)?.name);
  // small facts about a saved profile, shown as tags
- const tags=profile=>cg?[profile.options?.size,profile.options?.quality&&profile.options.quality!=='auto'&&t("质量 ")+profile.options.quality,profile.options?.references===false?t("纯文生图"):t("参考图 开")].filter(Boolean):['effort: '+(profileEffort(profile)??t("模型默认")),profile.contextTokens&&t("上下文 ")+Math.round(profile.contextTokens/1000)+'K',profile.keyConfigured&&t("Key 已保存")].filter(Boolean);
+ const tags=profile=>cg?[profile.options?.size,profile.options?.quality&&profile.options.quality!=='auto'&&t("质量 ")+profile.options.quality,profile.options?.references===false?t("纯文生图"):t("参考图 开")].filter(Boolean):['effort: '+(profileEffort(profile)??t("模型默认")),imageCapabilityLabel(profile.imageCapability??imageInputCapability(profile)),profile.contextTokens&&t("上下文 ")+Math.round(profile.contextTokens/1000)+'K',profile.keyConfigured&&t("Key 已保存")].filter(Boolean);
  const jobs=cg?view.jobs.filter(job=>job.kind!=='test'&&['queued','generating'].includes(job.status)).slice(0,3):[];
  return h('section',{className:'model-settings api-manager ws-stack',...attr('settings')},
   h('button',{...attr('new'),className:'ui-btn primary ws-head-action api-primary',disabled:busy,onClick:()=>create(view.presets[0].kind)},Icon('plus'),t("新增配置")),
@@ -73,6 +75,7 @@ export function ConnectionManager({type,initial}){
      h('div',{className:'ws-fgroup'},h('h4',null,t("模型")),h('div',{className:'ws-fgrid'},
       h('div',{className:'ws-fld ws-span2'},h('span',null,t("模型 ID")),h('div',{className:'ws-inline'},!cg&&models.length>0&&h('select',{...attr('field','model-select'),'aria-label':t("可用模型"),value:models.some(row=>row.id===draft.model)?draft.model:'',disabled:locked,onChange:e=>chooseModel(e.target.value)},h('option',{value:'',disabled:true},t("选择模型，或在下方手动填写")),...models.map(row=>h('option',{key:row.id,value:row.id},row.name===row.id?row.id:row.name+' · '+row.id))),h('input',{...attr('field','model'),'aria-label':t("模型 ID"),value:draft.model??'',disabled:locked,autoComplete:'off',spellCheck:false,placeholder:t("从列表选择或手动填写"),list:'whale-'+type+'-model-list',onChange:e=>chooseModel(e.target.value)}),h('button',{type:'button',className:'ui-btn',...attr('action','list'),disabled:locked||(cg&&view.busy),onClick:()=>run(refreshModels)},Icon('refresh'),t("获取模型列表"))),h('small',null,models.length?t("已读取 {count} 个模型").replace("{count}",String(models.length))+t("，也可以手动填写"):t("从列表选择或手动填写"))),
       h('datalist',{id:'whale-'+type+'-model-list'},...models.map(model=>h('option',{key:model.id,value:model.id},model.name))),
+      !cg&&h('p',{className:'ws-muted ws-span2',...attr('image-capability')},imageCapabilityLabel(imageInputCapability({...draft,models}))),
       !cg&&h('div',{className:'ws-fld'},h('span',null,t("推理强度（effort）")),h(Segmented,{size:'sm',label:t("推理强度（effort）"),...attr('field','reasoningEffort'),value:effortLevels.includes(configuredEffort)?configuredEffort:'',disabled:locked||!effortProtocol(draft.protocol),options:[['',t("模型默认")],...effortLevels.map(value=>[value,value])],onChange:value=>change('reasoningEffort',value||null)}),h('small',null,t(!effortProtocol(draft.protocol)?"该原生协议暂不提供 effort 参数，使用模型默认。":effortSupport(draft,models).source==='unknown'?"尚未取得此模型的推理档位，仅提供模型默认。请获取模型列表。":"档位按当前模型的能力提供；模型默认不发送 effort 参数。"))),
       !cg&&h('label',{className:'ws-fld model-field'},h('span',null,t('上下文容量（tokens，可留空）')),h('input',{type:'number',min:2048,max:2000000,step:1,value:draft.contextTokens??'',disabled:locked,placeholder:t("留空 · 按模型目录（保守 {tokens}）").replace('{tokens}',String(DEFAULT_CONTEXT_TOKENS)),onChange:e=>change('contextTokens',e.target.value===''?null:Number(e.target.value))}),h('small',null,t('优先使用手动填写的容量，其次使用模型目录；未知时按默认 {tokens} tokens 规划并预留回复空间。').replace('{tokens}',DEFAULT_CONTEXT_TOKENS.toLocaleString()))),
       cg&&draft.protocol==='ark-images'&&h('p',{className:'ws-muted ws-span2'},t("请选择已开通的 Seedream 模型或绘图接入点 ID；支持文生图和角色参考图。")),

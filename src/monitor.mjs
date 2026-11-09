@@ -102,7 +102,7 @@ export class LocalMonitor {
     for(const [file,provider]of this.pendingPaths)if(!this.watches(file,provider))this.pendingPaths.delete(file);
     await this.syncRootWatchers();this.lastDiscovery=0;await this.scan(true);
   }
-  schedule() { if(this.closed) return; clearTimeout(this.debounce); this.debounce=setTimeout(()=>{void this.scan(false);},120); }
+  schedule() { if(this.closed) return; clearTimeout(this.debounce); this.debounce=setTimeout(()=>{void this.scan(false).catch(error=>this.errors.set('scan',error.message));},120); }
   setRefreshInterval(ms){
     if(!MONITOR_INTERVALS.includes(ms))throw new Error('Invalid monitor interval');
     this.refreshIntervalMs=ms;
@@ -144,10 +144,10 @@ export class LocalMonitor {
         try { await this.readFile(item); this.errors.delete(item.path); }
         catch(e) { this.errors.set(item.path,e.message); }
         this.progress.scanned++;
-        if(Date.now()-lastEmit>1500) { this.emit(); lastEmit=Date.now(); await new Promise(r=>setImmediate(r)); }
+        if(Date.now()-lastEmit>1500) { if(!await this.emitScanSnapshot())return; lastEmit=Date.now(); await new Promise(r=>setImmediate(r)); }
       }
       this.progress.scanned=all.length;
-      this.emit(); if(full) await this.persist();
+      if(!await this.emitScanSnapshot())return; if(full&&!this.repository) await this.persist();
     } finally { this.busy=false; }
   }
   async readFile({path,provider}) {
@@ -205,6 +205,14 @@ export class LocalMonitor {
   snapshot() { return {...this.ledger.snapshot(Date.now(),this.projectAttribution),indexing:this.indexing,indexPhase:this.indexing?(this.startup.mode==='cold'||this.startup.mode==='migration'?'building':'checking'):'ready',startup:{...this.startup},progress:this.progress,files:this.files.size,errors:[...this.errors].map(([path,message])=>({path,message}))}; }
   ingestCompanion(row){const work=row.purpose==='work';this.ledger.session('codex',row.sessionId,{purpose:row.purpose,connectionIdentity:row.connectionIdentity,workspace:work?row.workspace:row.purpose==='cg-theme'?'AI娘 CG 主题设计':'鲸鱼娘陪伴聊天',model:row.model,companion:!work,createdAt:row.timestamp});this.ledger.ingestCodex({type:'event_msg',timestamp:row.timestamp,payload:{type:'token_count',info:{total_token_usage:row.usage},rewardMetadata:{nativeRequestId:row.requestId,activityOriginId:row.activityOriginId,scope:row.scope}}},row.sessionId,'companion');}
   emit() { this.onUpdate(this.snapshot()); }
+  async emitScanSnapshot(){
+    // SQLite facts and their file cursors must commit together before reducers
+    // observe them, so the bounded committed-append checkpoints remain usable.
+    // Keep the legacy JSON cache on its existing periodic/full-scan cadence.
+    if(this.repository)try{await this.persist();this.errors.delete('index-cache');}
+    catch(error){this.errors.set('index-cache',error.message);try{this.onAudit({type:'monitor-persist-error',path:'index-cache',message:error.message});}catch{}throw error;}
+    this.errors.delete('scan');this.emit();return true;
+  }
   async persist() {
     if(this.repository){
     if(this.hasCache&&this.saveRevision===this.ledger.revision&&!this.dirtyFiles.size)return;

@@ -360,7 +360,7 @@ async function syncNativeDirectory(io: NativeGlobalIo, directory: string): Promi
  * dshHomePath(...GLOBAL_SAVE_SEGMENTS). Workspace files continue to use ctx.fs.
  */
 export function createNativeGlobalStorage(targetPath: string, io?: any, options?: any): any {
-  return createSnapshotStorage(targetPath)
+  return createSnapshotStorage(targetPath, { ...options, deferWrites: options?.deferWrites ?? true })
 }
 
 /**
@@ -379,7 +379,7 @@ export function createNativeWorkspaceStorage(rootPath: string, io: NativeGlobalI
   if (!normalizedRoot || normalizedParent !== normalizedRoot) {
     throw nativeGlobalError('WORKSPACE_STORAGE_PATH_INVALID', 'Galgame workspace marker escaped its registered root')
   }
-  return createNativeGlobalStorage(target, io, { createParent: false })
+  return createNativeGlobalStorage(target, io, { createParent: false, deferWrites: false })
 }
 
 function sanitizeProfileText(raw: any, limit: number): string {
@@ -545,6 +545,9 @@ export function apply(
   let globalReadyPromise: Promise<void> | null = null
   let globalReadyError: any = null
   let globalStorage: any = null
+  let releaseDeferredSave: (() => void) | undefined
+  const deferredSaveRegistry = ctx.deferredSaveRegistry
+  const deferredSaveScope = typeof ctx.deferredSaveScope === 'string' ? ctx.deferredSaveScope : undefined
   let activeWorkspaceRuntime: any = null
   const workspaceRuntimes = new Map<string, any>()
   const sessionWorkspaceCache = new Map<string, { root: string; key: string }>()
@@ -3518,6 +3521,10 @@ export function apply(
       if (typeof dshHomePath !== 'function') throw new Error('whale-galgame DSH home path unavailable')
       const absolute = dshHomePath(...GLOBAL_SAVE_SEGMENTS)
       globalStorage = createNativeGlobalStorage(absolute, internals.nativeGlobalIo || DEFAULT_NATIVE_GLOBAL_IO)
+      releaseDeferredSave = deferredSaveRegistry?.register('engine', {
+        target: absolute, scope: deferredSaveScope, drain: drainDeferredSave,
+        flushSync: flushGlobalSync,
+      })
     }
     return globalStorage
   }
@@ -3640,6 +3647,36 @@ export function apply(
   async function writeGlobalState(content = JSON.stringify(globalState), expected?: any): Promise<any> {
     if (!globalState || !splitStorageActive()) return
     return resolveGlobalStorage().writeText(content, expected)
+  }
+
+  // Only persistence boundaries publish the paired archives. A global write
+  // during normal actions merely stages one complete bank/workFolded image.
+  function flushGlobalSync(): any {
+    if (!globalStorage || !globalState) return
+    ctx.flushWorkLedgerSync?.()
+    foldWorkLedger()
+    // Deferred writeText stages synchronously; session-end cannot await promises.
+    void globalStorage.writeText(JSON.stringify(globalState))
+    return globalStorage.flushSync()
+  }
+
+  function flushMigrationSync(): void {
+    if (deferredSaveRegistry) deferredSaveRegistry.flushSyncAll({ scope: deferredSaveScope })
+    else flushGlobalSync()
+  }
+
+  async function drainDeferredSave(): Promise<void> {
+    ctx.flushWorkLedgerSync?.()
+    if (globalEventFlushTimer) { clearTimeout(globalEventFlushTimer); globalEventFlushTimer = null }
+    await Promise.all([viewMaintenancePromise, ...Array.from(workspaceRuntimes.values(), (runtime: any) => runtime.viewMaintenancePromise)])
+    await flushWorkLedger()
+    await globalStorage?.drain()
+    globalEventDirty = false
+  }
+
+  async function flushSaves(): Promise<void> {
+    if (deferredSaveRegistry) await deferredSaveRegistry.flushAll({ scope: deferredSaveScope })
+    else { await drainDeferredSave(); flushGlobalSync() }
   }
 
   async function writeWorkspaceState(runtime: any, content = runtime ? JSON.stringify(runtime.state) : '', expected?: any): Promise<any> {
@@ -4400,6 +4437,7 @@ export function apply(
           // one durable save. Persist the in-memory upgrade before any
           // workspace projection is rewritten.
           await writeGlobalState()
+          flushMigrationSync()
         }
       })().catch((err) => {
         // Fatal load errors stay latched for this plugin lifetime. Retrying a
@@ -4468,7 +4506,10 @@ export function apply(
         await runSerializedStateTask(async () => {
           const rollback = JSON.parse(JSON.stringify(globalState))
           try {
-            if (mergeLegacyContext(legacyLocal, importKey)) await writeGlobalState()
+            if (mergeLegacyContext(legacyLocal, importKey)) {
+              await writeGlobalState()
+              flushMigrationSync()
+            }
           } catch (err) {
             replaceGlobalStateInPlace(rollback)
             throw err
@@ -4498,6 +4539,7 @@ export function apply(
           // Commit the complete global game before replacing the only legacy
           // copy. Both import markers make a retry idempotent.
           await writeGlobalState()
+          flushMigrationSync()
         } catch (err) {
           replaceGlobalStateInPlace(rollback)
           throw err
@@ -5950,5 +5992,5 @@ export function apply(
     }).catch(() => undefined)
   }))
 
-  return { handleAction, flushWorkLedger }
+  return { handleAction, flushWorkLedger, flushSaves, releaseDeferredSaves: () => releaseDeferredSave?.() }
 }

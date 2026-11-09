@@ -32,7 +32,7 @@ function fixture(id, version = '1.0.0', {cloudWorker = true} = {}) {
   const engine = id === breeze ? 'breeze' : 'gpt-sovits';
   const files = new Map([['assets.json', Buffer.from('{}')], ...(runtime ? [['asr_worker.py', Buffer.from('# ASR fixture')]] : [['entry.mjs', Buffer.from('export function activate() {}')], [engine === 'breeze' ? 'breeze_worker.py' : 'gpt_worker.py', Buffer.from('# TTS fixture')]])]);
   if(runtime && cloudWorker)files.set('cloud_speech.py',Buffer.from('# Cloud fixture'));
-  const manifest = {schemaVersion:1,id,name:id,description:'Voice fixture',version,kind:runtime?'runtime':'plugin',appRange:'2.0.7',apiRange:'^1.0.0',platform:'win32',arch:'x64',entry:runtime?'asr_worker.py':'entry.mjs',activationEvents:runtime?[]:[`onCommand:voice.${engine}`],capabilities:runtime?[]:['commands.register'],dependencies:runtime?{}:{[shared]:'1.0.0'},files:[...files].map(([path,bytes])=>({path,bytes:bytes.length,sha256:hash(bytes)}))};
+  const manifest = {schemaVersion:1,id,name:id,description:'Voice fixture',version,kind:runtime?'runtime':'plugin',appRange:'2.0.7',apiRange:'^1.0.0',platform:'win32',arch:'x64',entry:runtime?'asr_worker.py':'entry.mjs',activationEvents:runtime?[]:[`onCommand:voice.${engine}`],capabilities:runtime?[]:['commands.register'],dependencies:runtime?{}:{[shared]:version},files:[...files].map(([path,bytes])=>({path,bytes:bytes.length,sha256:hash(bytes)}))};
   const bytes = buildPluginArchive(manifest, files);
   return {bytes, item:{manifest,archive:{url:`${base}/${id}/${version}.zip`,bytes:bytes.length,sha256:hash(bytes)},publishedAt:'2026-11-06T00:00:00Z'}};
 }
@@ -41,7 +41,7 @@ async function setup(t, {allowTestKey = true, quiesce, cloudWorker = true} = {})
   const root = await mkdtemp(join(tmpdir(),'buddy-voice-package-'));
   const dataRoot = join(root,'profile');
   await mkdir(dataRoot);
-  const packages = [fixture(breeze), fixture(gpt), fixture(shared,'1.0.0',{cloudWorker}), fixture(breeze,'1.0.1')];
+  const packages = [fixture(breeze), fixture(gpt), fixture(shared,'1.0.0',{cloudWorker}), fixture(breeze,'1.0.1'), fixture(shared,'1.0.1',{cloudWorker})];
   const payload = {schemaVersion:1,id:'voice-fixture',generatedAt:'2026-11-06T00:00:00Z',packages:packages.map(row=>row.item)};
   const descriptor = {schemaVersion:1,id:payload.id,name:'Voice fixture',catalogUrl:`${base}/catalog.json`,publicKey:ssh,keyId:'voice-test'};
   const envelope = {payload,signature:{keyId:'voice-test',algorithm:'ed25519',value:sign(null,Buffer.from(canonicalPluginJson(payload)),privateKey).toString('base64')}};
@@ -141,7 +141,7 @@ test('disable fences the current lease before runtime release and rejects a fres
   await assert.rejects(authority.resolveVoicePackage(breeze),{code:'PLUGIN_DISABLED'});
 });
 
-test('code update and rollback preserve profile files, revocation rejects new leases', async t=>{
+test('code generation update and coordinated rollback preserve profile files, revocation rejects new leases', async t=>{
   const {authority,sourceId,install,change}=await setup(t);
   await install(breeze);
   await change('enable',breeze);
@@ -151,7 +151,10 @@ test('code update and rollback preserve profile files, revocation rejects new le
   await install(breeze,'1.0.1');
   assert.throws(first.assertCurrent,{code:'VOICE_PACKAGE_CHANGED'});
   assert.equal((await authority.resolveVoicePackage(breeze)).version,'1.0.1');
-  await change('rollback',breeze);
+  // A single-package rollback must not split the exact engine/shared generation.
+  await assert.rejects(change('rollback',breeze),{code:'PLUGIN_DEPENDENCY_ERROR'});
+  assert.equal((await authority.resolveVoicePackage(breeze)).version,'1.0.1');
+  await install(breeze,'1.0.0');
   assert.equal((await authority.resolveVoicePackage(breeze)).version,'1.0.0');
   await authority.action({action:'sources-disable',sourceId,disabled:true});
   await assert.rejects(authority.resolveVoicePackage(breeze),{code:'PLUGIN_SOURCE_DISABLED'});

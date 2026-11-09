@@ -9,6 +9,7 @@ import {themeAsset,THEMES} from './appearance.mjs';
 import {MoodCard} from './social-core-ui.mjs';
 import {safeSearchUrl} from './native-search.mjs';
 import {scheduleRenderedAck,r95ElementVisible} from './r95-core-page.mjs';
+import {ensureVoiceOutput,VoiceDialogueLine} from './voice/client.mjs';
 const h=React.createElement,F=React.Fragment;
 const english=()=>locale()==='en';
 export const fill=(text,values={})=>Object.entries(values).reduce((out,[key,value])=>out.replaceAll('{'+key+'}',String(value)),String(text));
@@ -161,8 +162,11 @@ const petLines=new Set();
 export function notePetLine(id){if(typeof id!=='string'||!id)return;petLines.add(id);if(petLines.size>64)petLines.delete(petLines.values().next().value);}
 export const petShowedLine=id=>petLines.has(id);
 export function speechOptions(line,{onReply,onDismiss}){const kind=speechKind(line),dismiss=kind==='proactive'?t('知道了'):english()?'Dismiss':t('收起');return [...(kind==='dream'?[]:[{key:'reply',label:kind==='proactive'?t('回她'):t('接一句'),run:()=>onReply?.(line)}]),{key:'read',label:dismiss,run:onDismiss,needsPresented:true}];}
-export function SpeechLine({line,onAction,onReply,more=0,inDialog=false,optionsRef}){
- const node=useRef(null),[error,setError]=useState(''),[read,setRead]=useState(false),[pending,setPending]=useState(false),action=useRef(onAction);action.current=onAction;
+export function SpeechLine({line,onAction,onReply,more=0,inDialog=false,optionsRef,voicePresentation}){
+ const node=useRef(null),[error,setError]=useState(''),[read,setRead]=useState(false),[pending,setPending]=useState(false),[voiceView,setVoiceView]=useState(null),action=useRef(onAction);action.current=onAction;
+ const voiceApi=globalThis.whale?.voice,voiceKey=JSON.stringify([line.messageId,line.scope??null]);
+ useEffect(()=>{if(voicePresentation!==undefined||!line.scope)return;return ensureVoiceOutput(voiceApi)?.subscribe(line.scope,value=>setVoiceView({key:voiceKey,value}));},[voiceApi,voiceKey,voicePresentation]);
+ const presentation=voicePresentation??(voiceView?.key===voiceKey?voiceView.value:null);
  useEffect(()=>{if(line.status!=='awaiting-presentation')return;return scheduleRenderedAck({isReady:()=>r95ElementVisible(node.current)&&node.current.textContent===line.text,send:()=>action.current('speech-presented',{messageId:line.messageId}),onError:e=>setError(e.message)});},[line.messageId,line.status,line.text]);
  const hidden=read||line.status==='read',kind=speechKind(line),[icon,tag]=SPEECH[kind],presented=line.status==='presented';
  const dismiss=async()=>{if(pending||!presented)return;setPending(true);setError('');try{await action.current('speech-read',{messageId:line.messageId});setRead(true);}catch(e){setError(e.message);}finally{setPending(false);}};
@@ -171,7 +175,7 @@ export function SpeechLine({line,onAction,onReply,more=0,inDialog=false,optionsR
  if(hidden)return null;
  return h('article',{'data-r95-speech':line.messageId,className:'r95-speech '+kind+(inDialog?' in-dlg':'')},
   h('div',{className:'r95-speech-h'},h('span',{className:'r95-spk '+kind},Icon(icon,{size:13}),[t(tag),clock(line.at)].filter(Boolean).join(' · ')),more>0&&h('small',null,fill(t('还有 {n} 句'),{n:more}))),
-  h('p',{ref:node,'data-r95-speech-text':line.messageId},line.text),
+  h('p',{ref:node,'data-r95-speech-text':line.messageId},line.status==='awaiting-presentation'?line.text:h(VoiceDialogueLine,{as:'span',presentation,requestId:'social-voice:'+line.messageId},line.text)),
   h('div',{className:'gx-choices r95-speech-opts'},...options.map((option,index)=>h('button',{key:option.key,type:'button',className:'gx-choice','data-speech-option':option.key,disabled:option.disabled,title:option.disabled&&!presented?t('台词完整显示出来以后才能点'):undefined,onClick:option.run},h('kbd',{'aria-hidden':true},index+1),h('span',null,option.label)))),
   petShowedLine(line.messageId)&&h('p',{className:'r95-speech-pet'},Icon('paw',{size:12}),t('桌宠上也说了这一句，在哪边回应都算读过')),
   error&&h('p',{role:'alert',className:'r95-err'},error));

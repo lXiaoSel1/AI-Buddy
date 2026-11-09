@@ -108,6 +108,7 @@ await build({...shared,entryPoints:[join(root,'src/dsh-platform/component-instal
 await build({...shared,entryPoints:[join(root,'src/media-components/ffmpeg-worker.mjs')],outfile:join(out,'ffmpeg-component-worker.mjs'),platform:'node',target:'node24',format:'esm'});
 await build({...shared,entryPoints:[join(root,'src/buddy-plugin-services/bili-full-media-worker.mjs')],outfile:join(out,'bili-full-media-worker.mjs'),platform:'node',target:'node24',format:'esm'});
 for(const entry of ['dashboard','pet','pet-trajectory'])await build({...shared,entryPoints:[join(root,'src',entry+'.mjs')],outfile:join(out,entry+'.js'),platform:'browser',target:'chrome144',format:'iife',define:{'process.env.NODE_ENV':'"production"','__ALL_ACTION_RIGS__':'false','__FIVE_ACTIONS_V014__':'false','__FRAME_SEQUENCES__':JSON.stringify(sequences),'__PET_CHARACTER_SEQUENCES__':JSON.stringify(characters),'__PREVIEW_ATLASES__':JSON.stringify(entry==='dashboard'?previews.resources:{})}});
+for(const name of ['voice-design.css','design-chat.css','voice-ui-cloud.css','shell-design.css'])copyFileSync(join(root,'src/voice',name),join(out,name));
 for(const name of ['index.html','pet.html','dashboard.css','appearance.css','workspace.css','pet-trajectory.html','voice-capture-worklet.js'])copyFileSync(join(root,'src',name),join(out,name));
 const componentDescriptor=join(root,'release','dsh-component.json');
 if(existsSync(componentDescriptor))copyFileSync(componentDescriptor,join(out,'dsh-component.json'));

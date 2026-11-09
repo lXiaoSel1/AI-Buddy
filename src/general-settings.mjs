@@ -10,7 +10,8 @@ import {frameSequence} from './frame-sequence.mjs';
 import {DataImportSetting,DataImportModal} from './data-import-ui.mjs';
 import {DshPreviewNoticeSetting} from './dsh-preview-notice-ui.mjs';
 import {UpdateSettings} from './update-settings.mjs';
-import {VoiceSettings} from './voice/client.mjs';
+import {useVoiceSession} from './voice/client.mjs';
+import {VoiceGeneralSettingsPanel} from './voice/shell-design.mjs';
 const h=React.createElement;
 const providerName=value=>value==='claude'?'Claude Code':value;
 // B2: maxOutputTokens is 'auto' or a whole number from 256 to 65536 (default 8192).
@@ -34,7 +35,8 @@ export function AboutCard(){
     h('p',{className:'settings-note'},t('许可全文和第三方声明见安装目录里的 LICENSE.md 和 THIRD_PARTY_NOTICES.md。')),
     h('p',{className:'settings-note'},t('本软件按“原样”提供，不提供任何担保。')));
 }
-export function GeneralSettings({view,onSaved,onPage,onManage,onPlugins}){
+export function GeneralSettings({view,onSaved,onPage,onManage,onPlugins,onVoicePage}){
+  const voice=useVoiceSession();
   const [busy,setBusy]=useState(false),[status,setStatus]=useState(t("修改会立即生效并自动保存")),[error,setError]=useState('');
   const [importOpen,setImportOpen]=useState(false);
   if(!view)return h('p',null,t("正在读取本地设置…"));
@@ -97,6 +99,7 @@ export function GeneralSettings({view,onSaved,onPage,onManage,onPlugins}){
       select('throwStrength',en?'Throw strength':'抛掷力度',en?'Changes physical speed without changing animation assets.':'只调整物理力度，不复制动画。',[['gentle',en?'Gentle':'轻柔'],['standard',en?'Standard':'标准'],['strong',en?'Strong':'强力'],['exaggerated',en?'Exaggerated':'夸张']]),
       h('div',{className:'ui-note hint'},Icon('info',{size:16}),h('div',null,en?'Left-click to pet and play an expression. +1 affection at most once per 60 seconds, up to 30 per character daily. Right-click without dragging opens the workspace menu.':'左键单击触发表情并摸摸：同一角色每 60 秒最多 +1 好感，每天最多 30 点。右键单击打开工作空间菜单。',view.interactionMedia?.[petId]===false&&h('div',{className:'ws-muted',role:'status'},en?'The six new motion samples are awaiting review. Sleep and throwing remain inactive for characters without these assets.':'六段新动作尚待审核；缺少该组资源的角色暂不启用睡眠和抛掷。'))),
       h('div',{className:'ws-srow ws-end'},h('span',null),h('button',{className:'ui-btn sm','data-action':'reset-position',disabled:busy,onClick:()=>{void action('reset-position');}},t("重置桌宠位置")))),
+    h(VoiceGeneralSettingsPanel,{snapshot:voice.snapshot,session:voice.session.current,onPlugins:onPlugins??(()=>onPage('plugins')),onOpen:id=>onVoicePage?onVoicePage(id):onPage('voice')}),
     h('div',{className:'ws-set2'},
       h(ConnectionSelection,{type:'model',initial:view.modelConnections,onManage:()=>onManage('model')}),
       h(ConnectionSelection,{type:'cg',initial:view.cgConnections,onManage:()=>onManage('cg')}),
@@ -110,7 +113,6 @@ export function GeneralSettings({view,onSaved,onPage,onManage,onPlugins}){
         h('section',{className:'ws-card ws-set settings-output'},h('h2',{className:'ws-sec'},t('模型输出')),replyStyle(),h(OutputLimitSetting,{value:prefs.maxOutputTokens??OUTPUT_LIMIT.fallback,disabled:busy,onSave:patch=>void save(patch)}),h('p',{className:'settings-note ws-muted'},t('回复被截断时，可以在这里调高上限后重试。'))),
         h(TokenDetectionControl,{onManage:()=>onPage('tokens')}),
         h('section',{className:'ws-card ws-set settings-character'},h('h2',{className:'ws-sec'},t("角色与对话")),h('p',{className:'ws-meta'},t("角色、好感度、记忆、立绘和背景在 Galgame 中设置。联网聊天开关在聊天模型中设置，重启后保留选择。")),h('div',{className:'ws-srow ws-end'},h('span',null),h('button',{className:'ui-btn sm',onClick:()=>onPage('galgame')},t("打开 Galgame →")))))),
-    h(VoiceSettings,{onPlugins:onPlugins??(()=>onPage('plugins')),onChat:()=>onPage('galgame')}),
     h(DataImportSetting,{onOpen:()=>setImportOpen(true)}),
     h('details',{className:'ws-details settings-install'},h('summary',null,Icon('chevron',{size:16}),t("本地安装"),h('span',{className:'ws-muted'},' · '+t("AI 酱 ")+view.version)),h(UpdateSettings,{version:view.version,onPlugins:onPlugins??(()=>onPage('plugins'))}),h('dl',{className:'ws-dl settings-info'},h('dt',null,t("版本")),h('dd',null,view.version+' · '+view.build),h('dt',null,t("数据目录")),h('dd',null,view.dataRoot),h('dt',null,t("日志来源")),h('dd',null,...view.logRoots.map((r,i)=>h('div',{key:i},h('span',null,providerName(r.provider)+' '),h('code',null,r.path))))),h('p',{className:'settings-note ws-muted'},t("设置保存为版本快照；旧版本、用量与陪伴历史继续保留。"))),
     h('section',{className:'ws-card ws-set'},h(DshPreviewNoticeSetting)),h(AboutCard),

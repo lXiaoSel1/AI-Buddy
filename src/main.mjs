@@ -3,6 +3,8 @@ import {createWorkSourceRegistry,sourceMutation} from './work-source-registry.mj
 import {createWorkPluginGate} from './work-plugin-gate.mjs';
 import {deliverRewardFacts} from './reward-fact-delivery.mjs';
 import {closeMonitorWorker} from './monitor-worker-shutdown.mjs';
+import {createMonitorProfileDiagnostic} from './monitor-profile-diagnostic.mjs';
+import {createMainProfileDiagnostic} from './main-profile-diagnostic.mjs';
 import {createPluginMaintenanceClient} from './plugin-maintenance-client.mjs';
 import {pluginActionResult} from './plugin-ipc.mjs';
 import {createPluginPlatform} from './plugin-platform.mjs';
@@ -23,6 +25,7 @@ import {startDesktopSample,stopDesktopSample,measureDesktopDiagnostic} from './d
 import {readPetFullscreenSnapshot} from './pet-fullscreen.mjs';
 import {resolveInstallation,commitInstallation,markInstallationInitialized} from './installation-record.mjs';
 import {createDataImportService,hasBusinessData} from './data-import.mjs';
+import {deferredSaves} from './deferred-saves.mjs';
 import {setLocale,t,localizedTitle} from './i18n.mjs';
 import {chromeColor,chromeSymbolColor,windowBackground,resolvedTheme,themeVariables} from './appearance.mjs';
 import {trayMenuTemplate,petContextTemplate} from './pet-menu.mjs';
@@ -58,6 +61,7 @@ import {createPetFullscreenObserver,createPetFullscreenPolicy,petVisibility} fro
 import {PET_RENDERER_DIAGNOSTIC_SCRIPT} from './pet-renderer-diagnostics.mjs';
 import {petCollisionInsets} from './pet-presentation.mjs';
 import { createLocalControlServer,requestLocalControl } from './local-control.mjs';
+import {claimControlPipe} from './startup-control-lock.mjs';
 import { DEFAULT_PREFERENCES,normalizePreferences,validatePreferencesPatch } from './preferences.mjs';
 import { PET_ACTIONS,PET_INTERACTION_ACTIONS,validatePetPlayback,getPetAction } from './pet-actions.mjs';
 import { EMOTIONS,validEmotion,shortReply } from './emotions.mjs';
@@ -122,6 +126,7 @@ if(!bootFailure)try{commitInstallation(installationResolution);}catch(error){boo
 for(const flag of ['disable-background-networking','disable-component-update','disable-domain-reliability','disable-sync'])app.commandLine.appendSwitch(flag);
 const auditPath=join(dataRoot,'runtime-audit.jsonl');
 const audit=value=>appendFileSync(auditPath,JSON.stringify({timestamp:new Date().toISOString(),...value})+'\n');
+deferredSaves.setAudit(audit);
 const pipe=installationResolution?.pipe || '\\\\.\\pipe\\whale-companion-v001';
 let dataImport=null,importBarrier=false,onboarding=false;
 let buttonObserver=null,nativeButtons=0;
@@ -129,8 +134,13 @@ let fullscreenObserver=null,fullscreenHidden=false;
 const fullscreenPolicy=createPetFullscreenPolicy({onChange:hidden=>{fullscreenHidden=hidden;applyPetVisibility(false);}});
 let dailyCgScheduler;
 let pet,panel,tray,worker,game,provider,snapshot={indexing:true,sessions:[],active:[],todayUsage:{codex:{total:0},claude:{total:0}},workTotal:0},settings={},drag=null,lastWork=null,quitting=false,gestureMode=false,lastPetHit=false,ignoringMouse=true,petAssetsReady=false;
+const monitorProfile=createMonitorProfileDiagnostic({getWorker:()=>worker,isClosing:()=>quitting||shuttingDown,processId:process.pid,build});
+// No user gesture: the probe must not unlock audio playback the user has not allowed yet.
+const panelProbe=script=>panel&&!panel.isDestroyed()?panel.webContents.executeJavaScript(script,false):null;
+const mainProfile=createMainProfileDiagnostic({isClosing:()=>quitting||shuttingDown,processId:process.pid,build,renderer:{start:()=>panelProbe('globalThis.__buddyVoiceProbe?.start()??false'),stop:()=>panelProbe('globalThis.__buddyVoiceProbe?.stop()??null')}});
 const settingsStore=createSnapshotStorage(join(dataRoot,'settings.json'));
 let cg,quotas,agents,plugins,petDiagnostics,pluginUsage,pluginEmbed,appUpdates,chatPreferences,voiceHost;
+let cardVoiceMix={voice:1,muted:false};
 const updateReservation=createUpdateReservation({external:()=>[
   ...(gameRequests||provider?.status().busy||activityClock.busy.size||game?.r95?.busy?.()?['chat']:[]),
   ...(cg?.status().busy?['cg']:[]),...(agents?.busy()?['work']:[]),...(voiceHost?.busy()?['voice']:[]),
@@ -427,8 +437,9 @@ ipcMain.handle('voice:action',async(event,op,payload)=>{
  assertImportIdle();if(!voiceHost)return {__buddyError:true,code:'VOICE_HOST_UNAVAILABLE',message:'语音服务尚未就绪'};
  try{
   // Existing capture/audio must settle even after the updater reserves new work.
-  const continuing=['state','profiles','cloud-status','cloud-prepare-preview','capture-feed','capture-finish','receipt','stop'].includes(op);
-  return await (continuing?voiceHost.action(op,payload):updateGuard('voice',()=>voiceHost.action(op,payload)));
+  const continuing=['state','profiles','cloud-status','cloud-prepare-preview','cloud-batch-preview','cloud-batch-reconcile','cloud-batch-cancel','assets-cancel','capture-feed','capture-finish','receipt','stop'].includes(op);
+  const result=await (continuing?voiceHost.action(op,payload):updateGuard('voice',()=>voiceHost.action(op,payload)));
+  return op==='state'?{...result,cardVoiceMix}:result;
  }catch(error){return {__buddyError:true,code:error.code??'VOICE_FAILED',message:String(error.message).slice(0,400)};}
 });
 ipcMain.handle('plugins:action',async(event,request)=>{if(event.sender!==panel?.webContents)throw Error('Invalid extension sender');assertImportIdle();return pluginActionResult(plugins,request);});
@@ -466,7 +477,10 @@ ipcMain.handle('game:action',async(event,action,args)=>{
   const dialog=provider.enabled&&['chat','side-story','side-story-free-reply','companion-group-send','companion-group-continue'].includes(action);
   const release=gameReads.has(action)||gameStops.has(action)||action==='companion-r95'&&['auto-pause','auto-stop'].includes(args?.action)?null:updateReservation.enter(dialog?'chat':'storage');
   if(dialog){gameRequests++;petEvent({kind:'dialog',active:true});}
-  try{const result=await measureDesktopDiagnostic('game-ipc-dispatch',()=>game.action(action,args||{}));if(dialog&&result?.ok===false&&result.code!=='CHARACTER_NOT_INSTALLED'&&!userStopped(result.error?.message??result.message))feedback({id:'fail',source:'chat-error',text:'聊天暂时失败，请重试。',cycles:1});
+  // R13: per-action counts while a diagnostic sample runs (measureDesktopDiagnostic is a pass-through otherwise).
+  // Use the count only: the time covers just the synchronous start of the async action.
+  const counted='game-action:'+(/^[a-z0-9-]{1,48}$/.test(action)?action:'other')+(action==='companion-r95'&&/^[a-z0-9-]{1,32}$/.test(String(args?.action??''))?':'+args.action:'');
+  try{const result=await measureDesktopDiagnostic('game-ipc-dispatch',()=>measureDesktopDiagnostic(counted,()=>game.action(action,args||{})));if(dialog&&result?.ok===false&&result.code!=='CHARACTER_NOT_INSTALLED'&&!userStopped(result.error?.message??result.message))feedback({id:'fail',source:'chat-error',text:'聊天暂时失败，请重试。',cycles:1});
     // A line read on the pet or in the main window closes it in the other place too (approved design C8).
     if(action==='companion-r95'&&args?.action==='speech-read'&&result?.ok!==false){petEvent({kind:'social-line-read',messageId:args.args?.messageId});if(panel&&!panel.isDestroyed())panel.webContents.send('game:output',{type:'social.updated'});}
     return result;}
@@ -540,6 +554,8 @@ const control=createLocalControlServer({
   onRequest:async request=>{
       let result;
       if(request.command==='snapshot')result={processId:process.pid,singleInstance:app.hasSingleInstanceLock(),snapshot,settings:settingsView(),petAction:petState,chat:{enabled:provider?.enabled || false,model:provider?.defaultModel},petBounds:pet?.getBounds(),petContentBounds:pet?.getContentBounds(),petVisible:pet?.isVisible(),petAssetsReady,petAlwaysOnTop:pet?.isAlwaysOnTop(),petInteraction:{gestureMode,lastPetHit,ignoringMouse,dragging:!!drag,...petInteraction()},displays:screen.getAllDisplays().map(d=>({workArea:d.workArea,scaleFactor:d.scaleFactor})),build,dataRoot};
+      else if(request.command==='diagnostics-monitor-profile')result=await monitorProfile.handle(request);
+      else if(request.command==='diagnostics-main-profile')result=await mainProfile.handle(request);
       else if(request.command==='installation-status'){
         const updateBusy=updateReservation.status(),reasons=updateBusy.reasons.filter(row=>row.capability!=='data');
         result={version:appVersion,root,build,dataRoot,processId:process.pid,ready:(!!game||!!startupFailure)&&petAssetsReady,onboarding,safeMode:!!startupFailure,startupFailure,
@@ -649,8 +665,7 @@ const control=createLocalControlServer({
   }
 });
 control.on('error',error=>{
-  if(error.code==='EADDRINUSE') {void requestLocalControl(pipe,{command:'show'}).catch(()=>{}).finally(()=>app.exit(0));}
-  else {audit({type:'control-error',message:error.message});}
+  if(control.listening)audit({type:'control-error',message:error.message});
 });
 
 let shuttingDown=false;
@@ -659,20 +674,30 @@ async function shutdown(forUpdate=false) {
   forUpdate ||= updateReservation.committed();
   shuttingDown=true;
   try{
+  await deferredSaves.flushAll({scope:dataRoot});
   if(agents?.busy()){const choice=await dialog.showMessageBox(panel??pet,{type:'question',title:'工作与协作',message:'仍有工作任务正在运行。',buttons:['完成后退出','停止并保存后退出','返回'],defaultId:2,cancelId:2});if(choice.response===2)return;await agents.prepareExit(choice.response===0?'finish':'stop-save');}
-  quitting=true;closePetFullscreen();applyPetVisibility(false);
+  quitting=true;monitorProfile.cancel();mainProfile.cancel();closePetFullscreen();applyPetVisibility(false);
   await dailyCgScheduler?.stopAndDrain();await rewardTail;await agents?.close();pluginEmbed?.close();await plugins?.close();await voiceHost?.close();await pluginUsage?.close();petDiagnostics?.dispose();dataImport?.close();buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();await settingsTail;await settingsWriteTail;provider?.close();await cg?.close();await game?.flushWorkLedger?.().catch(()=>{});await game?.close();
   await workSourceRegistry?.flush();
   if(worker)await closeMonitorWorker(worker,{onDiagnostic:value=>audit({type:'monitor-worker-close',...value})});
-  appUpdates?.close({keepApply:forUpdate});control.close();app.exit(0);
+  appUpdates?.close({keepApply:forUpdate});control.close();deferredSaves.stop();app.exit(0);
   }catch(error){quitting=false;syncPetFullscreenObserver();applyPetVisibility(false);if(forUpdate)updateReservation.reopenAfterFailedShutdown();audit({type:'shutdown-blocked',code:error.code,message:error.message});await dialog.showMessageBox(panel??pet,{type:'error',title:'工作尚未停止',message:'退出未完成，已保留当前运行状态。',detail:String(error.message),buttons:['返回']});}
   finally{shuttingDown=false;}
 }
 app.on('before-quit',event=>{event.preventDefault();if(!quitting)void shutdown();});
+function flushSessionEndSync(){try{deferredSaves.flushSyncAll({scope:dataRoot});}catch(error){audit({type:'session-end-save-error',code:error.code,message:error.message});}}
+// Electron emits Windows session-end on BrowserWindow, including hidden windows.
+app.on('browser-window-created',(_event,window)=>window.on('session-end',flushSessionEndSync));
+app.on('session-end',flushSessionEndSync);
 app.on('window-all-closed',()=>{});
 app.whenReady().then(async()=>{
   if(recoveryDispatched){app.exit(0);return;}
   if(bootFailure){await dialog.showMessageBox({type:'error',title:'AI Buddy · 存档恢复',message:bootFailure.message,detail:'没有创建新的业务存档。请恢复原存档目录或核对 local/installation-backups 中的记录后重试。',buttons:['关闭']});app.exit(1);return;}
+  try{await claimControlPipe(control,pipe);}catch(error){
+   await dialog.showMessageBox({type:'error',title:'AI Buddy · 资料维护',message:error.code==='EADDRINUSE'?'资料维护通道正在被占用，请等待维护结束后再启动。':'无法取得启动所需的本机控制通道。',detail:'尚未开始读取业务存档。'+String(error.message??error),buttons:['关闭']});
+   app.exit(1);return;
+  }
+  deferredSaves.start();
   onboarding=arg('data')===undefined&&!await hasBusinessData(dataRoot);
   dataImport=createDataImportService({root,dataRoot,build,pipe,manager:resources.manager(),onboarding,
    chooseSource:async()=>{if(arg('validation')==='1'&&arg('validation-import-source'))return arg('validation-import-source');const result=await dialog.showOpenDialog(panel??undefined,{title:'选择旧程序或实际存档目录',properties:['openDirectory']});return result.canceled?null:result.filePaths[0];},
@@ -681,7 +706,7 @@ app.whenReady().then(async()=>{
   });
   if(onboarding){
    settings.preferences=normalizePreferences({language:app.getLocale().startsWith('zh')?'zh-CN':'en'});setLocale(settings.preferences.language);
-   control.listen(pipe);openPanel('data-import',false);return;
+   openPanel('data-import',false);return;
   }
   buttonObserver=createPetButtonObserver({path:join(build,'pet-buttons.exe'),enabled:process.platform==='win32'&&arg('cursor')!=='manual',onState:observePetButtons,onError:error=>{audit({type:'pet-input-helper-error',message:error.message});if(drag)cancelGesture('button-observer-error');}});
   settings=await readJson(settingsStore,{});
@@ -719,7 +744,7 @@ app.whenReady().then(async()=>{
     chooseAssets:async kind=>{const result=await dialog.showOpenDialog(panel,{title:'选择匹配的语音组件目录 · '+kind,properties:['openDirectory']});return result.canceled?null:result.filePaths[0];},
     chooseReference:async()=>{const result=await dialog.showOpenDialog(panel,{title:'选择当前角色的平静参考音',properties:['openFile'],filters:[{name:'WAV',extensions:['wav']}]});return result.canceled?null:{file:result.filePaths[0]};},
   });
-  plugins=await createPluginPlatform({voice:{quiesce:()=>voiceHost.quiesce(),snapshot:()=>voiceHost.snapshot(),cardEvent:request=>request?.type==='scope-update'?voiceHost.cardEvent(request):updateGuard('voice',()=>voiceHost.cardEvent(request))},pageAppearance:options=>pluginPageAppearance(settings.preferences,themeCharacter,{...options,faces:pluginFaces(),portraits:(builtinPluginPortraits??=builtinPortraits(build))}),root,build,dataRoot,crypto:safeStorage,legacyManager:legacyPlugins,getSocialHost:()=>game?.r95?.socialHost,getGame:()=>game,getProvider:()=>provider,BrowserWindow,session,ipcMain,pluginClientPreloadPath:join(build,'plugin-client-preload.cjs'),openSocialSetup:request=>openSocialLogin(request),renderBiliSheet:createBiliSheetRenderer(nativeImage),analyzeBiliFrames:createBiliFrameAnalyzer(nativeImage),onReadingOpen:async()=>{assertImportIdle();if(!pluginEmbed)throw Object.assign(Error('Plugin page is not ready'),{code:'PLUGIN_EMBED_UNAVAILABLE'});await pluginEmbed.handle({op:'open',target:'bilibili'});},
+  plugins=await createPluginPlatform({voice:{quiesce:()=>voiceHost.quiesce(),snapshot:()=>voiceHost.snapshot(),audioSettings:value=>{cardVoiceMix={voice:value.voice,muted:value.muted};if(panel&&!panel.isDestroyed())panel.webContents.send('voice:event',{type:'card-volume',...cardVoiceMix});return cardVoiceMix;},cardEvent:request=>request?.type==='scope-update'?voiceHost.cardEvent(request):updateGuard('voice',()=>voiceHost.cardEvent(request)),cardPresentation:request=>voiceHost.cardPresentation(request)},pageAppearance:options=>pluginPageAppearance(settings.preferences,themeCharacter,{...options,faces:pluginFaces(),portraits:(builtinPluginPortraits??=builtinPortraits(build))}),root,build,dataRoot,crypto:safeStorage,legacyManager:legacyPlugins,getSocialHost:()=>game?.r95?.socialHost,getGame:()=>game,getProvider:()=>provider,BrowserWindow,session,ipcMain,pluginClientPreloadPath:join(build,'plugin-client-preload.cjs'),openSocialSetup:request=>openSocialLogin(request),renderBiliSheet:createBiliSheetRenderer(nativeImage),analyzeBiliFrames:createBiliFrameAnalyzer(nativeImage),onReadingOpen:async()=>{assertImportIdle();if(!pluginEmbed)throw Object.assign(Error('Plugin page is not ready'),{code:'PLUGIN_EMBED_UNAVAILABLE'});await pluginEmbed.handle({op:'open',target:'bilibili'});},
     hostServices:{'work.host':{capability:'work.host',handler:request=>agents.service(request)}},resolveToolScope:context=>agents.nativeToolScope(context),
     runtimeLockPath:arg('dsh-runtime-lock'),busy:()=>!!agents?.busy(),onUpdate:publishPlugins,audit,automaticWorkAllowed,maintenanceAdmission:()=>!updateReservation.active(),
     openExternal:async url=>{const parsed=new URL(url);if(!['http:','https:'].includes(parsed.protocol)||parsed.username||parsed.password)throw Error('外部页面地址无效');await shell.openExternal(parsed.href);},
@@ -803,7 +828,7 @@ app.whenReady().then(async()=>{
   monitorAppliedInterval=settings.preferences.monitorRefreshMs;
   // The monitor worker is restarted with backoff if it exits unexpectedly.
   superviseWorker(()=>{
-  worker=new Worker(join(build,'monitor-worker.cjs'),{workerData:{hostOwnsRegistry:true,roots:arg('roots')?logRoots:undefined,home,env:process.env,dataRoot,refreshIntervalMs:settings.preferences.monitorRefreshMs,statisticsTimeZone:settings.preferences.statisticsTimeZone,autoPriceUpdates:settings.preferences.autoPriceUpdates}});
+  worker=new Worker(join(build,'monitor-worker.cjs'),{name:'buddy-monitor',workerData:{hostOwnsRegistry:true,roots:arg('roots')?logRoots:undefined,home,env:process.env,dataRoot,refreshIntervalMs:settings.preferences.monitorRefreshMs,statisticsTimeZone:settings.preferences.statisticsTimeZone,autoPriceUpdates:settings.preferences.autoPriceUpdates}});
   worker.on('message',message=>{if(message.type==='sources'){tokenSources=message.value;if(panel&&!panel.isDestroyed())panel.webContents.send('tokens:update',message.value);}if(message.type==='source-result'){const pending=sourceRequests.get(message.id);if(pending){clearTimeout(pending.timer);sourceRequests.delete(message.id);message.error?pending.fail(Error(message.error)):pending.done(message.value);}}if(message.type==='snapshot'){publish(message.value);requestRewardDrain();}if(message.type==='configured'){monitorAppliedInterval=message.refreshIntervalMs;broadcastSettings();}if(message.type==='refreshed')broadcastSettings();if(message.type==='error')audit({type:'monitor-error',message:message.message});});
   const monitoredWorker=worker;worker.on('message',message=>{if(message.type==='reward-facts')consumeRewardFacts(message.value,monitoredWorker);});
   worker.on('message',message=>{if(message.type==='task-feedback'&&!quitting)feedback(message.value);if(message.type==='audit'&&message.value?.type)audit({...message.value,type:String(message.value.type)});});
@@ -819,7 +844,7 @@ app.whenReady().then(async()=>{
     recoveryRequired:!!startupFailure,bootstrapRun:startupFailure?undefined:bootstrapBackend.run,
     load:()=>updatePrefs,save:value=>updateGuard('storage',()=>updateStore.writeText(JSON.stringify(value))),
     onChange:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('updates:state',value);}});
-  control.listen(pipe);if(!startupFailure&&petAssetsReady)appUpdates.start();audit({type:'app-start',mode:'offline',version:appVersion,build});
+  if(!startupFailure&&petAssetsReady)appUpdates.start();audit({type:'app-start',mode:'offline',version:appVersion,build});
   if(startupFailure)openPanel('safe-mode',false);
   else if(reopenRequested||['overview','galgame','settings','actions','agent-tasks','plugins','shop','backpack','social'].includes(arg('open')))openPanel(reopenRequested?'overview':arg('open'),false);
 }).catch(error=>{audit({type:'startup-error',message:error.stack});console.error(error);enterSafeMode(error);});
@@ -829,7 +854,6 @@ function enterSafeMode(error){
   noteStartupFailure('app',error);
   try{
     if(!tray){tray=new Tray(appIcon.resize({width:32,height:32}));tray.setToolTip(APP_NAME+' · 安全模式');tray.setContextMenu(Menu.buildFromTemplate([{label:'查看错误',click:()=>{try{openPanel('safe-mode');}catch(error){audit({type:'safe-mode-panel-error',message:error.stack});}}},{label:'退出',click:()=>app.quit()}]));}
-    try{control.listen(pipe);}catch{}
     try{openPanel('safe-mode');}catch(error){audit({type:'safe-mode-panel-error',message:error.stack});}
   }catch(fatal){audit({type:'safe-mode-error',message:fatal.stack});app.exit(1);}
 }

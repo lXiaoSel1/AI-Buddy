@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,writeFile,readFile,readdir,rm} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -49,9 +49,8 @@ for(const stop of ['stop','quiesce','configure-disable','profile-select'])test(`
     f.lateResult.resolve();f.exited.resolve();
     await stopping;await rejected;
     await assert.rejects(readFile(join(f.dataRoot,'voice','cloud','bindings.json')),{code:'ENOENT'});
-    const receipts=await readdir(join(f.dataRoot,'voice','cloud','receipts'));assert.equal(receipts.length,1);
-    const receipt=JSON.parse(await readFile(join(f.dataRoot,'voice','cloud','receipts',receipts[0]),'utf8'));
-    assert.equal(receipt.status,'failed-or-unconfirmed');assert.equal(receipt.error.code,'CLOUD_CANCELLED');
-    assert.equal((await f.cloud.status({engine:'breeze',characterId:'alice',profileId:'alice-breeze',profileVersion:1})).state,'unbound','stop does not permanently close future cloud use');
+    const receipt=(await f.cloud.batchStatus({profiles:[{engine:'breeze',characterId:'alice',profileId:'alice-breeze',profileVersion:1}]})).results[0];
+    assert.equal(receipt.status,'unknown');assert.equal(receipt.code,'CLOUD_CANCELLED');
+    assert.equal((await f.cloud.status({engine:'breeze',characterId:'alice',profileId:'alice-breeze',profileVersion:1})).state,'unknown','stop preserves the unresolved receipt without permanently closing cloud use');
   }finally{f.lateResult.resolve();f.exited.resolve();await stopping.catch(()=>{});await pending.catch(()=>{});await rejected.catch(()=>{});}
 });

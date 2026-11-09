@@ -1,0 +1,31 @@
+/* Host adapters for the approved secV.css; component dimensions stay in voice-design.css. */
+.vx-chat-pop-wrap{position:relative;flex:none}
+.vx-chat-pop-wrap>.vx-popat{top:calc(100% + 8px);right:0}
+.vx-pop{background:var(--buddy-surface);color:var(--buddy-text);border-radius:calc(var(--buddy-r-btn-s) + 4px);box-shadow:0 18px 40px -16px rgba(0,0,0,.6),0 0 0 1px var(--buddy-border)}
+.vx-chat-pop-wrap .vx-vchip{display:inline-flex;align-items:center;gap:6px}
+.vx-chat-pop-wrap .vx-pop .ws-srow{display:flex;align-items:center;justify-content:space-between}
+.vx-pop .ws-srow>div:first-child{min-width:0}
+.vx-pop .ws-srow .ui-seg{display:flex}
+.vx-ginput>.gx-ta{display:flex;flex-direction:column}
+.vx-ginput>.vx-mic,.buddy-dialog .vx-ginput>.vx-mic{display:grid;place-items:center;flex:none;align-self:center;width:46px;height:46px;min-height:0;padding:0;border:0;border-radius:50%;background:var(--buddy-choice-bg);box-shadow:inset 0 0 0 1px var(--buddy-dlg-border);color:var(--buddy-dlg-text)}
+.vx-ginput>.vx-livebtn,.buddy-dialog .vx-ginput>.vx-livebtn{flex:none;align-self:stretch;display:flex;align-items:center;gap:6px;padding:0 16px;border:0;border-radius:12px;background:color-mix(in srgb,var(--buddy-accent) 16%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--buddy-accent) 45%,transparent);color:var(--buddy-dlg-text)}
+.vx-recrow{display:flex;gap:10px}
+.vx-recrow>.vx-rec{min-width:0}
+.vx-scrim{position:fixed}
+.vx-page{position:relative}
+.vx-page .vx-pagetabs{align-self:flex-start;margin:0}
+.vx-stepdot{display:inline-block;width:14px;height:14px;border-radius:50%;background:var(--buddy-border)}
+.vx-indeterminate>i{width:100%;opacity:.5}
+
+/* Exact supporting rules used by the approved mock shell (sec0.css / secC2.css). */
+.mk-face{display:inline-block;flex:none;width:28px;height:28px;border-radius:50%;overflow:hidden;background:var(--buddy-surface2);box-shadow:0 0 0 1px var(--buddy-border);vertical-align:middle}
+.mk-face img{display:block;width:100%;height:100%;object-fit:cover}
+.mk-face.sm{width:20px;height:20px}.mk-face.lg{width:40px;height:40px}.mk-face.xl{width:56px;height:56px}
+.mk-netbtn{cursor:pointer;border:0;font:inherit;padding:0 10px 0 12px!important}
+.mk-netbtn.open{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--buddy-accent) 55%,transparent)}
+.mk-ginput{display:flex;gap:12px;align-items:stretch;margin-top:auto}
+.mk-ginput .gx-ta{min-height:58px}
+.mk-gsend{display:flex;align-items:center;gap:6px;padding:0 22px;border:0;border-radius:12px;background:var(--buddy-accent);color:var(--buddy-on-accent);font:inherit;font-weight:600}
+.mk-gpop{position:absolute;z-index:60;display:flex;flex-direction:column;border-radius:calc(var(--buddy-r-btn-s) + 4px);background:var(--buddy-surface);color:var(--buddy-text);box-shadow:0 18px 40px -16px rgba(0,0,0,.6),0 0 0 1px var(--buddy-border)}
+.mk-gpop .ws-srow{min-height:0;padding:10px 0}
+.mk-gpop .ws-srow:first-child{border-top:0}

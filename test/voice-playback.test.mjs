@@ -6,6 +6,7 @@ import {createVoicePlayback,ensureVoiceOutput} from '../src/voice/client.mjs';
 function audioFactory(){
   const contexts=[];
   const create=({sampleRate})=>{const context={sampleRate,state:'running',currentTime:0,destination:{},resume:async()=>{},close:async()=>{context.state='closed';},
+    createGain:()=>({gain:{value:1},connect(){},disconnect(){}}),
     createBuffer:(_channels,length,rate)=>({duration:length/rate,getChannelData:()=>new Float32Array(length)}),
     createBufferSource:()=>({connect(){},disconnect(){},start(){},stop(){}})};contexts.push(context);return context;};
   return {create,contexts};

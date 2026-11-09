@@ -48,7 +48,7 @@ function childEnvironment(assets) {
   return voicePythonEnvironment(assets);
 }
 
-function makeWorker({ kind, assets, supervisor }) {
+function makeWorker({ kind, assets, supervisor, drainTimeoutMs }) {
   for (const field of ['python', 'script', 'root', 'assetRoot', 'cacheRoot']) {
     if (!isAbsolute(assets[field] ?? '')) throw fail('VOICE_ASSETS_INVALID', '语音运行组件路径无效');
   }
@@ -61,33 +61,64 @@ function makeWorker({ kind, assets, supervisor }) {
   });
   const lines = readLines(process.stdout);
   const exited = new Promise((resolve, reject) => {
-    process.once('close', resolve);
+    process.once('exit', resolve);
     process.once('error', reject);
   });
+  const pipeClosed=new Promise(resolve=>process.once('close',resolve));
   exited.catch(() => {});
   process.stdin.on('error', () => {});
   let admitted = false;
   let sequence = 0;
   let stopping;
-  let requestActive = false;
+  let current,drainFailure;
+
+  function nextLine(row) { return row.pending ??= lines.next(); }
+  function drain(row) {
+    if(row.draining)return row.draining;
+    row.cancelled=true;
+    row.draining=(async()=>{
+      const deadline=Date.now()+drainTimeoutMs;
+      while(!row.terminal){
+        if(stopping){await stopping;return;}
+        const pending=nextLine(row),next=await awaitChecked(pending,null,Math.max(1,deadline-Date.now()));
+        if(row.pending===pending)row.pending=null;
+        if(next.done||next.value?.id!==row.id)throw fail('VOICE_WORKER_PROTOCOL','语音组件返回无效会话');
+        const event=next.value;
+        if(event.type==='done'||event.type==='result'){row.terminal=true;return;}
+        if(event.type==='error'){row.terminal=true;throw fail(event.code??'VOICE_WORKER_ERROR','语音组件运行失败');}
+        if(event.type!=='pcm')throw fail('VOICE_WORKER_PROTOCOL','语音组件返回了无效的数据类型');
+      }
+    })().catch(error=>{drainFailure=error;throw error;});
+    return row.draining;
+  }
+
+  function cancelCurrent(){
+    if(stopping)return stopping;
+    if(drainFailure)return Promise.reject(drainFailure);
+    return current?drain(current):Promise.resolve({drained:true});
+  }
 
   async function* request(op, payload, signal, timeout = 20000, onSent) {
-    if (requestActive) throw fail('VOICE_WORKER_BUSY', '语音组件正在处理上一条请求');
+    if (current&&!current.terminal) throw fail('VOICE_WORKER_BUSY', '语音组件正在处理上一条请求');
+    if(drainFailure)throw drainFailure;
     if (stopping || process.exitCode !== null) throw fail('VOICE_WORKER_CLOSED', '语音组件已退出');
     if (signal?.aborted) throw aborted();
-    requestActive = true;
     const id = ++sequence;
+    const row=current={id,terminal:false,cancelled:false,pending:null,draining:null};
     try {
       await awaitChecked(new Promise((resolve, reject) => {
         process.stdin.write(JSON.stringify({ id, op, ...payload }) + '\n', error => error ? reject(error) : resolve());
         onSent?.();
       }), signal, timeout);
       for (;;) {
-        const next = await awaitChecked(lines.next(), signal, timeout);
+        const pending=nextLine(row),next = await awaitChecked(pending, signal, timeout);
+        if(row.cancelled){await drain(row);throw aborted();}
+        if(row.pending===pending)row.pending=null;
         if (next.done || next.value?.id !== id) throw fail('VOICE_WORKER_PROTOCOL', '语音组件返回无效会话');
         const event = next.value;
-        if (event.type === 'error') throw fail(event.code ?? 'VOICE_WORKER_ERROR', String(event.message ?? '语音组件运行失败').slice(0, 120));
+        if (event.type === 'error') {row.terminal=true;throw fail(event.code ?? 'VOICE_WORKER_ERROR', String(event.message ?? '语音组件运行失败').slice(0, 120));}
         if (event.type === 'result' || event.type === 'done') {
+          row.terminal=true;
           yield event;
           return;
         }
@@ -95,7 +126,8 @@ function makeWorker({ kind, assets, supervisor }) {
         yield event;
       }
     } finally {
-      requestActive = false;
+      try{if(!row.terminal&&op==='speak'){if(stopping)await stopping;else await drain(row);}}
+      finally{if(current===row)current=undefined;}
     }
   }
 
@@ -138,6 +170,13 @@ function makeWorker({ kind, assets, supervisor }) {
         await awaitChecked(exited, null, 400).catch(() => {});
         const proof = await supervisor.releaseRoot({ runtimeId });
         if (proof?.stopped !== true) throw fail('VOICE_STOP_UNCONFIRMED', '语音组件退出尚未确认');
+        // The guard has confirmed this exact owned process tree is gone. A
+        // paused PCM consumer can keep stdio open after exit; disposing that
+        // transport must not turn the OS stop proof into another 10s timeout.
+        process.stdin.destroy();
+        process.stdout.destroy();
+        await awaitChecked(pipeClosed, null, 1000).catch(() => {});
+        return {stopped:true};
       } else if (process.pid && process.exitCode === null) {
         // No Python engine loads until after ownership admission.
         process.kill();
@@ -146,13 +185,17 @@ function makeWorker({ kind, assets, supervisor }) {
         if (admitted) throw error;
       });
     })();
+    const result=stopping;
+    // An unknown stop stays gated, but a later explicit recovery must be able
+    // to ask the same guard for a fresh proof instead of replaying rejection.
+    void result.catch(()=>{if(stopping===result)stopping=undefined;});
     return stopping;
   }
 
-  return { kind, start, stop, request, result, dead: () => process.exitCode !== null };
+  return { kind, start, stop, cancelCurrent, request, result, dead: () => process.exitCode !== null };
 }
 
-export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile,preflightTimeoutMs=VOICE_PREFLIGHT_TIMEOUT_MS }) {
+export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile,preflightTimeoutMs=VOICE_PREFLIGHT_TIMEOUT_MS,drainTimeoutMs=2000 }) {
   let asr;
   let tts;
   let captureActive = false;
@@ -162,6 +205,7 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile,p
   let captureTail = Promise.resolve();
   let engineTail = Promise.resolve();
   let preparation;
+  let asrFailure,ttsFailure;
 
   function captureOperation(run) {
     const result = captureTail.then(run);
@@ -177,23 +221,28 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile,p
 
   function assertOpen() {
     if (closed) throw fail('VOICE_RUNTIME_CLOSED', '语音功能已停止');
+    if(asrFailure||ttsFailure)throw asrFailure??ttsFailure;
   }
 
   async function retireAsr() {
     if (!asr) return;
-    await asr.stop();
+    try{await asr.stop();}catch(error){asrFailure=error;throw error;}
     asr = undefined;
+    asrFailure=undefined;
   }
 
   async function retireTts() {
     if (!tts) return;
-    await tts.stop();
+    try{await tts.stop();}catch(error){ttsFailure=error;throw error;}
     tts = undefined;
+    ttsFailure=undefined;
   }
 
   async function ensureWorker(kind, packageId, signal, onProgress) {
     if (signal?.aborted) throw aborted();
-    onProgress?.({state:'verifying',component:kind});
+    // The verifier reports real scan progress itself. A hot proof lookup must
+    // not advertise a full component verification on every sentence/gesture.
+    onProgress?.({state:'checking',component:kind});
     // The cancellation race belongs inside the serialized operation. Merely
     // racing engineOperation() leaves stop queued behind a withheld RPC.
     const assets = await waitVoiceOperation(()=>resolveAssets(kind, packageId, {signal,onProgress:value=>{if(!signal?.aborted)onProgress?.({...value,state:value.state??value.phase,component:kind});}}),signal);
@@ -208,7 +257,7 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile,p
     let worker = kind === 'asr' ? asr : tts;
     if (!worker) {
       onProgress?.({state:'loading',component:kind});
-      worker = makeWorker({kind,assets,supervisor});
+      worker = makeWorker({kind,assets,supervisor,drainTimeoutMs});
       worker.proof = assets.proof;
       if (kind === 'asr') asr = worker; else tts = worker;
       try {
@@ -324,10 +373,11 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile,p
       const reference = await waitVoiceOperation(()=>resolveProfile({ characterId, profileId, profileVersion, engine, performance, referenceStyle,signal:combined }),combined);
       phase('component-check');
       await waitVoiceOperation(()=>engineOperation(()=>ensureWorker(engine,packageId,combined,value=>{if(value.state==='loading')phase('model-loading');else if(value.state==='loaded')phase('component-check');})),combined);
+      controller.worker=tts;
       combined.throwIfAborted();
       yield { type: 'reference', style: reference.referenceStyle, source: reference.referenceSource };
       combined.throwIfAborted();let first=true;
-      for await (const event of tts.request('speak', {
+      for await (const event of controller.worker.request('speak', {
         text, instruction, reference: { path: reference.path, text: reference.text, language: reference.language },
       }, combined, 120000,()=>phase('speak-sent'))) {
         if (event.type === 'pcm') {
@@ -343,17 +393,44 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile,p
           yield { type: 'done', metrics };
         }
       }
+    } catch(error){
+      if(combined.aborted)throw combined.reason??aborted();
+      throw error;
     } finally {
       preflight.close();
-      try { if (!completed) await engineOperation(retireTts); }
-      finally { speakController = undefined; }
+      try { if (!completed&&!controller.drained) await engineOperation(async()=>{
+        if(combined.aborted)await cancelTtsRequest(controller);
+        else if(controller.worker&&tts===controller.worker)await retireTts();
+      }); }
+      finally { if(speakController===controller)speakController = undefined; }
     }
+  }
+
+  async function cancelTtsRequest(active){
+    if(active?.drained)return {drained:true};
+    if(active?.worker){
+      try{await active.worker.cancelCurrent();}
+      catch(error){
+        // A serial Python handler cannot read a concurrent cancel command.
+        // Only terminal drain or a confirmed physical stop admits its successor.
+        if(tts===active.worker)await retireTts();else await active.worker.stop();
+      }
+    }
+    if(active)active.drained=true;
+    if(speakController===active)speakController=undefined;
+    return {drained:true};
+  }
+
+  function cancelCurrent(){
+    preparation?.controller.abort();
+    const active=speakController;active?.abort();
+    return engineOperation(()=>cancelTtsRequest(active));
   }
 
   function stopEngine() {
     preparation?.controller.abort();
-    speakController?.abort();
-    return engineOperation(retireTts);
+    const active=speakController;active?.abort();
+    return engineOperation(async()=>{await retireTts();if(active)active.drained=true;if(speakController===active)speakController=undefined;});
   }
 
   async function close() {
@@ -365,5 +442,5 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile,p
     for (const result of results) if (result.status === 'rejected') throw result.reason;
   }
 
-  return { prepare, ready, startCapture, feedCapture, finishCapture, cancelCapture, speak, stopEngine, close };
+  return { prepare, ready, startCapture, feedCapture, finishCapture, cancelCapture, speak, cancelCurrent, stopEngine, close };
 }

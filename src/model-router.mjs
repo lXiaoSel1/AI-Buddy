@@ -8,14 +8,15 @@ import {MODEL_PRESETS,API_PROTOCOLS,presetFor,apiBaseUrl,localEndpoint} from './
 import {ApiTransport} from './api-transport.mjs';
 import {profileEffort,validateProfileEffort,cleanModelCatalog} from './reasoning-settings.mjs';
 import {nativeSearchCapability,nativeSearchSystem} from './native-search.mjs';
-import {imageInputCapability} from './model-images.mjs';
+import {ModelImageProbe} from './model-image-probe.mjs';
 const turnCancelled=()=>Object.assign(Error('对话已取消'),{code:'ABORT_ERR'});
 export class ModelRouter{
+  #imageProbes;
   get supportsSubmissionLifecycle(){return true;}
   constructor({codex,dataRoot,crypto,legacy=false,onChange=()=>{},onUsage=()=>{},onActivity=()=>{},audit=()=>{},fetchImpl,timeoutMs=110000,gameIdleTimeoutMs=120000,storeName='model-connections.json',presets=MODEL_PRESETS,protocols=API_PROTOCOLS,outputLimit=()=>8192,searchPolicy=()=>false,onNativeSearch=()=>{}}){
     if(!Number.isSafeInteger(gameIdleTimeoutMs)||gameIdleTimeoutMs<1||gameIdleTimeoutMs>2147483647)throw RangeError('Invalid game model idle timeout');
-    Object.assign(this,{codex,dataRoot,crypto,onChange,onActivity,audit,timeoutMs,gameIdleTimeoutMs,presets,protocols,outputLimit,searchPolicy,onNativeSearch});this.store=createSnapshotStorage(join(dataRoot,storeName));this.enabled=false;this.activeTurns=0;this.controllers=new Set();this.context=new AsyncLocalStorage();this.tail=Promise.resolve();this.transport=new ApiTransport({fetchImpl,onUsage,audit});
-    this.ready=readJson(this.store,null).then(async value=>{this.state=value??{version:1,activeId:legacy?'codex':null,profiles:legacy?[{id:'codex',kind:'codex',name:'本机 Codex 登录',protocol:'codex',baseUrl:'',model:codex.defaultModel,models:[]}]:[]};if(!value)await this.store.writeText(JSON.stringify(this.state));return this;});
+    Object.assign(this,{codex,dataRoot,crypto,onChange,onActivity,audit,timeoutMs,gameIdleTimeoutMs,presets,protocols,outputLimit,searchPolicy,onNativeSearch});this.store=createSnapshotStorage(join(dataRoot,storeName));this.#imageProbes=new ModelImageProbe({dataRoot});this.enabled=false;this.activeTurns=0;this.controllers=new Set();this.context=new AsyncLocalStorage();this.tail=Promise.resolve();this.transport=new ApiTransport({fetchImpl,onUsage,audit});
+    this.ready=readJson(this.store,null).then(async value=>{await this.#imageProbes.ready;this.state=value??{version:1,activeId:legacy?'codex':null,profiles:legacy?[{id:'codex',kind:'codex',name:'本机 Codex 登录',protocol:'codex',baseUrl:'',model:codex.defaultModel,models:[]}]:[]};if(!value)await this.store.writeText(JSON.stringify(this.state));return this;});
   }
   selected(){return this.context.getStore()?.profile??this.state?.profiles.find(profile=>profile.id===this.state.activeId)??null;}
   currentSelection(){const profile=this.selected();return profile&&profile.model?{provider:profile.id,model:profile.model}:null;}
@@ -23,7 +24,7 @@ export class ModelRouter{
   get currentName(){return this.selected()?.name??'尚未选择模型';}
   get currentKind(){return this.selected()?.kind??null;}
   status(){return {enabled:this.enabled,model:this.defaultModel,provider:this.currentKind,name:this.currentName,busy:this.activeTurns>0};}
-  publicProfile(profile){return {id:profile.id,kind:profile.kind,name:profile.name,protocol:profile.protocol,baseUrl:profile.baseUrl,model:profile.model,models:profile.models??[],...(this.protocols===API_PROTOCOLS?{reasoningEffort:profileEffort(profile),contextTokens:profile.contextTokens??null}:{}),keyConfigured:!!profile.keyCiphertext};}
+  publicProfile(profile){return {id:profile.id,kind:profile.kind,name:profile.name,protocol:profile.protocol,baseUrl:profile.baseUrl,model:profile.model,models:profile.models??[],...(this.protocols===API_PROTOCOLS?{reasoningEffort:profileEffort(profile),contextTokens:profile.contextTokens??null,imageCapability:this.imageCapability(profile)}:{}),keyConfigured:!!profile.keyCiphertext};}
   view(){return {...this.status(),codexModel:this.codex.defaultModel,activeId:this.state.activeId,presets:this.presets,profiles:this.state.profiles.map(profile=>this.publicProfile(profile))};}
   async mutate(fn){const result=this.tail.then(async()=>{await this.ready;const previous=this.state,next=structuredClone(previous);const value=await fn(next);await this.store.writeText(JSON.stringify(next));this.state=next;this.onChange(this.view());return value??this.view();});this.tail=result.catch(()=>{});return result;}
   validateDraft(draft,previous=null){
@@ -53,7 +54,7 @@ export class ModelRouter{
   async activate(id){return this.mutate(state=>{this.unlocked();const profile=state.profiles.find(value=>value.id===id);this.materialize(profile);state.activeId=id;if(this.codex.enabled)this.codex.setEnabled(false);});}
   setEnabled(value){if(value)this.materialize(this.selected());this.enabled=!!value;if(!this.enabled){for(const controller of this.controllers)controller.abort();this.codex.setEnabled(false);}this.onChange(this.state?this.view():null);}
   listProviders(){return this.state.profiles.map(profile=>({id:profile.id,name:profile.name}));}
-  listModels(id){const profile=this.state.profiles.find(value=>value.id===id);if(!profile)return [];return [...(profile.models??[]),...(profile.model&&!(profile.models??[]).some(value=>value.id===profile.model)?[{id:profile.model,name:profile.model}]:[])];}
+  listModels(id){const profile=this.state.profiles.find(value=>value.id===id);if(!profile)return [];return [...(profile.models??[]),...(profile.model&&!(profile.models??[]).some(value=>value.id===profile.model)?[{id:profile.model,name:profile.model}]:[])].map(model=>({...model,...(this.protocols===API_PROTOCOLS?{imageCapability:this.imageCapability({...profile,model:model.id})}:{})}));}
   resolveModelInfo(providerId,modelId){const profile=this.selected()?.id===providerId?this.selected():this.state.profiles.find(p=>p.id===providerId),effort=profileEffort(profile);return {reasoning:{efforts:effort?[{id:effort}]:[]}};}
   async runTurn(fn,signal,{background=false}={}){await this.ready;return this.scheduleTurn(this.selected(),fn,background?1:0,signal);}
   resolveConnection(binding){const dedicated=binding?.enabled===true,profile=dedicated?this.state?.profiles.find(p=>p.id===binding.connectionId):this.selected();const error=!profile?(dedicated?'角色关联的聊天连接已删除，请重新选择':'尚未选择全局聊天连接'):profile.enabled===false?'角色关联的聊天连接已停用':profile.capabilities?.chat===false?'该连接不支持聊天':!profile.model?'聊天连接未设置模型':null;return {mode:dedicated?'character':'global',connectionId:profile?.id??binding?.connectionId??null,name:profile?.name??'',model:profile?.model??'',error};}
@@ -66,7 +67,9 @@ export class ModelRouter{
   }
   captureConnection(binding){return structuredClone(binding?.enabled?this.state.profiles.find(p=>p.id===binding.connectionId):this.selected());}
   resolveSearchCapability(binding){const profile=binding?.enabled?this.state?.profiles.find(p=>p.id===binding.connectionId):this.selected();return nativeSearchCapability(profile??{});}
-  resolveImageCapability(binding){return imageInputCapability(this.captureConnection(binding));}
+  imageCapability(profile){return this.#imageProbes.capability(profile);}
+  ensureImageCapability(profile,options){return this.#imageProbes.ensure(this,profile,options);}
+  resolveImageCapability(binding){return this.imageCapability(this.captureConnection(binding));}
   async runCaptured(profile,fn,signal,{background=false}={}){await this.ready;if(!profile)throw Error('聊天连接不存在');return this.scheduleTurn(profile,fn,background?1:0,signal);}
   async runProfile(id,fn,signal,{background=false}={}){await this.ready;const profile=this.state.profiles.find(p=>p.id===id);if(!profile)throw Error('角色关联的聊天连接不存在');const route=this.resolveConnection({enabled:true,connectionId:id});if(route.error)throw Error(route.error);return this.scheduleTurn(profile,fn,background?1:0,signal);}
   async runBackground(profile,fn,signal){await this.ready;return this.scheduleTurn(profile,fn,1,signal);}

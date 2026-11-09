@@ -1,5 +1,5 @@
 import {assertR95CompanionCompatible} from './r95-data-compatibility.mjs';
-import {join} from 'node:path';
+import {join,resolve} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {createSnapshotStorage,readJson} from './storage.mjs';
 import {currentLife} from './companion-life.mjs';
@@ -20,13 +20,23 @@ export function migrateCharacterTalkativeness(state,at=Date.now()){
  }
 }
 const copy=value=>structuredClone(value);
+// Guards may inspect a few live fields without copying the archive. Wrap lazily
+// so neither assignment nor descriptor access can change committed state.
+function readOnlyGuardState(state){
+ const views=new WeakMap(),reject=()=>{throw TypeError('Companion mutation guards are read-only');};
+ const view=value=>{
+  if(!value||typeof value!=='object')return value;if(views.has(value))return views.get(value);
+  const proxy=new Proxy(value,{get:(target,key,receiver)=>view(Reflect.get(target,key,receiver)),getOwnPropertyDescriptor(target,key){const descriptor=Reflect.getOwnPropertyDescriptor(target,key);return descriptor&&'value'in descriptor?{...descriptor,value:view(descriptor.value)}:descriptor;},set:reject,deleteProperty:reject,defineProperty:reject,setPrototypeOf:reject,preventExtensions:reject});
+  views.set(value,proxy);return proxy;
+ };return view(state);
+}
 const text=(value,limit=20000)=>{if(typeof value!=='string')throw Error('文本字段格式无效');if([...value].length>limit)throw Error(`文本超过 ${limit} 字符；原文未截断`);return value.replace(/\r\n?/g,'\n').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,'');};
 export const progress=(value={})=>({level:Math.max(1,Math.floor(Number(value.level)||1)),affection:Math.max(0,Number(value.affection)||0)});
 export const cap=level=>30+(Math.max(1,level)-1)*15;
 export function advanceProgress(value,delta){const next=progress(value);next.affection=Math.max(0,next.affection+delta);const levels=[];while(next.affection>=cap(next.level)){next.affection-=cap(next.level);next.level++;levels.push(next.level);}return {...next,levels};}
 function initial(){return {schema:1,migrated:false,activeCharacterId:'deepseek',activePersonaId:DEFAULT_PERSONA_ID,activeConversationId:null,activeGroupId:null,cards:{},personas:{[DEFAULT_PERSONA_ID]:{id:DEFAULT_PERSONA_ID,name:'默认身份',nickname:'你',createdAt:Date.now(),relationships:{}}},relationships:{},conversations:{},groups:{},touchQuotas:{},events:{},draftCards:{},settings:{allowUserMessageEdit:false}};}
-export async function openCompanionStore(dataRoot,{media=null}={}){
- const disk=createSnapshotStorage(join(dataRoot,'galgame','companion.json'));let state=await readJson(disk,null);if(!state)state=initial();assertR95CompanionCompatible(state);
+export async function openCompanionStore(dataRoot,{media=null,deferredSaveRegistry=null}={}){
+ const target=join(dataRoot,'galgame','companion.json'),scope=resolve(dataRoot),disk=createSnapshotStorage(target,{deferWrites:true});let state=await readJson(disk,null);if(!state)state=initial();assertR95CompanionCompatible(state);
  if(state.schema===1){state={...state,schema:2,minimumWriter:'r95-social-core-v1',requiredCapabilities:['social-core-state-v1'],r95Migration:{from:1,to:2,at:Date.now(),minimumWriterCapability:'social-core-v1'}};await disk.writeText(JSON.stringify(state));}
  // One serialization per change (B4): the body is compared without the revision,
  // which is then written first.
@@ -38,7 +48,8 @@ export async function openCompanionStore(dataRoot,{media=null}={}){
   if(!media)return;const before=new Map();for(const [holder,key,path]of imageSlots(state))before.set(path,holder[key]);
   for(const [holder,key,path]of imageSlots(next)){const value=holder[key];if(typeof value!=='string'||!value.startsWith('data:image/')||before.get(path)===value)continue;const url=media.put(value);if(url)holder[key]=url;}
  }
- const api={get state(){return state;},async mutate(fn,{storeImages:convert=true}={}){const task=tail.then(async()=>{const next=measureDesktopDiagnostic('companion-clone',()=>copy(state));const result=await fn(next);if(convert)storeImages(next);const text=body(next);if(text===current)return result;next.revision=(Number(state.revision)||0)+1;await disk.writeText('{"revision":'+next.revision+(text==='{}'?'}':','+text.slice(1)));state=next;current=text;return result;});tail=task.catch(()=>{});return task;},async flush(){await tail;},snapshot:()=>copy(state)};
+ const api={get state(){return state;},async mutate(fn,{storeImages:convert=true,guard}={}){const task=tail.then(async()=>{if(guard){const proceed=guard(readOnlyGuardState(state));if(typeof proceed!=='boolean')throw TypeError('Companion mutation guards must return a boolean synchronously');if(!proceed)return;}const next=measureDesktopDiagnostic('companion-clone',()=>copy(state));const result=await fn(next);if(convert)storeImages(next);const text=body(next);if(text===current)return result;next.revision=(Number(state.revision)||0)+1;await disk.writeText('{"revision":'+next.revision+(text==='{}'?'}':','+text.slice(1)));state=next;current=text;return result;});tail=task.catch(()=>{});return task;},async flush(){await tail;if(deferredSaveRegistry)await deferredSaveRegistry.flushAll({scope});else await disk.flush();},async drain(){await tail;await disk.drain();},releaseDeferredSave:()=>release?.(),snapshot:()=>copy(state)};
+ const release=deferredSaveRegistry?.register('companion',{target,scope,drain:()=>api.drain(),flushSync:()=>disk.flushSync()});
  return api;
 }
 export function makeCard(raw,previous=null,{draft=false}={}){
@@ -50,6 +61,9 @@ export function makeCard(raw,previous=null,{draft=false}={}){
  return {...previous,id,name,nameCustomized:previous?.nameCustomized===true||!!previous&&name!==previous.name,builtin:previous?.builtin===true,talkativeness:cardTalkativeness(Object.hasOwn(raw,'talkativeness')?raw.talkativeness:previous?.talkativeness??.5),fields,examples:examples.map(row=>({scene:text(row.scene??'',5000),speaker:text(row.speaker??'',100),text:text(row.text??'',20000)})),modelBinding:{enabled:binding.enabled,connectionId:binding.enabled?text(binding.connectionId,200):null},avatar:text(raw.avatar??previous?.avatar??'',26_000_000),revision:(previous?.revision??0)+1,updatedAt:Date.now(),draft};
 }
 export function effectiveCard(card){const value={...(card.defaults??{})};for(const key of CARD_FIELDS){const field=card.fields?.[key];if(field?.mode==='empty')value[key]='';else if(field?.mode==='custom')value[key]=field.value;}return {...value,name:card.name,examples:card.examples??[]};}
+// Reads a relationship without adding default entries, so callers need no copy of the archive.
+// Same values as relationshipFor would return on a throwaway copy.
+export function relationshipView(state,characterId,personaId=state.activePersonaId){const entry=state.relationships?.[characterId];if(!entry)return {level:1,affection:0};if(entry.mode==='shared')return entry.shared??{level:1,affection:0};return entry.byPersona?.[personaId]??{level:1,affection:0};}
 export function relationshipFor(state,characterId,personaId=state.activePersonaId){const entry=state.relationships[characterId]??={mode:'independent',byPersona:{}};if(entry.mode==='shared')return entry.shared??={level:1,affection:0};return entry.byPersona[personaId]??={level:1,affection:0};}
 export function conversationFor(state,characterId=state.activeCharacterId,personaId=state.activePersonaId,{fresh=false,title=''}={}){
  if(!Object.hasOwn(state.cards,characterId)||!Object.hasOwn(state.personas,personaId))throw Error('角色或身份不存在');const lifeId=state.lives?.[characterId]?.id;let row=!fresh&&Object.values(state.conversations).filter(row=>row.characterId===characterId&&row.personaId===personaId&&(!lifeId||row.lifeId===lifeId)&&!row.archived).sort((a,b)=>b.updatedAt-a.updatedAt)[0];

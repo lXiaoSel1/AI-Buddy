@@ -9,6 +9,19 @@ export function createAutoService({store,now=()=>Date.now(),dispatchTurn,cancelT
  function groupOf(state,id){const group=state.groups?.[id];if(!group)throw socialError('AUTO_GROUP_INVALID','群聊不存在');return group;}
  function autoOf(state,id){const group=groupOf(state,id);if(!group.auto)throw socialError('AUTO_NOT_STARTED','Auto尚未启动');return {group,auto:group.auto};}
  function retire(auto,reason,status){const pending=auto.pending;if(!pending)return null;auto.retiredRequests??={};auto.retiredRequests[pending.requestId]={...copy(pending),previousStatus:pending.status,status:status??(pending.status==='unknown'?'unknown':'cancelled'),reason,retiredAt:now()};auto.pending=null;return copy(auto.retiredRequests[pending.requestId]);}
+ // This decision runs synchronously inside the store queue, before any archive
+ // copy. A skipped wait leaves the state untouched; transitions still mutate.
+ function nextDecision(state,groupId){
+  const {group,auto}=autoOf(state,groupId);assertSocialScope(state,auto.scope);
+  if(auto.status!=='active')return {skipped:auto.status};
+  if(!socialSettings(state).auto)return {change:'disabled'};
+  if(!sameMembers(group.memberIds,auto.groupMemberSnapshot))return {change:'members-changed'};
+  if(auto.pending)return {skipped:'pending',requestId:auto.pending.requestId};
+  if(attentionAvailability(state,now()).doNotDisturb)return {change:'do-not-disturb'};
+  const runtime=getRuntimeState({groupId,scope:{...auto.scope}})??{};
+  if(runtime.typing||runtime.presenting||runtime.audioPlaying||runtime.waitingForReply||runtime.awaitingUserAnswer||runtime.canPresent===false)return {skipped:'presentation-barrier'};
+  return {change:'reserve'};
+ }
  const api={
   async start({groupId,mode='rounds',rounds=6,memberIds,scope,authorizationId}={}){
    if(!['rounds','until-stopped','ai-end'].includes(mode)||mode==='rounds'&&(!Number.isSafeInteger(rounds)||rounds<1||rounds>100000)||typeof authorizationId!=='string'||!authorizationId)throw socialError('AUTO_AUTHORIZATION_REQUIRED','请选择有效的Auto模式并确认本次启动');
@@ -18,13 +31,12 @@ export function createAutoService({store,now=()=>Date.now(),dispatchTurn,cancelT
   },
   async next({groupId}={}){
    if(flights.has(groupId))return flights.get(groupId);
-   const task=(async()=>{let reservation,cancellation;
-    await store.mutate(state=>{const {group,auto}=autoOf(state,groupId);assertSocialScope(state,auto.scope);if(auto.status!=='active'){reservation={skipped:auto.status};return;}if(!socialSettings(state).auto){auto.status='paused';auto.pauseReason='disabled';reservation={skipped:'disabled'};return;}if(!sameMembers(group.memberIds,auto.groupMemberSnapshot)){cancellation=retire(auto,'members-changed');auto.status='ended';auto.endedReason='members-changed';auto.endedAt=now();auto.generation++;reservation={skipped:'members-changed'};return;}if(auto.pending){reservation={skipped:'pending',requestId:auto.pending.requestId};return;}
-     if(attentionAvailability(state,now()).doNotDisturb){auto.status='paused';auto.pauseReason='do-not-disturb';reservation={skipped:'do-not-disturb'};return;}
-     const runtime=getRuntimeState({groupId,scope:auto.scope})??{};if(runtime.typing||runtime.presenting||runtime.audioPlaying||runtime.waitingForReply||runtime.awaitingUserAnswer||runtime.canPresent===false){reservation={skipped:'presentation-barrier'};return;}
+   const task=(async()=>{let reservation,cancellation,decision;
+    await store.mutate(state=>{const {group,auto}=autoOf(state,groupId),current=decision??nextDecision(state,groupId);if(current.skipped){reservation=current;return;}if(current.change==='disabled'){auto.status='paused';auto.pauseReason='disabled';reservation={skipped:'disabled'};return;}if(current.change==='members-changed'){cancellation=retire(auto,'members-changed');auto.status='ended';auto.endedReason='members-changed';auto.endedAt=now();auto.generation++;reservation={skipped:'members-changed'};return;}
+     if(current.change==='do-not-disturb'){auto.status='paused';auto.pauseReason='do-not-disturb';reservation={skipped:'do-not-disturb'};return;}
      const characterId=auto.members[auto.opportunityIndex],life=state.lives?.[characterId];if(!life)throw socialError('AUTO_MEMBERS_INVALID','成员人生不可用');
      const requestId='auto-turn-'+randomUUID();auto.pending={requestId,characterId,lifeId:life.id,operationId:life.operationId,roundIndex:auto.roundIndex,opportunityIndex:auto.opportunityIndex,generation:auto.generation,status:'reserved',at:now()};reservation={...copy(auto.pending),autoSessionId:auto.id,groupId,personaId:group.personaId,muted:group.mutedIds?.includes(characterId)===true};
-    });
+    },{guard:state=>{decision=nextDecision(state,groupId);if(decision.skipped){reservation=decision;return false;}return true;}});
     if(reservation.skipped){if(cancellation)await cancelTurn({...cancellation,groupId});return reservation;}
     const check=autoOf(store.state,groupId).auto;if(check.status!=='active'||check.generation!==reservation.generation){await store.mutate(state=>{const {auto}=autoOf(state,groupId);if(auto.pending?.requestId===reservation.requestId&&auto.pending.status==='reserved')auto.pending=null;});return {skipped:'authorization-changed'};}
     try{if(typeof dispatchTurn!=='function')throw socialError('AUTO_DISPATCH_UNAVAILABLE','群聊调度尚未接入');await dispatchTurn(reservation);return {dispatched:true,...reservation};}catch(error){await api.failOpportunity({groupId,requestId:reservation.requestId,error});throw error;}

@@ -23,6 +23,7 @@ export function createPresentationState(){
   beginInput:(scope,id)=>begin(scope,'input',id),endInput:(scope,id)=>end(scope,'input',id),
   beginRequest:(scope,id)=>begin(scope,'requests',id),endRequest:(scope,id)=>end(scope,'requests',id),
   beginPresentation(scope,{id=randomUUID(),hasAudio=false,autoRequestId,characterId}={}){const row=state(scope);if(!row.presentations.has(id)){row.presentations.set(id,{textDone:false,audioDone:!hasAudio,autoRequestId,characterId});revision++;}return id;},
+  attachAudio(scope,id){const value=state(scope).presentations.get(id);if(!value)return false;value.audioDone=false;revision++;return true;},
   presentation(scope,id){const value=state(scope).presentations.get(id);return value?{id,...value}:null;},
   cancelPresentation:(scope,id)=>end(scope,'presentation',id),
   cancelAutoPresentations(scope,{completed={},retiredRequests={}}={}){const row=state(scope);let changed=false;for(const [id,value]of row.presentations)if(value.autoRequestId&&(Object.hasOwn(completed,value.autoRequestId)||Object.hasOwn(retiredRequests,value.autoRequestId))){row.presentations.delete(id);changed=true;}if(changed)revision++;return changed;},

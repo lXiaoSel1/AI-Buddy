@@ -10,6 +10,7 @@ import {createSnapshotStorage} from './storage.mjs';
 import {writeAtomic} from './atomic-write.mjs';
 import {registeredDataPath,normalizedPipe} from './installation-record.mjs';
 import {requestLocalControl} from './local-control.mjs';
+import {deferredSaves} from './deferred-saves.mjs';
 
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const json=p=>JSON.parse(readFileSync(p,'utf8'));
@@ -24,7 +25,7 @@ export const IMPORT_GUARD='import-work-paused.json';
 export async function fileSha(path,signal){const hash=createHash('sha256');for await(const chunk of createReadStream(path)){if(signal?.aborted)throw aborted();hash.update(chunk);}return hash.digest('hex');}
 export function fileIndexSha(files){return digest(files.map(f=>f.path+'\t'+f.bytes+'\t'+f.sha256+'\n').join(''));}
 export async function importInventory(root,{signal,onFile=()=>{}}={}){
- root=await realpath(root);const files=[],exclusions=[],stack=[{path:root,prefix:''}];
+ await deferredSaves.flushAll({scope:root});root=await realpath(root);const files=[],exclusions=[],stack=[{path:root,prefix:''}];
  while(stack.length){if(signal?.aborted)throw aborted();const dir=stack.pop();
   for(const entry of await readdir(dir.path,{withFileTypes:true})){
    const path=join(dir.path,entry.name),rel=dir.prefix+entry.name;
@@ -43,8 +44,10 @@ export async function importInventory(root,{signal,onFile=()=>{}}={}){
  return {files,exclusions,bytes:files.reduce((n,f)=>n+f.bytes,0),sha256:fileIndexSha(files)};
 }
 
-// Inspection never opens a game, publishes a snapshot, or runs retention.
+// Inspection never opens a game. Registered current stores are flushed first;
+// an unregistered offline source remains read-only and does not run retention.
 export async function inspectSnapshot(path){
+ await deferredSaves.beforeRead(path);
  const journal=path+'.snapshots/commits.jsonl';
  if(!existsSync(journal)){if(!existsSync(path))return null;const s=await lstat(path);if(s.isSymbolicLink()||!s.isFile())throw Error('存档记录不可读取：'+path);return JSON.parse(await readFile(path,'utf8'));}
  for(const limit of [64,1024,16384]){
@@ -105,7 +108,8 @@ export async function pauseImportedWork(dataRoot,{planId,sourceIdentity,now=Date
 }
 
 export function createDataImportService({root,dataRoot,build,pipe,manager,onboarding=false,chooseSource=async()=>null,onState=()=>{},onBarrier=()=>{},onCreateNew=async()=>{},query=requestLocalControl,launchCommit=null,freeBytes=null,copyCheckpoint=()=>{}}){
- root=resolve(root);dataRoot=resolve(dataRoot);const plans=new Map();let selected=null,controller=null,active=null,closed=false;
+ root=resolve(root);dataRoot=resolve(dataRoot);const plans=new Map();let selected=null,controller=null,active=null,closed=false,resumeSaves=null;
+ const resumeDeferredSaves=()=>{resumeSaves?.();resumeSaves=null;};
  let state={onboarding,phase:'idle',canCancel:false};
  const currentGuard=()=>{try{const value=json(join(dataRoot,IMPORT_GUARD));return value?.version===1&&typeof value.active==='boolean'?value:{version:1,active:true,invalid:true};}catch(error){return error.code==='ENOENT'?null:{version:1,active:true,invalid:true};}};
  const view=()=>({...structuredClone(state),importedWorkPaused:currentGuard()?.active===true});
@@ -155,20 +159,26 @@ export function createDataImportService({root,dataRoot,build,pipe,manager,onboar
     sourceIdentity:plan.sourceIdentity,filesSha256:final.sha256,files:final.files,state:'ready'};
    const commitPath=join(plan.directory,'commit-plan.json');save(commitPath,commit);save(join(plan.directory,'COPY-RECEIPT.json'),{sourceFilesSha256:plan.filesSha256,targetFilesSha256:final.sha256,sourceUnchanged:true,normalization,at:new Date().toISOString()});
    update({phase:'waiting',canCancel:true});
-   if(launchCommit){await launchCommit(commit,commitPath);update({phase:'complete',canCancel:false});active=null;onBarrier(false);}
+   if(launchCommit){await launchCommit(commit,commitPath);update({phase:'complete',canCancel:false});active=null;resumeDeferredSaves();onBarrier(false);}
    else {
     if(!manager||!existsSync(manager))throw Error('同版本维护器缺失，请修复程序后重试；导入副本已保留');
     const receipt=join(plan.directory,'commit-receipt.json');
     const child=spawn(manager,['--headless','--action=data-import-commit','--root='+root,'--import-plan='+commitPath,'--receipt='+receipt],{windowsHide:true,detached:true,stdio:'ignore'});
     await new Promise((yes,no)=>{child.once('error',no);child.once('spawn',yes);});
     child.unref();
-    child.once('exit',code=>{if(closed)return;try{const result=json(receipt);update({phase:result.ok?'complete':'failed',error:result.error??null,canCancel:false});}catch{update({phase:'failed',error:'维护器退出，原资料指向已保留或将恢复；请查看导入回执（'+code+'）',canCancel:false});}finally{active=null;onBarrier(false);}});
+    child.once('exit',code=>{if(closed)return;try{const result=json(receipt);update({phase:result.ok?'complete':'failed',error:result.error??null,canCancel:false});}catch{update({phase:'failed',error:'维护器退出，原资料指向已保留或将恢复；请查看导入回执（'+code+'）',canCancel:false});}finally{active=null;resumeDeferredSaves();onBarrier(false);}});
    }
-  }catch(error){update({phase:signal.aborted?'cancelled':'failed',error:error.message,canCancel:false});active=null;onBarrier(false);}
+  }catch(error){update({phase:signal.aborted?'cancelled':'failed',error:error.message,canCancel:false});active=null;resumeDeferredSaves();onBarrier(false);}
  }
  async function start({planId,sourceClosed=false}={}){
   pending();if(sourceClosed!==true)throw Error('请确认旧版应用已经退出');const plan=plans.get(planId);if(!plan||state.plan?.planId!==planId)throw Error('导入预览已过期，请重新选择');
-  controller=new AbortController();active=plan;onBarrier(true);update({phase:'copying',canCancel:true,error:null});void execute(plan);return {started:true,planId};
+  // The copy targets a new profile; this instance retains its old absolute
+  // dataRoot until the maintenance process restarts onto the imported profile.
+  // Pausing before flushing also prevents the hourly timer during the copy.
+  controller=new AbortController();active=plan;onBarrier(true);update({phase:'copying',canCancel:true,error:null});
+  resumeSaves=deferredSaves.pause({scope:dataRoot});
+  try{await deferredSaves.flushAll({scope:dataRoot});}catch(error){active=null;resumeDeferredSaves();onBarrier(false);update({phase:'failed',error:error.message,canCancel:false});throw error;}
+  void execute(plan);return {started:true,planId};
  }
  async function cancel({planId}={}){
   if(planId&&active?.id!==planId&&state.plan?.planId!==planId)throw Error('导入任务不匹配');
@@ -184,6 +194,6 @@ export function createDataImportService({root,dataRoot,build,pipe,manager,onboar
   async createNew(){pending();if(!state.onboarding)throw Error('当前资料已经初始化');await onCreateNew();return {ok:true};},
   async resumeWork(){const guard=currentGuard();if(guard?.active){guard.active=false;guard.resumedAt=Date.now();writeAtomic(join(dataRoot,IMPORT_GUARD),JSON.stringify(guard));}onState(view());return {ok:true};},
   automaticWorkAllowed:()=>currentGuard()?.active!==true,
-  close(){closed=true;if(active&&['copying','verifying'].includes(state.phase))controller?.abort();},
+  close(){closed=true;if(active&&['copying','verifying'].includes(state.phase))controller?.abort();resumeDeferredSaves();},
  };
 }

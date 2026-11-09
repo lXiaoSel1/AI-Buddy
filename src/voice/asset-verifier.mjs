@@ -15,7 +15,7 @@ export function createVoiceAssetVerifier({workerPath}={}){
       if(message.type!=='done'&&message.type!=='error')return;
       jobs.delete(job.key);
       const error=message.type==='error'?Object.assign(Error(message.error.message),{name:message.error.name,code:message.error.code}):null;
-      for(const client of [...job.clients])client.finish(error);if(!jobs.size)child.unref();
+      for(const client of [...job.clients])client.finish(error,message.value);if(!jobs.size)child.unref();
     });
     child.on('error',()=>{if(worker===child){worker=undefined;rejectAll(fault());}});
     child.on('exit',()=>{if(worker===child){worker=undefined;rejectAll(fault());}});
@@ -26,12 +26,12 @@ export function createVoiceAssetVerifier({workerPath}={}){
     let job=jobs.get(key),fresh=!job;
     if(!job){job={key,id:++serial,clients:new Set()};jobs.set(key,job);}
     return new Promise((resolve,reject)=>{
-      const client={onProgress,finish(error){signal?.removeEventListener('abort',cancel);job.clients.delete(client);error?reject(error):resolve();}};
+      const client={onProgress,finish(error,value){signal?.removeEventListener('abort',cancel);job.clients.delete(client);error?reject(error):resolve(value);}};
       const cancel=()=>{client.finish(abort());if(!job.clients.size){jobs.delete(key);child.postMessage({type:'cancel',id:job.id});if(!jobs.size)child.unref();}};
       job.clients.add(client);signal?.addEventListener('abort',cancel,{once:true});
       if(signal?.aborted){cancel();return;}
       if(fresh){
-        const plan=known.has(key)?undefined:{destination:selected.destination,files:selected.descriptor.files};known.add(key);child.ref();
+        const plan=known.has(key)?undefined:{destination:selected.destination,files:selected.descriptor.files,proof:selected.proof,proofFile:selected.proofFile};known.add(key);child.ref();
         try{child.postMessage({type:'verify',id:job.id,key,plan});}catch{jobs.delete(key);known.delete(key);for(const pending of [...job.clients])pending.finish(fault());if(!jobs.size)child.unref();}
       }
     });

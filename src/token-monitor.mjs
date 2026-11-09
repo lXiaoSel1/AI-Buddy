@@ -25,8 +25,26 @@ import {validateSource} from './token-sources.mjs';
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const sum=(a,b)=>{for(const k of Object.keys(emptyUsage())){a[k]+=(typeof b[k]==='number'?b[k]:0);if(k==='requests')continue;const missing=b.fieldMissing?.[k]||(b[k]===null&&b.requests>0?b.requests:0);if(missing){a.fieldMissing??={};a.fieldMissing[k]=(a.fieldMissing[k]||0)+missing;}}return a;};
 const total=row=>Object.values(row).filter(v=>v&&typeof v==='object'&&typeof v.total==='number').reduce((n,u)=>n+u.total,0);
+// Aggregate partitions contain dimensions/session summaries, never historical request payloads.
+function combineGenericParts(parts,now){
+ const totals={},daily=new Map(),projects=new Map(),cube=new Map(),sessions=new Map();let missingRequests=0,workSinceStart=0;
+ for(const part of parts){
+  for(const[tool,u]of Object.entries(part.totals))sum(totals[tool]??=emptyUsage(),u);
+  for(const row of part.daily){const out=daily.get(row.date)??{date:row.date};for(const[tool,u]of Object.entries(row))if(tool!=='date')sum(out[tool]??=emptyUsage(),u);daily.set(row.date,out);}
+  for(const row of part.projects){const out=projects.get(row.workspace)??{workspace:row.workspace,sessions:0};for(const[tool,u]of Object.entries(row))if(!['workspace','sessions'].includes(tool))sum(out[tool]??=emptyUsage(),u);projects.set(row.workspace,out);}
+  for(const row of part.cube){const{usage,missingRequests:missing,...dimensions}=row,key=JSON.stringify(dimensions),out=cube.get(key)??{...dimensions,usage:emptyUsage(),missingRequests:0};sum(out.usage,usage);out.missingRequests+=missing;cube.set(key,out);}
+  for(const row of part.sessions){let out=sessions.get(row.key);if(!out){out={...row,usage:structuredClone(row.usage)};sessions.set(row.key,out);}else{sum(out.usage,row.usage);out.missingRequests+=row.missingRequests;if(Date.parse(row.lastActivity)>=Date.parse(out.lastActivity))for(const key of ['lastActivity','model','serviceProvider','status','displayStatus','feedbackEligible'])out[key]=row[key];}}
+  missingRequests+=part.missingRequests;workSinceStart+=part.workSinceStart;
+ }
+ for(const row of sessions.values()){const project=projects.get(row.workspace||'未记录项目');if(project)project.sessions++;row.displayStatus=row.status==='running'&&now-Date.parse(row.lastActivity)>120000?'unknown':row.status;}
+ return {totals,daily:[...daily.values()],projects:[...projects.values()],cube:[...cube.values()],sessions:[...sessions.values()],missingRequests,workSinceStart};
+}
+// The source file can affect attribution; its per-request row index cannot.
+// Including location.index made every real file-backed group heterogeneous and
+// forced an otherwise append-only snapshot to replay its entire history.
+const snapshotShape=r=>JSON.stringify([r.mode,r.tool,r.sessionId,r.sourceId,r.workspace,r.purpose,r.subagent,r.connectionIdentity,r.location?.file,r.nativeParentId,r.parentId]);
 export class GenericTokenLedger {
- constructor(repository=null){this.repository=repository;this.records=repository?repository.map("generic"):new Map();this.pending=[];this.revision=0;this.startedAt=Date.now();this.groups=repository?{keys:()=>repository.groups(['generic']),get(key){return {values:function*(){for(const[,v]of repository.entries('generic',{group:key,ordered:true}))yield v;}};}}:new Map();this.dirtyGroups=new Set();this.snapshotDirty=new Set();this.snapshotPartitions=new Map();this.snapshotBuilds=0;}
+ constructor(repository=null){this.repository=repository;this.records=repository?repository.map("generic"):new Map();this.pending=[];this.revision=0;this.startedAt=Date.now();this.groups=repository?{keys:()=>repository.groups(['generic']),get(key){return {values:function*(){for(const[,v]of repository.entries('generic',{group:key,ordered:true}))yield v;}};}}:new Map();this.dirtyGroups=new Set();this.snapshotDirty=new Set();this.snapshotPartitions=new Map();this.snapshotBuilds=0;this.snapshotCheckpoints=new Map();}
  ingest(event,persist=true){
   if(!event.timestamp)return false;
   const key=event.tool+':'+event.sessionId+':'+event.requestId,old=this.records.get(key),value={...event,key,workBase:old?.workBase??(event.workEligible===false?(event.usage.total||0):0)};
@@ -45,7 +63,7 @@ export class GenericTokenLedger {
    if(row.mode==='cumulative'){if(this.repository)continue;const k=row.tool+':'+row.sessionId;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(row);}else add(row,row.usage);
   }
   const cumulative=this.repository?(function*(repo){for(const key of repo.groups(['generic']))yield (function*(){for(const[,r]of repo.entries('generic',{group:key,ordered:true,tieRequest:true})){const source=settings.get(r.sourceId);if(r.mode!=='cumulative'||(source?.overlapGroup||r.overlapGroup)&&(source?.primary??r.primary)===false||r.tool==='companion'&&r.reportedProvider==='codex'&&legacySessions.has(r.sessionId))continue;yield r;}})();})(this.repository):groups.values();
-  for(let rows of cumulative){if(!this.repository)rows.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp)||String(a.requestId).localeCompare(String(b.requestId)));let previous=emptyUsage();for(const r of rows){if(r.usage.total===null){add(r,r.usage);continue;}if(r.usage.total<previous.total)continue;const u={...r.usage};for(const k of Object.keys(emptyUsage()))if(k!=='requests'&&u[k]!==null)u[k]=Math.max(0,u[k]-(previous[k]||0));u.requests=u.total>0?1:0;add(r,u);for(const k of Object.keys(emptyUsage()))previous[k]=Math.max(previous[k]||0,r.usage[k]||0);}}
+  for(let rows of cumulative){if(!this.repository)rows.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp)||String(a.requestId).localeCompare(String(b.requestId)));let previous=this.snapshotInitialPrevious??emptyUsage();for(const r of rows){if(r.usage.total===null){add(r,r.usage);continue;}if(r.usage.total<previous.total)continue;const u={...r.usage};for(const k of Object.keys(emptyUsage()))if(k!=='requests'&&u[k]!==null)u[k]=Math.max(0,u[k]-(previous[k]||0));u.requests=u.total>0?1:0;add(r,u);for(const k of Object.keys(emptyUsage()))previous[k]=Math.max(previous[k]||0,r.usage[k]||0);}this.snapshotFinalPrevious=previous;}
   function add(r,u){const source=settings.get(r.sourceId);r=workUsage?.projectRow(r,{...r,id:r.sessionId,provider:r.tool,path:r.location?.file??source?.path,parentId:r.nativeParentId??r.parentId??null})??r;r={...r,...resolveIdentity(r,source)};const key=r.tool+':'+r.sessionId;let s=sessions.get(key);if(!s){s={key,id:r.sessionId,provider:r.tool,tool:r.tool,sourceId:r.sourceId,workspace:r.workspace,...r.workAttribution?{rawNativeWorkspace:r.rawNativeWorkspace,sourcePath:r.sourcePath,workAttribution:r.workAttribution,projectId:r.projectId}:{},model:r.model,serviceProvider:r.serviceProvider,reportedProvider:r.reportedProvider,companion:r.purpose!=='work',purpose:r.purpose,subagent:r.subagent,status:'unknown',displayStatus:'unknown',usage:emptyUsage(),missingRequests:0,lastActivity:null,createdAt:r.timestamp};sessions.set(key,s);}
    if(!s.lastActivity||Date.parse(r.timestamp)>=Date.parse(s.lastActivity)){Object.assign(s,{lastActivity:r.timestamp,model:r.model,serviceProvider:r.serviceProvider,status:r.status,displayStatus:r.status,feedbackEligible:r.tool!=='dsh'&&r.workEligible===true&&Date.parse(r.timestamp)>=startedAt&&(r.observedAt||0)>=startedAt});}
    if(!totals[r.tool])totals[r.tool]=emptyUsage();sum(totals[r.tool],u);sum(s.usage,u);
@@ -60,25 +78,22 @@ export class GenericTokenLedger {
  }
  partitionedSnapshot(sources,now,legacySessions,workUsage){
   const signature=JSON.stringify([sources,[...legacySessions],workUsage?.key,this.startedAt]);
-  if(this.partitionSignature!==signature){this.snapshotPartitions.clear();this.partitionSignature=signature;}
+  if(this.partitionSignature!==signature){this.snapshotPartitions.clear();this.snapshotCheckpoints.clear();this.partitionSignature=signature;}
   const keys=new Set(this.repository.groups(['generic']));
   for(const key of keys)if(!this.snapshotPartitions.has(key)||this.snapshotDirty.has(key)){
-   const shard=new GenericTokenLedger();shard.startedAt=this.startedAt;
-   for(const[id,row]of this.repository.entries('generic',{group:key,ordered:true,tieRequest:true}))shard.records.set(id,row);
-   this.snapshotPartitions.set(key,shard.snapshot(sources,now,legacySessions,workUsage));this.snapshotDirty.delete(key);
+   const prior=this.snapshotCheckpoints.get(key),mutations=prior?this.repository.mutationSummary('generic',key,prior.generation):null;
+   const append=!!mutations?.length&&prior.shape!==null&&mutations.every(([,row])=>Date.parse(row.timestamp)>prior.boundary&&snapshotShape(row)===prior.shape);
+   const input=append?mutations.sort((a,b)=>Date.parse(a[1].timestamp)-Date.parse(b[1].timestamp)||String(a[1].requestId).localeCompare(String(b[1].requestId))||(a[2]??0)-(b[2]??0)):this.repository.entries('generic',{group:key,ordered:true,tieRequest:true});
+   const shard=new GenericTokenLedger();shard.startedAt=this.startedAt;shard.snapshotInitialPrevious=structuredClone(append?prior.previous:emptyUsage());let boundary=append?prior.boundary:-Infinity,shape=append?prior.shape:undefined;
+   for(const[id,row]of input){shard.records.set(id,row);boundary=Math.max(boundary,Date.parse(row.timestamp)||0);const current=snapshotShape(row);shape=shape===undefined?current:shape===current?shape:null;}
+   const delta=shard.snapshot(sources,now,legacySessions,workUsage),part=append?combineGenericParts([this.snapshotPartitions.get(key),delta],now):delta;
+   this.snapshotPartitions.set(key,part);this.snapshotDirty.delete(key);
+   if(this.repository.mutationSummary('generic',key,this.repository.commitGeneration))this.snapshotCheckpoints.set(key,{generation:this.repository.commitGeneration,boundary,shape,previous:shard.snapshotFinalPrevious??shard.snapshotInitialPrevious});else this.snapshotCheckpoints.delete(key);
   }
-  for(const key of this.snapshotPartitions.keys())if(!keys.has(key))this.snapshotPartitions.delete(key);
-  const totals={},daily=new Map(),projects=new Map(),cube=new Map(),sessions=[];let missingRequests=0,workSinceStart=0;
-  for(const part of this.snapshotPartitions.values()){
-   for(const [tool,u]of Object.entries(part.totals))sum(totals[tool]??=(emptyUsage()),u);
-   for(const row of part.daily){const out=daily.get(row.date)??{date:row.date};for(const[tool,u]of Object.entries(row))if(tool!=='date')sum(out[tool]??=(emptyUsage()),u);daily.set(row.date,out);}
-   for(const row of part.projects){const out=projects.get(row.workspace)??{workspace:row.workspace,sessions:0};out.sessions+=row.sessions;for(const[tool,u]of Object.entries(row))if(!['workspace','sessions'].includes(tool))sum(out[tool]??=(emptyUsage()),u);projects.set(row.workspace,out);}
-   for(const row of part.cube){const {usage,missingRequests:missing,...dimensions}=row,key=JSON.stringify(dimensions),out=cube.get(key)??{...dimensions,usage:emptyUsage(),missingRequests:0};sum(out.usage,usage);out.missingRequests+=missing;cube.set(key,out);}
-   for(const row of part.sessions)sessions.push({...row,usage:structuredClone(row.usage),displayStatus:row.status==='running'&&now-Date.parse(row.lastActivity)>120000?'unknown':row.status});
-   missingRequests+=part.missingRequests;workSinceStart+=part.workSinceStart;
-  }
-  return {totals,daily:[...daily.values()],projects:[...projects.values()],cube:[...cube.values()],sessions,missingRequests,workSinceStart};
+  for(const key of this.snapshotPartitions.keys())if(!keys.has(key)){this.snapshotPartitions.delete(key);this.snapshotCheckpoints.delete(key);}
+  return combineGenericParts(this.snapshotPartitions.values(),now);
  }
+
 }
 export function mergeSnapshots(legacy,generic,sources,aliases={}){
  const result={...legacy,totals:{...legacy.totals},toolNames:{...TOOL_NAMES},missingRequests:generic.missingRequests,sourceCount:sources.length};
@@ -103,7 +118,7 @@ export class TokenMonitor {
  // Restarts run one after another, so two quick source changes cannot leave an
  // earlier monitor running unseen (D2-5). A failed start is shown in errors.
  restartLegacy(){
-  const run=async()=>{this.legacyRestarting=true;try{const roots=this.sources.list().filter(s=>s.enabled&&['codex','claude'].includes(s.tool)).map(s=>({provider:s.tool,path:s.path}));if(this.legacy&&!this.legacy.closed&&this.legacyReady){await this.legacy.updateRoots(roots,this.workUsage?.view??null);this.errors.delete('legacy-monitor');if(this.repository)this.syncAnalytics();return;}if(this.legacy&&!this.legacy.closed)await this.legacy.close();this.legacyReady=false;this.legacy=new LocalMonitor({...this.options,persistentHistory:!!this.repository,roots,projectAttribution:this.workUsage?.view??null,refreshIntervalMs:this.refreshIntervalMs,onUpdate:v=>{this.legacySnapshot=v;this.emit();}});
+  const run=async()=>{this.legacyRestarting=true;try{const roots=this.sources.list().filter(s=>s.enabled&&['codex','claude'].includes(s.tool)).map(s=>({provider:s.tool,path:s.path}));if(this.legacy&&!this.legacy.closed&&this.legacyReady){await this.legacy.updateRoots(roots,this.workUsage?.view??null);this.errors.delete('legacy-monitor');if(this.repository)this.syncAnalytics();return;}if(this.legacy&&!this.legacy.closed)await this.legacy.close();this.legacyReady=false;this.legacy=new LocalMonitor({...this.options,persistentHistory:!!this.repository,roots,projectAttribution:this.workUsage?.view??null,refreshIntervalMs:this.refreshIntervalMs,onUpdate:v=>{this.legacySnapshot=v;this.legacySnapshotOwner=this.legacy;this.legacySnapshotRevision=this.legacy.ledger.revision;this.emit();}});
    try{await this.legacy.start();this.legacyReady=true;this.errors.delete('legacy-monitor');}catch(error){this.errors.set('legacy-monitor','用量监控启动失败：'+error.message);this.emit();throw error;}if(this.repository)this.syncAnalytics();}finally{this.legacyRestarting=false;}};
   return this.legacyRestart=(this.legacyRestart??Promise.resolve()).catch(()=>{}).then(run);
  }
@@ -117,7 +132,13 @@ export class TokenMonitor {
    if(!session.model&&task.model)session.model=task.model;
   }return value;
  }
- emit(){if(!this.legacySnapshot)return;this.listeners({activityEpoch:this.legacy.startedAt,usageRevision:this.legacy.ledger.aggregationRevision+':'+this.ledger.revision,...mergeSnapshots(this.legacySnapshot,this.genericSnapshot(),this.sources.list(),this.sources.state?.aliases),modelAliases:this.sources.state?.modelAliases||{},errors:[...this.legacySnapshot.errors,...this.errors].map(e=>Array.isArray(e)?{path:e[0],message:e[1]}:e)});}
+ emit(){
+  if(!this.legacySnapshot)return;
+  const now=Date.now(),value=this.legacySnapshot,key=JSON.stringify([this.legacySnapshotRevision,this.legacy.startedAt,this.ledger.revision,this.cacheRevision,this.sources.list(),this.sources.state?.aliases,this.sources.state?.modelAliases,this.workUsage.key,this.timeZone,value.today,value.indexing,value.indexPhase,value.progress,value.files,value.startup,value.errors,[...this.errors]]);
+  if(this.lastEmission?.owner===this.legacySnapshotOwner&&this.lastEmission.key===key&&now-this.lastEmission.at<this.refreshIntervalMs)return;
+  this.listeners({activityEpoch:this.legacy.startedAt,usageRevision:this.legacy.ledger.aggregationRevision+':'+this.ledger.revision,...mergeSnapshots(value,this.genericSnapshot(),this.sources.list(),this.sources.state?.aliases),modelAliases:this.sources.state?.modelAliases||{},errors:[...value.errors,...this.errors].map(e=>Array.isArray(e)?{path:e[0],message:e[1]}:e)});
+  this.lastEmission={owner:this.legacySnapshotOwner,key,at:now};
+ }
  recordTask(event,source){
   if(!event.timestamp)return;
   const key='dsh:'+event.sessionId,old=this.taskStates.get(key);
@@ -131,6 +152,13 @@ export class TokenMonitor {
   this.pendingFeedback.push({eventId:key+':'+event.turn+':'+event.seq,provider:'dsh',sessionKey:key,turnKey:event.turn,source:event.outcome==='completed'?'completed':'failed',outcome:event.outcome==='completed'?'completed':'failed',id:event.outcome==='completed'?'jump':'fail',cycles:event.outcome==='completed'?2:1,text:event.outcome==='completed'?'DeepSeek Harness完成任务啦，辛苦了～':'DeepSeek Harness日志记录了错误，点我查看。'});
  }
  async discover(source,path=source.path,found=[]){try{const info=await stat(path);if(info.isFile()){if(acceptsFile(source,path))found.push(path);return found;}for(const item of await readdir(path,{withFileTypes:true})){if(item.isSymbolicLink()||['node_modules','.git'].includes(item.name))continue;if(item.isDirectory())await this.discover(source,join(path,item.name),found);else if(item.isFile()&&acceptsFile(source,join(path,item.name)))found.push(join(path,item.name));}}catch(e){if(e.code!=='ENOENT')throw e;}return found;}
+ nativeSourceCounts(sources){
+  const signature=JSON.stringify(sources.map(s=>[s.id,s.tool,s.path])),owner=this.legacySnapshotOwner,revision=this.legacySnapshotRevision,cached=this.nativeSourceCountCache;
+  if(cached?.owner===owner&&cached.revision===revision&&cached.signature===signature&&(owner||cached.snapshot===this.legacySnapshot))return cached.counts;
+  const roots=new Map(),counts=new Map();for(const source of sources){const prefix=resolve(source.path).toLowerCase(),row={id:source.id,prefix,child:prefix+'\\'};if(!roots.has(source.tool))roots.set(source.tool,[]);roots.get(source.tool).push(row);counts.set(source.id,{records:0,hasUsage:false});}
+  for(const session of this.legacySnapshot?.sessions??[]){const candidates=roots.get(session.provider);if(!session.path||!candidates)continue;const file=resolve(session.path).toLowerCase();for(const root of candidates)if(file===root.prefix||file.startsWith(root.child)){const count=counts.get(root.id);count.records++;count.hasUsage||=session.usage.total>0;}}
+  this.nativeSourceCountCache={owner,revision,signature,counts,snapshot:this.legacySnapshot};return counts;
+ }
  async scan(full=false){if(this.busy&&!full)return;while(this.busy&&!this.closed)await new Promise(r=>setTimeout(r,10));if(this.closed)return;this.busy=true;try{
   const sources=this.sources.list().filter(s=>s.enabled&&!['codex','claude'].includes(s.tool));
   if(full||Date.now()-this.lastDiscovery>30000){this.paths=[];for(const source of sources){try{const found=await this.discover(source),paths=source.tool==='dsh'?selectDshLogs(found):found;this.paths.push(...paths.map(path=>({path,source})));if(!this.watchers.some(w=>w.path===source.path)){try{const watcher=watch(source.path,{recursive:true},()=>{this.lastDiscovery=0;void this.scan(false);});watcher.on('error',()=>{});this.watchers.push({path:source.path,watcher});}catch{}}}catch(e){this.sources.statuses.set(source.id,{message:e.code==='EACCES'?'无读取权限':e.message});}}this.lastDiscovery=Date.now();}
@@ -138,7 +166,7 @@ export class TokenMonitor {
   const enabled=new Set(sources.map(s=>s.id)),counts=new Map(),failedSources=new Set();
   for(const {path,source:stale} of this.paths||[]){if(!enabled.has(stale.id))continue;const source=sources.find(s=>s.id===stale.id);try{const result=await this.read(path,source);const count=counts.get(source.id)||{records:0,missing:0};count.records+=result.records;count.missing+=result.missing;counts.set(source.id,count);this.errors.delete(path);}catch(e){failedSources.add(source.id);this.errors.set(path,e.message);this.sources.statuses.set(source.id,{message:e.code==='EACCES'?'无读取权限':e.message});}}
   for(const [id,c] of counts)if(!failedSources.has(id))this.sources.statuses.set(id,{...c,message:c.records?(c.missing?'部分记录缺少用量':'正常读取'):'等待首次请求',updatedAt:new Date().toISOString()});
-  for(const source of this.sources.list().filter(s=>s.enabled&&['codex','claude'].includes(s.tool))){const prefix=resolve(source.path).toLowerCase(),sessions=this.legacySnapshot?.sessions.filter(s=>s.provider===source.tool&&s.path&&(resolve(s.path).toLowerCase()===prefix||resolve(s.path).toLowerCase().startsWith(prefix+'\\')))||[];if(sessions.length)this.sources.statuses.set(source.id,{records:sessions.length,message:sessions.some(s=>s.usage.total>0)?'正常读取':'已读取记录，但未提供 token 用量',updatedAt:new Date().toISOString()});}
+  const nativeSources=this.sources.list().filter(s=>s.enabled&&['codex','claude'].includes(s.tool)),nativeCounts=this.nativeSourceCounts(nativeSources);for(const source of nativeSources){const count=nativeCounts.get(source.id);if(count.records)this.sources.statuses.set(source.id,{records:count.records,message:count.hasUsage?'正常读取':'已读取记录，但未提供 token 用量',updatedAt:new Date().toISOString()});}
   for(const source of sources)this.knownSources.add(source.id);await this.persist();this.emit();for(const event of this.pendingFeedback.splice(0))this.onTaskFeedback(event);this.onSources(await this.sources.view());
  }finally{this.busy=false;}}
  async read(path,source){const info=await stat(path),wal=await stat(path+'-wal').catch(()=>null),stamp=info.mtimeMs+':'+(wal?.mtimeMs||0)+':'+(wal?.size||0),key=source.id+':'+path,old=this.files.get(key);
@@ -169,33 +197,46 @@ export class TokenMonitor {
   }finally{await handle.close();}
  }
  async persist(){if(this.repository){if(this.savedRevision===this.ledger.revision&&this.savedCacheRevision===this.cacheRevision)return;this.repository.publish({ready:true,state:{version:2,files:[...this.files],taskStates:[...this.taskStates],terminalWatermarks:[...this.terminalWatermarks]}});this.savedRevision=this.ledger.revision;this.savedCacheRevision=this.cacheRevision;return;}if(!this.ledger.pending.length&&this.savedRevision===this.ledger.revision&&this.savedCacheRevision===this.cacheRevision)return;await mkdir(this.options.dataRoot,{recursive:true});const pending=this.ledger.pending.splice(0);try{if(pending.length)await appendFile(this.dataFile,pending.map(r=>JSON.stringify(r)).join('\n')+'\n');await this.cache.writeText(JSON.stringify({version:1,files:[...this.files],taskStates:[...this.taskStates],terminalWatermarks:[...this.terminalWatermarks]}));this.savedRevision=this.ledger.revision;this.savedCacheRevision=this.cacheRevision;}catch(e){this.ledger.pending.unshift(...pending);throw e;}}
+ analyticsContext(){const sources=this.sources.list(),signature=JSON.stringify(sources.map(s=>[s.id,s.path,s.overlapGroup,s.primary,s.aliasProvider]).concat(this.attribution.revision,this.workUsage.key));return {sources,signature,projection:usageProjection(sources,this.attribution,this.workUsage,signature)};}
  syncAnalytics(){
   if(!this.repository)return this.syncAnalyticsRows();
-  const legacy=this.legacy.repository;
+  const legacy=this.legacy.repository,synchronizedOwner=this.analyticsSyncOwner;this.analyticsSyncOwner=null;
   for(const key of legacy.changedGroups())this.legacy.ledger.dirtyRequestSessions.add(key);
   for(const key of this.repository.changedGroups())this.ledger.dirtyGroups.add(key);
-  const dirtyLegacy=[...this.legacy.ledger.dirtyRequestSessions],dirtyGeneric=[...this.ledger.dirtyGroups],signature=this.analyticsSources,projection=this.analyticsProjection;
-  try{this.repository.transaction(()=>{this.syncAnalyticsRows();this.repository.acknowledgeChanges();});
+  const context=this.analyticsContext();
+  if(synchronizedOwner===this.legacy&&!this.legacy.ledger.dirtyRequestSessions.size&&!this.ledger.dirtyGroups.size&&!this.analytics.dimensionsDirty&&this.analyticsSources===context.signature&&isDeepStrictEqual(this.analyticsProjection,context.projection)){this.analyticsSyncOwner=synchronizedOwner;return;}
+  const dirtyLegacy=[...this.legacy.ledger.dirtyRequestSessions],dirtyGeneric=[...this.ledger.dirtyGroups],signature=this.analyticsSources,projection=this.analyticsProjection,checkpoints=this.analyticsCheckpoints;
+  this.pendingAnalyticsCheckpoints=new Map(checkpoints??[]);
+  try{this.repository.transaction(()=>{this.syncAnalyticsRows(context);this.repository.acknowledgeChanges();});
    // The separate legacy connection is acknowledged after contribution commit.
    // A crash between the two safely repeats an idempotent group replacement.
-   legacy.acknowledgeChanges();
-  }catch(e){this.analyticsSources=signature;this.analyticsProjection=projection;for(const k of dirtyLegacy)this.legacy.ledger.dirtyRequestSessions.add(k);for(const k of dirtyGeneric)this.ledger.dirtyGroups.add(k);this.analytics.restoreIndex();throw e;}
+   legacy.acknowledgeChanges();this.analyticsCheckpoints=this.pendingAnalyticsCheckpoints;this.analyticsSyncOwner=this.legacy;
+  }catch(e){this.analyticsSyncOwner=null;this.analyticsSources=signature;this.analyticsProjection=projection;for(const k of dirtyLegacy)this.legacy.ledger.dirtyRequestSessions.add(k);for(const k of dirtyGeneric)this.ledger.dirtyGroups.add(k);this.analytics.restoreIndex();throw e;}finally{this.pendingAnalyticsCheckpoints=null;}
  }
- syncAnalyticsRows(){
-  const sources=this.sources.list();this.analyticsSourceMap=new Map(sources.map(s=>[s.id,s]));const signature=JSON.stringify(sources.map(s=>[s.id,s.path,s.overlapGroup,s.primary,s.aliasProvider]).concat(this.attribution.revision,this.workUsage.key));
-  const l=this.legacy.ledger,projection=usageProjection(sources,this.attribution,this.workUsage,signature);
+ syncAnalyticsRows(context=TokenMonitor.prototype.analyticsContext.call(this)){
+  const {sources,signature,projection}=context;this.analyticsSourceMap=new Map(sources.map(s=>[s.id,s]));
+  const l=this.legacy.ledger;
   if(this.analyticsSources!==signature||this.analyticsProjection&&!isDeepStrictEqual(this.analyticsProjection,projection)){
    const scope=usageInvalidation(this.analyticsProjection,projection,this.analyticsSources);
    if(scope.all){for(const k of l.requestGroups.keys())l.dirtyRequestSessions.add(k);for(const k of this.ledger.groups.keys())this.ledger.dirtyGroups.add(k);}
    else if(scope.changed){for(const [key,session]of l.sessions)if(scope.legacy(session))l.dirtyRequestSessions.add(key);for(const r of this.ledger.records.values())if(scope.generic(r))this.ledger.dirtyGroups.add(r.tool+':'+r.sessionId);}
   }
-  for(const key of l.dirtyRequestSessions){const workUsage=this.workUsage,rows=(function*(){for(const r of l.iterateRequestRows(key)){const matches=sources.filter(s=>s.tool===r.tool&&r.location?.file&&(resolve(r.location.file).toLowerCase()===resolve(s.path).toLowerCase()||resolve(r.location.file).toLowerCase().startsWith(resolve(s.path).toLowerCase()+'\\'))).sort((a,b)=>b.path.length-a.path.length);r.sourceId=matches[0]?.id||r.sourceId;yield workUsage.projectRow(r,l.sessions.get(key));}})();this.analytics.replaceGroup(key,this.repository?rows:[...rows]);}
+  const checkpoints=this.pendingAnalyticsCheckpoints,projectionSignature=JSON.stringify(projection);
+  for(const key of l.dirtyRequestSessions){const workUsage=this.workUsage,repo=l.repository,kind=key.startsWith('codex:')?'codex':'claude',session=l.sessions.get(key),stamp=JSON.stringify([projectionSignature,...['workspace','purpose','companion','origin','path','id','sessionRootId','parentId','nativeParentId','subagent','rawNativeWorkspace','sourcePath'].map(field=>session?.[field])]),prior=checkpoints?.get('legacy:'+key),mutations=prior?.signature===stamp?repo?.mutationSummary?.(kind,key,prior.generation):null;
+   const append=!!mutations?.length&&mutations.every(([,r])=>Date.parse(r.timestamp)>prior.boundary),entries=append?mutations.sort((a,b)=>Date.parse(a[1].timestamp)-Date.parse(b[1].timestamp)||(a[2]??0)-(b[2]??0)).map(([id,r])=>[kind+':'+id,r]):undefined;let state;
+   const rows=(function*(){for(const r of l.iterateRequestRows(key,{entries,previous:append?prior.previous:emptyUsage(),onState:value=>state=value})){const matches=sources.filter(s=>s.tool===r.tool&&r.location?.file&&(resolve(r.location.file).toLowerCase()===resolve(s.path).toLowerCase()||resolve(r.location.file).toLowerCase().startsWith(resolve(s.path).toLowerCase()+'\\'))).sort((a,b)=>b.path.length-a.path.length);r.sourceId=matches[0]?.id||r.sourceId;yield workUsage.projectRow(r,l.sessions.get(key));}})();
+   if(append)this.analytics.applyGroupDelta(key,{upserts:rows});else this.analytics.replaceGroup(key,this.repository?rows:[...rows]);
+   if(checkpoints){if(state&&repo?.mutationSummary?.(kind,key,repo.commitGeneration))checkpoints.set('legacy:'+key,{...state,signature:stamp,generation:repo.commitGeneration});else checkpoints.delete('legacy:'+key);}
+  }
   l.dirtyRequestSessions.clear();
-  for(const key of this.ledger.dirtyGroups){const input=this.ledger.groups.get(key).values(),rows=this.repository?input:[...input].sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
-   const workUsage=this.workUsage,normalized=(function*(){let previous=emptyUsage();for(const r of rows){const source=sources.find(s=>s.id===r.sourceId);if((source?.overlapGroup||r.overlapGroup)&&(source?.primary??r.primary)===false)continue;if(r.tool==='companion'&&r.reportedProvider==='codex'&&l.sessions.has('codex:'+r.sessionId))continue;
-    let usage=r.usage;if(r.mode==='cumulative'){if(usage.total===null){yield r;continue;}if(usage.total<previous.total)continue;usage={...usage,...Object.fromEntries(Object.keys(emptyUsage()).filter(k=>k!=='requests').map(k=>[k,usage[k]===null?null:Math.max(0,usage[k]-(previous[k]||0))])),requests:1};previous=r.usage;if(!usage.total)continue;}
+  for(const key of this.ledger.dirtyGroups){const repo=this.repository,stamp=JSON.stringify([projectionSignature,key.startsWith('companion:')&&l.sessions.has('codex:'+key.slice('companion:'.length))]),prior=checkpoints?.get('generic:'+key),mutations=prior?.signature===stamp?repo?.mutationSummary?.('generic',key,prior.generation):null;
+   const append=!!mutations?.length&&mutations.every(([,r])=>r.requestId&&Date.parse(r.timestamp)>prior.boundary),input=append?mutations.sort((a,b)=>Date.parse(a[1].timestamp)-Date.parse(b[1].timestamp)||(a[2]??0)-(b[2]??0)).map(([,r])=>r):this.ledger.groups.get(key).values(),rows=this.repository?input:[...input].sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
+   const state={previous:append?prior.previous:emptyUsage(),boundary:append?prior.boundary:-Infinity};
+   const workUsage=this.workUsage,normalized=(function*(){for(const r of rows){state.boundary=Math.max(state.boundary,Date.parse(r.timestamp)||0);const source=sources.find(s=>s.id===r.sourceId);if((source?.overlapGroup||r.overlapGroup)&&(source?.primary??r.primary)===false)continue;if(r.tool==='companion'&&r.reportedProvider==='codex'&&l.sessions.has('codex:'+r.sessionId))continue;
+    let usage=r.usage;if(r.mode==='cumulative'){if(usage.total===null){yield r;continue;}if(usage.total<state.previous.total)continue;usage={...usage,...Object.fromEntries(Object.keys(emptyUsage()).filter(k=>k!=='requests').map(k=>[k,usage[k]===null?null:Math.max(0,usage[k]-(state.previous[k]||0))])),requests:1};state.previous=r.usage;if(!usage.total)continue;}
     yield workUsage.projectRow({...r,usage,actualProvider:r.reportedProvider||'unknown'},{...r,id:r.sessionId,provider:r.tool,path:r.location?.file??source?.path,parentId:r.nativeParentId??r.parentId??null});
-   }})();this.analytics.replaceGroup(key,this.repository?normalized:[...normalized]);
+   }})();if(append)this.analytics.applyGroupDelta(key,{upserts:normalized});else this.analytics.replaceGroup(key,this.repository?normalized:[...normalized]);
+   if(checkpoints){if(repo?.mutationSummary?.('generic',key,repo.commitGeneration))checkpoints.set('generic:'+key,{...state,signature:stamp,generation:repo.commitGeneration});else checkpoints.delete('generic:'+key);}
   }this.ledger.dirtyGroups.clear();this.analytics.saveIndex?.();if(this.analyticsSources!==signature)this.repository?.meta('analyticsSources',signature);if(!isDeepStrictEqual(this.analyticsProjection,projection))this.repository?.meta('analyticsProjection',projection);this.analyticsSources=signature;this.analyticsProjection=projection;
  }
  scheduleManagedRefresh(restartLegacy) {

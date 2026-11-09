@@ -1,0 +1,15 @@
+/* C3-C6 native-dialog adapter. Shared vx-* rules are copied by the final
+   integrator from the approved secV.css; these selectors stay cloud-scoped. */
+.vx-cloud-dialog{box-sizing:border-box;max-width:calc(100vw - 32px);max-height:none;padding:0;border:0;background:transparent;color:var(--buddy-text);overflow:visible}
+.vx-cloud-dialog::backdrop{background:var(--buddy-scrim,rgba(0,0,0,.5))}
+.vx-cloud-dialog .vx-dlg{width:100%;max-height:86vh}
+.vx-cloud .mk-grow{flex:1}
+.vx-cloud .vx-cface{display:inline-flex;align-items:center;justify-content:center;overflow:hidden;border-radius:50%;background:var(--buddy-surface2)}
+.vx-cloud .vx-cface img{object-fit:cover}
+.vx-cloud .vx-crow:has(.vx-cloud-row-error){flex-wrap:wrap}
+.vx-cloud .vx-cloud-row-error{flex-basis:100%;color:var(--buddy-muted);font-size:var(--buddy-fs-cap)}
+.vx-cloud .vx-cloud-plan-actions{margin:0 0 14px;padding-left:20px;font-size:var(--buddy-fs-sm);color:var(--buddy-muted)}
+.vx-cloud .vx-vfilter .ui-seg{flex:none}
+.vx-cloud .vx-vfilter .ui-seg button{white-space:nowrap}
+.vx-cloud .vx-vfilter .ui-icon-btn{flex:none}
+.vx-cloud .vx-vfilter .vx-search{min-width:0}

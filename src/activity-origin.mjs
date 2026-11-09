@@ -3,7 +3,7 @@ import {randomUUID,randomBytes,createHmac,timingSafeEqual} from 'node:crypto';
 import {socialError,sameSocialScope} from './companion-presentation-state.mjs';
 
 const policyFor=kind=>kind==='dream'||kind==='mood-asleep'?'preserve':kind==='feeding-temporary'?'temporary':'wake';
-const kinds=new Set(['chat','group-chat','work','cg','cg-theme','mood','mood-asleep','dream','feeding','feeding-temporary','search','external']);
+const kinds=new Set(['chat','group-chat','work','cg','cg-theme','mood','mood-asleep','dream','feeding','feeding-temporary','search','external','image-capability-probe']);
 export function createActivityOriginRegistry({now=()=>Date.now(),validateScope=()=>true,maxFinished=4096}={}){
  const origins=new Map(),highWater=new Map(),samples=new Set(),secret=randomBytes(32),epoch=randomUUID();let sequence=0,wakeTokens=0,sleepPreservingTokens=0;
  function signature(value){return createHmac('sha256',secret).update(JSON.stringify([value.epoch,value.sequence,value.wakeTokens,value.sleepPreservingTokens])).digest('hex');}

@@ -6,6 +6,7 @@ import {StringDecoder} from 'node:string_decoder';
 import {assertPluginTreeNoLinks} from '../plugin-archive.mjs';
 import {writeAtomic} from '../atomic-write.mjs';
 import {voicePythonEnvironment} from './python-environment.mjs';
+import {createVoiceBatch,createMiniMaxVoiceProvider} from './batch-voices.mjs';
 
 const packages = {breeze:'ai-buddy.voice-breeze',gpt:'ai-buddy.voice-gpt-sovits'};
 const providers = {minimax:'https://api.minimax.cn','minimax-global':'https://api.minimax.io'};
@@ -110,11 +111,11 @@ function remoteError(row) {
 
 // The host supplies trusted resolvers; neither plugin code nor a renderer gets
 // the raw credential. Bindings belong to this host's private data directory.
-export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolveConnection,resolveSecret,supervisor,transport}) {
+export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolveConnection,resolveSecret,supervisor,transport,batchProvider,fetchImpl,now=()=>Date.now()}) {
   if (!isAbsolute(dataRoot??'')) throw fail('CLOUD_CONFIG','云配音资料目录无效');
   const root=join(dataRoot,'voice','cloud');
   const indexPath=join(root,'bindings.json');
-  let active,stopping,closed=false,stopFailure;
+  let active,stopping,closed=false,stopFailure,batchTask;
 
   function assertOpen() {if (closed) throw fail('CLOUD_CLOSED','云配音已关闭');if (stopFailure) throw stopFailure;}
   function scope(params={}) {
@@ -126,9 +127,12 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
   }
   async function context(params,signal) {
     const request=scope(params);
-    const connection=await resolveConnection({engine:request.engine,packageId:request.packageId,characterId:request.characterId});
+    let connection,key;
+    try{connection=await resolveConnection({engine:request.engine,packageId:request.packageId,characterId:request.characterId});}
+    catch(error){throw fail('CLOUD_KEY_REQUIRED','请先在云配音配置中保存 MiniMax API Key');}
     if (!Object.hasOwn(providers,connection?.provider) || !models.includes(connection?.model) || typeof connection.keyRef!=='string' || !connection.keyRef) throw fail('CLOUD_KEY_REQUIRED','请先设置 MiniMax 语音 API Key');
-    const key=await resolveSecret(connection.keyRef);
+    try{key=await resolveSecret(connection.keyRef);}
+    catch(error){throw fail(error.code==='VOICE_CREDENTIAL_ENCRYPTION'?'CLOUD_KEY_UNREADABLE':'CLOUD_KEY_REQUIRED',error.code==='VOICE_CREDENTIAL_ENCRYPTION'?'此系统不能解密 MiniMax API Key，请重新保存云配音配置':'MiniMax API Key 缺失，请重新保存云配音配置');}
     if (typeof key!=='string' || !key.trim() || key.length>2048) throw fail('CLOUD_KEY_REQUIRED','MiniMax 语音 API Key 不可用');
     signal?.throwIfAborted();
     const profile=await resolveProfile(request);
@@ -149,16 +153,31 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
       return state;
     } catch (error) {if (error.code==='ENOENT') return {schemaVersion:1,scopes:{}};throw fail('CLOUD_BINDINGS','云端声音绑定资料不可读取');}
   }
-  async function persist(state,signal) {await assertPluginTreeNoLinks(root);await mkdir(root,{recursive:true});await assertPluginTreeNoLinks(indexPath);signal?.throwIfAborted();writeAtomic(indexPath,JSON.stringify(state));}
+  async function persist(state,signal,checkCurrent) {await assertPluginTreeNoLinks(root);await mkdir(root,{recursive:true});await assertPluginTreeNoLinks(indexPath);await checkCurrent?.();signal?.throwIfAborted();writeAtomic(indexPath,JSON.stringify(state));}
   function bindingFor(ctx,state) {
     const rows=state.scopes[ctx.connection.accountScope]??{};
     const saved=rows[ctx.bindingKey];
     const external=ctx.profile.cloudBinding;
     const binding=saved??(external?.accountScope===ctx.connection.accountScope && external.provider===ctx.connection.provider?{...external,characterId:ctx.request.characterId,profileId:ctx.request.profileId,profileVersion:ctx.request.profileVersion}:undefined);
     if (!binding || !validVoice(binding.voiceId) || binding.characterId!==ctx.request.characterId || binding.profileId!==ctx.request.profileId || binding.profileVersion!==ctx.request.profileVersion ||
-        Object.values(rows).some(row=>row.characterId!==ctx.request.characterId && row.voiceId===binding.voiceId)) throw fail('CLOUD_VOICE_REQUIRED','请先为当前账号和角色声音档案绑定云端音色');
+        Object.values(rows).some(row=>row.characterId!==ctx.request.characterId && row.voiceId===binding.voiceId&&(binding.category!=='system_voice'||row.category!=='system_voice'))) throw fail('CLOUD_VOICE_REQUIRED','请先为当前账号和角色声音档案绑定云端音色');
+    if(binding.preparedAt&&!binding.activatedAt&&Date.parse(binding.preparedAt)+7*24*60*60*1000<=now())throw fail('CLOUD_VOICE_EXPIRED','当前克隆音色在 7 天内未正式激活，已到期；请先到 MiniMax 核对，不会自动重新克隆');
     return binding;
   }
+  async function existingBinding(ctx){
+    const state=await load(),rows=state.scopes[ctx.connection.accountScope]??{};
+    const language=ctx.profile.cloudReference?.language??'zh';
+    try{const bound=bindingFor(ctx,state);if(!bound.sourceSHA||bound.sourceSHA===ctx.profile.cloudReference?.sha256&&(bound.language??'zh')===language)return bound;}catch(error){if(!['CLOUD_VOICE_REQUIRED','CLOUD_VOICE_EXPIRED'].includes(error.code))throw error;}
+    return Object.values(rows).find(row=>row.characterId===ctx.request.characterId&&row.sourceSHA===ctx.profile.cloudReference?.sha256&&(row.language??'zh')===language&&validVoice(row.voiceId));
+  }
+  async function saveBinding(ctx,binding){
+    const state=await load(),rows=state.scopes[ctx.connection.accountScope]??{};
+    if(Object.values(rows).some(row=>row.characterId!==ctx.request.characterId&&row.voiceId===binding.voiceId&&(binding.category!=='system_voice'||row.category!=='system_voice')))throw fail('CLOUD_VOICE_SCOPE','该云端音色已属于另一个角色');
+    rows[ctx.bindingKey]=binding;state.scopes[ctx.connection.accountScope]=rows;await persist(state);
+  }
+  const batch=createVoiceBatch({dataRoot,resolveContext:context,readReference:referencePlan,findBinding:existingBinding,saveBinding,
+    hasOtherAccount:async ctx=>Object.entries((await load()).scopes).some(([account,rows])=>account!==ctx.connection.accountScope&&Object.values(rows).some(row=>row.characterId===ctx.request.characterId&&row.sourceSHA===ctx.profile.cloudReference?.sha256)),
+    provider:batchProvider??createMiniMaxVoiceProvider({fetchImpl}),now});
   function reserve() {
     assertOpen();if (active || stopping) throw fail('CLOUD_BUSY','云配音正在处理上一条请求');
     let resolveReady;
@@ -196,30 +215,49 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
   }
   function normalizeVoices(answer) {
     if (!Array.isArray(answer.voices) || answer.voices.length>5000) throw fail('CLOUD_PROTOCOL','MiniMax 音色列表无效');
-    return answer.voices.filter(row=>validVoice(row?.voice_id)).map(row=>({voiceId:row.voice_id,name:typeof row.name==='string'?row.name.slice(0,200):row.voice_id,category:String(row.category??'').slice(0,40)}));
+    return answer.voices.filter(row=>validVoice(row?.voice_id??row?.voiceId)).map(row=>({voiceId:row.voice_id??row.voiceId,name:typeof row.voice_name==='string'?row.voice_name.slice(0,200):typeof row.name==='string'?row.name.slice(0,200):row.voice_id??row.voiceId,
+      category:['system_voice','voice_cloning','voice_generation'].includes(row.category)?row.category:'unknown'}));
   }
   async function status(params) {
     assertOpen();
     try {
       const ctx=await context(params);const binding=bindingFor(ctx,await load());
-      return {state:'ready',provider:ctx.connection.provider,model:ctx.connection.model,voiceId:binding.voiceId,characterId:ctx.request.characterId,profileId:ctx.request.profileId,profileVersion:ctx.request.profileVersion,busy:!!active||!!stopping};
-    } catch (error) {return {state:error.code==='CLOUD_VOICE_REQUIRED'?'unbound':'unavailable',code:error.code??'CLOUD_CONFIG',busy:!!active||!!stopping};}
+      const activationState=binding.activatedAt?'activated':binding.preparedAt?'pending':'unknown';
+      return {state:'ready',provider:ctx.connection.provider,model:ctx.connection.model,voiceId:binding.voiceId,characterId:ctx.request.characterId,profileId:ctx.request.profileId,profileVersion:ctx.request.profileVersion,activationState,
+        message:activationState==='pending'?'云音色已克隆，等待首次正式合成激活；7 天内未激活将过期':'当前角色云音色已绑定',busy:!!active||!!stopping};
+    } catch (error) {
+      if(error.code==='CLOUD_VOICE_REQUIRED'){
+        try{
+          const receipt=(await batch.status([params])).results[0];
+          if(receipt?.status==='unknown')return {state:'unknown',code:'CLOUD_PREPARE_UNKNOWN',message:'当前角色的云音色提交结果尚未确认；请先核对，未自动重新上传或克隆',busy:!!active||!!stopping};
+        }catch{ /* Keep the original stable configuration error when receipts cannot be inspected. */ }
+      }
+      return {state:error.code==='CLOUD_VOICE_REQUIRED'?'unbound':error.code==='CLOUD_VOICE_EXPIRED'?'expired':error.code==='CLOUD_KEY_REQUIRED'?'key-missing':'unavailable',code:error.code??'CLOUD_CONFIG',message:error.message??'云配音配置暂不可用',busy:!!active||!!stopping};
+    }
   }
-  async function listVoices(params) {
-    const token=reserve();try {const ctx=await context(params,token.controller.signal);return normalizeVoices(await result(token,ctx,'voices',{}));} finally {await finish(token);}
+  async function listVoices(params,options={}) {
+    const token=reserve();try {const ctx=await context(params,token.controller.signal);await options.checkCurrent?.();
+      const voices=normalizeVoices(await result(token,ctx,'voices',{}));await options.checkCurrent?.();token.controller.signal.throwIfAborted();return voices;} finally {await finish(token);}
   }
-  async function bindVoice(params={}) {
+  async function bindVoice(params={},options={}) {
     if (!validVoice(params.voiceId)) throw fail('CLOUD_VOICE','请选择当前账号的有效云端音色');
     const token=reserve();
     try {
       const ctx=await context(params,token.controller.signal);
+      await options.checkCurrent?.();
       const state=await load();const rows=state.scopes[ctx.connection.accountScope]??{};
-      if (Object.values(rows).some(row=>row.characterId!==ctx.request.characterId && row.voiceId===params.voiceId)) throw fail('CLOUD_VOICE_SCOPE','这个云端音色已绑定其他角色，请选择独立音色');
-      const voices=normalizeVoices(await result(token,ctx,'voices',{}));
-      if (!voices.some(row=>row.voiceId===params.voiceId)) throw fail('CLOUD_VOICE','该音色不在当前账号的可用列表中');
+      // A host-owned clone may not appear in get_voice before first synthesis.
+      const owned=Object.values(rows).find(row=>row.characterId===ctx.request.characterId&&row.voiceId===params.voiceId&&row.sourceSHA===ctx.profile.cloudReference?.sha256&&row.provenance?.startsWith('approved-reference-clone'));
+      let catalog;
+      if(!owned){await options.checkCurrent?.();const voices=normalizeVoices(await result(token,ctx,'voices',{}));await options.checkCurrent?.();catalog=voices.find(row=>row.voiceId===params.voiceId);if(!catalog)throw fail('CLOUD_VOICE','该音色不在当前账号的可用列表中');}
+      const category=owned?.category??catalog?.category;
+      // r5 catalog bindings had no category. Upgrade only from this account's fresh server catalog.
+      if(catalog?.category==='system_voice')for(const row of Object.values(rows))if(row.voiceId===params.voiceId&&(!row.category||row.category==='unknown'))row.category='system_voice';
+      if(Object.values(rows).some(row=>row.characterId!==ctx.request.characterId&&row.voiceId===params.voiceId&&(category!=='system_voice'||row.category!=='system_voice')))throw fail('CLOUD_VOICE_SCOPE','这个云端音色已绑定其他角色，请选择独立音色');
       token.controller.signal.throwIfAborted();
-      const binding={characterId:ctx.request.characterId,profileId:ctx.request.profileId,profileVersion:ctx.request.profileVersion,voiceId:params.voiceId,provider:ctx.connection.provider,provenance:'account-voice-pending-audition',boundAt:new Date().toISOString()};
-      rows[ctx.bindingKey]=binding;state.scopes[ctx.connection.accountScope]=rows;await persist(state,token.controller.signal);
+      const binding={...owned,...(!owned?{activatedAt:new Date(now()).toISOString()}:{}),characterId:ctx.request.characterId,profileId:ctx.request.profileId,profileVersion:ctx.request.profileVersion,voiceId:params.voiceId,provider:ctx.connection.provider,
+        ...(category?{category}:{}),...(catalog?{name:catalog.name}:{}),provenance:owned?.provenance??(category==='system_voice'?'catalog-system-voice':'account-voice-pending-audition'),boundAt:new Date(now()).toISOString()};
+      rows[ctx.bindingKey]=binding;state.scopes[ctx.connection.accountScope]=rows;await options.checkCurrent?.();await persist(state,token.controller.signal,options.checkCurrent);
       return {...binding,state:'ready'};
     } finally {await finish(token);}
   }
@@ -245,34 +283,27 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
     assertOpen();const ctx=await context(params);return (await referencePlan(ctx)).plan;
   }
   async function prepareVoice(params={}) {
-    if (params.consentUpload!==true) throw fail('CLOUD_CONSENT','请先确认上传当前角色的完整参考音并创建 MiniMax 云端音色');
-    const token=reserve();let receipt,receiptPath;
-    const saveReceipt=()=>{if (receiptPath) writeAtomic(receiptPath,JSON.stringify(receipt));};
-    try {
-      const ctx=await context(params,token.controller.signal);
-      const {plan,reference,bytes}=await referencePlan(ctx);
-      token.controller.signal.throwIfAborted();
-      const voiceId='buddy-'+randomUUID().replaceAll('-','');
-      receipt={schemaVersion:1,receiptId:randomUUID(),...plan,voiceId,createdAt:new Date().toISOString(),stages:[],status:'preparing'};
-      const receiptRoot=join(root,'receipts');await assertPluginTreeNoLinks(receiptRoot);await mkdir(receiptRoot,{recursive:true});
-      token.controller.signal.throwIfAborted();
-      receiptPath=join(receiptRoot,receipt.receiptId+'.json');saveReceipt();
-      const answer=await result(token,ctx,'clone',{voiceId,audio:bytes.toString('base64'),...(reference.text.length>0 && reference.text.length<=200?{textValidation:reference.text}:{})},async row=>{
-        if (!['uploaded','clone-request-submitted'].includes(row.stage)) throw fail('CLOUD_PROTOCOL','云端克隆阶段无效');
-        receipt.stages.push({stage:row.stage,...(['string','number'].includes(typeof row.file_id)?{fileId:String(row.file_id).slice(0,200)}:{})});saveReceipt();
-      });
-      if (answer.voice_id!==voiceId) throw fail('CLOUD_PROTOCOL','MiniMax 克隆返回了不同的音色身份');
-      token.controller.signal.throwIfAborted();
-      const state=await load(),rows=state.scopes[ctx.connection.accountScope]??{};
-      const binding={characterId:ctx.request.characterId,profileId:ctx.request.profileId,profileVersion:ctx.request.profileVersion,
-        voiceId,provider:ctx.connection.provider,sourceSHA:reference.sha256,provenance:'approved-reference-clone-pending-audition',receiptId:receipt.receiptId,preparedAt:new Date().toISOString()};
-      rows[ctx.bindingKey]=binding;state.scopes[ctx.connection.accountScope]=rows;await persist(state,token.controller.signal);
-      receipt.status='prepared-awaiting-first-synthesis-and-listening';saveReceipt();
-      return {...binding,state:'ready',cloudListeningAcceptance:'pending'};
-    } catch (error) {
-      if (receipt) {receipt.status='failed-or-unconfirmed';receipt.error={code:error.name==='AbortError'?'CLOUD_CANCELLED':/^CLOUD_[A-Z0-9_]{1,64}$/.test(error.code??'')?error.code:'CLOUD_PREPARE_FAILED'};saveReceipt();}
-      throw error;
-    } finally {await finish(token);}
+    if(params.consentUpload!==true)throw fail('CLOUD_CONSENT','请先确认上传当前角色的完整参考音并创建 MiniMax 云端音色');
+    const token=reserve();
+    try{
+      const value=await batch.prepare([params],{consentUpload:true,signal:token.controller.signal,
+        legacyClone:(ctx,{voiceId,reference},onEvent)=>result(token,ctx,'clone',{voiceId,audio:reference.bytes.toString('base64'),...(reference.reference.text.length>0&&reference.reference.text.length<=200?{textValidation:reference.reference.text}:{})},onEvent)});
+      const row=value.results[0];if(row.state!=='ready')throw fail(row.code??(row.status==='unknown'?'CLOUD_PREPARE_UNKNOWN':'CLOUD_PREPARE_FAILED'),row.message??'云音色准备结果尚未确认，请先核对，未重新提交');
+      return row;
+    }finally{await finish(token);}
+  }
+  function prepareBatch(options={}){
+    if(batchTask)return batchTask;
+    const token=reserve(),onAbort=()=>token.controller.abort();
+    options.signal?.addEventListener('abort',onAbort,{once:true});if(options.signal?.aborted)onAbort();
+    const task=(async()=>{try{return await batch.prepare(options.profiles,{...options,signal:token.controller.signal});}
+      finally{options.signal?.removeEventListener('abort',onAbort);await finish(token);}})();
+    batchTask=task;void task.finally(()=>{if(batchTask===task)batchTask=null;}).catch(()=>{});return task;
+  }
+  function batchStatus(input={}){assertOpen();return batch.status(Array.isArray(input)?input:input.profiles??[]);}
+  function batchPreview(input={}){assertOpen();return batch.preview(input.profiles??[],input.selectedCharacterIds??[]);}
+  async function reconcileVoice(params={}){
+    const token=reserve();try{return await batch.reconcile(params,{signal:token.controller.signal,checkCurrent:params.checkCurrent});}finally{await finish(token);}
   }
   async function* speak(params={}) {
     if (typeof params.text!=='string' || !params.text.trim() || Array.from(params.text).length>10000) throw fail('CLOUD_TEXT','云配音文字无效或过长');
@@ -295,6 +326,7 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
         } else if (row.type==='done') {
           if (row.metrics?.voice_id!==binding.voiceId) throw fail('CLOUD_VOICE','实际云配音音色与当前角色不匹配');
           done=true;
+          await batch.markActivated(ctx,binding.voiceId);
           const metrics={cloud:true,provider:ctx.connection.provider,model:ctx.connection.model,voice_id:binding.voiceId};
           for (const name of ['first_pcm_seconds','generation_seconds','audio_seconds','input_text_chunks']) if (Number.isFinite(row.metrics[name]) && row.metrics[name]>=0) metrics[name]=row.metrics[name];
           yield {type:'done',metrics};
@@ -310,5 +342,5 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
     return stopping;
   }
   async function close() {closed=true;await stopEngine();}
-  return {status,state:status,listVoices,bindVoice,previewPlan,prepareVoice,speak,stopEngine,stop:stopEngine,close};
+  return {status,state:status,listVoices,bindVoice,previewPlan,prepareVoice,prepareBatch,batchStatus,batchPreview,reconcileVoice,speak,stopEngine,stop:stopEngine,close};
 }

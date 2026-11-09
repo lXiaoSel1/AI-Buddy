@@ -20,7 +20,7 @@ const groupState=text=>({
 test('private dialogue and the next group segment follow the same audio clock without hiding saved text',async()=>{
   const listeners=new Set(),contexts=[];
   const api={action:async()=>({accepted:true}),onEvent:listener=>{listeners.add(listener);return()=>listeners.delete(listener);}};
-  const createContext=({sampleRate})=>{const context={sampleRate,currentTime:0,state:'running',destination:{},resume:async()=>{},close:async()=>{},createBuffer:(_,length,rate)=>({duration:length/rate,getChannelData:()=>new Float32Array(length)}),createBufferSource:()=>({connect(){},disconnect(){},start(){},stop(){}})};contexts.push(context);return context;};
+  const createContext=({sampleRate})=>{const context={sampleRate,currentTime:0,state:'running',destination:{},resume:async()=>{},close:async()=>{},createGain:()=>({gain:{value:1},connect(){},disconnect(){}}),createBuffer:(_,length,rate)=>({duration:length/rate,getChannelData:()=>new Float32Array(length)}),createBufferSource:()=>({connect(){},disconnect(){},start(){},stop(){}})};contexts.push(context);return context;};
   const privateScope={...scope,channel:'app-private'},first={...envelope,...privateScope},second={...first,index:1,segmentId:'held-tts:voice:1'};
   const output=ensureVoiceOutput(api,{createContext}),release=output.retain();let presentation;
   const off=output.subscribe(privateScope,value=>{presentation=value;});
@@ -66,7 +66,7 @@ test('a voice-admitted group segment stays hidden until its audio starts',async(
 test('a silent admitted chat retires its FIFO slot so queued card audio can play',async()=>{
   const listeners=new Set();let started=0,stopped=0;
   const api={action:async()=>({accepted:true}),onEvent:listener=>{listeners.add(listener);return()=>listeners.delete(listener);}};
-  const output=ensureVoiceOutput(api,{createContext:({sampleRate})=>({sampleRate,currentTime:0,state:'running',destination:{},resume:async()=>{},close:async()=>{},createBuffer:(_,length,rate)=>({duration:length/rate,getChannelData:()=>new Float32Array(length)}),createBufferSource:()=>({connect(){},disconnect(){},start(){started++;},stop(){stopped++;}})})}),release=output.retain();
+  const output=ensureVoiceOutput(api,{createContext:({sampleRate})=>({sampleRate,currentTime:0,state:'running',destination:{},resume:async()=>{},close:async()=>{},createGain:()=>({gain:{value:1},connect(){},disconnect(){}}),createBuffer:(_,length,rate)=>({duration:length/rate,getChannelData:()=>new Float32Array(length)}),createBufferSource:()=>({connect(){},disconnect(){},start(){started++;},stop(){stopped++;}})})}),release=output.retain();
   const emit=event=>Promise.all([...listeners].map(listener=>listener(event)));
   const chat={...envelope,channel:'app-private',requestId:'silent-chat'},card={channel:'card-table',requestId:'card-turn',segmentId:'card-turn:voice:0',index:0};
   try{

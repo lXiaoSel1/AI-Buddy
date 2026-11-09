@@ -9,20 +9,23 @@ import {createCompanionService} from './companion-service.mjs';
 import {writePortableImages} from './companion-media.mjs';
 import {createMediaStore} from './media-store.mjs';
 import {createDraftStore} from './draft-store.mjs';
+import {deferredSaves} from './deferred-saves.mjs';
 
-export async function createGalgame({dataRoot,provider,model,cg=null,resources=null,getLanguage=()=> 'zh-CN',getReplyStyle=()=> 'natural',onCharacter=()=>{},onPetVisibility=()=>{},onChatCommitted=()=>{},onOutput=()=>{},onCgUpdated=()=>{},onActivity=()=>{},audit=()=>{},imageConverter=null,automaticWorkAllowed=()=>true,workBridge=null,r95Options={},voice=null}) {
+export async function createGalgame({dataRoot,provider,model,cg=null,resources=null,getLanguage=()=> 'zh-CN',getReplyStyle=()=> 'natural',onCharacter=()=>{},onPetVisibility=()=>{},onChatCommitted=()=>{},onOutput=()=>{},onCgUpdated=()=>{},onActivity=()=>{},audit=()=>{},imageConverter=null,automaticWorkAllowed=()=>true,workBridge=null,r95Options={},voice=null,deferredSaveRegistry=deferredSaves}) {
   const media=createMediaStore(dataRoot),drafts=createDraftStore(dataRoot,{onError:error=>audit({type:'draft-store-error',message:String(error?.message??error)})});
-  const companionStore=await openCompanionStore(dataRoot,{media});
+  const companionStore=await openCompanionStore(dataRoot,{media,deferredSaveRegistry});
+  let engine;const effects=[];
+  try{
   const languageContext=new AsyncLocalStorage();
   const personaContext=new AsyncLocalStorage();
   const root=join(dataRoot,'game-workspace');mkdirSync(root,{recursive:true});
-  const bus=new EventEmitter(), effects=[];
+  const bus=new EventEmitter();
   const privateSessionId='whale-companion-local';
   const privateHeader={id:privateSessionId,cwd:root,origin:'main',events:[]};
   const scope={fs:restrictedFileService(root),sandboxPolicy:{resolve:()=>({workspaceRoot:root})},sessions:{list:()=>[privateHeader]},workspaceRegistry:{list:()=>[{path:root}]},agentDefaultModel:{currentSelection:()=>provider.currentSelection?provider.currentSelection():({provider:'codex',model})},sessionQuery:{listSessions:async()=>[privateHeader],listEvents:async()=>[]}};
   bus.on('galgame/chat-committed',onChatCommitted);
   bus.on('galgame/cg-updated',onCgUpdated);
-  const ctx={llm:provider,cg,resources,writePortableImages:files=>writePortableImages(dataRoot,cg?.imageCodec,files),companionCards:Object.values(companionStore.state.cards).map(card=>({...card,effective:effectiveCard(card)})),language:()=>languageContext.getStore()||getLanguage(),replyStyle:getReplyStyle,emit:(event,value)=>bus.emit(event,value),dshHomePath:(...parts)=>join(dataRoot,'galgame',...parts),inject:(_,fn)=>fn(scope),on:(event,fn)=>bus.on(event,fn),effect:fn=>{const cleanup=fn();if(typeof cleanup==='function')effects.push(cleanup);}};
+  const ctx={deferredSaveRegistry,deferredSaveScope:resolve(dataRoot),llm:provider,cg,resources,writePortableImages:files=>writePortableImages(dataRoot,cg?.imageCodec,files),companionCards:Object.values(companionStore.state.cards).map(card=>({...card,effective:effectiveCard(card)})),language:()=>languageContext.getStore()||getLanguage(),replyStyle:getReplyStyle,emit:(event,value)=>bus.emit(event,value),dshHomePath:(...parts)=>join(dataRoot,'galgame',...parts),inject:(_,fn)=>fn(scope),on:(event,fn)=>bus.on(event,fn),effect:fn=>{const cleanup=fn();if(typeof cleanup==='function')effects.push(cleanup);}};
   // Work-token counter: a few bytes rewritten atomically at most every 2 s,
   // instead of a full global save per token delta.
   const ledgerPath=join(dataRoot,'galgame','storages','dsh-whale-galgame','work-tokens.json');
@@ -30,7 +33,8 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
   try{const saved=JSON.parse(readFileSync(ledgerPath,'utf8'));if(Number.isFinite(saved.total)&&saved.total>=0)workTotal=saved.total;}catch(error){if(error.code!=='ENOENT'&&!(error instanceof SyntaxError))throw error;}
   const writeLedger=()=>{clearTimeout(ledgerTimer);ledgerTimer=null;mkdirSync(dirname(ledgerPath),{recursive:true});writeFileSync(ledgerPath+'.tmp',JSON.stringify({version:1,total:workTotal,updatedAt:new Date().toISOString()}));renameSync(ledgerPath+'.tmp',ledgerPath);};
   ctx.workLedgerTotal=()=>workTotal;
-  const engine=apply(ctx,{enabled:true,chatProvider:'codex',chatModel:model,singleChatSelection:!!provider.currentSelection,strictModelErrors:!!provider.currentSelection});
+  ctx.flushWorkLedgerSync=()=>{if(ledgerTimer)writeLedger();};
+  engine=apply(ctx,{enabled:true,chatProvider:'codex',chatModel:model,singleChatSelection:!!provider.currentSelection,strictModelErrors:!!provider.currentSelection});
   const settings=await engine.handleAction('settings-get',{});
   // Default whale identity is fixed independently from the actual Codex model.
   if(!settings?.characterId){
@@ -92,7 +96,9 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
       bus.emit('session/event',{header:{id:'local-work-ledger',cwd:root}},{type:'assistant/message',seq:++sequence,time:Date.now(),data:{id:'local-ledger-'+Date.now()+'-'+sequence,usage:{inputTokens:amount,outputTokens:0}}});
     },
     flushWorkLedger:()=>engine.flushWorkLedger(),
+    flushSaves:()=>engine.flushSaves(),
     maintenance:companion.maintenance,
-    async close(){if(ledgerTimer)try{writeLedger();}catch{}await engine.flushWorkLedger().catch(()=>{});await companion.close();for(const fn of effects)fn();},
+    async close(){if(ledgerTimer)writeLedger();await engine.flushWorkLedger();await companion.close();await engine.flushSaves();for(const fn of effects)fn();engine.releaseDeferredSaves();companionStore.releaseDeferredSave();},
   };
+  }catch(error){engine?.releaseDeferredSaves();companionStore.releaseDeferredSave();for(const fn of effects)try{fn();}catch{}throw error;}
 }

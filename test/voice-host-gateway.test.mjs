@@ -11,7 +11,7 @@ const cardScope=()=>({channel:'card-table',tableId:'table-one',handId:'hand-one'
 const cardRequest=(eventId='card-one')=>({eventId,kind:'allin',text:'untrusted replacement words',scope:cardScope()});
 async function until(check){for(let i=0;i<100;i++){if(check())return;await new Promise(resolve=>setTimeout(resolve,5));}throw Error('voice host did not settle');}
 
-async function fixture(t,{packageId=ids[0],provider='local',hold=false}={}){
+async function fixture(t,{packageId=ids[0],provider='local',hold=false,readiness={ready:true}}={}){
   const dataRoot=await mkdtemp(join(tmpdir(),'voice-host-gateway-'));
   const settings=createVoiceSettings();
   await settings.update({enabled:true,selectedPackageId:packageId,packages:{[packageId]:{ttsProvider:provider,credentialRef:'voice:test-key'}}});
@@ -23,7 +23,8 @@ async function fixture(t,{packageId=ids[0],provider='local',hold=false}={}){
   const held=hold?new Promise(resolve=>{release=resolve;}):Promise.resolve();
   const channels=Object.fromEntries(['chat','card-table'].map(owner=>[owner,{
     async *speak(request){spoken.push({owner,...request});if(owner==='card-table')await held;yield {type:'pcm',pcm:new Uint8Array([0,0,1,0]),sampleRate:request.speechProvider==='minimax'?32000:request.engine==='gpt'?48000:24000};},
-    async ready(request){ready.push({owner,...request});return {ready:true};},
+    async ready(request){ready.push({owner,...request});return readiness;},
+    async prepare(){return {ready:true};},
     async stopEngine(){stops.push(owner);if(owner==='card-table')release?.();},
     async cancelCapture(){},async close(){await this.stopEngine();}
   }]));
@@ -36,9 +37,9 @@ async function fixture(t,{packageId=ids[0],provider='local',hold=false}={}){
     async select({characterId,engine,profileId}){const key=characterId+':'+engine,old=profileRows.get(key),next={...old,id:profileId,version:old.version+1};profileRows.set(key,next);return next;}
   };
   const host=createVoiceHost({dataRoot,build:'unused',getGame:()=>game,getPlatform:()=>platform,send:event=>events.push(event),
-    components:{settings,profiles,runtime,local:{},cloud:{async status(){return {state:'ready'};}},credentials:{},assets:{async resolve(){return {};},async status(){return {state:'ready'};}},supervisor:{async close(){}}}});
+    components:{settings,profiles,runtime,local:{},cloud:{async status(){return {state:'ready'};}},credentials:{},assets:{async prepareSelected(){return {state:'ready'};},async resolve(){return {};},async status(){return {state:'ready'};}},supervisor:{async close(){}}}});
   t.after(async()=>{release?.();try{await host.close();}finally{await rm(dataRoot,{recursive:true,force:true});}});
-  return {host,settings,events,spoken,ready,stops,gameReceipts,profileReads,profileRows,leases,packages,
+  return {host,settings,events,spoken,ready,stops,gameReceipts,profileReads,profileRows,leases,packages,channels,
     releaseSpeech:()=>release?.(),invalidateScope:()=>{valid=false;},cancelled:()=>cancelled};
 }
 const generated=(f,eventId='card-one')=>f.events.some(event=>event.type==='turn'&&event.state==='generated'&&event.requestId==='card:'+eventId&&!event.failed);
@@ -112,6 +113,39 @@ test('renderer-supplied identity is rejected before it can configure or stop an 
     await assert.rejects(f.host.action('configure',identity),{code:'VOICE_SCOPE_FORGED'});
   }
   assert.equal(f.stops.length,0);assert.equal(f.cancelled(),0);assert.equal(f.spoken.length,0);
+});
+
+test('table hand transition cancels old output without releasing an idle healthy voice engine',async t=>{
+ const f=await fixture(t);
+ await f.host.cardEvent({type:'scope-update',tableId:'table-one',handId:'hand-one',status:'completed'});
+ const before=f.stops.length;
+ await f.host.cardEvent({type:'scope-update',tableId:'table-one',handId:'hand-two',status:'active'});
+ assert.equal(f.stops.length,before);
+});
+
+test('table cloud readiness preserves the real provider failure code and explanation',async t=>{
+ const f=await fixture(t,{provider:'minimax',readiness:{ready:false,code:'CLOUD_KEY_REQUIRED',message:'请更新失效的云配音配置'}});
+ await f.host.cardEvent(cardRequest());await until(()=>f.events.some(row=>row.type==='segment'&&row.state==='failed'));
+ const error=f.events.find(row=>row.type==='segment'&&row.state==='failed');
+ assert.equal(error.code,'CLOUD_KEY_REQUIRED');assert.equal(error.message,'请更新失效的云配音配置');assert.equal(f.spoken.length,0);
+});
+
+test('renderer settings and configuration events cannot disclose or replace private credential references',async t=>{
+ const f=await fixture(t);
+ assert.doesNotMatch(JSON.stringify(await f.host.action('state')),/credentialRef|voice:test-key/);
+ await assert.rejects(f.host.action('configure',{cloudConnections:{selectedId:null,items:[]}}),{code:'VOICE_SCOPE_FORGED'});
+ await assert.rejects(f.host.action('configure',{packages:{[ids[0]]:{credentialRef:'voice:forged'}}}),{code:'VOICE_SCOPE_FORGED'});
+ assert.doesNotMatch(JSON.stringify(await f.host.action('configure',{enabled:true})),/credentialRef|voice:test-key/);
+ assert.doesNotMatch(JSON.stringify(f.events),/credentialRef|voice:test-key/);
+});
+
+for(const target of ['app-chat','global'])test('explicit '+target+' stop retries a failed chat cleanup in one click',async t=>{
+ const f=await fixture(t);const real=f.channels.chat.stopEngine;
+ f.channels.chat.stopEngine=async()=>{throw Object.assign(Error('stop unknown'),{code:'VOICE_WORKER_STOP_FAILED'});};
+ await assert.rejects(f.host.action('stop',{channel:'app-chat'}),{code:'VOICE_CLEANUP_FAILED'});
+ f.channels.chat.stopEngine=real;
+ await f.host.action('stop',target==='global'?{}:{channel:'app-chat'});
+ assert.equal((await f.host.action('state')).preparation.state,'idle');
 });
 
 test('configuration and profile changes revoke pending card PCM, including an externally changed profile version',async t=>{
