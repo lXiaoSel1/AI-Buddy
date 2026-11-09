@@ -255,7 +255,8 @@ export function createBiliFullMedia({tools,playback,validateUrl=mediaUrl,fetchIm
         worker.once('exit',code => failWorker(fail(code?'BILI_FULL_DECODE_INCOMPLETE':'BILI_FULL_FRAMES_MISSING')));
       });
     } catch (error) {
-      if (combined.aborted || error.code?.startsWith('FFMPEG_COMPONENT_') || error.code?.startsWith('BILI_FULL_')) throw error;
+      if(error.name==='TimeoutError')throw fail('BILI_FULL_MEDIA_TIMEOUT');
+      if (combined.aborted || (typeof error.code==='string'&&error.code.startsWith('FFMPEG_COMPONENT_')) || (typeof error.code==='string'&&error.code.startsWith('BILI_FULL_'))) throw error;
       throw fail('BILI_FULL_ORIGINAL_UNAVAILABLE');
     } finally {
       lifetime.abort();

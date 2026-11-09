@@ -19,7 +19,7 @@ function validateConnections(value){
   const seen=new Set();
   for(const row of value.items){
     if(!plain(row)||Object.keys(row).some(key=>!['id','name','provider','model','credentialRef'].includes(key))||!validId(row.id)||seen.has(row.id)||
-      typeof row.name!=='string'||!row.name.trim()||row.name.length>100||/[\r\n\0]/.test(row.name)||row.provider!=='minimax'||!models.includes(row.model)||
+      typeof row.name!=='string'||!row.name.trim()||row.name.length>100||/[\r\n\0]/.test(row.name)||!['minimax','minimax-global'].includes(row.provider)||!models.includes(row.model)||
       row.credentialRef!==null&&!validRef(row.credentialRef))throw fault();
     seen.add(row.id);
   }

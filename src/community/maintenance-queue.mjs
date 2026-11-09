@@ -5,6 +5,7 @@ import {writeAtomicAsync} from '../atomic-write.mjs';
 import {assertPluginTreeNoLinks} from '../plugin-archive.mjs';
 import {canonicalPluginJson} from '../plugin-manifest.mjs';
 import {communityDigest} from './catalog.mjs';
+import {createEvidenceArchive} from '../evidence-archive.mjs';
 
 const operations = new Set(['install', 'enable', 'disable', 'rollback', 'uninstall']);
 const copy = value => structuredClone(value);
@@ -17,6 +18,8 @@ export async function createMaintenanceQueue({directory, execute, revalidate = a
   if (typeof execute !== 'function') throw Error('Maintenance executor is required');
   await assertPluginTreeNoLinks(directory); await mkdir(directory, {recursive: true});
   const file = join(directory, 'maintenance-queue-v1.json'); let state;
+  const archive=createEvidenceArchive(join(directory,'maintenance-history.sqlite')),terminal=new Set(['completed','failed','cancelled']),recentLimit=200;
+  function compact(next){const completed=next.jobs.filter(job=>terminal.has(job.state)),evicted=completed.slice(0,Math.max(0,completed.length-recentLimit));if(!evicted.length)return next;archive.putMany(evicted.map(job=>({namespace:'maintenance-dedup',id:job.idempotencyKey,value:job})));const ids=new Set(evicted.map(job=>job.id));return {...next,jobs:next.jobs.filter(job=>!ids.has(job.id))};}
   try { state = JSON.parse(await readFile(file, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; state = {schemaVersion: 1, jobs: []}; }
   if (state.schemaVersion !== 1 || !Array.isArray(state.jobs)) throw fault('Maintenance queue is invalid; evidence retained', 'COMMUNITY_QUEUE_INVALID');
   const ids = new Set();
@@ -25,27 +28,30 @@ export async function createMaintenanceQueue({directory, execute, revalidate = a
     ids.add(job.id);
   }
   let closed = false, executing = false, draining = null, serial = Promise.resolve();
+  const beforeCompaction=state.jobs.length;state=compact(state);
   const recoveryOnly = state.jobs.length > MAX_JOBS;
   const snapshot = () => copy({...state, capacity: {limit: MAX_JOBS, count: state.jobs.length, recoveryOnly}});
   // The previous durable snapshot remains authoritative until the candidate has
   // committed. A failed publication cannot poison memory or an idempotent retry.
-  const persist = async next => { await write(file, canonicalPluginJson(next)); state = next; try { onChange(snapshot()); } catch {} };
+  const persist = async next => {next=compact(next);await write(file, canonicalPluginJson(next)); state = next; try { onChange(snapshot()); } catch {} };
+  if(state.jobs.length!==beforeCompaction)await write(file,canonicalPluginJson(state));
   const recovered = copy(state); let changed = false;
   for (const job of recovered.jobs) if (!recoveryOnly && job.state === 'running') { job.state = 'interrupted-needs-user'; job.error = {code: 'MAINTENANCE_OUTCOME_UNKNOWN', message: 'Process stopped during maintenance; inspect runtime before planning a retry'}; job.updatedAt = new Date(now()).toISOString(); changed = true; }
   if (changed) await persist(recovered);
   function mutation(run) { const result = serial.then(run); serial = result.catch(() => {}); return result; }
-  async function enqueue({operation, packageKey, intent, idempotencyKey}) {
+  async function enqueue({operation, packageKey, intent, idempotencyKey,official=false}) {
     if (closed) throw fault('Maintenance queue is closed', 'COMMUNITY_CLOSED');
     if (!operations.has(operation) || typeof packageKey !== 'string' || !packageKey || packageKey.length > 800) throw fault('Invalid maintenance request', 'COMMUNITY_QUEUE_INVALID');
     const encoded = canonicalPluginJson(intent); if (Buffer.byteLength(encoded) > 2 * 1024 * 1024) throw fault('Maintenance intent exceeds limit', 'COMMUNITY_QUEUE_INVALID');
     const intentDigest = communityDigest(intent), dedup = idempotencyKey ?? operation + ':' + packageKey + ':' + intentDigest;
     return mutation(async () => {
       if (closed) throw fault('Maintenance queue is closed', 'COMMUNITY_CLOSED');
-      const prior = state.jobs.find(job => job.idempotencyKey === dedup);
+      if(typeof dedup!=='string'||!dedup||dedup.length>4000)throw fault('Invalid maintenance idempotency key','COMMUNITY_QUEUE_INVALID');
+      const prior = state.jobs.find(job => job.idempotencyKey === dedup)??archive.get('maintenance-dedup',dedup);
       if (prior) { if (prior.intentDigest !== intentDigest || prior.operation !== operation || prior.packageKey !== packageKey) throw fault('Idempotency key conflicts with another operation', 'COMMUNITY_QUEUE_CONFLICT'); return copy(prior); }
       if (state.jobs.length >= MAX_JOBS) throw fault('Maintenance history reached its capacity; existing evidence is retained', 'COMMUNITY_QUEUE_CAPACITY');
       const timestamp = new Date(now()).toISOString();
-      const job = {id: randomUUID(), operation, packageKey, intent: JSON.parse(encoded), intentDigest, idempotencyKey: dedup, state: 'queued', createdAt: timestamp, updatedAt: timestamp}, next = copy(state);
+      const job = {id: randomUUID(), official:official===true,operation, packageKey, intent: JSON.parse(encoded), intentDigest, idempotencyKey: dedup, state: 'queued', createdAt: timestamp, updatedAt: timestamp}, next = copy(state);
       next.jobs.push(job); await persist(next); return copy(job);
     });
   }
@@ -63,12 +69,12 @@ export async function createMaintenanceQueue({directory, execute, revalidate = a
     const next = copy(state), job = next.jobs.find(value => value.id === id); if (!job || !expected.includes(job.state)) return null;
     change(job); await persist(next); return copy(job);
   });
-  const failed = cause => ({code: typeof cause?.code === 'string' ? cause.code : 'MAINTENANCE_FAILED', message: String(cause?.message ?? cause).slice(0, 2000)});
+  const failed = cause => ({code: typeof cause?.code === 'string' ? cause.code : 'MAINTENANCE_FAILED', message:String(cause?.message??cause).slice(0,2000),...(cause?.retryOfficial===true?{retryOfficial:true,originKnownMirror:cause.originKnownMirror===true,...(typeof cause.host==='string'?{host:cause.host}:{}),...(typeof cause.technicalCode==='string'?{technicalCode:cause.technicalCode}:{})}:{})});
   async function runDrain() {
     await serial;
     if (closed || recoveryOnly) return snapshot();
-    for (let index = 0; index < state.jobs.length; index++) {
-      const original = copy(state.jobs[index]), id = original.id;
+    for (const original of copy(state.jobs)) {
+      const id = original.id;
       if (closed || original.state !== 'queued') continue;
       let busy, decision;
       try { busy = await isBusy(copy(original)); if (!busy) decision = await revalidate(copy(original)); if (!busy && (decision === true || decision?.allowed === true)) busy = await isBusy(copy(original)); }

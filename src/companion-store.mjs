@@ -1,5 +1,7 @@
 import {assertR95CompanionCompatible} from './r95-data-compatibility.mjs';
 import {join,resolve} from 'node:path';
+import {createEvidenceArchive} from './evidence-archive.mjs';
+import {compactAutoGroups} from './auto-evidence.mjs';
 import {randomUUID,createHash} from 'node:crypto';
 import {createSnapshotStorage,readJson} from './storage.mjs';
 import {currentLife} from './companion-life.mjs';
@@ -48,7 +50,8 @@ export async function openCompanionStore(dataRoot,{media=null,deferredSaveRegist
   if(!media)return;const before=new Map();for(const [holder,key,path]of imageSlots(state))before.set(path,holder[key]);
   for(const [holder,key,path]of imageSlots(next)){const value=holder[key];if(typeof value!=='string'||!value.startsWith('data:image/')||before.get(path)===value)continue;const url=media.put(value);if(url)holder[key]=url;}
  }
- const api={get state(){return state;},async mutate(fn,{storeImages:convert=true,guard}={}){const task=tail.then(async()=>{if(guard){const proceed=guard(readOnlyGuardState(state));if(typeof proceed!=='boolean')throw TypeError('Companion mutation guards must return a boolean synchronously');if(!proceed)return;}const next=measureDesktopDiagnostic('companion-clone',()=>copy(state));const result=await fn(next);if(convert)storeImages(next);const text=body(next);if(text===current)return result;next.revision=(Number(state.revision)||0)+1;await disk.writeText('{"revision":'+next.revision+(text==='{}'?'}':','+text.slice(1)));state=next;current=text;return result;});tail=task.catch(()=>{});return task;},async flush(){await tail;if(deferredSaveRegistry)await deferredSaveRegistry.flushAll({scope});else await disk.flush();},async drain(){await tail;await disk.drain();},releaseDeferredSave:()=>release?.(),snapshot:()=>copy(state)};
+ const archive=createEvidenceArchive(join(dataRoot,'galgame','auto-evidence.sqlite'));compactAutoGroups(state,archive);
+ const api={archive,get state(){return state;},async mutate(fn,{storeImages:convert=true,guard}={}){const task=tail.then(async()=>{if(guard){const proceed=guard(readOnlyGuardState(state));if(typeof proceed!=='boolean')throw TypeError('Companion mutation guards must return a boolean synchronously');if(!proceed)return;}const next=measureDesktopDiagnostic('companion-clone',()=>copy(state));const result=await fn(next);if(convert)storeImages(next);const text=body(next);if(text===current)return result;next.revision=(Number(state.revision)||0)+1;await disk.writeText('{"revision":'+next.revision+(text==='{}'?'}':','+text.slice(1)));state=next;current=text;return result;});tail=task.catch(()=>{});return task;},async flush(){await tail;if(deferredSaveRegistry)await deferredSaveRegistry.flushAll({scope});else await disk.flush();},async drain(){await tail;await disk.drain();},releaseDeferredSave:()=>release?.(),snapshot:()=>copy(state)};
  const release=deferredSaveRegistry?.register('companion',{target,scope,drain:()=>api.drain(),flushSync:()=>disk.flushSync()});
  return api;
 }

@@ -1,4 +1,5 @@
 import {Worker} from 'node:worker_threads';
+import {replyNetworkRoute} from '../network-worker.mjs';
 import {createDshComponentManager,DSH_SOURCE_COMMIT} from './component-manager.mjs';
 import {assertPublicDshComponentDescriptor,DSH_PUBLIC_COMPONENT} from './component-download.mjs';
 const fault=(message,code)=>Object.assign(Error(message),{code});
@@ -16,15 +17,17 @@ export async function planHostDshComponent({request={},descriptor,manager,choose
 // Status is an informational snapshot. Initial verification and every install
 // run in this manager's single owned worker; polling never reparses the archive
 // or repeats full-tree hashing. Runtime consumers still verify their own entry.
-export function createManagedDshComponentManager({destinationRoot,busy=()=>false,onUpdate=()=>{},workerPath=new URL('./component-install-worker.mjs',import.meta.url),workerFactory=(path,options)=>new Worker(path,options)}={}){
+export function createManagedDshComponentManager({destinationRoot,network,busy=()=>false,onUpdate=()=>{},workerPath=new URL('./component-install-worker.mjs',import.meta.url),workerFactory=(path,options)=>new Worker(path,options)}={}){
   const planner=createDshComponentManager({destinationRoot}),plans=new Map();let current={state:'missing',sourceCommit:DSH_SOURCE_COMMIT},checked=false,checking=null,active=null,operation=null,closed=false,closePromise=null,installation={state:'idle',phase:'idle'};
   const snapshot=()=>({...structuredClone(current),installation:structuredClone(installation)});
   const update=value=>{installation={...installation,...value};try{onUpdate(snapshot());}catch{}};
-  function workerTask(kind,item,planId){
+  function workerTask(kind,item,planId,official=false){
+    const taskNetwork=network?.capture?.({official})??network;
     const abortBuffer=new SharedArrayBuffer(4),abortView=new Int32Array(abortBuffer),entry={kind,abortView,worker:null,promise:null};
     entry.promise=new Promise((resolve,reject)=>{
-      let value,error,worker;try{worker=workerFactory(workerPath,{workerData:{kind,destinationRoot,item,abortBuffer}});entry.worker=worker;}catch(cause){reject(cause);return;}
+      let value,error,worker;try{worker=workerFactory(workerPath,{workerData:{kind,destinationRoot,item,abortBuffer,...(taskNetwork?{network:taskNetwork.snapshot()}:{} )}});entry.worker=worker;}catch(cause){reject(cause);return;}
       worker.on('message',row=>{
+        if(row?.type==='network-route'){void replyNetworkRoute(worker,row,taskNetwork);return;}
         if(row?.type==='busy')void(async()=>{let value=true;try{value=closed||Atomics.load(abortView,0)!==0||Boolean(await busy());}catch{}try{worker.postMessage({type:'busy-result',id:row.id,busy:value});}catch{}})();
         else if(row?.type==='progress'&&kind==='install'&&operation?.entry===entry&&!operation.controller.signal.aborted)update({...row.value,planId});
         else if(row?.type==='result')value=row.value;
@@ -52,7 +55,7 @@ export function createManagedDshComponentManager({destinationRoot,busy=()=>false
     const signal=op.controller.signal;if(signal.aborted)return Promise.reject(signal.reason);
     return new Promise((resolve,reject)=>{const abort=()=>{signal.removeEventListener('abort',abort);reject(signal.reason);};signal.addEventListener('abort',abort,{once:true});Promise.resolve(promise).then(value=>{signal.removeEventListener('abort',abort);resolve(value);},error=>{signal.removeEventListener('abort',abort);reject(error);});if(signal.aborted)abort();});
   }
-  async function install({planId,signal}={}){
+  async function install({planId,signal,official=false}={}){
     if(closed)throw fault('Component manager is closed','PLUGIN_CLOSED');
     if(operation)throw fault('Runtime is busy','DSH_COMPONENT_BUSY');
     const item=plans.get(planId);if(!item)throw fault('Component installation plan expired','DSH_COMPONENT_PLAN_STALE');
@@ -62,7 +65,7 @@ export function createManagedDshComponentManager({destinationRoot,busy=()=>false
         update({state:op.controller.signal.aborted?'cancelling':'installing',phase:'checking',planId,error:undefined,receivedBytes:0,totalBytes:item.bytes});
         if(checking)await waitForStatus(checking,op);op.controller.signal.throwIfAborted();
         if(closed)throw cancelled();if(active)throw fault('Runtime is busy','DSH_COMPONENT_BUSY');
-        const entry=workerTask('install',item,planId);op.entry=entry;if(op.controller.signal.aborted)cancelOperation(op);
+        const entry=workerTask('install',item,planId,official);op.entry=entry;if(op.controller.signal.aborted)cancelOperation(op);
         // After worker admission, wait for its exact exit/lock-cleanup receipt
         // even on cancellation, so a second task cannot overlap its side effects.
         const result=await entry.promise;current=result;checked=true;plans.delete(planId);update({state:result.state==='ready'?'ready':'failed',phase:result.state==='ready'?'ready':'failed'});return result;

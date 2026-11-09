@@ -3,12 +3,16 @@ import {mkdir, readFile, writeFile, rm, stat, statfs, open, readdir} from 'node:
 import {createReadStream} from 'node:fs';
 import {resolve, join, relative, isAbsolute, sep} from 'node:path';
 import {writeAtomic} from './atomic-write.mjs';
-import {canonicalPluginJson, PLUGIN_API_VERSION, pluginId, parsePluginVersion, satisfiesVersionRange} from './plugin-manifest.mjs';
+import {canonicalPluginJson, PLUGIN_API_VERSION, pluginId, parsePluginVersion, satisfiesVersionRange, pluginCompatibility} from './plugin-manifest.mjs';
 import {verifyPluginCatalog, resolvePluginInstallPlan, catalogPackages} from './plugin-catalog.mjs';
 import {assertPluginTreeNoLinks, extractPluginArchive, inspectPluginArchive, verifyInstalledPlugin} from './plugin-archive.mjs';
 import {OFFICIAL_SOURCE_CATALOG_URL} from './plugin-sources.mjs';
 import {PLUGIN_SOURCE_BACKEND, createPluginSourceManager} from './plugin-source-manager.mjs';
 import {renamePluginPath as rename} from './plugin-files.mjs';
+import {quarantinePluginDirectories,recoverPluginTrash,pluginTrashPending} from './plugin-quarantine.mjs';
+import {processLockOwner,processLockAlive} from './process-lock-owner.mjs';
+import {fetchDownloadResponse,downloadResponseInfo,createDownloadDeadline,waitForNetwork} from './network-download.mjs';
+import {retryPluginDownload,pluginMirrorIntegrity} from './plugin-download-integrity.mjs';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const fail = (message, code = 'PLUGIN_OPERATION_FAILED') => { throw Object.assign(Error(message), {code}); };
@@ -17,7 +21,7 @@ const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) 
 async function fileHash(file) { const hash = createHash('sha256'); for await (const bytes of createReadStream(file)) hash.update(bytes); return hash.digest('hex'); }
 
 /** Official trusted packages only. The default URL is pinned to the public official catalog. */
-async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion = PLUGIN_API_VERSION, fetchImpl = globalThis.fetch,
+async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion = PLUGIN_API_VERSION, fetchImpl = globalThis.fetch, planDownload,
   trustedKeys, catalogUrl = OFFICIAL_SOURCE_CATALOG_URL, host = null, busy = async () => false, onUpdate = () => {}, withMaintenanceLock = null,
   startupRetryMs = null, startupRetryLimitMs = 120000,
   availableBytes = async path => { const s = await statfs(path); return Number(s.bavail) * Number(s.bsize); }} = {}) {
@@ -31,6 +35,7 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
   let service = {state: 'initializing', usable: false, retryable: false, lastError: null, attempt: 0, waitingSince: null};
   const catalogRequests = new Set();
   const plans = new Map(), offlineSelections = new Map();
+  const startupTasks=[];
   function under(path) { const target = resolve(control, path), rel = relative(control, target); if (!rel || isAbsolute(rel) || rel === '..' || rel.startsWith('..' + sep)) fail('Extension path escapes its root'); return target; }
   function snapshot() {
     return {schemaVersion: 1, appVersion, apiVersion, service: structuredClone(service), catalogAvailable: !!catalog, catalogGeneratedAt: catalog?.generatedAt ?? null, catalogError, operation: active ? {id: active.id, phase: active.phase, packageId: active.packageId, downloadedBytes: active.downloadedBytes, totalBytes: active.totalBytes} : null,
@@ -60,18 +65,19 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
   }
   async function loadCatalog(envelope) { assertReady(); return mutation(() => setCatalog(envelope)); }
   try { await setCatalog(await readFile(catalogFile, 'utf8'), {persist: false}); } catch (error) { if (error.code !== 'ENOENT') catalogError = error.message; }
-  async function refreshCatalog() {
+  async function refreshCatalog({official=false}={}) {
     assertReady();
     if (!catalogUrl) { catalogError = '官方扩展目录尚未配置；可导入已签名的离线包'; update(); return snapshot(); }
     if (new URL(catalogUrl).protocol !== 'https:') fail('Catalog requires HTTPS');
     const controller = new AbortController(); catalogRequests.add(controller);
+    let response;
     try {
-      const response = await fetchImpl(catalogUrl, {signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000)])});
+      response = await fetchDownloadResponse(catalogUrl, {fetchImpl,planDownload,official,signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000)])});
       if (!response.ok) fail('Catalog request failed: ' + response.status);
       const chunks = []; let size = 0;
-      for await (const chunk of response.body) { size += chunk.length; if (size > 17 * 1024 * 1024) fail('Catalog exceeds size limit'); chunks.push(Buffer.from(chunk)); }
-      return await mutation(() => setCatalog(Buffer.concat(chunks).toString('utf8'), {strictWatermark: true}));
-    } catch (error) { if (!closing) { catalogError = error.message; update(); } return snapshot(); }
+      for await (const chunk of response.body) { size += chunk.length; if (size > 17 * 1024 * 1024) throw pluginMirrorIntegrity(Object.assign(Error('Catalog exceeds size limit'),{code:'PLUGIN_OPERATION_FAILED'}),downloadResponseInfo(response)); chunks.push(Buffer.from(chunk)); }
+      const incoming=Buffer.concat(chunks).toString('utf8');try{verifyPluginCatalog(incoming,{trustedKeys});}catch(cause){throw pluginMirrorIntegrity(cause,downloadResponseInfo(response));}return await mutation(() => setCatalog(incoming, {strictWatermark: true}));
+    } catch (error) { if (!closing) { catalogError = error.message; update(); } if(error.code==='NETWORK_MIRROR_MISMATCH')throw error;return snapshot(); }
     finally { catalogRequests.delete(controller); }
   }
   async function plan(requests) {
@@ -93,9 +99,9 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
       const guarded = async () => {
         if (closing) fail('扩展服务已关闭', 'PLUGIN_CLOSED');
         await assertPluginTreeNoLinks(control); await assertPluginTreeNoLinks(dataDirectory);
-        for (const part of ['', 'cache', 'staging', 'packages', 'transactions', 'catalogs']) await mkdir(join(control, part), {recursive: true});
-        try { const old = await json(ownFile); if (!Number.isInteger(old.pid) || alive(old.pid)) fail('Another extension operation is active', 'PLUGIN_BUSY'); await rm(ownFile); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-        own = await open(ownFile, 'wx'); await own.writeFile(JSON.stringify({pid: process.pid, at: Date.now()}));
+        for (const part of ['', 'cache', 'staging', 'packages', 'transactions', 'catalogs', 'trash']) await mkdir(join(control, part), {recursive: true});
+        try { const old = await json(ownFile); if (!Number.isInteger(old.pid) || await processLockAlive(old)) fail('Another extension operation is active', 'PLUGIN_BUSY'); await rm(ownFile); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+        own = await open(ownFile, 'wx'); await own.writeFile(JSON.stringify({...await processLockOwner(),at:Date.now()}));
         await readState();
         return run();
       };
@@ -105,7 +111,7 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
   function mutation(run, {recovery = false} = {}) { if (!recovery) assertReady(); const result = serial.then(() => { if (!recovery) assertReady(); return lock(run); }); serial = result.catch(() => {}); return result; }
   function checkAbort(signal) { if (signal.aborted) throw signal.reason ?? Object.assign(Error('Extension operation cancelled'), {name: 'AbortError'}); }
   function checkDependencies(manifest, state = registry) {
-    for (const [id, range] of Object.entries(manifest.dependencies)) { const dependency = state.packages[id]; if (!dependency || !satisfiesVersionRange(dependency.current, range)) fail('Installed dependency is missing or incompatible: ' + id, 'PLUGIN_DEPENDENCY_ERROR'); }
+    for (const [id, range] of Object.entries(manifest.dependencies)) { const dependency = state.packages[id],saved=dependency?.versions[dependency.current]; if (!saved || !satisfiesVersionRange(dependency.current, range)||!pluginCompatibility(saved.manifest,{appVersion,apiVersion}).compatible) fail('Installed dependency is missing or incompatible: ' + id, 'PLUGIN_DEPENDENCY_ERROR'); }
   }
   async function savedProof(item) {
     if (!/^[a-f0-9]{64}$/.test(item.catalogSha256 ?? '')) fail('Installed extension has no signed publication proof');
@@ -128,26 +134,30 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
     for (const candidate of Object.keys(registry.packages)) if (depends(candidate, id) && (await busy(candidate) || host?.isActive?.(candidate))) return true;
     return false;
   }
-  async function download(item, signal) {
+  const download=async(item,signal,official=false)=>{signal?.throwIfAborted();if(official){const partial=join(control,'cache',item.archive.sha256+'.zip.partial');try{await rename(partial,partial+'.mirror-retry-'+randomUUID());}catch(error){if(error.code!=='ENOENT')throw error;}}return retryPluginDownload(()=>downloadAttempt(item,signal,official),signal);};
+  async function downloadAttempt(item, signal, official=false) {
     const complete = join(control, 'cache', item.archive.sha256 + '.zip'), partial = complete + '.partial';
+
     try { if ((await stat(complete)).size === item.archive.bytes && await fileHash(complete) === item.archive.sha256) return complete; } catch (error) { if (error.code !== 'ENOENT') throw error; }
     let offset = 0; try { offset = (await stat(partial)).size; } catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (offset > item.archive.bytes) { await rm(partial); offset = 0; }
     if (offset === item.archive.bytes) { if (await fileHash(partial) === item.archive.sha256) { await rename(partial, complete); return complete; } await rm(partial); offset = 0; }
-    const response = await fetchImpl(item.archive.url, {headers: offset ? {Range: `bytes=${offset}-`} : {}, signal});
+    const deadline=createDownloadDeadline(signal);try{
+    const response = await fetchDownloadResponse(item.archive.url,{fetchImpl,planDownload,official,headers:offset?{Range:`bytes=${offset}-`}:{},signal:deadline.signal});deadline.touch();
     if (response.status === 206) {
       const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range') ?? '');
       if (!range || Number(range[1]) !== offset || Number(range[2]) !== item.archive.bytes - 1 || Number(range[3]) !== item.archive.bytes) fail('Invalid download resume range');
     } else if (response.status === 200) offset = 0; else fail('Extension download failed: ' + response.status);
     const file = await open(partial, offset ? 'a' : 'w'); let count = offset;
     try {
-      for await (const chunk of response.body) { checkAbort(signal); const bytes = Buffer.from(chunk); count += bytes.length; if (count > item.archive.bytes) fail('Download exceeds signed size'); await file.write(bytes); active.downloadedBytes = count; update(); }
+      const iterator=response.body[Symbol.asyncIterator]();while(true){const {done,value:chunk}=await waitForNetwork(()=>iterator.next(),deadline.signal);if(done)break;deadline.touch();checkAbort(signal); const bytes = Buffer.from(chunk); count += bytes.length; if (count > item.archive.bytes) throw pluginMirrorIntegrity(Object.assign(Error('Download exceeds signed size'),{code:'PLUGIN_OPERATION_FAILED'}),downloadResponseInfo(response)); await file.write(bytes); active.downloadedBytes = count; update(); }
       await file.sync();
     } finally { await file.close(); }
-    if (count !== item.archive.bytes || await fileHash(partial) !== item.archive.sha256) { if (count === item.archive.bytes) await rm(partial, {force: true}); fail('Downloaded extension size or hash differs from signed metadata'); }
+    if (count !== item.archive.bytes || await fileHash(partial) !== item.archive.sha256) { if (count === item.archive.bytes) await rm(partial, {force: true}); throw pluginMirrorIntegrity(Object.assign(Error('Downloaded extension size or hash differs from signed metadata'),{code:'PLUGIN_OPERATION_FAILED'}),downloadResponseInfo(response)); }
     await rename(partial, complete); return complete;
+    }finally{deadline.dispose();}
   }
-  async function install({planId, offlineArchives = {}, updateCheck} = {}) {
+  async function install({planId, offlineArchives = {}, updateCheck,official=false} = {}) {
     const selected = plans.get(planId); if (!selected) fail('Installation plan is missing or expired');
     return mutation(async () => {
       await packageGuard(selected.packages);
@@ -170,7 +180,7 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
           if (item.reuse && saved) { await verifySaved(saved); prepared.push({item, saved}); continue; }
           active.phase = 'downloading'; update();
           const source = offlineArchives[item.manifest.id + '@' + item.manifest.version] ?? offlineArchives[item.manifest.id];
-          const bytes = source ? Buffer.isBuffer(source) ? source : await readFile(source) : await readFile(await download(item, controller.signal));
+          const bytes = source ? Buffer.isBuffer(source) ? source : await readFile(source) : await readFile(await download(item, controller.signal,official));
           if (bytes.length !== item.archive.bytes || digest(bytes) !== item.archive.sha256) fail('Offline extension hash or size differs from signed metadata');
           const inspected = inspectPluginArchive(bytes, item.manifest);
           if (await availableBytes(control) < inspected.unpackedBytes + 4 * 1024 * 1024) fail('Insufficient space to extract extension', 'PLUGIN_DISK_SPACE');
@@ -203,16 +213,17 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
     assertReady();
     const {row, saved} = recordFor(id);
     if (requireEnabled && !row.enabled) fail('Extension is not enabled', 'PLUGIN_DISABLED');
+    if(!pluginCompatibility(saved.manifest,{appVersion,apiVersion}).compatible)fail('Extension is incompatible with this app/API','PLUGIN_INCOMPATIBLE');
     checkDependencies(saved.manifest); await verifySaved(saved);
     const schema = await json(join(dataDirectory, id, '.schema.json'), null);
     if (schema && !saved.manifest.compatibleDataVersions.includes(schema.dataSchemaVersion)) fail('Extension cannot read this profile data', 'PLUGIN_DATA_MIGRATION_REQUIRED');
     assertReady(); return {manifest: saved.manifest, directory: under(saved.directory), dataDirectory: join(dataDirectory, id), version: saved.manifest.version, archiveSha256: saved.archive.sha256};
   }
-  async function enable(id) { return mutation(async () => { const {saved} = recordFor(id); checkDependencies(saved.manifest); await verifySaved(saved); const next = structuredClone(registry); next.packages[id].enabled = true; await persist(next); return snapshot(); }); }
+  async function enable(id) { return mutation(async () => { const {saved} = recordFor(id); if(!pluginCompatibility(saved.manifest,{appVersion,apiVersion}).compatible)fail('Extension is incompatible with this app/API','PLUGIN_INCOMPATIBLE');checkDependencies(saved.manifest); await verifySaved(saved); const next = structuredClone(registry); next.packages[id].enabled = true; await persist(next); return snapshot(); }); }
   async function disable(id) { return mutation(async () => { recordFor(id); if (await busy(id)) fail('Stop the extension task before disabling', 'PLUGIN_BUSY'); await host?.stop?.(id); const next = structuredClone(registry); next.packages[id].enabled = false; await persist(next); return snapshot(); }); }
-  async function activate(id, event, context = {}) { assertReady(); const {row, saved} = recordFor(id); if (!row.enabled) fail('Extension is disabled'); if (saved.manifest.kind !== 'plugin') return {assetOnly: true}; if (!host) fail('Extension host is unavailable'); checkDependencies(saved.manifest); await verifySaved(saved); for (const dependency of Object.keys(saved.manifest.dependencies)) { const dep = recordFor(dependency); await verifySaved(dep.saved); } assertReady(); await mkdir(join(dataDirectory, id), {recursive: true}); return host.activate({manifest: saved.manifest, directory: under(saved.directory), dataDirectory: join(dataDirectory, id), event, context}); }
+  async function activate(id, event, context = {}) { assertReady(); const {row, saved} = recordFor(id); if (!row.enabled) fail('Extension is disabled');if(!pluginCompatibility(saved.manifest,{appVersion,apiVersion}).compatible)fail('Extension is incompatible with this app/API','PLUGIN_INCOMPATIBLE'); if (saved.manifest.kind !== 'plugin') return {assetOnly: true}; if (!host) fail('Extension host is unavailable'); checkDependencies(saved.manifest); await verifySaved(saved); for (const dependency of Object.keys(saved.manifest.dependencies)) { const dep = recordFor(dependency); await verifySaved(dep.saved); } assertReady(); await mkdir(join(dataDirectory, id), {recursive: true}); return host.activate({manifest: saved.manifest, directory: under(saved.directory), dataDirectory: join(dataDirectory, id), event, context}); }
   async function rollback(id) { return mutation(async () => { const {row} = recordFor(id); if (!row.previous || !row.versions[row.previous]) fail('No compatible previous extension version'); if (await inUse(id)) fail('Extension is in use', 'PLUGIN_BUSY'); const prior = row.versions[row.previous]; await verifySaved(prior); checkDependencies(prior.manifest); if (!prior.manifest.compatibleDataVersions.includes(row.dataSchemaVersion ?? 1)) fail('Previous extension cannot read the current data; personal data was retained', 'PLUGIN_DATA_MIGRATION_REQUIRED'); if (!catalogPackages({schemaVersion: 1, id: 'local-registry', generatedAt: new Date().toISOString(), packages: [{...prior, publishedAt: prior.installedAt}].map(({manifest, archive, publishedAt}) => ({manifest, archive, publishedAt}))}, {appVersion, apiVersion})[0].compatible) fail('Previous extension is incompatible'); const next = structuredClone(registry); next.packages[id].previous = row.current; next.packages[id].current = row.previous; for (const selected of Object.values(next.packages)) checkDependencies(selected.versions[selected.current].manifest, next); await persist(next); return snapshot(); }); }
-  async function uninstall(id) { return mutation(async () => { const {row} = recordFor(id); for (const [other, value] of Object.entries(registry.packages)) if (other !== id && Object.hasOwn(value.versions[value.current].manifest.dependencies, id)) fail('Another installed package depends on this extension', 'PLUGIN_DEPENDENCY_ERROR'); if (await busy(id)) fail('Stop extension tasks before uninstalling', 'PLUGIN_BUSY'); await host?.stop?.(id); const next = structuredClone(registry); delete next.packages[id]; await persist(next); for (const saved of Object.values(row.versions)) { const path = under(saved.directory); await assertPluginTreeNoLinks(path); await rm(path, {recursive: true, force: true}); } return snapshot(); }); }
+  async function uninstall(id) { return mutation(async () => { const {row} = recordFor(id); for (const [other, value] of Object.entries(registry.packages)) if (other !== id && Object.hasOwn(value.versions[value.current].manifest.dependencies, id)) fail('Another installed package depends on this extension', 'PLUGIN_DEPENDENCY_ERROR');active={id:randomUUID(),kind:'uninstall',phase:'committing',packageId:id,controller:new AbortController()};update();try{if (await busy(id)) fail('Stop extension tasks before uninstalling', 'PLUGIN_BUSY'); await host?.stop?.(id); const next = structuredClone(registry); delete next.packages[id];await quarantinePluginDirectories(control,Object.values(row.versions).map(saved=>saved.directory),()=>persist(next));return snapshot();}finally{active=null;update();} }); }
   async function importOffline({envelope, archives, requests}) { await loadCatalog(envelope); const selected = await plan(requests); for (const item of selected.packages) if (!item.reuse && !archives?.[item.manifest.id] && !archives?.[item.manifest.id + '@' + item.manifest.version]) fail('Offline bundle is missing dependency: ' + item.manifest.id); return install({planId: selected.planId, offlineArchives: archives}); }
   async function prepareOffline(directory, requests) {
     assertReady();
@@ -234,8 +245,8 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
   }
   async function action(request = {}) {
     const {action: type, id} = request;
-    if (type === 'status') return snapshot(); if (type === 'retry') { if (closing) fail('扩展服务已关闭', 'PLUGIN_CLOSED'); if (service.usable) return snapshot(); if (!recoveryPromise) { clearTimeout(recoveryTimer); recoveryTimer = null; recoveryStarted = Date.now(); service = {...service, attempt: 0, waitingSince: null}; await startRecovery(); } return snapshot(); } if (type === 'refresh') return refreshCatalog(); if (type === 'plan') return plan(request.requests);
-    if (type === 'install') return install({planId: request.planId}); if (type === 'enable') return enable(id); if (type === 'disable') return disable(id);
+    if (type === 'status') return snapshot(); if (type === 'retry') { if (closing) fail('扩展服务已关闭', 'PLUGIN_CLOSED'); if (service.usable) return snapshot(); if (!recoveryPromise) { clearTimeout(recoveryTimer); recoveryTimer = null; recoveryStarted = Date.now(); service = {...service, attempt: 0, waitingSince: null}; await startRecovery(); } return snapshot(); } if (type === 'refresh') return refreshCatalog({official:request.official===true}); if (type === 'plan') return plan(request.requests);
+    if (type === 'install') return install({planId: request.planId,official:request.official===true}); if (type === 'enable') return enable(id); if (type === 'disable') return disable(id);
     if (type === 'install-offline') return installOffline(request);
     if (type === 'rollback') return rollback(id); if (type === 'uninstall') return uninstall(id); if (type === 'cancel') return cancel();
     fail('Unsupported extension action');
@@ -257,7 +268,7 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
     recoveryPromise = (async () => {
       if (closing) return;
       try {
-        if (!(await recoverableTransactions()).length) { if (!closing) setService('ready', {lastError: null, waitingSince: null}); return; }
+        if (!(await recoverableTransactions()).length&&!startupTasks.length&&!await pluginTrashPending(control)) { if (!closing) setService('ready', {lastError: null, waitingSince: null}); return; }
         if (closing) return;
         service = {...service, attempt: service.attempt + 1};
         await mutation(async () => {
@@ -269,6 +280,8 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
               checkAbort(controller.signal); await assertPluginTreeNoLinks(stage); await rm(stage, {recursive: true, force: true});
               writeAtomic(file, JSON.stringify({...tx, recovery: {state: 'complete', at: new Date().toISOString()}}));
             }
+            await recoverPluginTrash(control);
+            while(startupTasks.length){await startupTasks[0]();startupTasks.shift();}
           } finally { active = null; }
         }, {recovery: true});
         if (!closing) setService('ready', {lastError: null, waitingSince: null});
@@ -289,7 +302,8 @@ async function createLegacyPluginManager({root, dataRoot, appVersion, apiVersion
   // transaction-owned staging recovery needs the shared installation lock.
   recoveryStarted = Date.now(); await startRecovery();
   return {snapshot, loadCatalog, refreshCatalog, plan, install, enable, disable, activate, resolveInstalled, rollback, uninstall, importOffline, prepareOffline, installOffline, cancel, close, action,
-    [PLUGIN_SOURCE_BACKEND]: {mutation, fetchImpl, availableBytes, busy, host, catalogDigest: () => catalog?.verified.payloadSha256,
+    [PLUGIN_SOURCE_BACKEND]: {mutation, fetchImpl, planDownload, availableBytes, busy, host, catalogDigest: () => catalog?.verified.payloadSha256,
+      async startup(task){startupTasks.push(task);clearTimeout(recoveryTimer);recoveryTimer=null;setService('initializing');recoveryStarted=Date.now();await startRecovery();if(service.state==='failed')throw Object.assign(Error(service.lastError.message),{code:service.lastError.code});},
       registrySnapshot: () => structuredClone(registry),
       async replaceRegistry(expected, next) {
         if (canonicalPluginJson(registry) !== canonicalPluginJson(expected)) fail('Legacy registration changed during source migration', 'PLUGIN_SOURCE_MIGRATION_CHANGED');

@@ -55,9 +55,10 @@ test('verified downloads enforce signed bytes and digest, reuse valid cache and 
   await assert.rejects(overflow.download(fixture.release,join(cache,'overflow')),{code:'APP_UPDATE_VERIFICATION_FAILED'});
 });
 
-test('cancelling a download removes partial bytes and does not publish a cached executable',async t=>{
+test('cancelling retains resumable partial bytes without publishing an executable',async t=>{
   const cache=await mkdtemp(join(tmpdir(),'release-cancel-r4-'));t.after(()=>rm(cache,{recursive:true,force:true}));
   const fixture=releaseFixture(),controller=new AbortController();
-  await assert.rejects(fixture.client.download(fixture.release,cache,{signal:controller.signal,onProgress:()=>controller.abort()}),{code:'APP_UPDATE_CANCELLED'});
-  assert.deepEqual(await readdir(cache),[]);
+  await assert.rejects(fixture.client.download(fixture.release,cache,{signal:controller.signal,onProgress:row=>{if(row.bytes>0)controller.abort();}}),{code:'APP_UPDATE_CANCELLED'});
+  const names=await readdir(cache);assert.equal(names.length,1);assert.ok(names[0].endsWith('.partial'));
+  assert.deepEqual(await readFile(await fixture.client.download(fixture.release,cache)),fixtureBytes);
 });

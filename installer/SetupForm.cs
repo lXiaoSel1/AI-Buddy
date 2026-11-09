@@ -2,7 +2,8 @@ using AiBuddy.Install;
 namespace AiBuddy.Setup;
 public sealed class SetupForm:Form {
     readonly ComboBox language=new(){DropDownStyle=ComboBoxStyle.DropDownList};
-    readonly TextBox folder=new(),offline=new();
+    readonly TextBox folder=new(),offline=new(),githubMirror=new(){Width=550},huggingFaceMirror=new(){Width=550};
+    readonly bool localResources;
     readonly ComboBox edition=new(){DropDownStyle=ComboBoxStyle.DropDownList},initial=new(){DropDownStyle=ComboBoxStyle.DropDownList};
     readonly CheckedListBox characters=new(){CheckOnClick=true,IntegralHeight=false};
     readonly CheckBox shortcuts=new(){Checked=true,AutoSize=true},launch=new(){Checked=true,AutoSize=true};
@@ -10,13 +11,18 @@ public sealed class SetupForm:Form {
     readonly ProgressBar bar=new(){Minimum=0,Maximum=1000};
     readonly Button install=new(){AutoSize=true},cancel=new(){AutoSize=true,Enabled=false},rollback=new(){AutoSize=true},uninstall=new(){AutoSize=true};
     readonly Button checkUpdate=new(){AutoSize=true},openUpdate=new(){AutoSize=true,Visible=false};
+    readonly Button retryOfficial=new(){AutoSize=true,Visible=false};string retryOfficialAction="install";
     readonly Label updateStatus=new(){AutoSize=true,MaximumSize=new Size(720,0)};
     readonly List<Button> browseButtons=[];
     readonly TableLayoutPanel layout=new(){Dock=DockStyle.Fill,ColumnCount=1,Padding=new Padding(24),AutoScroll=true};
     readonly FlowLayoutPanel footer=new(){Dock=DockStyle.Bottom,AutoSize=true,Padding=new Padding(24,12,24,12),WrapContents=true};
     CancellationTokenSource? cancellation;bool initializing=true;bool english;bool shown;int estimateRevision;readonly string[] args;UpdateRelease? availableUpdate;string? selectionError;string lastDefaultsRoot="";string? rollbackBlocked;
     string L(string zh,string en)=>english?en:zh;
-    public SetupForm(string[] arguments) {
+    CancellationTokenSource? estimateCancellation;Task estimateFlight=Task.CompletedTask;
+    readonly Func<InstallOptions,CancellationToken,Task<DiskEstimate>> estimateOperation;
+    public SetupForm(string[] arguments):this(arguments,(options,token)=>Task.Run(()=>Program.Engine.Estimate(options,token),token)){}
+    internal SetupForm(string[] arguments,Func<InstallOptions,CancellationToken,Task<DiskEstimate>> estimateOperation) {
+        this.estimateOperation=estimateOperation;
         args=arguments;Text="AI Buddy "+ReleaseIdentity.InstallerVersion;Icon=Icon.ExtractAssociatedIcon(Environment.ProcessPath!);ClientSize=new Size(780,850);MinimumSize=new Size(640,740);StartPosition=FormStartPosition.CenterScreen;AutoScaleMode=AutoScaleMode.Dpi;Font=new Font("Segoe UI",10);
         language.Items.AddRange(["简体中文","English"]);language.SelectedIndex=System.Globalization.CultureInfo.CurrentUICulture.Name.StartsWith("zh")?0:1;english=language.SelectedIndex==1;
         if(Program.Argument(args,"language") is {} locale){if(locale is not ("en" or "zh-CN"))throw new InvalidDataException("Unsupported installer language");language.SelectedIndex=locale=="en"?1:0;english=language.SelectedIndex==1;}
@@ -27,6 +33,11 @@ public sealed class SetupForm:Form {
         if(Program.Argument(args,"edition") is {} requestedEdition){if(requestedEdition is not ("30fps" or "60fps"))throw new InvalidDataException("Invalid edition");edition.SelectedItem=requestedEdition;}
         if(Program.Argument(args,"characters") is {} requestedRoles){var ids=requestedRoles.Split(',');if(ids.Length==0||ids.Distinct().Count()!=ids.Length||ids.Any(id=>!Program.Manifest.Characters.Any(c=>c.Id==id)))throw new InvalidDataException("Invalid selected characters");for(int i=0;i<characters.Items.Count;i++)characters.SetItemChecked(i,ids.Contains(((Role)characters.Items[i]).Id));}
         lastDefaultsRoot=Path.GetFullPath(folder.Text);offline.Text=Program.Argument(args,"offline")??"";shortcuts.Checked=BooleanArgument("shortcuts",true);launch.Checked=BooleanArgument("launch",!args.Contains("--no-launch"));
+        offline.Text=Program.Argument(args,"local-tree")??(string.IsNullOrEmpty(offline.Text)?LocalInstallSource.Discover(Environment.ProcessPath!,Hashing.Bytes(Program.ManifestBytes))??"":offline.Text);
+        var localSource=!string.IsNullOrEmpty(offline.Text)?LocalInstallSource.Open(offline.Text,Hashing.Bytes(Program.ManifestBytes)):null;
+        localResources=localSource is not null;
+        if(localSource is not null){var available=localSource.Installation.Edition;if(Program.Argument(args,"edition") is {} selectedEdition&&selectedEdition!=available)throw new InvalidDataException("This local folder contains only "+available+" / 本地文件夹仅包含 "+available);edition.Items.Clear();edition.Items.Add(available);edition.SelectedItem=available;}
+        offline.ReadOnly=localResources;githubMirror.Text=InstallerNetwork.Current.GithubMirror;huggingFaceMirror.Text=InstallerNetwork.Current.HuggingFaceMirror;
         var requested=(Program.Argument(args,"characters-add")??Program.Argument(args,"character")??"").Split(',');for(int i=0;i<characters.Items.Count;i++)if(requested.Contains(((Role)characters.Items[i]).Id))characters.SetItemChecked(i,true);
         language.SelectedIndexChanged+=(_,_)=>{english=language.SelectedIndex==1;Render();};
         folder.Leave+=(_,_)=>ReadExisting();edition.SelectedIndexChanged+=(_,_)=>UpdateEstimate();
@@ -36,7 +47,8 @@ public sealed class SetupForm:Form {
         install.Click+=async(_,_)=>await Run("install");cancel.Click+=(_,_)=>{cancellation?.Cancel();status.Text=L("正在安全停止；已下载内容可继续。","Stopping safely; downloaded data can be resumed.");};
         rollback.Click+=async(_,_)=>await Run("rollback");uninstall.Click+=async(_,_)=>await Run("uninstall");
         checkUpdate.Click+=async(_,_)=>await CheckUpdate();openUpdate.Click+=async(_,_)=>await OpenUpdate();
-        FormClosing+=(_,e)=>{if(cancellation is not null){e.Cancel=true;cancellation.Cancel();status.Text=L("正在停止，完成后可关闭。","Stopping; close once the operation has stopped.");}};
+        retryOfficial.Click+=async(_,_)=>{retryOfficial.Visible=false;using(InstallerNetwork.UseOfficial()){if(retryOfficialAction=="update")await OpenUpdate();else if(retryOfficialAction=="check")await CheckUpdate();else await Run("install");}};
+        FormClosing+=(_,e)=>{CancelEstimate();if(cancellation is not null){e.Cancel=true;cancellation.Cancel();status.Text=L("正在停止，完成后可关闭。","Stopping; close once the operation has stopped.");}};
         Controls.Add(layout);Controls.Add(footer);initializing=false;UpdateInitial();if(Program.Argument(args,"initial") is {} requestedInitial){if(!initial.Items.Cast<Role>().Any(r=>r.Id==requestedInitial))throw new InvalidDataException("Initial character must be selected");SelectInitial(requestedInitial);}Render();
         Shown+=async(_,_)=>{shown=true;try{await UpdateHandoff.SignalReady(args,Program.Manifest.AppVersion,Hashing.Bytes(Program.ManifestBytes));}catch(Exception ex){updateStatus.Text=ex.Message;}UpdateEstimate();if(!args.Contains("--skip-update-check")&&!args.Any(a=>a.StartsWith("--handoff-"))&&string.IsNullOrWhiteSpace(offline.Text))await CheckUpdate();};
     }
@@ -56,19 +68,50 @@ public sealed class SetupForm:Form {
         Add(Heading(L("安装位置","Installation folder")));Add(Row(folder,Browse(folder)));
         Add(Heading(L("动画版本与初始角色","Animation edition and initial character")));Add(Row(edition,initial));
         Add(Heading(L("角色资源 · 可在以后补装","Character resources · add more later")));Add(characters,170);
-        Add(Heading(L("离线资源目录（留空则从 GitHub 下载）","Offline resource folder (leave empty for GitHub)")));Add(Row(offline,Browse(offline)));
+        Add(Heading(localResources?L("离线资源目录","Offline resource folder"):L("离线资源目录（留空则从 GitHub 下载）","Offline resource folder (leave empty for GitHub)")));
+        if(localResources)Add(new Label{Text=L("从这个文件夹安装，不需要联网","Install from this folder without an internet connection"),AutoSize=true});else Add(Row(offline,Browse(offline)));
+        Add(Heading(L("下载镜像","Download mirrors")));
+        Add(new Label{Text=L("GitHub 镜像","GitHub mirror"),AutoSize=true});Add(githubMirror);
+        Add(new Label{Text=L("HuggingFace 镜像","HuggingFace mirror"),AutoSize=true});Add(huggingFaceMirror);
+        Add(new Label{Text=L("留空就从官方地址下载。用镜像下载的文件同样会核对大小和 SHA-256，对不上会拒绝。","Leave empty to download from official addresses. Mirror downloads are checked against the same size and SHA-256; mismatches are rejected."),AutoSize=true,MaximumSize=new Size(720,0),ForeColor=Color.DimGray});
         shortcuts.Text=L("创建桌面和开始菜单入口","Create desktop and Start menu shortcuts");launch.Text=L("验证后保持 AI Buddy 运行","Keep AI Buddy running after verification");Add(Row(shortcuts,launch));
-        Add(estimate);Add(bar,28);Add(status);Add(rollbackNote);
+        Add(estimate);Add(bar,28);Add(status);retryOfficial.Text=L("改用官方地址重试","Retry using official addresses");Add(retryOfficial);Add(rollbackNote);
         install.Text=L("安装 / 补装 / 修复","Install / Add / Repair");cancel.Text=L("取消","Cancel");rollback.Text=L("回退上一版","Roll back");uninstall.Text=L("卸载…","Uninstall…");footer.Controls.Clear();footer.Controls.AddRange([install,cancel,rollback,uninstall]);
         Add(new Label{AutoSize=true,MaximumSize=new Size(720,0),Text=L("打开安装器时检查正式新版本；下载和安装需你点击确认。每次安装使用固定版本清单，保留个人数据。检查失败仍可离线安装、修复或回退。","The installer checks for stable updates when opened. Download and installation require your action. Each install uses a pinned manifest and retains personal data; offline install, repair and rollback remain available if checking fails."),ForeColor=Color.DimGray,Margin=new Padding(0,14,0,0)});
         layout.ResumeLayout();UpdateEstimate();
     }
     InstallOptions Options()=>new(folder.Text,Program.Argument(args,"cache")??Program.Cache,(string?)edition.SelectedItem??"30fps",characters.CheckedItems.Cast<Role>().Select(c=>c.Id).ToArray(),(initial.SelectedItem as Role)?.Id??"",string.IsNullOrWhiteSpace(offline.Text)?null:offline.Text,shortcuts.Checked,launch.Checked,Program.Argument(args,"data"),Program.Argument(args,"pipe"));
-    async void UpdateEstimate(){if(initializing||cancellation is not null||!shown)return;RefreshRollback();var revision=++estimateRevision;install.Enabled=false;try{if(selectionError is not null)throw new InvalidDataException(selectionError);var options=Options();var e=await Task.Run(()=>Program.Engine.Estimate(options));if(IsDisposed||revision!=estimateRevision||cancellation is not null)return;estimate.Text=L($"所选下载 {FormatSize(e.DownloadBytes)} · 解压 {FormatSize(e.ExpandedBytes)}\n额外空间：缓存 {FormatSize(e.CacheAdditionalBytes)}，安装盘 {FormatSize(e.InstallAdditionalBytes)}；保留旧版本 {FormatSize(e.RetainedBytes)}",$"Selected download {FormatSize(e.DownloadBytes)} · Expanded {FormatSize(e.ExpandedBytes)}\nAdditional space: cache {FormatSize(e.CacheAdditionalBytes)}, install disk {FormatSize(e.InstallAdditionalBytes)}; retained version {FormatSize(e.RetainedBytes)}");install.Enabled=true;}catch(Exception ex){if(IsDisposed||revision!=estimateRevision||cancellation is not null)return;estimate.Text=ex.Message;install.Enabled=false;}}
-    void Busy(bool value){estimateRevision++;install.Enabled=uninstall.Enabled=folder.Enabled=edition.Enabled=characters.Enabled=initial.Enabled=language.Enabled=checkUpdate.Enabled=offline.Enabled=shortcuts.Enabled=launch.Enabled=!value;rollback.Enabled=!value&&rollbackBlocked is null;foreach(var b in browseButtons)b.Enabled=!value;openUpdate.Enabled=!value&&availableUpdate is not null;cancel.Enabled=value;}
+    void CancelEstimate(){estimateRevision++;estimateCancellation?.Cancel();}
+    protected override void Dispose(bool disposing){if(disposing)CancelEstimate();base.Dispose(disposing);}
+    async void UpdateEstimate(){
+        if(initializing||cancellation is not null||!shown||IsDisposed)return;
+        RefreshRollback();CancelEstimate();var revision=estimateRevision;var pending=new CancellationTokenSource();estimateCancellation=pending;
+        var prior=estimateFlight;var completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);estimateFlight=completion.Task;install.Enabled=false;
+        try{
+            await Task.Delay(200,pending.Token);await prior;pending.Token.ThrowIfCancellationRequested();
+            if(selectionError is not null)throw new InvalidDataException(selectionError);var options=Options();var e=await estimateOperation(options,pending.Token);
+            if(IsDisposed||revision!=estimateRevision||cancellation is not null)return;
+            estimate.Text=L($"所选下载 {FormatSize(e.DownloadBytes)} · 解压 {FormatSize(e.ExpandedBytes)}\n额外空间：缓存 {FormatSize(e.CacheAdditionalBytes)}，安装盘 {FormatSize(e.InstallAdditionalBytes)}；保留旧版本 {FormatSize(e.RetainedBytes)}",$"Selected download {FormatSize(e.DownloadBytes)} · Expanded {FormatSize(e.ExpandedBytes)}\nAdditional space: cache {FormatSize(e.CacheAdditionalBytes)}, install disk {FormatSize(e.InstallAdditionalBytes)}; retained version {FormatSize(e.RetainedBytes)}");install.Enabled=true;
+        }catch(OperationCanceledException)when(pending.IsCancellationRequested){}
+        catch(Exception ex){if(IsDisposed||revision!=estimateRevision||cancellation is not null)return;estimate.Text=ex.Message;install.Enabled=false;}
+        finally{if(ReferenceEquals(estimateCancellation,pending))estimateCancellation=null;pending.Dispose();await prior;completion.SetResult();}
+    }
+    void Busy(bool value){CancelEstimate();install.Enabled=uninstall.Enabled=folder.Enabled=edition.Enabled=characters.Enabled=initial.Enabled=language.Enabled=checkUpdate.Enabled=offline.Enabled=shortcuts.Enabled=launch.Enabled=githubMirror.Enabled=huggingFaceMirror.Enabled=!value;rollback.Enabled=!value&&rollbackBlocked is null;foreach(var b in browseButtons)b.Enabled=!value;openUpdate.Enabled=!value&&availableUpdate is not null;cancel.Enabled=value;}
+    void ConfigureNetwork()=>InstallerNetwork.Configure(InstallerNetwork.Current with{GithubMirror=githubMirror.Text.Trim(),HuggingFaceMirror=huggingFaceMirror.Text.Trim()});
+    bool MirrorFailure(Exception error,string action) {
+        if(error is not MirrorMismatchException)return false;
+        retryOfficialAction=action;retryOfficial.Visible=true;status.Text=L("镜像返回的文件和官方记录不一致，已拒绝","The mirror returned a file that differs from the official record; it was rejected");return true;
+    }
+    bool ConfirmPluginRollback(string notice) {
+        using var dialog=new Form{Text="AI Buddy",ClientSize=new Size(590,205),StartPosition=FormStartPosition.CenterParent,Font=Font,MinimizeBox=false,MaximizeBox=false,FormBorderStyle=FormBorderStyle.FixedDialog};
+        var text=new Label{Text=notice,AutoSize=true,MaximumSize=new Size(540,0),Location=new Point(22,22)};
+        var proceed=new Button{Text=L("仍然回退","Roll back anyway"),AutoSize=true,DialogResult=DialogResult.OK};
+        var cancelChoice=new Button{Text=L("取消","Cancel"),AutoSize=true,DialogResult=DialogResult.Cancel};
+        var buttons=new FlowLayoutPanel{Dock=DockStyle.Bottom,AutoSize=true,Padding=new Padding(22),FlowDirection=FlowDirection.RightToLeft};buttons.Controls.AddRange([cancelChoice,proceed]);dialog.Controls.AddRange([text,buttons]);dialog.CancelButton=cancelChoice;return dialog.ShowDialog(this)==DialogResult.OK;
+    }
     string CurrentVersion(){var versions=new List<System.Version>{System.Version.Parse(ReleaseIdentity.Version)};foreach(var p in new[]{Path.Combine(folder.Text,"local","current-build.json"),Path.Combine(folder.Text,"local","installation.json")})if(File.Exists(p)){using var d=System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(p));var r=d.RootElement;var raw=r.TryGetProperty("appVersion",out var av)?av.GetString():r.TryGetProperty("version",out var v)?v.GetString():null;if(raw is null)continue;if(!System.Text.RegularExpressions.Regex.IsMatch(raw,@"\A(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z")||!System.Version.TryParse(raw,out var parsed))throw new InvalidDataException("Cannot determine installed version");versions.Add(parsed);}return versions.Max()!.ToString(3);}
-    async Task CheckUpdate(){if(cancellation is not null)return;cancellation=new(TimeSpan.FromSeconds(20));Busy(true);updateStatus.Text=L("正在检查正式新版本…","Checking for stable updates…");try{availableUpdate=await Program.Updates.Check(CurrentVersion(),cancellation.Token);openUpdate.Visible=availableUpdate is not null;updateStatus.Text=availableUpdate is null?L("当前没有更高的正式版本。","No newer stable version is available."):L($"发现 {availableUpdate.Version}，可校验并打开新版安装器。",$"Version {availableUpdate.Version} is available. Verify and open its installer.");}catch(OperationCanceledException){updateStatus.Text=L("检查已取消；当前维护功能仍可使用。","Update check cancelled; current maintenance remains available.");}catch(Exception ex){updateStatus.Text=L("检查未完成：","Update check failed: ")+ex.Message;}finally{cancellation.Dispose();cancellation=null;Busy(false);UpdateEstimate();}}
-    async Task OpenUpdate(){if(cancellation is not null||availableUpdate is null)return;var selected=availableUpdate;var options=Options();cancellation=new();Busy(true);var opened=false;try{var path=await Program.Updates.Download(selected,options.Cache,new Progress<InstallProgress>(p=>{updateStatus.Text=L("正在校验新版安装器：","Verifying newer installer: ")+p.Item;bar.Value=p.Total>0?(int)Math.Clamp(p.Completed*1000d/p.Total,0,1000):0;}),cancellation.Token);await UpdateHandoff.Start(selected,path,UpdateHandoff.BuildArguments(options,english?"en":"zh-CN",shortcuts.Checked,launch.Checked),cancellation.Token);opened=true;}catch(OperationCanceledException){updateStatus.Text=L("已取消；当前版本未变。","Cancelled; the current version is unchanged.");}catch(Exception ex){updateStatus.Text=L("新版未确认打开，当前安装器保留：","The newer installer did not confirm readiness; this installer remains open: ")+ex.Message;}finally{cancellation.Dispose();cancellation=null;if(opened)Close();else{Busy(false);UpdateEstimate();}}}
+    async Task CheckUpdate(){if(cancellation is not null)return;cancellation=new(TimeSpan.FromSeconds(20));Busy(true);updateStatus.Text=L("正在检查正式新版本…","Checking for stable updates…");try{ConfigureNetwork();availableUpdate=await Program.Updates.Check(CurrentVersion(),cancellation.Token);openUpdate.Visible=availableUpdate is not null;updateStatus.Text=availableUpdate is null?L("当前没有更高的正式版本。","No newer stable version is available."):L($"发现 {availableUpdate.Version}，可校验并打开新版安装器。",$"Version {availableUpdate.Version} is available. Verify and open its installer.");}catch(OperationCanceledException){updateStatus.Text=L("检查已取消；当前维护功能仍可使用。","Update check cancelled; current maintenance remains available.");}catch(Exception ex){updateStatus.Text=MirrorFailure(ex,"check")?status.Text:L("检查未完成：","Update check failed: ")+ex.Message;}finally{cancellation.Dispose();cancellation=null;Busy(false);UpdateEstimate();}}
+    async Task OpenUpdate(){if(cancellation is not null||availableUpdate is null)return;var selected=availableUpdate;var options=Options();cancellation=new();Busy(true);var opened=false;try{ConfigureNetwork();var path=await Program.Updates.Download(selected,options.Cache,new Progress<InstallProgress>(p=>{updateStatus.Text=L("正在校验新版安装器：","Verifying newer installer: ")+p.Item;bar.Value=p.Total>0?(int)Math.Clamp(p.Completed*1000d/p.Total,0,1000):0;}),cancellation.Token);await UpdateHandoff.Start(selected,path,UpdateHandoff.BuildArguments(options,english?"en":"zh-CN",shortcuts.Checked,launch.Checked),cancellation.Token);opened=true;}catch(OperationCanceledException){updateStatus.Text=L("已取消；当前版本未变。","Cancelled; the current version is unchanged.");}catch(Exception ex){updateStatus.Text=MirrorFailure(ex,"update")?status.Text:L("新版未确认打开，当前安装器保留：","The newer installer did not confirm readiness; this installer remains open: ")+ex.Message;}finally{cancellation.Dispose();cancellation=null;if(opened)Close();else{Busy(false);UpdateEstimate();}}}
     // A slow check for a folder the user has since changed must not overwrite the newer folder's state.
     async void RefreshRollback(){
         var root=folder.Text;
@@ -86,16 +129,20 @@ public sealed class SetupForm:Form {
             var check=new CheckBox{Text=L("同时删除默认目录中的个人数据（不可恢复）","Also delete default personal data (irreversible)"),AutoSize=true,Location=new Point(20,25),Checked=false};
             var proceed=new Button{Text=L("继续卸载","Uninstall"),DialogResult=DialogResult.OK,Location=new Point(20,100),AutoSize=true};choice.Controls.AddRange([check,proceed]);choice.AcceptButton=proceed;if(choice.ShowDialog(this)!=DialogResult.OK)return;removeData=check.Checked;
         }
-        var options=Options();cancellation=new CancellationTokenSource();Busy(true);
+        try{ConfigureNetwork();}catch(Exception ex){status.Text=ex.Message;return;}
+        var confirmPluginDowngrade=false;
+        try{if(action=="rollback"&&Program.Engine.RollbackNotice(folder.Text) is {} notice){if(!ConfirmPluginRollback(notice))return;confirmPluginDowngrade=true;}}catch(Exception ex){status.Text=ex.Message;return;}
+        var options=Options();string? networkWarning=null;cancellation=new CancellationTokenSource();Busy(true);
         var last=DateTime.MinValue;var progress=new Progress<InstallProgress>(p=>{if((p.Phase=="download"||p.Phase=="extract")&&(DateTime.UtcNow-last).TotalMilliseconds<150)return;last=DateTime.UtcNow;status.Text=$"{Phase(p.Phase)} · {p.Item}\n{p.Detail??(p.Total>0?FormatSize(p.Completed)+" / "+FormatSize(p.Total):"")}";bar.Value=p.Total>0?(int)Math.Clamp(p.Completed*1000d/p.Total,0,1000):0;});
         try {
-            if(action=="rollback")await Program.Engine.Rollback(options.Root,progress,cancellation.Token);
+            if(action=="rollback")await Program.Engine.Rollback(options.Root,progress,cancellation.Token,confirmPluginDowngrade);
             else if(action=="uninstall")await Program.Engine.Uninstall(options.Root,removeData,progress,cancellation.Token,options.Cache);
-            else await Program.Engine.Install(options,progress,cancellation.Token);
+            else {await Task.Run(()=>Program.Engine.Install(options,progress,cancellation.Token));try{if(InstallerNetwork.Load(options.Root)!=InstallerNetwork.Current)InstallerNetwork.Save(options.Root,InstallerNetwork.Current);}catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){networkWarning=ex.Message;}}
             var record=InstallEngine.Existing(options.Root);var startup=record?.Startup;status.Text=startup?.SafeMode==true?L("程序已安装并进入安全模式：","Installed in safe mode: ")+startup.StartupFailure?.ToString():L("已完成。","Completed.");bar.Value=1000;
             if(action=="install"&&record?.Warnings is {Length:>0} warnings)status.Text+="\n"+L("已安装，但有一步没有完成：","Installed, but one step did not finish: ")+string.Join("; ",warnings);
+            if(networkWarning is not null)status.Text+="\n"+L("已安装，但网络设置未能保存：","Installed, but network settings could not be saved: ")+networkWarning;
         }catch(OperationCanceledException){status.Text=L("已取消；保留已验证下载，下次可继续。","Cancelled; verified downloads are retained for resuming.");}
-        catch(Exception ex){status.Text=L("未完成：","Not completed: ")+ex.Message;MessageBox.Show(this,status.Text,"AI Buddy",MessageBoxButtons.OK,MessageBoxIcon.Error);}
+        catch(Exception ex){if(!MirrorFailure(ex,"install"))status.Text=L("未完成：","Not completed: ")+ex.Message;MessageBox.Show(this,status.Text,"AI Buddy",MessageBoxButtons.OK,MessageBoxIcon.Error);}
         finally{cancellation.Dispose();cancellation=null;Busy(false);UpdateEstimate();}
     }
     string Phase(string phase)=>phase switch{"download"=>L("下载中","Downloading"),"extract"=>L("解压与校验","Extracting and verifying"),"cached"=>L("复用已验证下载","Verified cache"),"retry"=>L("重试当前包","Retrying package"),"waiting"=>L("等待安全退出","Waiting for safe exit"),"complete"=>L("完成","Complete"),"rolled-back"=>L("已回退程序","Program restored"),"warning"=>L("提醒","Note"),"pruned"=>L("清理旧版本","Removed an older version"),"cleanup-pending"=>L("稍后清理","Cleanup pending"),_=>phase};

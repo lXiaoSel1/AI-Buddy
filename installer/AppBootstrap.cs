@@ -7,7 +7,7 @@ using AiBuddy.Install;
 namespace AiBuddy.Setup;
 
 internal sealed record BootstrapSource(string Root,string Build,string DataRoot,string Pipe,string Version,int Pid,string InstallationSha256,string PointerSha256);
-internal sealed record BootstrapRequest(int Protocol,string Type,string Nonce,BootstrapSource Source,UpdateRelease Release);
+internal sealed record BootstrapRequest(int Protocol,string Type,string Nonce,BootstrapSource Source,UpdateRelease Release,bool Official=false);
 internal sealed record BootstrapSelection(BootstrapSource Source,UpdateRelease Release,string SelectionId);
 
 // This is a separate, target-installer entry. The ordinary installed-manager
@@ -134,7 +134,9 @@ internal static class AppBootstrap {
             var selectionId=SelectionId(request.Source,request.Release);
             selected=new(request.Source,request.Release,selectionId);
             var source=await RequireBootstrapSource(root,request.Source,nonce,selectionId,manifestHash,cancellation.Token);
+            using var officialScope=request.Official?InstallerNetwork.UseOfficial():null;
             previous=source.Installed;
+            InstallerNetwork.Configure(InstallerNetwork.Load(root));
             // Share the ordinary app-update lock, then recheck the live source.
             Directory.CreateDirectory(SafePaths.Under(root,"local/installer"));
             await using var operationLock=new FileStream(SafePaths.Under(root,"local/installer/app-update.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);

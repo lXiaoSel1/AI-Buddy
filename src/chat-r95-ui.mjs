@@ -75,9 +75,9 @@ export function GroupAutoPanel({view={},onAction,nameOf=id=>id,onOpenSocial}){
   !enabled&&!running&&h('div',{className:'r95-auto-off',role:'status'},h('span',{className:'r95-cap'},t('社交与心情里还没有允许群聊 Auto。')),onOpenSocial&&h('button',{type:'button',className:'ui-btn ghost sm','data-open-social':'auto',onClick:onOpenSocial},t('去开启'))),
   h('div',{className:'r95-row'},!running&&h('button',{type:'button',className:'ui-btn sm primary',disabled:pending||!enabled||!groupId||mode==='rounds'&&!validRounds,onClick:()=>void run('auto-start',{groupId,mode,rounds})},t('确认成员并开始')),
    running&&progress.status==='active'&&h('button',{type:'button',className:'ui-btn sm',disabled:pending,onClick:act('auto-pause')},Icon('pause',{size:14}),t('暂停')),
-   running&&progress.status==='paused'&&h('button',{type:'button',className:'ui-btn sm',disabled:pending||!!auto.pending,onClick:act('auto-continue')},Icon('play',{size:14}),t('继续 Auto')),
+   running&&progress.status==='paused'&&h('button',{type:'button',className:'ui-btn sm',disabled:pending||!!auto.pending&&auto.pending.status!=='unknown',onClick:()=>void run('auto-continue',{groupId,...auto.pending?.status==='unknown'&&{resumeFromNext:true,requestId:auto.pending.requestId}})},Icon('play',{size:14}),t(auto.pending?.status==='unknown'?'从下一位继续':'继续 Auto')),
    running&&h('button',{type:'button',className:'ui-btn sm danger',disabled:pending,onClick:act('auto-stop')},Icon('stop',{size:14}),t('停止 Auto'))),
-  auto?.pending&&h('p',{role:'status',className:'r95-cap'},t('有待完成或核对的请求，不能重复提交。')),
+  auto?.pending&&h('p',{role:'status',className:'r95-cap'},t(auto.pending.status==='unknown'?'上一轮没有完成。':'有待完成或核对的请求，不能重复提交。')),
   error&&h('p',{role:'alert',className:'r95-err'},error));
 }
 export function AutoChip({view,onAction,nameOf,onOpenSocial,initialOpen}){
@@ -104,10 +104,10 @@ export function AutoRoundStrip({view,onAction,nameOf=id=>id,busy=false,speaker='
  const wait=({presenting:t('等待上一句显示'),input:t('等待输入结束'),model:t('等待模型回复'),['awaiting-user']:t('等待你的回复'),['not-visible']:t('等待对话窗口可见'),ready:t('准备下一位')})[view.autoWait?.reason];
  const detail=['Auto',autoRoundText(progress),progress.failed&&nameOf(progress.failed)+' · '+t('回复失败'),progress.next&&fill(t('下一位 {name}'),{name:nameOf(progress.next)})].filter(Boolean).join(' · ');
  return h('div',{className:'r95-roundstrip',role:'status','data-auto-strip':groupId??''},
-  h('span',{className:'r95-row r95-auto-state'},speakingBusy?h('span',{className:'ui-spinner','aria-hidden':true}):Icon(paused?'pause':'play',{size:14}),speakingBusy?h('span',null,who&&h('b',null,who),who?' '+t('正在说'):t('正在回复')):h('span',null,paused?t('Auto 已暂停'):wait??t('Auto 进行中'))),
+  h('span',{className:'r95-row r95-auto-state'},speakingBusy?h('span',{className:'ui-spinner','aria-hidden':true}):Icon(paused?'pause':'play',{size:14}),speakingBusy?h('span',null,who&&h('b',null,who),who?' '+t('正在说'):t('正在回复')):h('span',null,paused?t(view.auto?.pending?.status==='unknown'?'上一轮没有完成。':'Auto 已暂停'):wait??t('Auto 进行中'))),
   h('small',{className:'r95-auto-detail'},detail),h(AutoProgressDetails,{auto:view.auto,nameOf,busy:speakingBusy}),h('span',{className:'grow'}),
   queued>0&&h('span',{className:'ws-tag','data-r95-queued-user':queued},t('你的消息排在她后面')),
-  paused?h('button',{type:'button',className:'ui-btn sm ghost',disabled:pending||!!view.auto?.pending,onClick:()=>void run('auto-continue',{groupId})},Icon('play',{size:14}),t('继续')):h('button',{type:'button',className:'ui-btn sm ghost',disabled:pending,onClick:()=>void run('auto-pause',{groupId})},Icon('pause',{size:14}),t('暂停')),
+  paused?h('button',{type:'button',className:'ui-btn sm ghost',disabled:pending||!!view.auto?.pending&&view.auto.pending.status!=='unknown',onClick:()=>void run('auto-continue',{groupId,...view.auto?.pending?.status==='unknown'&&{resumeFromNext:true,requestId:view.auto.pending.requestId}})},Icon('play',{size:14}),t(view.auto?.pending?.status==='unknown'?'从下一位继续':'继续')):h('button',{type:'button',className:'ui-btn sm ghost',disabled:pending,onClick:()=>void run('auto-pause',{groupId})},Icon('pause',{size:14}),t('暂停')),
   h('button',{type:'button',className:'ui-btn sm ghost danger',disabled:pending,onClick:()=>void run('auto-stop',{groupId})},Icon('stop',{size:14}),t('停止')),error&&h('span',{role:'alert',className:'r95-err'},error));
 }
 

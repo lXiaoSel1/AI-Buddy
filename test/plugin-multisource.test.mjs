@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {generateKeyPairSync,sign,createHash} from 'node:crypto';
-import {mkdtemp,mkdir,writeFile,readFile,rm,stat} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,rm,stat,readdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {canonicalPluginJson} from '../src/plugin-manifest.mjs';
@@ -113,7 +113,7 @@ test('source count is capped at twenty including the built-in source and tombsto
 });
 
 test('all-source metadata refresh has at most four concurrent fetches and independent failures',async t=>{
- const f=await setup(t),pubs=[];for(let i=0;i<7;i++){const pub=publisher('parallel-'+i);publish(f,pub,[]);await add(f,pub);pubs.push(pub);}let active=0,peak=0;for(const pub of pubs)f.remote.set(pub.catalogUrl,async()=>{active++;peak=Math.max(peak,active);await new Promise(r=>setTimeout(r,15));active--;return Response.json(catalog(pub,[]));});await f.manager.action({action:'sources-refresh'});assert(peak>=2);assert(peak<=4);assert.equal(f.manager.snapshot().service.state,'ready');assert.equal(f.manager.snapshot().sources.find(x=>x.sourceId==='official').lastError.code,'PLUGIN_SOURCE_FETCH_FAILED');
+ const f=await setup(t),pubs=[];for(let i=0;i<7;i++){const pub=publisher('parallel-'+i);publish(f,pub,[]);await add(f,pub);pubs.push(pub);}let active=0,peak=0;for(const pub of pubs)f.remote.set(pub.catalogUrl,async()=>{active++;peak=Math.max(peak,active);await new Promise(r=>setTimeout(r,15));active--;return Response.json(catalog(pub,[]));});await f.manager.action({action:'sources-refresh'});assert(peak>=2);assert(peak<=4);assert.equal(f.manager.snapshot().service.state,'ready');assert.equal(f.manager.snapshot().sources.find(x=>x.sourceId==='official').lastError.code,'NETWORK_CONNECT_FAILED');
 });
 
 test('legacy action and direct mutation results preserve composed source state without recursive updates',async t=>{
@@ -157,4 +157,36 @@ test('pinned multisource update skips prereleases and cannot auto-upgrade a sepa
   await f.manager.action({action:'sources-disable', sourceId:row.sourceId, disabled:true});
   await assert.rejects(f.manager.action({action:'install-update', planId:manual.planId}), {code:'PLUGIN_UPDATE_CHANGED'});
   assert.equal(f.manager.snapshot().installed[prior.manifest.id].current, '1.0.0');
+});
+
+const mirrorPlan=(url,{official=false}={})=>{const logical=new URL(url),mirror=!official&&(logical.hostname==='archives.example'||logical.pathname.endsWith('/catalog.json')),requestUrl=mirror?new URL(logical.pathname+logical.search,'https://mirror.example').href:url;return {logicalUrl:url,requestUrl,mirror:mirror?'https://mirror.example':null};};
+test('B8 known mirror oversized short and SHA archives retain technical errors for both registries',async t=>{
+ for(const legacy of [false,true])for(const kind of ['long','short','sha','official']){
+  const pub=publisher('mirror-'+legacy+'-'+kind),one=pack(),f=await setup(t,{planDownload:mirrorPlan,trustedKeys:{publisher:pub.key}});publish(f,pub,[one]);f.remote.set(mirrorPlan(pub.catalogUrl).requestUrl,catalog(pub,[one]));let sourceId;
+  if(legacy)await f.manager.loadCatalog(catalog(pub,[one]));else{await add(f,pub);sourceId=f.manager.snapshot().sources.find(row=>row.name===pub.name).sourceId;}
+  const p=await f.manager.action({action:'plan',...(sourceId?{sourceId}:{}),requests:[{id:one.manifest.id}]}),bad=kind==='long'?Buffer.concat([one.bytes,Buffer.from('x')]):kind==='short'?one.bytes.subarray(0,one.bytes.length-1):Buffer.alloc(one.bytes.length,120),official=kind==='official';f.remote.set(mirrorPlan(one.archive.url,{official}).requestUrl,bad);
+  await assert.rejects(f.manager.action({action:'install',planId:p.planId,official}),error=>{if(official){assert.notEqual(error.code,'NETWORK_MIRROR_MISMATCH');assert.notEqual(error.retryOfficial,true);assert.notEqual(error.originKnownMirror,true);}else{assert.equal(error.code,'NETWORK_MIRROR_MISMATCH');assert.equal(error.originKnownMirror,true);assert.equal(error.retryOfficial,true);assert.equal(error.host,'mirror.example');assert.equal(error.technicalCode,legacy?'PLUGIN_OPERATION_FAILED':'PLUGIN_DOWNLOAD_INVALID');}return true;});assert.equal(f.calls.filter(call=>call.url===mirrorPlan(one.archive.url,{official}).requestUrl).length,1);assert.equal(f.manager.snapshot().installed[one.manifest.id],undefined);
+ }
+});
+test('B8 mirrored catalog signature stays rejected and explicit official preview keeps the same trust',async t=>{
+ const pub=publisher('mirror-proof'),one=pack(),f=await setup(t,{planDownload:mirrorPlan});publish(f,pub,[one]);const bad=catalog(pub,[one]);bad.signature.value=Buffer.alloc(64,0).toString('base64');f.remote.set(mirrorPlan(pub.catalogUrl).requestUrl,bad);
+ await assert.rejects(f.manager.action({action:'sources-preview',url:pub.url}),error=>error.code==='NETWORK_MIRROR_MISMATCH'&&error.originKnownMirror===true&&error.retryOfficial===true&&error.technicalCode==='PLUGIN_SIGNATURE_INVALID');assert.equal(f.manager.snapshot().sources.filter(row=>row.sourceId!=='official').length,0);
+ const preview=await f.manager.action({action:'sources-preview',url:pub.url,official:true});assert.equal(preview.signatureValid,true);assert.equal(preview.source.keyFingerprint,pluginSourceFingerprint(pub.key));f.remote.set(pub.catalogUrl,bad);await assert.rejects(f.manager.action({action:'sources-preview',url:pub.url,official:true}),error=>error.code==='PLUGIN_SIGNATURE_INVALID'&&error.retryOfficial!==true);
+});
+test('B8 metadata size and JSON errors only offer official retry for a recorded mirror route',async()=>{
+ const {fetchPluginJson}=await import('../src/plugin-sources.mjs');for(const mirror of [false,true])for(const oversized of [false,true]){const planDownload=url=>({logicalUrl:url,requestUrl:mirror?'https://mirror.example/file.json':url,mirror:mirror?'https://mirror.example':null});await assert.rejects(fetchPluginJson('https://catalog.example/file.json',{planDownload,maximum:8,fetchImpl:async()=>new Response(oversized?'x'.repeat(9):'bad')}),error=>{if(mirror){assert.equal(error.code,'NETWORK_MIRROR_MISMATCH');assert.equal(error.retryOfficial,true);assert.equal(error.originKnownMirror,true);assert.equal(error.host,'mirror.example');assert.equal(error.technicalCode,oversized?'PLUGIN_SOURCE_TOO_LARGE':'PLUGIN_SOURCE_FETCH_FAILED');}else{assert.equal(error.code,oversized?'PLUGIN_SOURCE_TOO_LARGE':'PLUGIN_SOURCE_FETCH_FAILED');assert.notEqual(error.retryOfficial,true);}return true;});}
+});
+
+test('B2 transient connect and body failure resume the same signed archive within two retries',async t=>{
+ for(const legacy of [false,true])for(const official of [false,true]){
+  const pub=publisher('retry-'+legacy+'-'+official),one=pack(),f=await setup(t,{trustedKeys:{publisher:pub.key}});publish(f,pub,[one]);let sourceId;if(legacy)await f.manager.loadCatalog(catalog(pub,[one]));else{await add(f,pub);sourceId=f.manager.snapshot().sources.find(row=>row.name===pub.name).sourceId;}
+  const plan=await f.manager.action({action:'plan',...(sourceId?{sourceId}:{}),requests:[{id:one.manifest.id}]}),prefix=100;let attempts=0;const ranges=[];if(official)await writeFile(join(f.root,'local/plugins/cache',one.archive.sha256+'.zip.partial'),'untrusted prior mirror prefix');
+  f.remote.set(one.archive.url,(_url,options)=>{attempts++;ranges.push(options.headers?.Range??null);if(attempts===1)throw Object.assign(Error('connection reset'),{code:'ECONNRESET'});if(attempts===2){let reads=0;return new Response(new ReadableStream({pull(controller){if(reads++===0)controller.enqueue(one.bytes.subarray(0,prefix));else controller.error(Object.assign(Error('socket interrupted'),{code:'ECONNRESET'}));}}));}return new Response(one.bytes.subarray(prefix),{status:206,headers:{'content-range':'bytes '+prefix+'-'+(one.bytes.length-1)+'/'+one.bytes.length}});});
+  await f.manager.action({action:'install',planId:plan.planId,official});assert.equal(attempts,3);assert.deepEqual(ranges,[null,null,'bytes='+prefix+'-']);assert.equal(f.manager.snapshot().installed[one.manifest.id].current,one.manifest.version);if(official)assert.equal((await readdir(join(f.root,'local/plugins/cache'))).filter(name=>name.startsWith(one.archive.sha256+'.zip.partial.mirror-retry-')).length,1);
+ }
+});
+
+test('A5 legacy compatible plugin refuses an app-incompatible installed dependency at resolve and activation',async t=>{
+ let activations=0;const pub=publisher('legacy-dependency'),runtime=pack('ai-buddy.kimi-runtime','1.0.0',{}, {appRange:'1.9.2'}),engine=pack('ai-buddy.kimi-engine','1.0.0',{'ai-buddy.kimi-runtime':'^1.0.0'},{appRange:'>=1.9.2'}),host={isActive:()=>false,stopAll:async()=>{},activate:async()=>{activations++;return {ready:true};}},f=await setup(t,{trustedKeys:{publisher:pub.key},host});publish(f,pub,[runtime,engine]);await f.manager.loadCatalog(catalog(pub,[runtime,engine]));const plan=await f.manager.plan([{id:engine.manifest.id}]);await f.manager.install({planId:plan.planId});await f.manager.enable(engine.manifest.id);assert.equal((await f.manager.resolveInstalled(engine.manifest.id)).version,'1.0.0');await f.manager.activate(engine.manifest.id,'onHarness:kimi');assert.equal(activations,1);await f.manager.close();
+ const upgraded=await createPluginManager({...f.config,appVersion:'2.0.13'});try{await assert.rejects(upgraded.resolveInstalled(engine.manifest.id),{code:'PLUGIN_DEPENDENCY_ERROR'});await assert.rejects(upgraded.activate(engine.manifest.id,'onHarness:kimi'),{code:'PLUGIN_DEPENDENCY_ERROR'});assert.equal(activations,1);}finally{await upgraded.close();}
 });

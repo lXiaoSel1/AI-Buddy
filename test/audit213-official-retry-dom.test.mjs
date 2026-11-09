@@ -1,0 +1,25 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,writeFile,readFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {createRequire} from 'node:module';
+import {spawn} from 'node:child_process';
+import {build} from 'esbuild';
+test('B8 actual PluginCenter DOM pins the failed metadata request through later refresh and query changes',{timeout:20000},async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'audit213-official-dom-')),host=fileURLToPath(new URL('..',import.meta.url)),require=createRequire(import.meta.url);
+ const renderer=`import React from 'react';import {createRoot} from 'react-dom/client';import {PluginCenter} from './src/plugin-center.mjs';const {ipcRenderer}=window.require('electron');window.fetch=()=>{throw Error('External I/O forbidden');};
+ const calls=[],wait=ms=>new Promise(resolve=>setTimeout(resolve,ms)),state={service:{state:'ready',usable:true},catalogAvailable:true,installed:{},sources:[{sourceId:'official',name:'Fixture official',official:true,enabled:true,cachedAt:new Date().toISOString(),catalogUrl:'https://official.invalid/catalog.json'}]};let notify,failed=false;
+ const api={onUpdate(fn){notify=fn;return()=>{};},async action(request){calls.push(structuredClone(request));if(request.action==='status')return state;if(request.action==='search'){if(!failed){failed=true;return {error:{code:'NETWORK_MIRROR_MISMATCH',host:'mirror.invalid',retryOfficial:true,message:'Fixture mismatch'}};}return {items:[],total:0};}throw Error('Unexpected operation '+request.action);}};
+ const root=createRoot(document.getElementById('root'));root.render(React.createElement(PluginCenter,{api}));
+ (async()=>{try{for(let n=0;n<100&&!document.querySelector('[data-official-address-retry]');n++)await wait(20);if(!document.querySelector('[data-official-address-retry]'))throw Error('Official retry button missing');
+ notify(state);await wait(160);const input=document.querySelector('input[type="search"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'later-query');input.dispatchEvent(new Event('input',{bubbles:true}));await wait(180);
+ if(!calls.some(row=>row.action==='search'&&row.query==='later-query'))throw Error('Later search did not run');document.querySelector('[data-official-address-retry]').click();await wait(80);
+ const retries=calls.filter(row=>row.official);if(retries.length!==1||retries[0].action!=='search'||retries[0].query!==''||retries[0].page!==1||retries[0].excludeVoice!==true)throw Error('Original metadata request was not pinned');
+ if(calls.some(row=>/model|speak|send/.test(row.action)))throw Error('Business work was retried');root.unmount();ipcRenderer.send('result',{calls,checks:4});}catch(error){ipcRenderer.send('result',{error:error.stack,calls});}})();`;
+ await build({stdin:{contents:renderer,resolveDir:host,sourcefile:'official-retry-dom.mjs'},bundle:true,format:'iife',platform:'browser',outfile:join(directory,'renderer.js')});
+ await writeFile(join(directory,'index.html'),'<!doctype html><div id="root"></div><script src="renderer.js"></script>');
+ await writeFile(join(directory,'main.cjs'),`const {app,BrowserWindow,ipcMain,session}=require('electron'),fs=require('node:fs'),path=require('node:path');app.setPath('userData',path.join(__dirname,'profile'));app.disableHardwareAcceleration();ipcMain.once('result',(_,value)=>{fs.writeFileSync(path.join(__dirname,'result.json'),JSON.stringify(value));app.quit();});app.whenReady().then(()=>{session.defaultSession.webRequest.onBeforeRequest((details,done)=>done({cancel:!details.url.startsWith('file:')&&!details.url.startsWith('data:')}));new BrowserWindow({show:false,webPreferences:{nodeIntegration:true,contextIsolation:false}}).loadFile(path.join(__dirname,'index.html'));});setTimeout(()=>app.exit(2),15000);`);
+ const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;const outcome=await new Promise((resolve,reject)=>{const child=spawn(require('electron'),[join(directory,'main.cjs')],{windowsHide:true,env,stdio:'ignore'});child.once('error',reject);child.once('exit',code=>resolve(code));});assert.equal(outcome,0);const result=JSON.parse(await readFile(join(directory,'result.json'),'utf8'));assert.equal(result.error,undefined,result.error);assert.equal(result.checks,4);
+});

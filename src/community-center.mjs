@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { PluginCenter, PluginInstallPlanDialog } from "./plugin-center.mjs";
 import { InstalledVoicePluginRow } from "./community-installed-voice.mjs";
 import { SocialAccounts } from "./social-accounts-ui.mjs";
-import { pluginErrorText, pluginResult } from "./plugin-center-helpers.mjs";
+import { pluginErrorText, pluginResult,pluginIsIncompatible,pluginCompatibilityText,pluginUpdateAvailable } from "./plugin-center-helpers.mjs";
 import { locale, t as coreT } from "./i18n.mjs";
 import { communityMessages, communityErrorText, communityCount } from "./community/messages.mjs";
 import { Icon } from "./ui-icons.mjs";
@@ -17,6 +17,7 @@ import { EMBED_TARGETS, embedCapable, embedTargetFor } from "./plugin-embed-targ
 import { isVoiceEnginePackage, VOICE_SHARED_PACKAGE } from './voice/package-contract.mjs';
 import {useVoiceSession} from './voice/client.mjs';
 import {CommunityMaintenanceConfirmation} from './voice/shell-design.mjs';
+import {invokeWithOfficialRetry,officialRetryPin,officialRetryRequest,OfficialRetryButton,mirrorRetryError} from './plugin-official-retry.mjs';
 const h = React.createElement;
 const t = (value) => locale() === "en" ? communityMessages[value] ?? coreT(value) : coreT(value);
 const tn = (key, n) => communityCount(key, n, t);
@@ -54,8 +55,8 @@ function CommunityCategoryOptions({ capabilities }) {
   return categories.map(([value, label]) => h("option", { key: value, value, disabled: !!value && capabilities?.[value]?.installable !== true }, t(label) + (value && capabilities?.[value]?.installable !== true ? " · " + t("尚未开放安装") : "")));
 }
 // B4: 运行中 / 加载中 / 已停用 / 加载失败. 「加载中」 is an enabled plugin that has not been loaded since this start.
-export const runtimeLabel = (record) => record.runtimeVerified && record.enabled ? "运行中" : record.runtimeFailure || record.runtimeState === "failed" ? "加载失败" : record.enabled ? "加载中" : "已停用";
-const runtimeTone = { "运行中": "ok", "加载失败": "err", "加载中": "info", "已停用": "idle" };
+export const runtimeLabel = (record) => pluginIsIncompatible(record)?'不兼容':record.runtimeVerified && record.enabled ? "运行中" : record.runtimeFailure || record.runtimeState === "failed" ? "加载失败" : record.enabled ? "加载中" : "已停用";
+const runtimeTone = { "运行中": "ok", "加载失败": "err", "加载中": "info", "已停用": "idle",'不兼容':'warn' };
 // compact: the installed list shows the enabled intent as its switch, so only the observed state is written out.
 export function CommunityInstallationStatus({ record, compact = false }) {
   const label = runtimeLabel(record);
@@ -65,6 +66,7 @@ export function CommunityInstallationStatus({ record, compact = false }) {
 export const failureReason = (failure) => communityErrorText(failure?.code) ?? t("加载没有成功，原因写在技术详情里。");
 /** The one line under an installed plugin (B4): what it is doing now, from data the host already has. */
 export function installedSituation(record, { jobs = null, accounts = null } = {}) {
+  if(pluginIsIncompatible(record))return pluginCompatibilityText(record);
   const permissions = tn("{n} 项权限",record.grantedCapabilities?.length ?? 0);
   if (record.runtimeFailure || record.runtimeState === "failed") return failureReason(record.runtimeFailure);
   if (!record.enabled) return t("停用期间不会运行，记录和设置都保留") + " · " + permissions;
@@ -95,6 +97,7 @@ export function maintenanceNote(job, { ahead = null, kept = false } = {}) {
 const RETRYABLE = new Set(["COMMUNITY_INSTALLATION_CHANGED", "PLUGIN_BUSY", "DSH_PACKAGE_DOWNLOAD_FAILED", "MAINTENANCE_FAILED", "DSH_OPERATION_FAILED", "DSH_INSTALL_CANCELLED", "DSH_ACTIVATION_FAILED", "DSH_ENABLE_UNCONFIRMED", "DSH_RUNTIME_NOT_READY", "DSH_COMPONENT_REQUIRED"]);
 export const maintenanceAction = (job) => ["needs-user", "interrupted-needs-user"].includes(job.state) ? "review" : job.state === "failed" ? RETRYABLE.has(job.error?.code) ? "retry" : "review" : null;
 export function MaintenanceRow({ job, installed, ahead, busy, onCancel, onRetry, onReview }) {
+  const official=job.state==='failed'&&job.operation==='install'&&mirrorRetryError(job.error);
   const name = job.packageKey?.split(":").at(-1), kept = !!installed?.some((value) => value.packageKey === job.packageKey);
   const action = { install: "安装", enable: "启用", disable: "停用", uninstall: "卸载", rollback: "回退" }[job.operation] ?? job.operation;
   const next = maintenanceAction(job);
@@ -104,17 +107,21 @@ export function MaintenanceRow({ job, installed, ahead, busy, onCancel, onRetry,
       job.error && h("details", { className: "ext-tech" }, h("summary", null, t("技术详情")), h("code", null, job.error.code + "\n" + (job.error.message ?? "")))),
     h(StatusPill, { tone: stageTone[job.state] ?? "idle" }, t(stages[job.state] ?? job.state)),
     ["queued", "needs-user"].includes(job.state) && h("button", { type: "button", className: "ui-btn ghost sm", disabled: busy, onClick: () => onCancel(job) }, t("取消这次维护")),
-    next && h("button", { type: "button", className: "ui-btn sm", disabled: busy, "data-maintenance-action": next, onClick: () => next === "retry" ? onRetry(job) : onReview(job) }, Icon(next === "retry" ? "refresh" : "eye", { size: 14 }), t(next === "retry" ? "重试" : "查看")));
+    official&&h('button',{type:'button',className:'ui-btn sm',disabled:busy,'data-maintenance-official-retry':true,onClick:()=>onRetry(job,{official:true})},t('改用官方地址重试')),
+    !official&&next && h("button", { type: "button", className: "ui-btn sm", disabled: busy, "data-maintenance-action": next, onClick: () => next === "retry" ? onRetry(job) : onReview(job) }, Icon(next === "retry" ? "refresh" : "eye", { size: 14 }), t(next === "retry" ? "重试" : "查看")));
 }
 export function UpdateCard({ update, record, busy, onReview }) {
   const name = record?.packageName ?? update.packageName ?? update.packageKey.split(":").at(-1), changes = (update.changes ?? []).filter((row) => releaseNotes(row));
+  const incompatible=update.installedIncompatible||update.requiresCompatibilityUpdate||update.state==='incompatible',available=pluginUpdateAvailable(update);
   return h("article", { className: "ws-card ext-upd", "data-update": update.packageKey }, h(PluginLogo, { packageName: name, size: 44 }),
     h("div", { className: "ext-ir-main" },
-      h("div", { className: "ext-row" }, h("b", null, pluginName(name)), h("span", { className: "ext-cap" }, update.from + " → " + update.to), !["available", "needs-user"].includes(update.state) && stages[update.state] && h(StatusPill, { tone: stageTone[update.state] ?? "idle" }, t(stages[update.state])), update.addedCapabilities?.length > 0 && h(StatusPill, { tone: "warn" }, tn("新增 {n} 项权限",update.addedCapabilities.length)), update.incompatibleData && h(StatusPill, { tone: "warn" }, t("资料版本变化"))),
-      update.requiresCompatibilityUpdate && h("p", {className:"ext-cap",role:"status","data-compatibility-update":true}, fill(t("要更新到 {v} 才能继续用"),{v:update.to})),
+      h("div", { className: "ext-row" }, h("b", null, pluginName(name)), h("span", { className: "ext-cap" }, update.to?update.from + " → " + update.to:update.from), incompatible?h(StatusPill,{tone:'warn'},t('不兼容')):!["available", "needs-user"].includes(update.state) && stages[update.state] && h(StatusPill, { tone: stageTone[update.state] ?? "idle" }, t(stages[update.state])), update.addedCapabilities?.length > 0 && h(StatusPill, { tone: "warn" }, tn("新增 {n} 项权限",update.addedCapabilities.length)), update.incompatibleData && h(StatusPill, { tone: "warn" }, t("资料版本变化"))),
+      incompatible&&h('p',{className:'ext-cap',role:'status'},pluginCompatibilityText(update)),
+      incompatible&&!update.to&&h('p',{className:'ext-cap',role:'status'},t('等插件更新后才能继续用')),
+      update.requiresCompatibilityUpdate&&update.to && h("p", {className:"ext-cap",role:"status","data-compatibility-update":true}, fill(t("要更新到 {v} 才能继续用"),{v:update.to})),
       changes.length > 0 && h("details", { className: "ext-tech ext-changes", open: true }, h("summary", null, t("更新内容")), h("ul", { className: "ext-bul" }, ...changes.map((row) => h("li", { key: row.version }, Icon("check", { size: 14 }), h("span", null, (changes.length > 1 ? row.version + " · " : "") + releaseNotes(row)))))),
       update.addedCapabilities?.length > 0 && h("small", { className: "ext-cap" }, t("新增能力需要重新确认")), update.incompatibleData && h("small", { className: "ext-cap" }, t("资料版本变化，暂不自动更新。")), update.error && h("small", { className: "ext-cap", role: "status" }, communityErrorText(update.error.code) ?? update.error.message)),
-    h("button", { type: "button", className: "ui-btn primary", disabled: busy || update.incompatibleData || ["queued", "running", "unavailable", "interrupted-needs-user"].includes(update.state), onClick: () => onReview(update) }, update.state === "failed" ? L("重试…", "Retry…") : t("查看并更新…")));
+    h("button", { type: "button", className: "ui-btn primary", disabled: busy || !available, onClick: () => {if(available)onReview(update);} }, incompatible&&update.to?t('更新到 {v}').replace('{v}',update.to):!update.to?t('等插件更新后才能继续用'):update.state === "failed" ? L("重试…", "Retry…") : t("查看并更新…")));
 }
 function Stars({ value }) {
   return h("span", { className: "ext-stars", "aria-label": t("{n} 星").replace("{n}", value.toFixed(1)) }, Icon("star", { size: 13 }), value.toFixed(1));
@@ -151,6 +158,7 @@ export function CommunityHostDependencies({plan,working,ffmpeg,dsh,onCancel,onNo
   repair&&h('div',{'data-bili-component-repair':true},ffmpeg?.state==='checking'&&h('p',{role:'status'},t('正在核验本地视频组件，尚未下载。')),h('p',null,t('视频组件缺失或损坏。准备完成后返回B站页面，由原按钮重新开始。')),h('button',{type:'button',className:'ui-btn',disabled:active||ffmpeg?.state==='checking',onClick:onPrepare},t('重新准备视频组件')),ffmpeg?.state==='ready'&&h('button',{type:'button',className:'ui-btn primary',onClick:onReturn},t('返回B站页面'))));
 }
 function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = globalThis.window?.whale?.pluginFiles, workApi = globalThis.window?.whale?.work, onManage, onStatus, onPage, onVoicePage, intent } = {}) {
+  const [officialRetry,setOfficialRetry]=useState(null),officialFlight=useRef(false);
   const voiceSession=useVoiceSession();
   const [tab, setTab] = useState("community"), [state, setState] = useState(null), [listing, setListing] = useState({ items: [], total: 0, page: 1, pageSize: 24 }), [query, setQuery] = useState(""), [category, setCategory] = useState(""), [sort, setSort] = useState("recommended"), [favoritesOnly, setFavoritesOnly] = useState(false), [page, setPage] = useState(1), [revision, setRevision] = useState(0), [pending, setPending] = useState(0), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [detail, setDetail] = useState(null), [author, setAuthor] = useState(null), [plan, setPlan] = useState(null), [granted, setGranted] = useState([]), [sourceId, setSourceId] = useState("official"), [catalogUrl, setCatalogUrl] = useState(""), [reviewUrl, setReviewUrl] = useState(""), [catalogDialog, setCatalogDialog] = useState(false), [reviewDraft, setReviewDraft] = useState(null), [reviewStatus, setReviewStatus] = useState(null);
@@ -166,7 +174,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
   const say = (text, values) => setNotice(fill(t(text), values));
   const call = useCallback(async (request) => {
     if (!api) throw Error(t("扩展服务尚未就绪"));
-    return pluginResult(await api.action(request));
+    try{return await invokeWithOfficialRetry(async pinned=>pluginResult(await api.action(pinned)),request);}catch(error){const pin=officialRetryPin(error);if(pin&&mounted.current)setOfficialRetry(current=>current??pin);throw error;}
   }, [api]);
   const refreshState = useCallback(async () => {
     const value = await call({ action: "community-status" });
@@ -176,6 +184,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
   // "Open" goes to the plugin's page in the main window (approved design G); a version that cannot be shown
   // there yet, or a host without page navigation, keeps the plugin's own window.
   function openPage(record) {
+    if(pluginIsIncompatible(record))return;
     if (isVoiceEnginePackage(record?.packageName)) { if(onVoicePage)onVoicePage(record.packageName);else onPage?.("voice"); return; }
     const target = embedTargetFor(record.packageName);
     if (target && onPage && embedCapable(target, record.exactVersion)) { onPage(EMBED_TARGETS[target].page); return; }
@@ -211,6 +220,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
       if (mounted.current) setPending((value) => Math.max(0, value - 1));
     }
   }
+  async function retryOfficial(){if(!officialRetry||officialFlight.current)return;officialFlight.current=true;const request=officialRetryRequest(officialRetry);setOfficialRetry(null);try{return await run(async()=>{const value=await call(request);if(request.action==='community-plan-update'){const update=updates?.find(row=>row.packageKey===request.packageKey);if(update)setLegacyUpdate({update,plan:value});}if(request.action==='dsh-component-install')setComponentNeeded(false);return value;});}finally{officialFlight.current=false;}}
   useEffect(() => {
     mounted.current = true;
     void refreshState().catch((cause) => mounted.current && setError(errorText(cause)));
@@ -421,7 +431,8 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
     if (["uninstall", "rollback"].includes(job.operation) && record && job.state !== "interrupted-needs-user") return setConfirm({ kind: job.operation, record });
     showRecord(job, job.state === "interrupted-needs-user");
   }
-  function retryJob(job) {
+  function retryJob(job,{official=false}={}) {
+    if(official&&job.state==='failed'&&job.operation==='install'&&mirrorRetryError(job.error))return void run(()=>call({action:'community-retry-maintenance',jobId:job.id,official:true}));
     const record = jobRecord(job);
     if (job.operation === "install") return void run(() => openPlanFor(job, job.version));
     if (["uninstall", "rollback"].includes(job.operation)) return record ? setConfirm({ kind: job.operation, record }) : showRecord(job);
@@ -501,10 +512,11 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
   const currentCapabilities = (work) => [...(work.releases ?? [])].sort((a, b) => Date.parse(b.publishedAt ?? 0) - Date.parse(a.publishedAt ?? 0))[0]?.package?.capabilities ?? [];
   function installedRow(record) {
     const label = runtimeLabel(record), open = menuFor === record.packageKey, policy = state?.community?.updatePolicies?.[record.packageKey] ?? "manual", update = updates?.find((value) => value.packageKey === record.packageKey), job = jobFor(record.packageName), working = job && ["queued", "running"].includes(job.state);
+    const incompatible=pluginIsIncompatible(record);
     const items = [
       { label: t("更新方式：手动更新"), icon: "sliders", checked: policy === "manual", onSelect: () => void run(() => call({ action: "community-set-update-policy", packageKey: record.packageKey, policy: "manual" })) },
       { label: L("更新方式：自动更新兼容补丁", "Update policy: automatic compatible patches"), icon: "sliders", checked: policy === "auto", onSelect: () => void run(() => call({ action: "community-set-update-policy", packageKey: record.packageKey, policy: "auto" })) },
-      { label: t("在浏览器打开"), icon: "external", disabled: !record.enabled, onSelect: () => void run(() => call({ action: "dsh-open-client", packageKey: record.packageKey, external: true })) },
+      { label: t("在浏览器打开"), icon: "external", disabled: !record.enabled||incompatible, onSelect: () => {if(!incompatible)void run(() => call({ action: "dsh-open-client", packageKey: record.packageKey, external: true }));} },
       "separator",
       record.previous && { label: t("回退到上一个版本…"), icon: "retry", onSelect: () => setConfirm({ kind: "rollback", record }) },
       { label: t("卸载（保留数据）…"), icon: "close", danger: true, onSelect: () => setConfirm({ kind: "uninstall", record }) }
@@ -512,12 +524,14 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
     return h("article", { className: "ws-card ext-irow", key: record.packageKey, "data-dsh-record": record.packageKey },
       h(PluginLogo, { packageName: record.packageName, size: 44 }),
       h("div", { className: "ext-ir-main" },
-        h("div", { className: "ext-row" }, h("b", null, pluginName(record.packageName)), h("span", { className: "ext-cap" }, record.exactVersion), record.localBundled && h("span", { className: "ext-cap" }, L("本地随附", "Bundled locally")), working ? h(StatusPill, { tone: "busy" }, t(job.operation === "install" ? "正在安装" : "正在维护")) : h(CommunityInstallationStatus, { record, compact: true }), update && h("button", { type: "button", className: "ws-tag ext-tagbtn", onClick: () => setTab("updates") }, t("有更新 {v}").replace("{v}", update.to))),
+        h("div", { className: "ext-row" }, h("b", null, pluginName(record.packageName)), h("span", { className: "ext-cap" }, record.exactVersion), record.localBundled && h("span", { className: "ext-cap" }, L("本地随附", "Bundled locally")), working&&!incompatible ? h(StatusPill, { tone: "busy" }, t(job.operation === "install" ? "正在安装" : "正在维护")) : h(CommunityInstallationStatus, { record, compact: true }), update?.to && h("button", { type: "button", className: "ws-tag ext-tagbtn", onClick: () => setTab("updates") }, t("有更新 {v}").replace("{v}", update.to))),
         h("small", { className: "ext-cap", "data-installed-situation": true }, installedSituation(record, { jobs: workStatus ? (workStatus.jobs ?? []).length : null, accounts })),
+        incompatible&&!update?.to&&h('small',{className:'ext-cap'},t('等插件更新后才能继续用')),
         label === "加载失败" && record.runtimeFailure && h("details", { className: "ext-tech" }, h("summary", null, t("技术详情")), h("code", null, record.runtimeFailure.code + "\n" + record.runtimeFailure.message))),
       h("div", { className: "ext-row" },
-        h("span", { className: "ext-cap" }, L("启用", "Enabled")), h(Switch, { checked: !!record.enabled, disabled: busy, label: t(record.enabled ? "停用" : "启用") + " · " + pluginName(record.packageName), onChange: () => void run(() => record.enabled ? call({action:"dsh-disable",packageKey:record.packageKey}) : enableRecord(record)) }),
-        h("button", { type: "button", className: "ui-btn", disabled: !record.enabled || busy, onClick: () => openPage(record) }, Icon("external", { size: 16 }), t("打开")),
+        h("span", { className: "ext-cap" }, L("启用", "Enabled")), h(Switch, { checked: !!record.enabled, disabled: busy||incompatible&&!record.enabled, label: t(record.enabled ? "停用" : "启用") + " · " + pluginName(record.packageName), onChange: () => void run(() => record.enabled ? call({action:"dsh-disable",packageKey:record.packageKey}) : enableRecord(record)) }),
+        incompatible&&update?.to&&h('button',{type:'button',className:'ui-btn primary',disabled:busy||!pluginUpdateAvailable(update),onClick:()=>void run(()=>reviewUpdate(update))},t('更新到 {v}').replace('{v}',update.to)),
+        h("button", { type: "button", className: "ui-btn", disabled: !record.enabled || busy||incompatible, onClick: () => openPage(record) }, Icon("external", { size: 16 }), t("打开")),
         !record.localBundled && h("div", { className: "ext-menuwrap" }, h("button", { type: "button", className: "ui-icon-btn", "aria-haspopup": "menu", "aria-expanded": open, "aria-label": t("更多") + " · " + pluginName(record.packageName), title: t("更多"), onClick: () => setMenuFor(open ? null : record.packageKey) }, Icon("more", { size: 16 })),
           open && h(Menu, { label: t("更多"), className: "ext-menu-r", onClose: () => setMenuFor(null), items }))));
   }
@@ -530,16 +544,17 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
     await call({action:'install',planId:selected.planId});
   }
   function legacyRow(row) {
-    const m = row.manifest, key = legacyUpdateKey(row.sourceId ?? "legacy", m.id), policy = state?.community?.updatePolicies?.[key] ?? "manual", pending = updates?.find(value => value.packageKey === key), text = legacyText(m, { official: ["official", "legacy"].includes(row.sourceId ?? "legacy") }), incompatible = row.compatible === false;
-    if(isVoiceEnginePackage(m.id))return h(InstalledVoicePluginRow,{key,row:{...row,updatePolicy:policy},record:installedRecord(m.id,row.sourceId),snapshot:voiceSession.snapshot,session:voiceSession.session.current,call,run,busy,menuOpen:menuFor===key,onMenu:open=>setMenuFor(open?key:null),onOpen:id=>openPage({packageName:id}),onConfirm:setConfirm,onVersionSelect:version=>void run(()=>prepareVoiceVersion(version)),onUpdate:pending?()=>setTab('updates'):null});
+    const m = row.manifest, key = legacyUpdateKey(row.sourceId ?? "legacy", m.id), policy = state?.community?.updatePolicies?.[key] ?? "manual", pending = updates?.find(value => value.packageKey === key), text = legacyText(m, { official: ["official", "legacy"].includes(row.sourceId ?? "legacy") }), incompatible = pluginIsIncompatible(row);
+    if(isVoiceEnginePackage(m.id))return h(InstalledVoicePluginRow,{key,row:{...row,updatePolicy:policy},record:installedRecord(m.id,row.sourceId),snapshot:voiceSession.snapshot,session:voiceSession.session.current,call,run,busy,menuOpen:menuFor===key,onMenu:open=>setMenuFor(open?key:null),onOpen:id=>openPage({...row,packageName:id}),onConfirm:setConfirm,onVersionSelect:version=>void run(()=>prepareVoiceVersion(version)),update:pending,onUpdate:pending?.to?()=>incompatible?void run(()=>reviewUpdate(pending)):setTab('updates'):null});
     return h("article", { className: "ws-card ext-irow", key: key, "data-legacy-installed": m.id },
       h("span", { className: "ext-logo", style: { "--pl": "44px" }, "aria-hidden": true }, Icon(m.kind === "runtime" ? "terminal" : "bolt", { size: 22 })),
-      h("div", { className: "ext-ir-main" }, h("div", { className: "ext-row" }, h("b", null, text.name), h("span", { className: "ext-cap" }, m.version), incompatible ? h(StatusPill, { tone: "warn" }, t("不兼容")) : h(StatusPill, { tone: row.enabled ? "ok" : "idle" }, t(row.enabled ? "已启用" : "已安装")), h("span", { className: "ws-tag" }, t("旧扩展")), pending && h("button", { type: "button", className: "ws-tag ext-tagbtn", onClick: () => setTab("updates") }, t("有更新 {v}").replace("{v}", pending.to))),
-        h("small", { className: "ext-cap" }, incompatible ? t("暂不兼容当前版本的 AI 酱，数据和启用意图都保留着。") : t("1.9 时代的扩展，在「来源与旧扩展」里管理。"))),
+      h("div", { className: "ext-ir-main" }, h("div", { className: "ext-row" }, h("b", null, text.name), h("span", { className: "ext-cap" }, m.version), incompatible ? h(StatusPill, { tone: "warn" }, t("不兼容")) : h(StatusPill, { tone: row.enabled ? "ok" : "idle" }, t(row.enabled ? "已启用" : "已安装")), h("span", { className: "ws-tag" }, t("旧扩展")), pending?.to && h("button", { type: "button", className: "ws-tag ext-tagbtn", onClick: () => setTab("updates") }, t("有更新 {v}").replace("{v}", pending.to))),
+        h("small", { className: "ext-cap" }, incompatible ? pluginCompatibilityText(row) : t("1.9 时代的扩展，在「来源与旧扩展」里管理。")),incompatible&&!pending?.to&&h('small',{className:'ext-cap'},t('等插件更新后才能继续用'))),
       h("div", {className: "ext-row"},
         h("label", {className: "ext-cap"}, L("更新方式", "Update policy"), " ",
           h("select", {value: policy, disabled: busy, onChange: event => { const policy = event.target.value; void run(() => call({action: "community-set-update-policy", packageKey: key, policy})); }},
             h("option", {value: "manual"}, L("手动更新", "Manual")), h("option", {value: "auto"}, L("自动更新补丁", "Automatic patches")))),
+        incompatible&&pending?.to&&h('button',{type:'button',className:'ui-btn primary',disabled:busy||!pluginUpdateAvailable(pending),onClick:()=>void run(()=>reviewUpdate(pending))},t('更新到 {v}').replace('{v}',pending.to)),
         h("button", { type: "button", className: "ui-btn ghost sm", onClick: () => setTab("sources") }, t("在来源里管理"))));
   }
   if (!api) return h("div", { className: "ws-page" }, h("div", { className: "ws-page-head" }, h("div", null, h("h2", { className: "ws-ptitle" }, t("扩展中心")))), h("div", { className: "ui-alert warn", role: "status" }, Icon("alert", { size: 16 }), h("div", null, t("扩展服务尚未就绪"))));
@@ -593,6 +608,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
     notice && h("div", { role: "status", className: "ui-note" }, Icon("info", { size: 16 }), h("div", null, notice)),
     // B1: a running maintenance job is announced on 「更新与维护」 (and on its plugin's row), not over every tab.
     h(CommunityBusyNotice, { pending: busy && !componentWorking, action: pendingAction, phase: state?.dsh?.state?.phase, maintenance: tab === "updates" ? state?.maintenance : null }),
+    h(OfficialRetryButton,{retry:officialRetry,busy,onRetry:retryOfficial}),
     h(CommunityRuntimeNotice, { state: state?.dsh?.state, needed: componentNeeded, technicalError, onPrepare: () => void run(prepareComponent), onLocal: () => void run(() => prepareComponent(true)), busy }),
     installed.some(record=>record.packageName==="@ai-buddy/bilibili-companion")&&!!state?.mediaComponents?.ffmpeg&&state.mediaComponents.ffmpeg.state!=="ready"&&hostDependencyCard,
     componentWorking && h("section", { className: "ws-card ext-card" }, runtimeCard),

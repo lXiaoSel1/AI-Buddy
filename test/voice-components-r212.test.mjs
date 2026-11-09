@@ -41,7 +41,7 @@ test('failed verification never downloads, marks recovery and explicit Download 
  await rm(f.resolved.python);
  assert.equal((await f.assets.status('asr','breeze')).state,'ready','ordinary status reports the completed install without scanning payload files');
  await assert.rejects(f.assets.prepare('asr',{engineId:'breeze',verifyOnly:true}),{code:'VOICE_ASSET_MISSING'});assert.equal((await f.assets.status('asr','breeze')).state,'missing');assert.equal(f.downloads(),1);
- await f.assets.prepare('asr',{engineId:'breeze',forceDownload:true});assert.equal(f.downloads(),2);assert.equal((await f.assets.status('asr','breeze')).state,'ready');
+ await f.assets.prepare('asr',{engineId:'breeze',forceDownload:true});assert.equal(f.downloads(),1,'restoration reuses the SHA-verified download instead of fetching identical bytes again');assert.equal((await readFile(f.resolved.python)).toString(),'verified component');assert.equal((await f.assets.status('asr','breeze')).state,'ready');
 });
 
 const nodes=node=>!node||typeof node!=='object'?[]:[node,...React.Children.toArray(node.props?.children).flatMap(nodes)];

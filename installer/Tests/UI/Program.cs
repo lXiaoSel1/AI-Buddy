@@ -19,17 +19,26 @@ internal static partial class Program {
  static void Check(string name,Action action){try{action();results.Add(new{name,passed=true});Console.WriteLine("PASS "+name);}catch(Exception ex){results.Add(new{name,passed=false,error=ex.ToString()});throw;}}
  static object? Invoke(SetupForm form,string name,params object[] values)=>typeof(SetupForm).GetMethod(name,BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(form,values);
  static void Pump(Func<bool> done,string why){var end=Environment.TickCount64+10000;while(!done()){if(Environment.TickCount64>end)throw new Exception("Timed out: "+why);Application.DoEvents();Thread.Sleep(10);}Application.DoEvents();}
+ static void CheckEstimateCoalescing(string output){
+  int calls=0,active=0,maximum=0,cancelled=0;var tokens=new List<CancellationToken>();
+  async Task<DiskEstimate> Estimate(InstallOptions options,CancellationToken token){calls++;active++;maximum=Math.Max(maximum,active);tokens.Add(token);try{await Task.Delay(700,token);return new(calls,1,1,1,0);}catch(OperationCanceledException){cancelled++;await Task.Delay(450);throw;}finally{active--;}}
+  using var stopped=new CancellationTokenSource();stopped.Cancel();Check("A1 cancelled estimate stops before filesystem/hash work",()=>{try{Engine.Estimate(new("invalid",Cache,"30fps",["deepseek"],"deepseek"),stopped.Token);throw new Exception("Cancelled estimate continued");}catch(OperationCanceledException){}});
+  using var form=new SetupForm(["--skip-update-check","--root="+Path.Combine(output,"estimate-isolated")],Estimate);form.Show();Pump(()=>calls==1,"initial scan entered");
+  for(int n=0;n<10;n++)Invoke(form,"UpdateEstimate");Settled(form);
+  Check("A1 rapid native UI changes cancel and coalesce scans",()=>Assert(maximum==1&&calls==2&&cancelled==1,"Expected one active scan, one latest retry and cancelled prior scan; actual max="+maximum+", calls="+calls+", cancelled="+cancelled));
+  Invoke(form,"UpdateEstimate");Pump(()=>calls==3,"second scan entered");Invoke(form,"Busy",true);Pump(()=>active==0,"busy cancels scan");Check("A1 busy operation cancels pending estimates",()=>Assert(tokens.Last().IsCancellationRequested,"Busy left estimate running"));form.Close();
+ }
  static void Settled(SetupForm f)=>Pump(()=>Field<CancellationTokenSource?>(f,"cancellation") is null&&Field<Button>(f,"install").Enabled,"asynchronous estimate and install ready");
  static void Shot(SetupForm f,string file){using var bitmap=new Bitmap(f.Width,f.Height);f.DrawToBitmap(bitmap,new Rectangle(Point.Empty,f.Size));bitmap.Save(file);}
  static void Reject(Action action){try{action();}catch(InvalidDataException){return;}throw new Exception("Expected argument rejection");}
  static HttpClient Mock(string version,List<string> calls,bool failed=false){
   const string api="https://api.github.com/repos/lXiaoSel1/AI-Buddy",web="https://github.com/lXiaoSel1/AI-Buddy";
   var source=new string('b',40);var tagSha=new string('c',40);var sha=new string('d',64);var manifestSha=new string('e',64);var tag="v"+version;
-  var signature="-----BEGIN SSH SIGNATURE-----\nfixture\n-----END SSH SIGNATURE-----\n";var body=$"AI Buddy {version}\n\nSource: {source}\nManifest SHA-256: {manifestSha}\nInstaller SHA-256: {sha}\n";
+  var signature="-----BEGIN SSH SIGNATURE-----\nfixture\n-----END SSH SIGNATURE-----\n";var body=$"AI Buddy {version}\n\nSource: {source}\nManifest SHA-256: {manifestSha}\nInstaller SHA-256: {sha}\nChecksums SHA-256: {sha}\nApp Update Protocol: 1\nApp Bootstrap Protocol: 1\n";
   object Asset(string name,long size,string hash)=>new{name,size,state="uploaded",digest="sha256:"+hash,browser_download_url=web+"/releases/download/"+tag+"/"+name};
   return new(new Handler((request,cancel)=>{cancel.ThrowIfCancellationRequested();var url=request.RequestUri!.AbsoluteUri;calls.Add(url);Assert(request.Method==HttpMethod.Get&&!request.Headers.Contains("Authorization"),"Anonymous read-only GET required");if(failed)return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
    object value=url switch{
-    api+"/releases/latest"=>new{tag_name=tag,html_url=web+"/releases/tag/"+tag,target_commitish=source,draft=false,prerelease=false,assets=new[]{Asset("AI-Buddy-Setup-"+version+"-win-x64.exe",123,sha),Asset("install-manifest-"+version+".json",12,manifestSha)}},
+    api+"/releases/latest"=>new{tag_name=tag,html_url=web+"/releases/tag/"+tag,target_commitish=source,draft=false,prerelease=false,assets=new[]{Asset("AI-Buddy-Setup-"+version+"-win-x64.exe",123,sha),Asset("install-manifest-"+version+".json",12,manifestSha),Asset("SHA256SUMS-"+version+".txt",12,sha)}},
     var p when p==api+"/git/ref/tags/"+tag=>new{@ref="refs/tags/"+tag,@object=new{type="tag",sha=tagSha}},
     var p when p==api+"/git/tags/"+tagSha=>new{sha=tagSha,tag,@object=new{type="commit",sha=source},message=body+signature,verification=new{verified=true,reason="valid",signature,payload=$"object {source}\ntype commit\ntag {tag}\ntagger fixture <test@example.invalid> 0 +0000\n\n"+body}},
     _=>throw new Exception("Actual download or external request forbidden: "+url)};return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK){Content=new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(value))});}));
@@ -39,6 +48,8 @@ internal static partial class Program {
   var output=Path.GetFullPath(args[1]);Directory.CreateDirectory(output);var profile=Path.Combine(output,"isolated nonexisting profile 中文");DefaultRoot=Path.Combine(profile,"install");Cache=Path.Combine(profile,"cache");var host=new NeverHost();
   try{
    ManifestBytes=File.ReadAllBytes(args[0]);Manifest=Manifests.Parse(ManifestBytes,Hashing.Bytes(ManifestBytes));var calls=new List<string>();using var http=Mock(ReleaseIdentity.Version,calls);Updates=new(http,verifySignature:FixtureSigned);Engine=new(Manifest,ManifestBytes,Hashing.Bytes(ManifestBytes),new Downloader(http),host,Environment.ProcessPath!);
+   if(args.Contains("--estimate-only")){CheckEstimateCoalescing(output);Json.Save(Path.Combine(output,"estimate-ui.json"),new{ok=true,total=results.Count,tests=results});return 0;}
+   if(!args.Contains("--local-only")){
    using(var form=new SetupForm(["--skip-update-check"])){
     form.Show();Settled(form);var language=Field<ComboBox>(form,"language");var edition=Field<ComboBox>(form,"edition");var initial=Field<ComboBox>(form,"initial");var roles=Field<CheckedListBox>(form,"characters");
     Check("defaults 11 roles 30fps DeepSeek",()=>Assert(roles.CheckedItems.Count==11&&edition.SelectedItem?.ToString()=="30fps"&&initial.SelectedItem?.ToString()=="DeepSeek","Wrong defaults"));
@@ -85,7 +96,16 @@ internal static partial class Program {
     var badRoot=Path.Combine(output,"preflight failure "+malformed);using var form=new SetupForm(["--skip-update-check","--language=en","--root="+badRoot]);form.Show();Settled(form);var pointer=Path.Combine(badRoot,"local","current-build.json");Directory.CreateDirectory(Path.GetDirectoryName(pointer)!);File.WriteAllText(pointer,malformed=="bad-json"?"{broken":"{\"version\":\"bad-version\"}");
     Check("install preflight safely rejects "+malformed,()=>{var task=(Task)Invoke(form,"Run","install")!;Pump(()=>task.IsCompleted,"invalid pointer preflight");task.GetAwaiter().GetResult();Assert(Field<Label>(form,"status").Text.StartsWith("Cannot confirm the installed version;")&&!form.IsDisposed&&host.Calls==0&&!Directory.Exists(Path.Combine(badRoot,"local","installer")),"Malformed version must not crash or start installation");});Shot(form,Path.Combine(output,"installer-ui-"+malformed+".png"));form.Close();
    }
-   CheckSnapshotUpgrades(output);
+   }
+   var localSource=Path.Combine(output,"expanded-local-source-ui");var localHash=Hashing.Bytes(ManifestBytes);
+   Directory.CreateDirectory(Path.Combine(localSource,"builds/source"));Directory.CreateDirectory(Path.Combine(localSource,"runtime/source"));
+   var localRecord=new Installation(1,ReleaseIdentity.Version,localHash,"30fps",Manifest.Characters.Select(c=>c.Id).ToArray(),"deepseek","builds/source","runtime/source","maintenance/"+ReleaseIdentity.Version+"/AI Buddy Setup.exe",null,"ui-local-source",DateTimeOffset.UtcNow,Manifest.Packages.ToDictionary(p=>p.Id,p=>p.Sha256));
+   Json.Save(InstallEngine.RecordPath(localSource),localRecord);Directory.CreateDirectory(Path.Combine(localSource,"local/install-manifests"));File.WriteAllBytes(SafePaths.Under(localSource,"local/install-manifests/"+localHash+".json"),ManifestBytes);
+   foreach(var locale in new[]{"zh-CN","en"})using(var form=new SetupForm(["--skip-update-check","--language="+locale,"--local-tree="+localSource,"--root="+Path.Combine(output,"local-source-target-"+locale)])){
+    form.Show();Settled(form);Check("local source read-only notice and zero download "+locale,()=>Assert(Field<TextBox>(form,"offline").ReadOnly&&Controls(form).Any(c=>c.Text==(locale=="zh-CN"?"从这个文件夹安装，不需要联网":"Install from this folder without an internet connection"))&&Field<Label>(form,"estimate").Text.Contains("0.0 MiB"),"local source UI mismatch"));
+    Check("download mirror inputs default empty "+locale,()=>Assert(Field<TextBox>(form,"githubMirror").Text==""&&Field<TextBox>(form,"huggingFaceMirror").Text=="","mirror should be opt-in"));Shot(form,Path.Combine(output,"installer-local-source-"+locale+".png"));Field<TableLayoutPanel>(form,"layout").ScrollControlIntoView(Field<Label>(form,"estimate"));Application.DoEvents();Shot(form,Path.Combine(output,"installer-local-source-download-"+locale+".png"));form.Close();
+   }
+   if(!args.Contains("--local-only"))CheckSnapshotUpgrades(output);
    Json.Save(Path.Combine(output,"installer-ui.json"),new{ok=true,total=results.Count,tests=results,locales=2,roles=11,defaultEdition="30fps",defaultInitial="DeepSeek",httpMode="in-memory mock only",realNetworkRequests=0,appHostCalls=host.Calls,actualApplicationOrInstallerLaunched=false,at=DateTimeOffset.UtcNow});Console.WriteLine($"PASS {results.Count}/{results.Count}; mock HTTP only; no app or installer launched");return 0;
   }catch(Exception ex){Json.Save(Path.Combine(output,"installer-ui.json"),new{ok=false,total=results.Count,tests=results,error=ex.ToString(),appHostCalls=host.Calls,at=DateTimeOffset.UtcNow});Console.Error.WriteLine(ex);return 1;}
  }

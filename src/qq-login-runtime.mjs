@@ -11,6 +11,7 @@ import {createQqComponent,componentChild} from './qq-component.mjs';
 import {assertOwnedListener} from './qq-owned-listener.mjs';
 import {manualQqSession} from './qq-manual-connection.mjs';
 import {inspectQqCache} from './qq-owned-cache.mjs';
+import {createManagedProcessSupervisor} from './managed-process-supervisor.mjs';
 
 const fail=code=>Object.assign(Error(code),{code});
 const privateKeys={USERPROFILE:'h',HOME:'h',APPDATA:'h/a',LOCALAPPDATA:'h/l',TEMP:'t',TMP:'t'};
@@ -20,20 +21,21 @@ export function qrImage(url){let parsed;try{parsed=new URL(url);}catch{throw fai
 // NapCat shares a name-keyed adapter registry across transport types.
 // Reusing one name would let WebSocket replace HTTP before either is opened.
 export function qqNetworkConfig(httpPort,wsPort,token){return {network:{httpServers:[{name:'ai-buddy-http',enable:true,host:'127.0.0.1',port:httpPort,token,enableCors:false,enableWebsocket:false,messagePostFormat:'array',debug:false}],websocketServers:[{name:'ai-buddy-websocket',enable:true,host:'127.0.0.1',port:wsPort,token,messagePostFormat:'array',debug:false,reportSelfMessage:false,enableForcePushEvent:false}],httpClients:[],websocketClients:[],plugins:[]},enableLocalFile2Url:false};}
-export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onState=()=>{}}={}){
+export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onState=()=>{},supervisor=null,network,fetchImpl=network?.fetch??globalThis.fetch,childEnvironment=()=>({}),spawnImpl=spawn,listenerInspector=assertOwnedListener,stopTimeoutMs=8000}={}){
  const root=join(dataRoot,'social-login'),profiles=join(root,'qq'),runs=new Map(),restores=new Map(),pending=new Set(),resumeGenerations=new Map(),lifetime=new AbortController(),exits=[];let closed=false,db=null,opening=null;
- component??=createQqComponent({directory:join(dataRoot,'plugin-runtimes','qq-components'),descriptor});
+ component??=createQqComponent({directory:join(dataRoot,'plugin-runtimes','qq-components'),descriptor,network,fetchImpl});
+ supervisor??=createManagedProcessSupervisor({guardPath:join(build,'managed-process-guard.exe'),statePath:join(root,'processes.json'),onState});
  async function database(){if(closed)throw fail('SOCIAL_LOGIN_CLOSED');if(db)return db;if(!opening)opening=(async()=>{await mkdir(root,{recursive:true});const next=new DatabaseSync(join(root,'onboarding-v1.sqlite'));try{next.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS bindings(ref TEXT PRIMARY KEY,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)");db=next;return db;}catch(cause){next.close();throw cause;}})().catch(cause=>{opening=null;throw cause;});return opening;}
  async function binding(ref){const saved=JSON.parse((await database()).prepare('SELECT body FROM bindings WHERE ref=?').get(ref)?.body??'null'),account=accounts.get(ref);return account?.managedProfileId?{...saved,ref,accountId:account.accountId,resourceId:account.managedProfileId}:saved;}
  async function saveBinding(value){(await database()).prepare('INSERT INTO bindings VALUES(?,?) ON CONFLICT(ref) DO UPDATE SET body=excluded.body').run(value.ref,JSON.stringify(value));}
  async function api(row,path,body={},authenticate=true){
   if(row.exit)throw fail('QQ_COMPONENT_EXITED');
-  const response=await fetch(`http://127.0.0.1:${row.webPort}/api/${path}`,{method:'POST',redirect:'error',headers:{'content-type':'application/json',...(authenticate?{authorization:'Bearer '+row.credential}:{})},body:JSON.stringify(body),signal:AbortSignal.timeout(5000)});
+  const response=await fetchImpl(`http://127.0.0.1:${row.webPort}/api/${path}`,{method:'POST',redirect:'error',headers:{'content-type':'application/json',...(authenticate?{authorization:'Bearer '+row.credential}:{})},body:JSON.stringify(body),signal:AbortSignal.timeout(5000)});
   const text=await response.text();if(text.length>2*1024*1024)throw fail('QQ_COMPONENT_RESPONSE_TOO_LARGE');let result;try{result=JSON.parse(text);}catch{throw fail('QQ_COMPONENT_RESPONSE_INVALID');}
   if(!response.ok||result.code!==0)throw fail('QQ_COMPONENT_API_FAILED');return result.data;
  }
  async function onebot(row,action){
-  const response=await fetch(`http://127.0.0.1:${row.httpPort}/${action}`,{method:'POST',redirect:'error',headers:{'content-type':'application/json',authorization:'Bearer '+row.accessToken},body:'{}',signal:AbortSignal.timeout(6000)});
+  const response=await fetchImpl(`http://127.0.0.1:${row.httpPort}/${action}`,{method:'POST',redirect:'error',headers:{'content-type':'application/json',authorization:'Bearer '+row.accessToken},body:'{}',signal:AbortSignal.timeout(6000)});
   const text=await response.text();if(text.length>4*1024*1024)throw fail('QQ_COMPONENT_RESPONSE_TOO_LARGE');const value=JSON.parse(text);if(!response.ok||value.status!=='ok'||value.retcode!==0)throw fail('QQ_ONEBOT_NOT_READY');return value.data;
  }
  async function socketReady(row){
@@ -43,13 +45,20 @@ export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onS
  }
  async function stopRow(row){
   if(!row)return;if(row.stopping)return row.stopping;
-  row.stopping=(async()=>{row.abort.abort();clearInterval(row.cacheTimer);if(!row.exit){if(!row.child.connected)throw fail('QQ_COMPONENT_STOP_PENDING');row.child.send({type:'shutdown'});await bounded(row.exited,8000,'QQ_COMPONENT_STOP_PENDING');}if(row.exit.code!==0)throw fail('QQ_COMPONENT_EXIT_FAILED');runs.delete(row.attemptId);try{await inspectQqCache(row.profile,{prune:true});}catch{row.cacheWarning=true;}onState();})();
+  row.stopping=(async()=>{
+   row.abort.abort();clearInterval(row.cacheTimer);await row.admission?.catch(()=>{});let forced=false;
+   if(!row.exit)try{if(!row.child.connected)throw fail('QQ_COMPONENT_STOP_PENDING');await new Promise((yes,no)=>row.child.send({type:'shutdown'},error=>error?no(error):yes()));await bounded(row.exited,stopTimeoutMs,'QQ_COMPONENT_STOP_PENDING');}catch{forced=true;}
+   if(row.guardReady){await supervisor.releaseRoot({runtimeId:row.runtimeId});await bounded(row.exited,stopTimeoutMs,'QQ_COMPONENT_STOP_PENDING');}
+   else if(!row.exit){row.child.kill();await bounded(row.exited,stopTimeoutMs,'QQ_COMPONENT_STOP_PENDING');throw fail('QQ_COMPONENT_STOP_UNCONFIRMED');}
+   if(!row.guardReady)throw fail('QQ_COMPONENT_STOP_UNCONFIRMED');
+   runs.delete(row.attemptId);try{await inspectQqCache(row.profile,{prune:true});}catch{row.cacheWarning=true;}onState();if(!forced&&row.exit.code!==0)throw fail('QQ_COMPONENT_EXIT_FAILED');
+  })();
   try{await row.stopping;}catch(cause){row.stopping=null;throw cause;}
  }
- async function launch({attemptId,signal,update=()=>{},saved=null}){
+ async function launch({attemptId,signal,update=()=>{},saved=null,official=false}){
   if(closed)throw fail('SOCIAL_LOGIN_CLOSED');
   signal=AbortSignal.any([signal,lifetime.signal]);
-  const runtime=await component.ensure({signal,onProgress:update});signal.throwIfAborted();
+  const runtime=await component.ensure({signal,onProgress:update,official:official===true});signal.throwIfAborted();
   const store=await database();let resourceId=saved?.resourceId;
   if(!resourceId){resourceId=store.prepare("SELECT value FROM metadata WHERE key='pendingProfile'").get()?.value??randomUUID();if(accounts.list().some(account=>account.managedProfileId===resourceId))resourceId=randomUUID();if(!/^[a-f0-9-]{36}$/.test(resourceId))throw fail('QQ_PRIVATE_PROFILE_REQUIRED');store.prepare("INSERT INTO metadata VALUES('pendingProfile',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(resourceId);}
   if([...runs.values()].some(row=>row.resourceId===resourceId&&!row.exit))throw fail('SOCIAL_LOGIN_BUSY');
@@ -69,16 +78,18 @@ export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onS
   }
   if(saved?.accountId)await writeFile(join(config,'onebot11_'+saved.accountId+'.json'),network);
   Object.assign(env,{AI_BUDDY_QQ_PRIVATE_HOME:env.HOME,NAPCAT_WORKDIR:work,NAPCAT_WORKER_PROCESS:'1',NAPCAT_DISABLE_PIPE:'1',NAPCAT_DISABLE_TIME_SYNC:'1',NAPCAT_WRAPPER_PATH:join(runtime,'wrapper.node'),NAPCAT_QQ_PACKAGE_INFO_PATH:join(runtime,'package.json'),NAPCAT_QQ_VERSION_CONFIG_PATH:join(runtime,'config.json')});
+  Object.assign(env,await childEnvironment({env:{...env},purpose:'qq-runtime',signal}));
   signal.throwIfAborted();
-  const child=spawn(join(runtime,'node.exe'),['--require',join(build,'social-login-assets/native-path-guard.cjs'),join(runtime,'index.js')],{cwd:runtime,env,windowsHide:true,stdio:['ignore','ignore','ignore','ipc']});
-  const row={attemptId,resourceId,profile,child,webPort,httpPort,wsPort,accessToken,abort:new AbortController(),exit:null};runs.set(attemptId,row);
+  const child=spawnImpl(join(runtime,'node.exe'),['--require',join(build,'social-login-assets/native-path-guard.cjs'),join(runtime,'index.js')],{cwd:runtime,env,windowsHide:true,stdio:['ignore','ignore','ignore','ipc']});
+  const row={attemptId,runtimeId:'qq:'+attemptId,guardReady:false,resourceId,profile,child,webPort,httpPort,wsPort,accessToken,abort:new AbortController(),exit:null};runs.set(attemptId,row);
   row.cacheTimer=setInterval(()=>{if(row.cacheChecking||row.stopping||row.exit)return;row.cacheChecking=true;void inspectQqCache(profile).then(value=>{if(value.overLimit){row.cacheLimit=true;return stopRow(row);}}).catch(()=>{row.cacheLimit=true;return stopRow(row).catch(()=>{});}).finally(()=>{row.cacheChecking=false;});},30000);row.cacheTimer.unref?.();
   row.exited=new Promise(resolve=>{child.once('error',()=>{row.exit={code:-1};resolve(row.exit);});child.once('exit',(code,signal)=>{row.exit={code,signal};exits.push({pid:child.pid,code,signal,at:Date.now()});if(exits.length>20)exits.shift();resolve(row.exit);onState();});});
+  row.admission=supervisor.registerRoot({runtimeId:row.runtimeId,pid:child.pid}).then(()=>{row.guardReady=true;});await row.admission;
   child.on('message',message=>{if(message?.type==='restart'){row.restartRequested=true;onState();}});
   const combined=AbortSignal.any([signal,row.abort.signal]);row.signal=combined;
   for(let n=0;n<40;n++){
    combined.throwIfAborted();if(row.exit)throw fail(row.exit.code===78?'QQ_PRIVATE_PROFILE_REQUIRED':'QQ_COMPONENT_EXITED');
-   try{await assertOwnedListener(child.pid,[webPort]);row.credential=(await api(row,'auth/login',{hash:createHash('sha256').update(token+'.napcat').digest('hex')},false)).Credential;if(row.credential)return row;}catch(cause){if(cause.code==='QQ_LISTENER_OWNER_MISMATCH')throw cause;}
+   try{await listenerInspector(child.pid,[webPort]);row.credential=(await api(row,'auth/login',{hash:createHash('sha256').update(token+'.napcat').digest('hex')},false)).Credential;if(row.credential)return row;}catch(cause){if(cause.code==='QQ_LISTENER_OWNER_MISMATCH')throw cause;}
    await delay(1000,undefined,{signal:combined});
   }
   throw fail('QQ_COMPONENT_START_TIMEOUT');
@@ -91,7 +102,7 @@ export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onS
    if(state.isLogin===true&&state.coreReady===true){
     update({phase:'verifying',clearQr:true});const login=await api(row,'QQLogin/GetQQLoginInfo'),accountId=String(login.uin??'');
     if(!/^\d{1,20}$/.test(accountId)||login.online!==true||expectedAccountId&&expectedAccountId!==accountId)throw fail('SOCIAL_LOGIN_IDENTITY_MISMATCH');
-    let identity,socketVerified=false;for(let n=0;n<15;n++){signal.throwIfAborted();try{await assertOwnedListener(row.child.pid,[row.httpPort,row.wsPort]);identity=await onebot(row,'get_login_info');await socketReady(row);socketVerified=true;break;}catch(cause){if(cause.code==='QQ_LISTENER_OWNER_MISMATCH')throw cause;await delay(1000,undefined,{signal});}}
+    let identity,socketVerified=false;for(let n=0;n<15;n++){signal.throwIfAborted();try{await listenerInspector(row.child.pid,[row.httpPort,row.wsPort]);identity=await onebot(row,'get_login_info');await socketReady(row);socketVerified=true;break;}catch(cause){if(cause.code==='QQ_LISTENER_OWNER_MISMATCH')throw cause;await delay(1000,undefined,{signal});}}
     if(!identity||!socketVerified)throw fail('QQ_ONEBOT_NOT_READY');if(String(identity.user_id)!==accountId)throw fail('SOCIAL_LOGIN_IDENTITY_MISMATCH');
     const confirmed=await api(row,'QQLogin/CheckLoginStatus');if(confirmed.isLogin!==true||confirmed.coreReady!==true)throw fail('QQ_ONEBOT_NOT_READY');
     signal.throwIfAborted();row.accountId=accountId;return {accountId,label:String(identity.nickname||accountId).slice(0,180),httpUrl:`http://127.0.0.1:${row.httpPort}`,webSocketUrl:`ws://127.0.0.1:${row.wsPort}`,secret:{accessToken:row.accessToken},resourceId:row.resourceId,attemptId:row.attemptId};
@@ -128,6 +139,6 @@ export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onS
   stop:async({attemptId}={})=>{for(const row of [...runs.values()])if(!attemptId||row.attemptId===attemptId)await stopRow(row);},
   discard:async result=>stopRow(runs.get(result?.attemptId)),
   async setAutoResume(ref,enabled,scope,{signal,check=async()=>{}}={}){const account=accounts.get(ref);if(closed||!account?.enabled||account.platform!=='qq'||typeof enabled!=='boolean'||!scope||['characterId','lifeId','operationId'].some(key=>typeof scope[key]!=='string'||!scope[key]))throw fail('QQ_AUTOSTART_INVALID');const generation=(resumeGenerations.get(ref)??0)+1;resumeGenerations.set(ref,generation);const valid=()=>{signal?.throwIfAborted();if(closed||resumeGenerations.get(ref)!==generation||accounts.get(ref)?.generation!==account.generation)throw fail('SOCIAL_ACCOUNT_CHANGED');};await check();valid();const value=await binding(ref)??{ref,accountId:account.accountId,resourceId:null},databaseHandle=await database();await check();valid();databaseHandle.prepare('INSERT INTO bindings VALUES(?,?) ON CONFLICT(ref) DO UPDATE SET body=excluded.body').run(ref,JSON.stringify({...value,autoResume:enabled,scope:Object.fromEntries(['characterId','lifeId','operationId'].map(key=>[key,scope[key]]))}));},
-  async close(){closed=true;lifetime.abort();await Promise.all([...runs.values()].map(stopRow));await Promise.allSettled([...restores.values(),...pending]);await opening?.catch(()=>{});db?.close();db=null;},
+  async close(){closed=true;lifetime.abort();const stopped=await Promise.allSettled([...runs.values()].map(stopRow));await Promise.allSettled([...restores.values(),...pending]);const guarded=await Promise.allSettled([supervisor.close()]);await opening?.catch(()=>{});db?.close();db=null;const errors=[...stopped,...guarded].filter(row=>row.status==='rejected').map(row=>row.reason);if(errors.length)throw new AggregateError(errors,'QQ component shutdown failed');},
  };
 }

@@ -13,6 +13,8 @@ import { createDshStageDiagnostics, normalizeDshUiPolicy, dshModelError } from '
 import {modelNotSubmittedCause} from '../buddy-plugin-services/social-runtime-journal.mjs';
 import { verifyInstalledDshArtifact } from './installed-artifact.mjs';
 import { dshUiBootstrap } from './ui-bootstrap.mjs';
+import {downloadPinnedFile} from '../network-download.mjs';
+import {replyNetworkRoute} from '../network-worker.mjs';
 
 const CHANNEL = 'ai-buddy-dsh-platform-v1';
 const PIN = '22ddee3792402c3e70ec5f86a63c3e3e895a2f60';
@@ -76,7 +78,7 @@ function sanitized(value, key = '') {
 }
 
 /** Process-owning adapter over one pinned official DSH Web profile. */
-export function createDshBackend({ runtimeLockPath, dshHome, profileId = 'buddy-community-v1', stateDir, buddyServices, socialServices, voiceGamesServices, resolveToolScope, uiPolicy, hostBridgeSourcePath, workClientMode = false, purpose = 'ui', taskMode, taskBootstrapPath, onProcessStart, onProcessStop, authorizeNativeModel, onNativeModelUsage, stageDiagnostics = process.env.AI_BUDDY_DSH_TRACE_STAGES === '1', handshakeTimeoutMs = 120000, maxPackageBytes = 256 * 1024 * 1024, onEvent = () => {} } = {}) {
+export function createDshBackend({ fetchImpl=fetch,network,networkBootstrapPath,runtimeLockPath, dshHome, profileId = 'buddy-community-v1', stateDir, buddyServices, socialServices, voiceGamesServices, resolveToolScope, uiPolicy, hostBridgeSourcePath, workClientMode = false, purpose = 'ui', taskMode, taskBootstrapPath, onProcessStart, onProcessStop, authorizeNativeModel, onNativeModelUsage, stageDiagnostics = process.env.AI_BUDDY_DSH_TRACE_STAGES === '1', handshakeTimeoutMs = 120000, maxPackageBytes = 256 * 1024 * 1024, onEvent = () => {} } = {}) {
   if (!runtimeLockPath || !dshHome || !stateDir) throw failure('DSH_CONFIGURATION_REQUIRED', 'runtimeLockPath, dshHome and stateDir are required');
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(profileId) || profileId === 'desktop') throw failure('DSH_INVALID_PROFILE', 'A private non-desktop profile is required');
   const hostUiPolicy = normalizeDshUiPolicy(uiPolicy);
@@ -97,6 +99,8 @@ export function createDshBackend({ runtimeLockPath, dshHome, profileId = 'buddy-
   const nativeModelAdmissions=new Map();
   let child, startPromise, lock, paths, authURL, webOrigin, bridgeReady = false, sequence = 0, toolOwners = {}, identities = {}, closed = false;
   let phase = 'not-started', lastError = null, jobStopPromise;
+  let runtimeNetwork=network?.capture?.()??network;
+  function configureNetwork(){runtimeNetwork=network?.capture?.()??network;if(network&&child?.connected)child.send({type:'network-configure',network:runtimeNetwork.snapshot()});}
   const runtimeId = randomUUID();
   const emit = event => { events.emit('event', event); onEvent(event); };
   async function audit(type, data) {
@@ -155,6 +159,7 @@ export function createDshBackend({ runtimeLockPath, dshHome, profileId = 'buddy-
   }
   async function start() {
     if (closed) throw failure('DSH_BACKEND_CLOSED', 'This backend has been closed');
+    configureNetwork();const taskNetwork=runtimeNetwork;
     if (phase === 'running' && child?.exitCode === null && bridgeReady && (taskOnly||authURL)) return;
     if (startPromise) return startPromise;
     if (child?.pid && child.exitCode === null) throw failure('DSH_RUNTIME_STILL_RUNNING', 'The previous runtime has not exited; refusing a duplicate process');
@@ -195,7 +200,14 @@ export function createDshBackend({ runtimeLockPath, dshHome, profileId = 'buddy-
       const env = dshRuntimeEnvironment(process.env, { DSH_HOME: resolve(dshHome), DSH_AGENTS_HOME: resolve(dshHome, '.agents'), DSH_TELEMETRY_DISABLED: '1', PNPM_HOME: resolve(stateDir, 'pnpm-home'), npm_config_store_dir: resolve(stateDir, 'pnpm-store'), npm_config_cache: resolve(stateDir, 'npm-cache'), npm_config_userconfig: emptyNpmConfig, npm_config_globalconfig: emptyGlobalNpmConfig, ...modelEnvironment, PATH: `${resolve(dirname(runtimeLockPath), 'bin')};${dirname(paths.pnpm)};${dirname(paths.node)};${process.env.PATH ?? ''}` });
       if (closed) throw failure('DSH_BACKEND_CLOSED', 'The backend was closed during runtime verification; no process was launched');
       phase = 'starting';
+      if(network){
+        const bootstrap=networkBootstrapPath??(hostBridgeSourcePath?resolve(dirname(hostBridgeSourcePath),'..','dsh-network-bootstrap.mjs'):fileURLToPath(new URL('../network-process-bootstrap.mjs',import.meta.url)));
+        if(!(await stat(bootstrap)).isFile())throw failure('DSH_NETWORK_BOOTSTRAP_REQUIRED','Host network bootstrap is missing');
+        env.AI_BUDDY_NETWORK_SETTINGS=JSON.stringify(taskNetwork.snapshot());env.NODE_USE_SYSTEM_CA='1';
+        args.unshift('--import',bootstrap);
+      }
       child = spawn(paths.node, args, { cwd: resolve(stateDir), env, windowsHide: true, stdio: [taskOnly?'pipe':'ignore', 'pipe', 'pipe', 'ipc'] });
+      if(network){const networkChild=child;networkChild.on('message',row=>{if(row?.type==='network-route')void replyNetworkRoute({postMessage:value=>{if(networkChild.connected)networkChild.send(value);}},row,runtimeNetwork);});}
       await audit('runtime-start', { pid: child.pid, sourceCommit: PIN, args: cliArgs.map(redact), initialize, hostBridge, shimSha256, uiPolicy:hostUiPolicy, purpose, ...(taskOnly?{jobId:taskMode.jobId,runId:taskMode.runId,bootstrapSha256}: {}) });
       await new Promise((resolveReady, rejectReady) => {
         let tail = '', settled = false;
@@ -341,7 +353,7 @@ export function createDshBackend({ runtimeLockPath, dshHome, profileId = 'buddy-
       verified = await prepareDshGitPackage({ spec: packageRef.spec, packageRef, stateDir, paths: runtime.paths, env: dshRuntimeEnvironment(process.env, { PATH: `${dirname(runtime.paths.node)};${process.env.PATH ?? ''}`, npm_config_userconfig: emptyConfig, npm_config_globalconfig: globalConfig, npm_config_cache: resolve(stateDir, 'npm-cache') }), signal: request.signal, maxBytes: maxPackageBytes });
       await verifyTarball(verified.spec, { ...packageRef, sourceDigest: verified.artifactSha256 });
     } else if (packageRef.spec?.kind === 'registry') {
-      const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(packageRef.packageName)}/${encodeURIComponent(packageRef.exactVersion)}`, { signal: request.signal });
+      const response = await fetchImpl(`https://registry.npmjs.org/${encodeURIComponent(packageRef.packageName)}/${encodeURIComponent(packageRef.exactVersion)}`, { signal: request.signal });
       if (!response.ok) throw failure('DSH_REGISTRY_METADATA_FAILED', `Registry metadata returned ${response.status}`);
       const metadata = await response.json();
       if (metadata.name !== packageRef.packageName || metadata.version !== packageRef.exactVersion || !/^https:\/\//.test(metadata.dist?.tarball ?? '') || !/^sha512-[A-Za-z0-9+/=]+$/.test(metadata.dist?.integrity ?? '')) throw failure('DSH_REGISTRY_IDENTITY_INVALID', 'Registry metadata lacks the exact identity and SHA512 integrity');
@@ -423,15 +435,16 @@ export function createDshBackend({ runtimeLockPath, dshHome, profileId = 'buddy-
     result.activation={observed:true,packageName:bundle.name,version:bundle.version,entries:rows.map(row=>({entryId:row.entry.entryId,moduleName:row.moduleName,enabled:row.entry.enabled,fiberPhase:row.entry.fiberPhase}))};
   }
   async function verifyTarball(spec, packageRef, options = {}) {
+    const downloadNetwork=network?.capture?.({official:options.official===true})??network;
     if (/\.(?:tgz|tar\.gz)(?:[?#].*)?$/i.test(spec)) {
       let bytes;
       if (/^https?:/i.test(spec)) {
-        const response = await fetch(spec, { signal: options.signal });
-        if (!response.ok) throw failure('DSH_PACKAGE_DOWNLOAD_FAILED', `Package download returned ${response.status}`);
-        if (Number(response.headers.get('content-length')) > maxPackageBytes) throw failure('DSH_PACKAGE_TOO_LARGE', 'Package exceeds the configured download limit');
-        const chunks = []; let size = 0;
-        for await (const chunk of response.body) { size += chunk.length; if (size > maxPackageBytes) throw failure('DSH_PACKAGE_TOO_LARGE', 'Package exceeds the configured download limit'); chunks.push(chunk); }
-        bytes = Buffer.concat(chunks, size);
+        const expected=packageRef.sourceDigest.replace(/^sha256:/,'').toLowerCase();
+        if(!/^[a-f0-9]{64}$/.test(expected))throw failure('DSH_PACKAGE_DIGEST_MISMATCH','Package digest is missing');
+        const cache=resolve(stateDir,'verified-packages'),target=resolve(cache,expected+'.tgz');
+        await downloadPinnedFile({url:spec,sha256:expected,maxBytes:maxPackageBytes},target,{fetchImpl:downloadNetwork?.fetch??fetchImpl,planDownload:downloadNetwork?.planDownload,official:options.official===true,signal:options.signal,validateUrl:value=>{const url=new URL(value);if(url.username||url.password||url.hash||!(url.protocol==='https:'||url.protocol==='http:'&&url.hostname==='127.0.0.1'))throw failure('DSH_PACKAGE_DOWNLOAD_FAILED','Invalid package download URL');return url;}});
+        bytes=await readFile(target);
+
       } else {
         const path = spec.startsWith('file://') ? fileURLToPath(spec) : spec.replace(/^file:/, '');
         if ((await stat(path)).size > maxPackageBytes) throw failure('DSH_PACKAGE_TOO_LARGE', 'Package exceeds the configured download limit');
@@ -507,7 +520,7 @@ export function createDshBackend({ runtimeLockPath, dshHome, profileId = 'buddy-
     if(!socialUIRequestAdmissible(request,webOrigin,expected))return false;
     // Native's own signed-cookie middleware authenticates this second GET.
     // Do not add a launch token, use an alternate address, or log the cookie.
-    const response=await fetch(webOrigin+expected+'?action=readiness',{headers:{cookie:request.headers.cookie},redirect:'error',signal:AbortSignal.timeout(5000)});
+    const response=await fetchImpl(webOrigin+expected+'?action=readiness',{headers:{cookie:request.headers.cookie},redirect:'error',signal:AbortSignal.timeout(5000)});
     return response.status===200;
   }
   async function close() {
@@ -537,7 +550,7 @@ export function createDshBackend({ runtimeLockPath, dshHome, profileId = 'buddy-
     if(!jobStopPromise)jobStopPromise=Promise.resolve().then(()=>onProcessStop({runtimeId,pid:child.pid,jobId:taskMode.jobId,runId:taskMode.runId,...result})).then(proof=>{if(proof?.stopped!==true||proof.osActiveProcesses!==0)throw failure('DSH_TASK_STOP_UNCONFIRMED','The OS guard did not confirm zero owned task descendants');return {...result,osStopProof:proof};});
     try{return await jobStopPromise;}catch(error){jobStopPromise=null;throw error;}
   }
-  return Object.freeze({ probe, snapshot, identity, status: snapshot, planInstall, install, enable, disable: ref => rpc('management.disable', { packageName: ref.packageName }), uninstall: ref => rpc('management.uninstall', { packageName: ref.packageName }), async rollback(ref, options = {}) { if (!options.plan) throw failure('DSH_ROLLBACK_PLAN_REQUIRED', 'Rollback requires an exact verified prior install plan'); await rpc('management.uninstall', { packageName: ref.packageName }); return install(options.plan, options); }, openClient, listTools, callTool, verifySocialUI, close, on: (name, listener) => { events.on(name, listener); return () => events.off(name, listener); } });
+  return Object.freeze({ probe, snapshot, identity, configureNetwork, status: snapshot, planInstall, install, enable, disable: ref => rpc('management.disable', { packageName: ref.packageName }), uninstall: ref => rpc('management.uninstall', { packageName: ref.packageName }), async rollback(ref, options = {}) { if (!options.plan) throw failure('DSH_ROLLBACK_PLAN_REQUIRED', 'Rollback requires an exact verified prior install plan'); await rpc('management.uninstall', { packageName: ref.packageName }); return install(options.plan, options); }, openClient, listTools, callTool, verifySocialUI, close, on: (name, listener) => { events.on(name, listener); return () => events.off(name, listener); } });
 }
 
 export function socialUIRequestAdmissible(request,webOrigin,expectedPath){

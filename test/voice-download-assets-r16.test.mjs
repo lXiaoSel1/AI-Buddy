@@ -20,7 +20,7 @@ function zip(files,{mutate}={}){
   const central=Buffer.concat(centrals),end=Buffer.alloc(22);end.writeUInt32LE(0x06054b50);end.writeUInt16LE(files.size,8);end.writeUInt16LE(files.size,10);end.writeUInt32LE(central.length,12);end.writeUInt32LE(offset,16);
   return Buffer.concat([...locals,central,end]);
 }
-async function fixture(t,{archiveTransform,downloadTransform,stream,fetchOverride,directMode,descriptorTransform}={}){
+async function fixture(t,{archiveTransform,downloadTransform,stream,fetchOverride,directMode,descriptorTransform,downloadOptions}={}){
   const root=await mkdtemp(join(tmpdir(),'voice-download-r16-')),records={},bodies=new Map(),opened=[],requests=[];
   for(const kind of ['asr','breeze','gpt']){
     const directory=join(root,'package-'+kind);await mkdir(directory);
@@ -38,7 +38,7 @@ async function fixture(t,{archiveTransform,downloadTransform,stream,fetchOverrid
     records[kind]={directory,sourceId:'test',archiveSha256:'package-1',manifest:{files:[{path:'assets.json',bytes:descriptor.length,sha256:sha(descriptor)},{path:'downloads.json',bytes:delivery.length,sha256:sha(delivery)}]}};
   }
   const fetchImpl=async(url,options)=>{requests.push(String(url));if(fetchOverride)return fetchOverride(url,options,bodies);const bytes=bodies.get(String(url));return new Response(stream?stream(bytes,options):bytes);};
-  const open=()=>{const assets=createVoiceAssets({dataRoot:root,fetchImpl,resolveVoicePackage:async id=>({...records[id.endsWith('breeze')?'breeze':'gpt'],shared:records.asr})});opened.push(assets);return assets;};
+  const open=()=>{const assets=createVoiceAssets({dataRoot:root,fetchImpl,downloadOptions,resolveVoicePackage:async id=>({...records[id.endsWith('breeze')?'breeze':'gpt'],shared:records.asr})});opened.push(assets);return assets;};
   const assets=open();t.after(async()=>{for(const asset of opened)await asset.close();await rm(root,{recursive:true,force:true});});return {root,assets,records,bodies,requests,open};
 }
 
@@ -74,8 +74,19 @@ test('progress can cancel a stream before any file ends and removes only the own
   const f=await fixture(t,{stream:bytes=>new ReadableStream({async pull(stream){await new Promise(resolve=>setTimeout(resolve,10));stream.enqueue(bytes.subarray(0,16));}})});
   await assert.rejects(f.assets.prepare('asr',{engineId:'breeze',signal:controller.signal,onProgress:row=>{progress.push(row);if(row.downloadReceivedBytes>0)controller.abort();}}),{name:'AbortError'});
   assert.ok(progress.some(row=>row.downloadReceivedBytes>0&&row.receivedBytes===0));
-  assert.deepEqual(await readdir(join(f.root,'voice/components/asr')),[]);
+  assert.deepEqual((await readdir(join(f.root,'voice/components/asr'))).filter(name=>name!=='downloads'),[]);
   assert.equal((await f.assets.status('asr','breeze')).state,'missing');
+});
+test('retrying a voice preparation sends Range for its retained archive and keeps verified bytes',async t=>{
+  let calls=0;const ranges=[];
+  const f=await fixture(t,{downloadOptions:{retries:0},fetchOverride:(url,options,bodies)=>{
+    const bytes=bodies.get(String(url));ranges.push(options.headers.Range??null);
+    if(++calls===1){let sent=false;return new Response(new ReadableStream({pull(stream){if(sent)stream.error(Error('fixture interrupted'));else{sent=true;stream.enqueue(bytes.subarray(0,20));}}}));}
+    return new Response(bytes.subarray(20),{status:206,headers:{'content-range':`bytes 20-${bytes.length-1}/${bytes.length}`,'content-length':String(bytes.length-20)}});
+  }});
+  await assert.rejects(f.assets.prepare('asr',{engineId:'breeze'}));
+  await f.assets.prepare('asr',{engineId:'breeze'});assert.deepEqual(ranges,[null,'bytes=20-']);
+  assert.equal((await f.assets.status('asr','breeze')).state,'ready');await f.assets.prepare('asr',{engineId:'breeze'});assert.equal(calls,2);
 });
 
 for(const mode of ['original','override'])test('direct '+mode+' URLs retain per-file hashes alongside archived runtime files',async t=>{
@@ -108,7 +119,7 @@ for(const [name,transform] of [
   ['overlapping payload',files=>{const bytes=zip(files),centralAt=bytes.readUInt32LE(bytes.length-6),second=centralAt+46+Buffer.byteLength('python.exe');bytes.writeUInt32LE(0,second+42);return bytes;}],
 ])test('signed '+name+' archive cannot become ready',async t=>{
   const f=await fixture(t,{archiveTransform:transform});await assert.rejects(f.assets.prepare('asr',{engineId:'breeze'}));
-  assert.equal((await f.assets.status('asr','breeze')).state,'missing');assert.deepEqual(await readdir(join(f.root,'voice/components/asr')),[]);
+  assert.equal((await f.assets.status('asr','breeze')).state,'missing');assert.deepEqual((await readdir(join(f.root,'voice/components/asr'))).filter(name=>name!=='downloads'),[]);
 });
 
 test('compressed archive SHA is checked before extraction',async t=>{
@@ -118,7 +129,7 @@ test('compressed archive SHA is checked before extraction',async t=>{
 
 test('revocation during extraction prevents promotion and cleans the active stage',async t=>{
   const f=await fixture(t);await assert.rejects(f.assets.prepare('asr',{engineId:'breeze',onProgress:row=>{if(row.phase==='extracting'&&row.receivedBytes)f.records.asr.archiveSha256='revoked';}}),{code:'VOICE_ASSET_REVOKED'});
-  assert.equal((await f.assets.status('asr','breeze')).state,'missing');assert.deepEqual(await readdir(join(f.root,'voice/components/asr')),[]);
+  assert.equal((await f.assets.status('asr','breeze')).state,'missing');assert.deepEqual((await readdir(join(f.root,'voice/components/asr'))).filter(name=>name!=='downloads'),[]);
 });
 
 test('same-assets rebind never admits altered files or hardlinks',async t=>{
@@ -158,12 +169,9 @@ test('same-host redirects work but cross-host redirects and redirect loops stay 
 
 for(const phase of ['headers','body'])test('a stalled download '+phase+' fails on the bounded idle deadline',async t=>{
   let began;const started=new Promise(resolve=>began=resolve);
-  const f=await fixture(t,{fetchOverride:()=>{if(phase==='headers'){began();return new Promise(()=>{});}return new Response(new ReadableStream({pull(){began();return new Promise(()=>{});}}));}});
-  t.mock.timers.enable({apis:['setTimeout']});
-  try{
-    const running=f.assets.prepare('asr',{engineId:'breeze'}),verdict=assert.rejects(running,{code:'VOICE_ASSET_DOWNLOAD'});await started;await nextTurn();t.mock.timers.tick(60001);await verdict;
-    assert.equal((await f.assets.status('asr','breeze')).state,'missing');
-  }finally{t.mock.timers.reset();}
+  const f=await fixture(t,{downloadOptions:{retries:0,connectMs:30,idleMs:30},fetchOverride:()=>{if(phase==='headers'){began();return new Promise(()=>{});}return new Response(new ReadableStream({pull(){began();return new Promise(()=>{});}}));}});
+  const running=f.assets.prepare('asr',{engineId:'breeze'}),verdict=assert.rejects(running,{code:'VOICE_ASSET_DOWNLOAD'});await started;await verdict;
+  assert.equal((await f.assets.status('asr','breeze')).state,'missing');
 });
 
 test('a signed archive stream cannot exceed its pinned compressed byte count',async t=>{

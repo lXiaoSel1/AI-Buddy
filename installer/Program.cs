@@ -18,7 +18,10 @@ internal static class Program {
             using var input=Assembly.GetExecutingAssembly().GetManifestResourceStream("InstallManifest")??throw new IOException("Embedded manifest missing");
             using var buffer=new MemoryStream();input.CopyTo(buffer);ManifestBytes=buffer.ToArray();
             Manifest=Manifests.Parse(ManifestBytes,BuildIdentity.ManifestSha256);
-            Http=new HttpClient(new SocketsHttpHandler{AllowAutoRedirect=true,MaxAutomaticRedirections=8,AutomaticDecompression=System.Net.DecompressionMethods.None,ConnectTimeout=TimeSpan.FromSeconds(30)}){Timeout=Timeout.InfiniteTimeSpan};
+            var networkRoot=Argument(args,"app-root")??Argument(args,"root")??DefaultRoot;
+            var settings=headlessAction=="inspect"||args.Any(a=>a.StartsWith("--app-worker=",StringComparison.Ordinal))?new NetworkSettings():InstallerNetwork.Load(networkRoot);
+            InstallerNetwork.Configure(settings with{Mode=Argument(args,"proxy-mode")??settings.Mode,ProxyUrl=Argument(args,"proxy-url")??settings.ProxyUrl,GithubMirror=Argument(args,"github-mirror")??settings.GithubMirror,HuggingFaceMirror=Argument(args,"huggingface-mirror")??settings.HuggingFaceMirror});
+            Http=new HttpClient(new InstallerNetworkHandler()){Timeout=Timeout.InfiniteTimeSpan};
             Http.DefaultRequestHeaders.UserAgent.ParseAdd("AI-Buddy-Setup/"+ReleaseIdentity.InstallerVersion);
             Updates=new(Http);
             if(AppBootstrap.Requested(args))return Task.Run(()=>AppBootstrap.Run(args,Http,Updates,Manifest,ManifestBytes,BuildIdentity.ManifestSha256,Self)).GetAwaiter().GetResult();
@@ -58,12 +61,14 @@ internal static class Program {
                 var result=command=="data-import-commit"?await importer.Commit(root,Argument(args,"import-plan")??throw new IOException("--import-plan is required"),progress,default):await importer.Recover(root,progress,default);
                 Json.Save(receipt,new{ok=true,command,installerRevision=ReleaseIdentity.InstallerRevision,result,installation=InstallEngine.Existing(root),events=log.ToArray(),at=DateTimeOffset.UtcNow});return 0;
             }
-            if(command=="rollback")await Engine.Rollback(root,progress,default);
+            if(command=="rollback")await Engine.Rollback(root,progress,default,args.Contains("--confirm-plugin-downgrade"));
             else if(command=="uninstall")await Engine.Uninstall(root,false,progress,default,Argument(args,"cache")??Cache);
             else if(command=="install") {
                 var defaults=InstallEngine.Defaults(root,Manifest);var ids=(Argument(args,"characters")??string.Join(',',defaults.Characters)).Split(',');
                 var initial=Argument(args,"initial")??(ids.Contains(defaults.InitialCharacter)?defaults.InitialCharacter:ids.Contains("deepseek")?"deepseek":ids[0]);
-                await Engine.Install(new(root,Argument(args,"cache")??Cache,Argument(args,"edition")??defaults.Edition,ids,initial,Argument(args,"offline"),args.Contains("--shortcuts"),!args.Contains("--no-launch"),Argument(args,"data"),Argument(args,"pipe"),KeepCache:args.Contains("--keep-cache")),progress,default);
+                var local=Argument(args,"local-tree")??Argument(args,"offline")??LocalInstallSource.Discover(Self,BuildIdentity.ManifestSha256);
+                var localEdition=local is not null?LocalInstallSource.Open(local,BuildIdentity.ManifestSha256)?.Installation.Edition:null;
+                await Engine.Install(new(root,Argument(args,"cache")??Cache,Argument(args,"edition")??localEdition??defaults.Edition,ids,initial,local,args.Contains("--shortcuts"),!args.Contains("--no-launch"),Argument(args,"data"),Argument(args,"pipe"),KeepCache:args.Contains("--keep-cache")),progress,default);
             }
             else throw new InvalidDataException("Unknown installer action: "+command);
             Json.Save(receipt,new{ok=true,version=Manifest.AppVersion,installerRevision=ReleaseIdentity.InstallerRevision,command,installation=InstallEngine.Existing(root),events=log.ToArray(),at=DateTimeOffset.UtcNow});return 0;

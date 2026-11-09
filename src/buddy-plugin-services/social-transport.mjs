@@ -43,6 +43,18 @@ export function createSocialTransport({dataRoot,accounts,fetchImpl=fetch,WebSock
   db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS sends(id TEXT PRIMARY KEY,digest TEXT NOT NULL,state TEXT NOT NULL,result TEXT); UPDATE sends SET state='unknown' WHERE state='submitted';");
   db.exec("CREATE TABLE IF NOT EXISTS qq_memory_intents(id TEXT PRIMARY KEY,send_id TEXT UNIQUE NOT NULL,proof_json TEXT NOT NULL,proof_digest TEXT NOT NULL,state TEXT NOT NULL,event_ref TEXT,attempts INTEGER NOT NULL DEFAULT 0,next_at INTEGER NOT NULL DEFAULT 0,last_error TEXT);CREATE INDEX IF NOT EXISTS qq_memory_due ON qq_memory_intents(state,next_at);CREATE INDEX IF NOT EXISTS qq_memory_request ON qq_memory_intents(json_extract(proof_json,'$.context.pluginId'),json_extract(proof_json,'$.accountRef'),json_extract(proof_json,'$.requestId'));");
   const connections=new Map(),observations=new Map(),writes=new Map();let closed=false;
+  db.exec('CREATE TABLE IF NOT EXISTS qq_event_inbox(connection_id TEXT NOT NULL,cursor INTEGER NOT NULL,account_ref TEXT NOT NULL,account_generation INTEGER NOT NULL,payload TEXT NOT NULL,bytes INTEGER NOT NULL,received_at INTEGER NOT NULL,PRIMARY KEY(connection_id,cursor));');
+  function eventFilter(value){if(value===undefined)return null;if(!value||!['contacts','groups'].every(key=>Array.isArray(value[key])&&value[key].length<=10000&&value[key].every(id=>typeof id==='string'&&/^[1-9]\d{0,19}$/.test(id))))throw fail('QQ_EVENT_FILTER_INVALID');return {contacts:new Set(value.contacts),groups:new Set(value.groups)};}
+  function notify(row){for(const wake of row.waiters)wake();}
+  function inboxStatus(row){if(row.storageFailure)return {code:'QQ_EVENT_STORAGE_FAILED',pendingInMemory:row.pending.length,rejectedAdmissions:row.rejectedAdmissions};if(row.clockSkew)return {code:'QQ_CLOCK_SKEW',...row.clockSkew};if(row.storedCount+row.pending.length>=1000||row.storedBytes>=64*1024*1024)return {code:'QQ_EVENT_BACKPRESSURE',queued:row.storedCount+row.pending.length,bytes:row.storedBytes};return null;}
+  function flushInbox(row){
+    if(!row.pending.length)return;
+    const batch=[];let batchBytes=0;for(const entry of row.pending){if(batch.length&&(batch.length>=100||batchBytes+entry.bytes>1024*1024))break;batch.push(entry);batchBytes+=entry.bytes;}const insert=db.prepare('INSERT INTO qq_event_inbox VALUES(?,?,?,?,?,?,?)');
+    try{db.exec('BEGIN IMMEDIATE');for(const entry of batch)insert.run(row.id,entry.cursor,row.account.ref,row.account.generation,entry.payload,entry.bytes,entry.receivedAt);db.exec('COMMIT');row.pending.splice(0,batch.length);row.storedCount+=batch.length;row.storedBytes+=batch.reduce((sum,event)=>sum+event.bytes,0);row.storageFailure=false;}
+    catch(error){try{db.exec('ROLLBACK');}catch{}row.storageFailure=true;}
+    notify(row);
+  }
+  function scheduleInbox(row){if(row.flushScheduled)return;row.flushScheduled=true;setImmediate(()=>{row.flushScheduled=false;if(!closed){flushInbox(row);if(row.pending.length&&!row.storageFailure)scheduleInbox(row);}});}
   function account(ref,expected){if(closed)throw fail('SOCIAL_TRANSPORT_CLOSED');const a=accounts.get(ref);if(!a?.enabled||expected&&a.accountId!==expected)throw fail('SOCIAL_ACCOUNT_CHANGED');return a;}
   function connection(id){const row=connections.get(id);if(!row||row.closed||account(row.account.ref).generation!==row.account.generation)throw fail('SOCIAL_CONNECTION_CLOSED');return row;}
   // A connection belongs to the operator's original life, not merely the npm
@@ -66,11 +78,11 @@ export function createSocialTransport({dataRoot,accounts,fetchImpl=fetch,WebSock
     const response=await fetchImpl(qqOneBotUrl(a.httpUrl,action),{method:'POST',headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},body:JSON.stringify(params),redirect:'error',signal:linked(signal)});
     const text=await responseBody(response,4*1024*1024);if(!response.ok)throw fail('QQ_BACKEND_HTTP_FAILED');let body;try{body=JSON.parse(text);}catch{throw fail('QQ_BACKEND_REPLY_INVALID');}if(body.status!=='ok'||body.retcode!==0)throw fail('QQ_BACKEND_REQUEST_FAILED');return body.data;
   }
-  async function open({connectionRef,accountId,newEventsOnly},scope,{signal}={}){
+  async function open({connectionRef,accountId,newEventsOnly,eventFilter:filter},scope,{signal}={}){
     if(newEventsOnly!==true)throw fail('QQ_HISTORY_DISABLED');const a=account(connectionRef,accountId);if(a.platform!=='qq')throw fail('QQ_ACCOUNT_REQUIRED');
     const login=await qqCall(a,'get_login_info',{},signal);if(String(login?.user_id)!==a.accountId)throw fail('QQ_CONNECTION_ACCOUNT_MISMATCH');
     signal?.throwIfAborted();if(account(a.ref).generation!==a.generation)throw fail('SOCIAL_ACCOUNT_CHANGED');
-    const id=randomUUID(),row={id,account:a,scope:scopeCopy(scope),events:[],cursor:0,deliveredCursor:0,ackCursor:0,waiters:new Set(),started:Math.ceil(now()/1000),closed:false};connections.set(id,row);
+    const id=randomUUID(),row={id,account:a,scope:scopeCopy(scope),filter:eventFilter(filter),pending:[],storedCount:0,storedBytes:0,storageFailure:false,rejectedAdmissions:0,cursor:0,deliveredCursor:0,ackCursor:0,waiters:new Set(),started:Math.ceil(now()/1000),closed:false};connections.set(id,row);
     const url=new URL(a.webSocketUrl),token=accounts.secret(a.ref).accessToken;if(token)url.searchParams.set('access_token',token);
     const socket=row.socket=new WebSocketImpl(url);
     try{await new Promise((resolve,reject)=>{
@@ -80,24 +92,30 @@ export function createSocialTransport({dataRoot,accounts,fetchImpl=fetch,WebSock
     });}catch(error){await closeConnection(id);throw error;}
     socket.addEventListener('message',event=>{
       if(row.closed)return;let raw;try{if(String(event.data).length>1024*1024)return;raw=JSON.parse(String(event.data));}catch{return;}
-      if(raw.post_type!=='message'||!['private','group'].includes(raw.message_type)||String(raw.self_id)!==a.accountId||!Number.isSafeInteger(raw.time)||raw.time<row.started||raw.time*1000>now()+30000||raw.message_id==null)return;
-      if(row.events.length>=1000){void closeConnection(id);return;}row.events.push({cursor:++row.cursor,raw:copy(raw)});for(const notify of row.waiters)notify();
+      if(raw.post_type!=='message'||!['private','group'].includes(raw.message_type)||String(raw.self_id)!==a.accountId||raw.message_id==null)return;
+      const peer=String(raw.message_type==='group'?raw.group_id:raw.user_id??raw.sender?.user_id);if(row.filter&&!(raw.message_type==='group'?row.filter.groups:row.filter.contacts).has(peer))return;
+      if(!Number.isSafeInteger(raw.time)||raw.time<row.started)return;
+      if(raw.time*1000>now()+30000){row.clockSkew={eventTime:raw.time,receivedAt:now(),invalidUnit:raw.time>now()/10};notify(row);return;}
+      if(row.pending.length>=1000)flushInbox(row);
+      if(row.pending.length>=1000){row.rejectedAdmissions++;notify(row);return;}
+      const payload=JSON.stringify(raw);row.pending.push({cursor:++row.cursor,payload,bytes:Buffer.byteLength(payload),receivedAt:now()});scheduleInbox(row);
     });socket.addEventListener('close',()=>{row.closed=true;for(const notify of row.waiters)notify();});
-    return {connectionId:id,accountId:a.accountId,capabilities:qqCaps,cursor:0,generation:a.generation};
+    return {connectionId:id,accountId:a.accountId,capabilities:qqCaps,cursor:0,generation:a.generation,epochSeconds:row.started};
   }
   async function events(payload,scope,{signal,check=async()=>{}}={}){
     await check();const row=connectionScope(connection(payload.connectionId),scope);if(payload.accountId!==row.account.accountId)throw fail('SOCIAL_CONNECTION_SCOPE_DENIED');
+    if(payload.eventFilter!==undefined)row.filter=eventFilter(payload.eventFilter);flushInbox(row);
     if(payload.newEventsOnly!==true)throw fail('QQ_HISTORY_DISABLED');const cursor=payload.cursor??0;if(!Number.isSafeInteger(cursor)||cursor<0||cursor>row.cursor)throw fail('QQ_EVENT_CURSOR_INVALID');
     if(cursor<row.ackCursor)throw fail('QQ_EVENT_CURSOR_EXPIRED');
     // Fetching a batch is not acknowledgement: its source messages remain
     // available during model/quote processing. Only the next explicit ack,
     // sent after all handlers settle, releases that consumed prefix.
-    if(payload.ackCursor!==undefined){const ack=payload.ackCursor;if(!Number.isSafeInteger(ack)||ack<row.ackCursor||ack>cursor||ack>row.deliveredCursor)throw fail('QQ_EVENT_ACK_INVALID');row.ackCursor=ack;row.events=row.events.filter(event=>event.cursor>ack);}
-    if(!row.events.some(e=>e.cursor>cursor))await new Promise(resolve=>{const done=()=>{clearTimeout(timer);row.waiters.delete(done);signal?.removeEventListener('abort',done);resolve();};const timer=setTimeout(done,Math.min(20000,Math.max(0,payload.waitMs??20000)));row.waiters.add(done);signal?.addEventListener('abort',done,{once:true});if(signal?.aborted)done();});
+    if(payload.ackCursor!==undefined){const ack=payload.ackCursor;if(!Number.isSafeInteger(ack)||ack<row.ackCursor||ack>cursor||ack>row.deliveredCursor)throw fail('QQ_EVENT_ACK_INVALID');const removed=db.prepare('SELECT COUNT(*) count,COALESCE(SUM(bytes),0) bytes FROM qq_event_inbox WHERE connection_id=? AND cursor<=?').get(row.id,ack);db.prepare('DELETE FROM qq_event_inbox WHERE connection_id=? AND cursor<=?').run(row.id,ack);row.ackCursor=ack;row.storedCount-=removed.count;row.storedBytes-=removed.bytes;}
+    if(!inboxStatus(row)&&!db.prepare('SELECT 1 FROM qq_event_inbox WHERE connection_id=? AND cursor>? LIMIT 1').get(row.id,cursor))await new Promise(resolve=>{const done=()=>{clearTimeout(timer);row.waiters.delete(done);signal?.removeEventListener('abort',done);resolve();};const timer=setTimeout(done,Math.min(20000,Math.max(0,payload.waitMs??20000)));row.waiters.add(done);signal?.addEventListener('abort',done,{once:true});if(signal?.aborted)done();});
     signal?.throwIfAborted();await check();connectionScope(connection(row.id),scope);
-    const selected=row.events.filter(e=>e.cursor>cursor).slice(0,100),nextCursor=selected.at(-1)?.cursor??cursor;row.deliveredCursor=Math.max(row.deliveredCursor,nextCursor);return {events:selected.map(e=>copy(e.raw)),cursor:nextCursor};
+    flushInbox(row);const limit=Math.min(100,Math.max(1,Number.isSafeInteger(payload.limit)?payload.limit:100)),selected=db.prepare('SELECT cursor,payload FROM qq_event_inbox WHERE connection_id=? AND cursor>? ORDER BY cursor LIMIT ?').all(row.id,cursor,limit),nextCursor=selected.at(-1)?.cursor??cursor;row.deliveredCursor=Math.max(row.deliveredCursor,nextCursor);return {events:selected.map(e=>JSON.parse(e.payload)),cursor:nextCursor,transportStatus:inboxStatus(row)};
   }
-  function inbound(connectionId,sourceMessageId,scope){const row=connectionScope(connection(connectionId),scope);const event=row.events.find(e=>String(e.raw.message_id)===sourceMessageId);if(!event)throw fail('QQ_NATIVE_EVENT_MISSING');return {raw:copy(event.raw),account:copy(row.account)};}
+  function inbound(connectionId,sourceMessageId,scope){const row=connectionScope(connection(connectionId),scope);flushInbox(row);const event=db.prepare("SELECT payload FROM qq_event_inbox WHERE connection_id=? AND CAST(json_extract(payload,'$.message_id') AS TEXT)=? ORDER BY cursor LIMIT 1").get(row.id,sourceMessageId);if(!event)throw fail('QQ_NATIVE_EVENT_MISSING');return {raw:JSON.parse(event.payload),account:copy(row.account)};}
   async function request(payload,scope,{signal,check=async()=>{},memoryContext}={}){
     await check();signal?.throwIfAborted();
     if(payload.platform==='bilibili'){
@@ -117,7 +135,7 @@ export function createSocialTransport({dataRoot,accounts,fetchImpl=fetch,WebSock
     if(!action||payload.action!==action||String(payload.params?.[field])!==scope.peerId||!payload.requestId||!Array.isArray(payload.params?.message)||payload.params.message.some(v=>v.type!=='text'||typeof v.data?.text!=='string')||JSON.stringify(payload.params).length>200000)throw fail('QQ_SEND_SCOPE_DENIED');
     return submit(hash([scope.pluginId,a.ref,payload.requestId]),{action,params:payload.params,scope:scopeCopy(scope)},async()=>{await check();const result=await qqCall(a,action,payload.params,signal);const messageId=result?.message_id==null?null:String(result.message_id);if(!messageId)return {status:'unknown'};const observationId=keep(scope,{kind:'qq-send',requestId:payload.requestId,messageId,text:payload.params.message.map(v=>v.data.text).join(''),occurredAt:now()});return {status:'sent',messageId,observationId};},memoryContext);
   }
-  async function closeConnection(id){const row=connections.get(id);if(!row)return {closed:true};row.closed=true;row.socket?.close();for(const notify of row.waiters)notify();connections.delete(id);return {closed:true};}
+  async function closeConnection(id){const row=connections.get(id);if(!row)return {closed:true};row.closed=true;row.socket?.close();do{flushInbox(row);if(row.pending.length&&!row.storageFailure)await new Promise(setImmediate);}while(row.pending.length&&!row.storageFailure);notify(row);if(row.storageFailure&&row.pending.length)throw fail('QQ_EVENT_STORAGE_FAILED');connections.delete(id);return {closed:true};}
   const unsubscribe=accounts.subscribe(({ref})=>{for(const row of connections.values())if(row.account.ref===ref)void closeConnection(row.id);});
   function qqMemoryList({pluginId=null,accountRef=null,pending=false,due=Number.MAX_SAFE_INTEGER,requestIds=null,limit=100}={}){if(closed)throw fail('SOCIAL_TRANSPORT_CLOSED');return db.prepare("SELECT * FROM qq_memory_intents WHERE (? IS NULL OR json_extract(proof_json,'$.context.pluginId')=?) AND (? IS NULL OR json_extract(proof_json,'$.accountRef')=?) AND (?=0 OR state='pending' AND next_at<=?) AND (? IS NULL OR json_extract(proof_json,'$.requestId') IN (SELECT value FROM json_each(?))) ORDER BY rowid LIMIT ?").all(pluginId,pluginId,accountRef,accountRef,pending?1:0,due,requestIds?JSON.stringify(requestIds.slice(0,200)):null,requestIds?JSON.stringify(requestIds.slice(0,200)):null,Math.min(1000,Math.max(1,limit))).map(row=>({...row,proof:JSON.parse(row.proof_json)}));}
   function qqMemoryState(id){if(closed)throw fail('SOCIAL_TRANSPORT_CLOSED');return db.prepare('SELECT state FROM qq_memory_intents WHERE id=?').get(id)?.state??null;}

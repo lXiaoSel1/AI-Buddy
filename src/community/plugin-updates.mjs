@@ -40,22 +40,22 @@ export function createPluginUpdateCoordinator({
         satisfiesVersionRange(bridgeCompatibilityVersion, ref.compatibility.bridge) &&
         (!dshVersion || satisfiesHostVersionRange(dshVersion, ref.compatibility.dsh));
       const selected = selectStableUpdate(releases, record.exactVersion, ({package: ref}) => compatibleRef(ref));
-      if (!selected) continue;
-      const {target: release, compatible} = selected, requested = release.package;
+      const installedIncompatible=!compatibleRef(record);if(!selected&&!installedIncompatible)continue;
+      const release=selected?.target??{version:null,package:record},compatible=selected?.compatible??false,requested=release.package;
       const addedCapabilities = requested.capabilities.filter(capability => !record.grantedCapabilities.includes(capability));
       const incompatibleData = requested.dataSchemaVersion !== record.dataSchemaVersion;
       const policy = preferences.updatePolicies[record.packageKey] ?? 'manual';
-      const changes = work.releases.filter(value => compareVersions(value.version, record.exactVersion) > 0 && compareVersions(value.version, release.version) <= 0 && !parsePluginVersion(value.version).pre.length).sort((a, b) => -compareVersions(a.version, b.version)).map(value => ({version: value.version, notes: value.notes ?? null, ...(value.locales ? {locales: copy(value.locales)} : {})}));
+      const changes = !selected?[]:work.releases.filter(value => compareVersions(value.version, record.exactVersion) > 0 && compareVersions(value.version, release.version) <= 0 && !parsePluginVersion(value.version).pre.length).sort((a, b) => -compareVersions(a.version, b.version)).map(value => ({version: value.version, notes: value.notes ?? null, ...(value.locales ? {locales: copy(value.locales)} : {})}));
       const matching = jobs.get(updateIdentity(record.packageKey, release.version, requested.sourceDigest));
       const sourceChanged = record.sourceProof?.sourceFingerprint !== sourceFingerprint(work.sourceId);
       const unavailable = !compatible || sourceChanged || !!sourceError(work.sourceId);
-      const state = unavailable ? 'unavailable' : addedCapabilities.length || incompatibleData ? 'needs-user' : 'available';
+      const state = installedIncompatible&&!compatible?'incompatible':unavailable ? 'unavailable' : addedCapabilities.length || incompatibleData ? 'needs-user' : 'available';
       const error = sourceChanged ? {code: 'PLUGIN_SOURCE_CHANGED', message: 'Installed publisher identity differs from the current source'} :
         !compatible ? {code: 'PLUGIN_INCOMPATIBLE', message: 'Update requires a compatible AI Buddy or DSH version'} : sourceError(work.sourceId);
       const priorFailure = failedPluginUpdates[record.packageKey], sameFailure = priorFailure?.digest === requested.sourceDigest && priorFailure.to === release.version && priorFailure.from === record.exactVersion;
       const knownState = ['queued', 'running', 'failed', 'interrupted-needs-user', 'needs-user', 'cancelled'].includes(matching?.state) ? matching.state : sameFailure ? 'failed' : null;
       const pinnedState = ['queued', 'running', 'interrupted-needs-user'].includes(knownState);
-      output.push({backend: 'dsh', packageKey: record.packageKey, packageName: record.packageName, from: record.exactVersion, to: release.version, digest: requested.sourceDigest, policy, addedCapabilities, incompatibleData, requiresCompatibilityUpdate: !unavailable && !incompatibleData && !compatibleRef(record), state: pinnedState || state === 'available' ? knownState ?? state : state, workId: work.id, sourceId: work.sourceId, changes, ...(matching?.error || error || sameFailure ? {error: matching?.error ?? error ?? priorFailure.error} : {}), ...(matching?.waitingReason ? {waitingReason: matching.waitingReason} : {})});
+      output.push({backend: 'dsh', packageKey: record.packageKey, packageName: record.packageName, from: record.exactVersion, to: release.version,installedIncompatible,compatibility:{requiredAppRange:record.compatibility.app,currentAppVersion:appVersion}, digest: requested.sourceDigest, policy, addedCapabilities, incompatibleData, requiresCompatibilityUpdate: !unavailable && !incompatibleData && !compatibleRef(record), state: pinnedState || state === 'available' ? knownState ?? state : state, workId: work.id, sourceId: work.sourceId, changes, ...(matching?.error || error || sameFailure ? {error: matching?.error ?? error ?? priorFailure.error} : {}), ...(matching?.waitingReason ? {waitingReason: matching.waitingReason} : {})});
     }
     return output;
   }
@@ -96,7 +96,7 @@ export function createPluginUpdateCoordinator({
   }
   function pinnedUpdate(request, backend) {
     const row = updateRows().updates.find(row => row.backend === backend && row.packageKey === request.packageKey && row.from === request.from && row.to === request.to && row.digest === request.digest);
-    if (!row || ['unavailable', 'queued', 'running', 'interrupted-needs-user'].includes(row.state) || row.incompatibleData) fail('Plugin update changed; check updates again', 'PLUGIN_UPDATE_CHANGED');
+    if (!row || ['unavailable', 'queued', 'running', 'interrupted-needs-user','incompatible'].includes(row.state) || row.incompatibleData) fail('Plugin update changed; check updates again', 'PLUGIN_UPDATE_CHANGED');
     return row;
   }
   async function rememberUpdateFailure(row, cause) {

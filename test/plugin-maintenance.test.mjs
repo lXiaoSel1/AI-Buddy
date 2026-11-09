@@ -10,7 +10,7 @@ class Process extends EventEmitter {
 }
 test('maintenance bridge exposes a narrow method surface and caches child snapshots', async () => {
   const child = new Process(), client = await createPluginMaintenanceClient({runnerPath: '/runner', root: '/isolated/app', dataRoot: '/isolated/data', appVersion: '1.9.2', processFactory: () => child});
-  assert.deepEqual(Object.keys(client).sort(), ['action', 'close', 'prepareOffline', 'resolveInstalled', 'resolveTrustedSource', 'snapshot'].sort());
+  assert.deepEqual(Object.keys(client).sort(), ['action','close','reopen','configureNetwork','prepareOffline','resolveInstalled','resolveTrustedSource','snapshot'].sort());
   child.emit('message', {type: 'update', value: {installed: {demo: {enabled: false}}, packages: [], operation: null}});
   const copy = client.snapshot(); copy.installed.demo.enabled = true; assert.equal(client.snapshot().installed.demo.enabled, false);
   assert.equal((await client.action({action: 'status'})).installed.demo.enabled, false);

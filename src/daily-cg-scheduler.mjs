@@ -1,4 +1,5 @@
 import {join} from 'node:path';
+import {localDay} from './local-day.mjs';
 import {createSnapshotStorage,readJson} from './storage.mjs';
 
 export const DAILY_CG_SLOTS=Object.freeze(['10:00','22:00']);
@@ -8,7 +9,7 @@ const cancelled=()=>Object.assign(Error('每日 CG 调度已停止'),{code:'DAIL
 export function dailyCgTime(at,timeZone='local'){
  const zone=timeZone==='local'?Intl.DateTimeFormat().resolvedOptions().timeZone:timeZone;
  const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(at)).map(row=>[row.type,row.value]));
- return {logicalDay:parts.year+'-'+parts.month+'-'+parts.day,slot:parts.hour+':'+parts.minute,timeZone:zone};
+ return {logicalDay:timeZone==='local'?localDay(at):parts.year+'-'+parts.month+'-'+parts.day,slot:parts.hour+':'+parts.minute,timeZone:zone};
 }
 
 /** A slot belongs to the application, never to a character. A durable claim is

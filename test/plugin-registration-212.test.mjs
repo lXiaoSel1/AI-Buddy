@@ -66,7 +66,7 @@ test('community update row identifies the compatible release needed after a host
 });
 
 const officialFixture = new URL('./fixtures/official-registration/', import.meta.url);
-async function officialSetup(t, {legacy = false, tamper, interruptMigration = false, mutateAfterInterruption, trustedKeys, remote = new Map()} = {}) {
+async function officialSetup(t, {legacy = false, tamper, interruptMigration = false, mutateAfterInterruption, trustedKeys, remote = new Map(), extra = {}} = {}) {
   const root = await mkdtemp(join(tmpdir(), 'official-registration-212-')), dataRoot = join(root, 'data');
   const control = join(root, 'local/plugins'), id = 'ai-buddy.voice-shared-runtime';
   await mkdir(dataRoot, {recursive: true});
@@ -88,7 +88,7 @@ async function officialSetup(t, {legacy = false, tamper, interruptMigration = fa
     await writeFile(join(dataRoot, 'plugins', id, 'keep.json'), 'original voice settings');
   }
   let downloads = 0, manager;
-  const config = {root, dataRoot, appVersion: '2.0.12', trustedKeys, fetchImpl: async url => {
+  const config = {root, dataRoot, appVersion: '2.0.12', trustedKeys, ...extra, fetchImpl: async url => {
     if(remote.has(url))return Response.json(remote.get(url));
     if (url === OFFICIAL_SOURCE_CATALOG_URL) return Response.json(envelope);
     const item = catalog.packages.find(item => item.archive.url === url);
@@ -199,4 +199,27 @@ test('interrupted migration refuses to overwrite registration changed by another
     value.packages['ai-buddy.voice-shared-runtime'].enabled = false;
     await writeFile(file, JSON.stringify(value));
   }}), {code: 'PLUGIN_SOURCE_MIGRATION_CHANGED'});
+});
+
+test('A3 official startup waits for installation lock then recovers automatically',async t=>{
+ let held=true;
+ const f=await officialSetup(t,{legacy:true,extra:{startupRetryMs:5,startupRetryLimitMs:1000,withMaintenanceLock:async run=>{if(held)throw Object.assign(Error('installer held'),{code:'EBUSY',path:'install.lock'});return run();}}});
+ assert.equal(f.manager.snapshot().service.state,'waiting-installation');held=false;
+ const end=Date.now()+3000;while(f.manager.snapshot().service.state!=='ready'&&Date.now()<end)await new Promise(resolve=>setTimeout(resolve,10));
+ assert.equal(f.manager.snapshot().service.state,'ready');assert.equal(f.manager.snapshot().installed[f.id].sourceId,'official');
+});
+
+test('A4 already migrated official registration repairs legacy automatic-update policy keys',async t=>{
+ const f=await officialSetup(t,{legacy:true}),directory=join(f.dataRoot,'community');await mkdir(directory,{recursive:true});
+ const old='buddy-v1:legacy:'+f.id,next='buddy-v1:official:'+f.id;
+ await writeFile(join(directory,'preferences-v1.json'),JSON.stringify({schemaVersion:1,favorites:[],follows:[],pendingReviews:[],updatePolicies:{[old]:'automatic'},failedPluginUpdates:{[old]:{error:{code:'fixture'},from:'1.0.1',to:'1.0.2'}}}));
+ await f.restart();const saved=JSON.parse(await readFile(join(directory,'preferences-v1.json'),'utf8'));
+ assert.equal(saved.updatePolicies[next],'automatic');assert.equal(saved.updatePolicies[old],undefined);assert.equal(saved.failedPluginUpdates[next].error.code,'fixture');
+});
+
+test('A5 incompatible installed release stays visible without a newer catalog release',async t=>{
+ const f=await setup(t,{appVersion:'2.0.14',packages:[fixturePackage('1.0.0','>=2.0.14')]});
+ const plan=await f.manager.action({action:'plan',sourceId:f.sourceId,requests:[{id:'ai-buddy.kimi-engine',version:'1.0.0'}]});await f.manager.action({action:'install',planId:plan.planId});await f.restart('2.0.13');
+ const row=f.manager.snapshot().installed['ai-buddy.kimi-engine'];assert.equal(row.compatible,false);assert.equal(row.compatibility.currentAppVersion,'2.0.13');
+ const updates=await f.manager.action({action:'update-candidates'});assert.equal(updates.updates[0].state,'incompatible');assert.equal(updates.updates[0].to,null);assert.equal(updates.updates[0].installedIncompatible,true);await assert.rejects(f.manager.resolveInstalled('ai-buddy.kimi-engine',{requireEnabled:false}),{code:'PLUGIN_INCOMPATIBLE'});
 });

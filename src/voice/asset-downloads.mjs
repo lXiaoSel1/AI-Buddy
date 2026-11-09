@@ -10,6 +10,7 @@ import {assertPluginTreeNoLinks} from '../plugin-archive.mjs';
 import {waitVoiceOperation} from './operation-wait.mjs';
 import {FFMPEG_COMPONENT_DESCRIPTOR} from '../media-components/ffmpeg-descriptor.mjs';
 import {extractSelectedPinnedZip} from '../media-components/pinned-zip.mjs';
+import {downloadPinnedFile,verifiedFile} from '../network-download.mjs';
 
 const LIMIT=2*1024**3,IDLE_MS=60000;
 const fault=(code,message)=>Object.assign(Error(message),{code});
@@ -79,6 +80,14 @@ export async function voiceAssetDownloadStream(file,{signal,fetchImpl}){
     }
     throw fault('VOICE_ASSET_DOWNLOAD','语音资源下载失败，请检查连接后重试');
   }catch(error){clearTimeout(timer);controller.abort();throw error;}
+}
+
+export async function downloadVoiceAsset(file,target,{signal,fetchImpl=fetch,planDownload,onBytes=()=>{},official=false,retries=2,connectMs=30000,idleMs=60000}={}){
+ const initial=voiceAssetDownloadUrl(file.url);let previous=0;
+ const reused=await verifiedFile(target,file);
+ try{await downloadPinnedFile(file,target,{signal,fetchImpl,planDownload,official,retries,connectMs,idleMs,maxRedirects:4,onProgress:value=>{const delta=Math.max(0,value.receivedBytes-previous);previous=value.receivedBytes;onBytes(delta);},validateUrl:(url,{initial:first})=>{const target=voiceAssetDownloadUrl(url);if(!first&&!redirectAllowed(initial,target))throw fault('VOICE_ASSET_SOURCE','语音资源重定向来源无效');return target;}});}
+ catch(cause){if(signal?.aborted)throw signal.reason;if(cause.code==='NETWORK_MIRROR_MISMATCH')throw cause;if(/^NETWORK_DOWNLOAD_(HASH|SIZE|RANGE)$/.test(cause.code??''))throw fault('VOICE_ASSET_HASH','语音资源摘要与清单不符');if(cause.code==='NETWORK_TIMEOUT'||cause.code==='NETWORK_DOWNLOAD_REDIRECT')throw fault('VOICE_ASSET_DOWNLOAD','语音资源下载超时或重定向过多，请重试');throw cause;}
+ if(reused)onBytes(file.bytes);return target;
 }
 
 export async function writeVoiceAsset(input,target,file,{signal,onBytes=()=>{},checksum}={}){

@@ -1,3 +1,4 @@
+import {locale} from '../i18n.mjs';
 const packages=[['breeze','ai-buddy.voice-breeze'],['gpt','ai-buddy.voice-gpt-sovits']];
 const operations=new Set(['cloud-connection-save','cloud-connection-select','cloud-connection-remove','cloud-batch-preview','cloud-batch-prepare','cloud-batch-reconcile','cloud-batch-cancel']);
 const fail=(code,message)=>Object.assign(Error(message),{code});
@@ -7,8 +8,12 @@ const configIdentity=config=>JSON.stringify([config.enabled,config.selectedPacka
 const emptyBatch=()=>({state:'idle',running:false,total:0,completed:0,items:[],results:[],counts:{active:0,prepared:0,unknown:0,failed:0,pending:0}});
 
 /** Host-only routing. No renderer argument can choose a role, life or Key reference. */
-export function createCloudVoiceGateway({settings,profiles,credentials,cloud,getGame,resolvePackage,publish=()=>{},assertOpen=()=>{},stopAll=async()=>{},track=task=>task}){
-  let epoch=0,batchRun,admissionRun,admissionIdentity,batchState=emptyBatch();
+export function createCloudVoiceGateway({settings,profiles,credentials,cloud,getGame,resolvePackage,publish=()=>{},assertOpen=()=>{},stopAll=async()=>{},track=task=>task,getLocale=locale}){
+  let epoch=0,batchRun,admissionRun,admissionIdentity,batchState=emptyBatch(),connectionTail=Promise.resolve();
+  async function cleanupCredential(ref){
+    if(!ref||typeof credentials.removeIfUnused!=='function')return;
+    await credentials.removeIfUnused(ref,async candidate=>{const current=await settings.get();return current.cloudConnections.items.some(row=>row.credentialRef===candidate)||Object.values(current.packages).some(row=>row.credentialRef===candidate);});
+  }
   function assertPayload(op,payload){
     if(!payload||typeof payload!=='object'||Array.isArray(payload))throw fail('VOICE_ACTION_INVALID','云配音参数无效');
     const identities=['characterId','personaId','lifeId','operationId','conversationId','engine','packageId','profiles','credentialRef','keyRef','scope'];
@@ -168,17 +173,24 @@ export function createCloudVoiceGateway({settings,profiles,credentials,cloud,get
         epoch++;batchState={...batchState,state:'cancelling'};send();await cloud.stopEngine();await (admissionRun??batchRun)?.catch(()=>{});
         batchState={...batchState,state:'cancelled',running:false};send();return structuredClone(batchState);
       }
-      epoch++;await stopAll('cloud-connection-changing');assertOpen();
+      epoch++;
+      const changing=connectionTail.then(async()=>{
+      await stopAll('cloud-connection-changing');assertOpen();let retiredRef,warningCode;
       if(op==='cloud-connection-save'){
         const list=await settings.listConnections(),previous=payload.id?list.items.find(row=>row.id===payload.id):null;
         if(payload.id&&!previous)throw fail('VOICE_SETTINGS_INVALID','云配音配置不存在');
-        const name=payload.name??previous?.name??'MiniMax 云配音',provider=payload.provider??previous?.provider??'minimax',model=payload.model??previous?.model??'speech-2.8-turbo';
-        if(typeof name!=='string'||!name.trim()||name.length>100||/[\r\n\0]/.test(name)||provider!=='minimax'||!['speech-2.8-turbo','speech-2.8-hd'].includes(model))throw fail('VOICE_SETTINGS_INVALID','云配音配置名称、服务或模型无效');
+        const name=payload.name??previous?.name??'MiniMax 云配音',provider=payload.provider??previous?.provider??(getLocale()==='en'?'minimax-global':'minimax'),model=payload.model??previous?.model??'speech-2.8-turbo';
+        if(typeof name!=='string'||!name.trim()||name.length>100||/[\r\n\0]/.test(name)||!['minimax','minimax-global'].includes(provider)||!['speech-2.8-turbo','speech-2.8-hd'].includes(model))throw fail('VOICE_SETTINGS_INVALID','云配音配置名称、服务或模型无效');
+        if(previous&&previous.provider!==provider&&payload.key===undefined)throw fail('CLOUD_REGION_KEY_REQUIRED','更改地区后，请填写该地区平台的 API Key');
         const saved=payload.key!==undefined?await credentials.save(payload.key):null;
-        await settings.saveConnection({...(payload.id?{id:payload.id}:{}),name,provider,model,credentialRef:saved?.ref??previous?.credentialRef??null});
+        try{await settings.saveConnection({...(payload.id?{id:payload.id}:{}),name,provider,model,credentialRef:saved?.ref??previous?.credentialRef??null});}
+        catch(error){if(saved)try{await cleanupCredential(saved.ref);}catch{error.credentialCleanupPending=true;}throw error;}
+        if(saved&&previous?.credentialRef!==saved.ref)retiredRef=previous?.credentialRef;
       }else if(op==='cloud-connection-select')await settings.selectConnection(payload.id);
-      else await settings.removeConnection(payload.id);
-      batchState=emptyBatch();return {cloudConnections:await publicConnections()};
+      else{retiredRef=(await settings.listConnections()).items.find(row=>row.id===payload.id)?.credentialRef;await settings.removeConnection(payload.id);}
+      if(retiredRef)try{await cleanupCredential(retiredRef);}catch{warningCode='VOICE_CREDENTIAL_CLEANUP_PENDING';}
+      batchState=emptyBatch();return {cloudConnections:await publicConnections(),...(warningCode?{warningCode,message:'配置已保存，但旧密钥清理尚未完成；原加密记录仍保留'}:{})};
+      });connectionTail=changing.catch(()=>{});return changing;
     },
   };
 }

@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {lstat,mkdir,readFile,readdir} from 'node:fs/promises';
-import {join} from 'node:path';
+import {join,dirname} from 'node:path';
 import {writeAtomic} from '../atomic-write.mjs';
 import {assertPluginTreeNoLinks} from '../plugin-archive.mjs';
 
@@ -12,6 +12,7 @@ const validVoice=value=>typeof value==='string'&&/^[a-zA-Z0-9_.:-]{1,256}$/.test
 const rejectedCode=code=>/^CLOUD_REMOTE_\d+$/.test(code??'')||/^CLOUD_HTTP_4\d\d$/.test(code??'');
 const accountRejected=code=>['CLOUD_REMOTE_1002','CLOUD_REMOTE_1004','CLOUD_REMOTE_1008','CLOUD_HTTP_401','CLOUD_HTTP_403','CLOUD_HTTP_429'].includes(code);
 const hasVoice=(voices,voiceId)=>voices.some(row=>(typeof row==='string'?row:row?.voiceId??row?.voice_id)===voiceId);
+const otherBinding=(binding,row)=>binding&&(!binding.provenance?.startsWith('approved-reference-clone')||row&&row.voiceId!==binding.voiceId&&row.retiredBindingVoiceId!==binding.voiceId);
 const existingRow=(ctx,binding)=>({characterId:ctx.request.characterId,voiceId:binding.voiceId,status:binding.activatedAt?'activated':'reuse-existing',
   stage:'existing-binding',activationState:binding.activatedAt?'activated':'unknown',provenance:binding.provenance,category:binding.category,action:'reuse-existing',state:'ready'});
 const publicRow=row=>({characterId:row.characterId,voiceId:row.voiceId,status:row.status,stage:row.stage,
@@ -141,7 +142,7 @@ export function createVoiceBatch({dataRoot,resolveContext,readReference,findBind
     // The current binding is the user's choice. Never replay an older failed receipt over it.
     if(existing&&!existing.provenance?.startsWith('approved-reference-clone'))return existingRow(ctx,existing);
     const key=identity(ctx);let row=state.rows[key.id];
-    if(existing&&row&&row.voiceId!==existing.voiceId)return existingRow(ctx,existing);
+    if(otherBinding(existing,row))return existingRow(ctx,existing);
     if(!row&&existing){
       row={...key,voiceId:existing.voiceId,stage:'cloned',preparedAt:existing.preparedAt??existing.boundAt??time(),status:existing.activatedAt?'activated':'prepared-awaiting-activation',
         ...(existing.activatedAt?{activatedAt:existing.activatedAt}:{}),legacy:true};state.rows[key.id]=row;await persist(state);
@@ -178,7 +179,15 @@ export function createVoiceBatch({dataRoot,resolveContext,readReference,findBind
       if(hasVoice(voices,row.voiceId)){row.stage='activated';row.status='activated';row.activatedAt=time();row.remoteVerifiedAt=time();await save();}
     }
     if(row.status==='unknown')return publicRow(row);
-    if(row.status==='expired')return publicRow(row);
+    if(row.status==='expired'){
+      if(options.consentActivation!==true)return publicRow(row);
+      const attempt=(row.attempt??0)+1,previousAttemptRef=key.id+'-'+attempt+'.json',archive=join(root,'preparation-archive',previousAttemptRef),original=JSON.stringify(row);
+      await assertPluginTreeNoLinks(archive);await mkdir(dirname(archive),{recursive:true});await assertPluginTreeNoLinks(archive);
+      try{if(await readFile(archive,'utf8')!==original)throw fail('CLOUD_RECEIPT_CONFLICT','旧克隆回执归档冲突，未提交新的克隆');}
+      catch(error){if(error.code!=='ENOENT')throw error;writeAtomic(archive,original);}
+      row={...key,voiceId:'buddy-'+hash([key.id,'renewal',attempt].join('\0')).slice(0,48),attempt,previousAttemptRef,retiredBindingVoiceId:row.voiceId,stage:'pending',status:'pending',createdAt:time()};
+      state.rows[key.id]=row;await save();
+    }
     if(row.stage==='pending'||row.stage==='uploaded'){
       const reference=await readReference(ctx);await check(ctx,options);
       if(options.legacyClone){
@@ -247,7 +256,7 @@ export function createVoiceBatch({dataRoot,resolveContext,readReference,findBind
           if(binding&&!binding.provenance?.startsWith('approved-reference-clone')){results.push(existingRow(ctx,binding));continue;}
           const key=identity(ctx),row=state.rows[key.id],old=!row&&!binding&&await oldMatch(ctx);
           if(row)refresh(row);
-          results.push(binding&&(!binding.provenance?.startsWith('approved-reference-clone')||row&&row.voiceId!==binding.voiceId)?existingRow(ctx,binding):row?publicRow(row):binding?existingRow(ctx,binding):old?{characterId:params.characterId,voiceId:old.voiceId,status:'unknown',code:'CLOUD_LEGACY_ACCOUNT_UNCONFIRMED'}:{characterId:params.characterId,status:'not-prepared'});}
+          results.push(otherBinding(binding,row)?existingRow(ctx,binding):row?publicRow(row):binding?existingRow(ctx,binding):old?{characterId:params.characterId,voiceId:old.voiceId,status:'unknown',code:'CLOUD_LEGACY_ACCOUNT_UNCONFIRMED'}:{characterId:params.characterId,status:'not-prepared'});}
         catch(error){results.push({characterId:params.characterId,status:'unavailable',code:error.code,message:error.message});}
       }return summary(results);
     },
@@ -268,11 +277,12 @@ export function createVoiceBatch({dataRoot,resolveContext,readReference,findBind
           const boundFingerprint=binding?{voiceId:binding.voiceId,provenance:binding.provenance,category:binding.category,sourceSHA:binding.sourceSHA,activatedAt:binding.activatedAt}:null;
           fingerprints.push({key,profileId:ctx.request.profileId,profileVersion:ctx.request.profileVersion,engine:ctx.request.engine,model:ctx.connection.model,keyRevision:ctx.connection.keyRef,connectionId:ctx.connection.id,binding:boundFingerprint,
             receipt:row?{voiceId:row.voiceId,stage:row.stage,status:row.status,outcome:row.outcome,code:row.errorCode,activatedAt:row.activatedAt,fileId:row.fileId}:null});
-          const choiceKey=key.id+'\0'+(binding&&(!binding.provenance?.startsWith('approved-reference-clone')||row&&row.voiceId!==binding.voiceId)?'existing:'+binding.voiceId:'clone');
+          const choiceKey=key.id+'\0'+(otherBinding(binding,row)?'existing:'+binding.voiceId:'clone');
           if(seen.has(choiceKey))continue;seen.add(choiceKey);
           const base={characterId:key.characterId,sourceSHA:key.sourceSHA,language:key.language,voiceId:binding?.voiceId??row?.voiceId,cloneRequired:false,activationRequired:false};
-          if(binding&&(!binding.provenance?.startsWith('approved-reference-clone')||row&&row.voiceId!==binding.voiceId))actions.push({...base,action:'reuse-existing',provenance:binding.provenance});
-          else if(row?.status==='unknown'||row?.status==='expired')actions.push({...base,action:'blocked-unknown',code:row.errorCode??(row.status==='expired'?'CLOUD_VOICE_EXPIRED':'CLOUD_PREPARE_UNKNOWN')});
+          if(otherBinding(binding,row))actions.push({...base,action:'reuse-existing',provenance:binding.provenance});
+          else if(row?.status==='unknown')actions.push({...base,action:'blocked-unknown',code:row.errorCode??'CLOUD_PREPARE_UNKNOWN'});
+          else if(row?.status==='expired')actions.push({...base,action:'new-clone',cloneRequired:true,activationRequired:true,renewal:true,code:'CLOUD_VOICE_EXPIRED'});
           else if(row?.activatedAt||binding?.activatedAt)actions.push({...base,action:'reuse-existing',provenance:binding?.provenance});
           else if(row?.stage==='cloned'||row?.stage==='activation-submitted'&&row.outcome==='rejected'||binding)actions.push({...base,action:'activation',activationRequired:true});
           else if(!row&&await oldMatch(ctx)||!row&&(await hasOtherAccount(ctx)||Object.values(state.rows).some(other=>other.characterId===key.characterId&&other.sourceSHA===key.sourceSHA&&other.accountScope!==key.accountScope)))actions.push({...base,action:'blocked-unknown',code:'CLOUD_ACCOUNT_CONFIRMATION'});
@@ -290,7 +300,7 @@ export function createVoiceBatch({dataRoot,resolveContext,readReference,findBind
       if(!row)throw fail('CLOUD_RECEIPT_REQUIRED','没有可核对的云音色准备回执');
       await check(ctx,options);const voices=await provider.voices(ctx,{signal:options.signal});
       const binding=await findBinding(ctx);
-      if(binding&&binding.voiceId!==row.voiceId)return {...existingRow(ctx,binding),message:'当前角色已选择其他云端音色，保留当前绑定'};
+      if(otherBinding(binding,row))return {...existingRow(ctx,binding),message:'当前角色已选择其他云端音色，保留当前绑定'};
       if(hasVoice(voices,row.voiceId)){row.stage='activated';row.status='activated';row.activatedAt??=time();row.remoteVerifiedAt=time();delete row.errorCode;delete row.outcome;await persist(state);await check(ctx,options);await project(ctx,row);}
       else refresh(row);
       return {...publicRow(row),message:hasVoice(voices,row.voiceId)?'MiniMax 已确认该音色可用':'音色未出现在已激活列表；这不能证明未创建，请在 MiniMax 核对后再处理，未重新提交'};

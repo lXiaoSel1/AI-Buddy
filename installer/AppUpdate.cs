@@ -11,17 +11,17 @@ using AiBuddy.Install;
 namespace AiBuddy.Setup;
 
 internal sealed record AppUpdateResult(bool Ok,string? Stage=null,string? SelectionId=null,string? Version=null,long? InstallerBytes=null,
-    long? DownloadBytes=null,long? InstallBytes=null,string? Code=null,string? Message=null,long? RetryAfterMs=null,string? ReleaseUrl=null,bool? RequiresBootstrap=null,string? Notes=null);
+    long? DownloadBytes=null,long? InstallBytes=null,string? Code=null,string? Message=null,long? RetryAfterMs=null,string? ReleaseUrl=null,bool? RequiresBootstrap=null,string? Notes=null,bool? RetryOfficial=null,string? Host=null);
 internal sealed record AppUpdateSelection(string SourceStamp,UpdateRelease Release);
 internal sealed record AppUpdateState(string SourceStamp,AppUpdateResult Result,string? CompletedBuild=null);
-internal sealed record AppUpdateWork(string Action,string Root,string Nonce,int AppPid,string SelectionId,AppUpdateSelection Selection);
+internal sealed record AppUpdateWork(string Action,string Root,string Nonce,int AppPid,string SelectionId,AppUpdateSelection Selection,bool Official=false);
 
 internal static class AppUpdate {
     const string Prefix="AI-Buddy-App-Update-";
     const int Protocol=1;
     const int MessageLimit=128*1024;
     internal static readonly JsonSerializerOptions LineJson=new(Json.Options){WriteIndented=false,DefaultIgnoreCondition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull};
-    static readonly string[] ManagerArguments=["app-update","app-root","app-nonce","app-pid","app-selection"];
+    static readonly string[] ManagerArguments=["app-update","app-root","app-nonce","app-pid","app-selection","network-official"];
     static readonly string[] WorkerArguments=["app-worker","app-worker-nonce","app-parent"];
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe,out uint processId);
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe,out uint processId);
@@ -99,6 +99,7 @@ internal static class AppUpdate {
             ReleaseUrl:selection.Release.ReleaseUrl,Notes:SignedNotes(selection.Release));
 
     internal static AppUpdateResult Failure(Exception error) => error switch {
+        MirrorMismatchException mirror=>new(false,Code:"NETWORK_MIRROR_MISMATCH",Message:mirror.Message,RetryOfficial:true,Host:mirror.Host),
         OperationCanceledException=>new(false,Code:"APP_UPDATE_CANCELLED",Message:"Update cancelled before commit"),
         DownloadException failure=>new(false,Code:failure.Wait is null?"APP_UPDATE_DOWNLOAD_FAILED":"APP_UPDATE_RATE_LIMITED",
             Message:failure.Wait is null?"The release server did not complete the update request":"The release server requested a delay",
@@ -116,6 +117,8 @@ internal static class AppUpdate {
     public static async Task<int> Run(string[] args,HttpClient http,UpdateDiscovery discovery,InstallManifest manifest,byte[] manifestBytes,string manifestHash,string self) {
         if(args.Any(a=>a.StartsWith("--app-worker=",StringComparison.Ordinal)))return await RunWorker(args,http,discovery,manifest,manifestBytes,manifestHash,self);
         var parsed=Parse(args,ManagerArguments);
+        var rawOfficial=parsed.GetValueOrDefault("network-official");if(rawOfficial is not null&&rawOfficial is not ("true" or "false"))throw new InvalidDataException("Invalid official download override");
+        using var officialScope=rawOfficial=="true"?InstallerNetwork.UseOfficial():null;
         var action=Need(parsed,"app-update");var root=Need(parsed,"app-root");var nonce=Need(parsed,"app-nonce");var pid=Pid(Need(parsed,"app-pid"));
         var id=parsed.GetValueOrDefault("app-selection");
         if(!Digest(nonce)||action is not("check" or "prepare" or "apply" or "status")||
@@ -195,7 +198,7 @@ internal static class AppUpdate {
             executable=await discovery.Download(selected.Release,releaseCache,progress,cancel);
         } else executable=SafePaths.Under(releaseCache,selected.Release.InstallerSha256+"-"+selected.Release.InstallerName);
 
-        var work=new AppUpdateWork(action,root,nonce,pid,id!,selected);
+        var work=new AppUpdateWork(action,root,nonce,pid,id!,selected,InstallerNetwork.OfficialOnly);
         try {
             var response=await Worker(executable,work,new ProgressSink(value=>{
                 if(action=="apply"&&value.Phase=="committing")Json.Save(statePath,new AppUpdateState(stamp,ready!.Result with{Stage="applying"}));
@@ -276,6 +279,8 @@ internal static class AppUpdate {
             using var manager=Process.GetProcessById(parent);
             var executable=manager.MainModule?.FileName??throw new InvalidDataException("Cannot verify the update manager process image");
             var (previous,identity)=await Instance(work.Root,executable,work.AppPid,work.Nonce,cancellation.Token);
+            InstallerNetwork.Configure(InstallerNetwork.Load(work.Root));
+            using var officialScope=work.Official?InstallerNetwork.UseOfficial():null;
             VerifySelection(discovery,work.Selection,work.SelectionId,previous);
             if(work.Selection.Release.Version!=manifest.AppVersion||work.Selection.Release.ManifestSha256!=manifestHash||
                 !await Hashing.Matches(self,work.Selection.Release.Bytes,work.Selection.Release.InstallerSha256,cancellation.Token))

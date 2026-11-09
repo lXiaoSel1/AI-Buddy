@@ -1,5 +1,5 @@
 import React,{useEffect,useId,useRef,useState} from 'react';
-import {t} from '../i18n.mjs';
+import {t,locale} from '../i18n.mjs';
 import {CloudDesignDialog,CloudCharacterFace,cloudCharacterId,cloudCharacterLabel,cloudIcon} from './cloud-design-ui.mjs';
 
 const h=React.createElement;
@@ -7,8 +7,8 @@ const emptyConnections={selectedId:null,items:[]};
 const models=['speech-2.8-turbo','speech-2.8-hd'];
 const pendingStates=new Set(['running','preparing','cancelling','cancel-requested']);
 const batchBusy=batch=>batch?.running===true||pendingStates.has(batch?.state??batch?.status);
-const freshDraft=()=>({name:'',provider:'minimax',model:models[0],key:''});
-const draftOf=row=>({...freshDraft(),id:row.id,name:row.name,provider:row.provider,model:row.model,configured:row.configured});
+const freshDraft=()=>({name:'',provider:locale()==='en'?'minimax-global':'minimax',model:models[0],key:''});
+const draftOf=row=>({...freshDraft(),id:row.id,name:row.name,provider:row.provider,model:row.model,configured:row.configured,originalProvider:row.provider,originalConfigured:row.configured});
 const stageLabel=stage=>t(({ready:'已就绪，待试听',active:'已激活，待试听',activated:'已激活，待试听',reused:'已复用','reuse-existing':'已复用',prepared:'已准备，待激活','prepared-awaiting-activation':'已准备，待激活','prepared-awaiting-first-synthesis-and-listening':'已准备，待激活与试听',planned:'等待准备',pending:'等待准备','upload-confirmed':'参考音已上传',uploaded:'参考音已上传','clone-confirmed':'已克隆，待激活',cloned:'已克隆，待激活','activation-confirmed':'已激活，待核对','activation-confirmed-query-pending':'首次合成已确认，待查询核对','activation-pending':'待首次合成激活','upload-submitted':'已提交参考音上传','clone-submitted':'已提交克隆','activation-submitted':'已提交首次合成',unknown:'结果未知，待核对','remote-unknown':'结果未知，待核对',expired:'音色已过期','account-confirmation-required':'账号待核对','not-prepared':'尚未准备',failed:'失败',missing:'缺少声音档案','profile-missing':'缺少声音档案','profile-incomplete':'部分声音档案缺失',profileMissing:'声音档案缺失',cancelled:'已取消',interrupted:'已中断',activating:'参考录音已上传，正在激活',preparing:'正在准备',running:'正在准备',cancelling:'正在取消…','cancel-requested':'正在取消…',complete:'本批准备已结束',completed:'本批准备已结束',idle:'尚未准备'})[stage]??'等待核对');
 const safeVoiceId=value=>typeof value==='string'&&/^[a-zA-Z0-9_.:-]{1,256}$/.test(value)?value:'';
 const categoryLabels={system_voice:'系统音色',voice_cloning:'克隆音色',voice_generation:'设计音色'};
@@ -26,10 +26,10 @@ export function CloudVoiceConnectionEditor({draft,onChange,onSave,onCancel,busy=
   return h('form',{id:formId,className:'vx-form vx-cfgform','data-cloud-editor':true,onSubmit:e=>{e.preventDefault();if(!busy&&draft.name.trim()&&(draft.configured||draft.key.trim()))void onSave();}},
     h('h4',null,t(draft.id?'编辑配置':'新增配置')),
     h('div',{className:'ws-fgrid'},field('name','名字'),
-      h('label',{className:'ws-fld model-field'},h('span',null,t('提供方')),h('select',{'aria-label':t('云配音提供方'),'data-cloud-field':'provider',value:draft.provider,disabled:busy,onChange:e=>onChange({...draft,provider:e.target.value})},h('option',{value:'minimax'},'MiniMax'))),
+      h('label',{className:'ws-fld model-field'},h('span',null,t('地区')),h('select',{'aria-label':t('云配音地区'),'data-cloud-field':'provider',value:draft.provider,disabled:busy,onChange:e=>onChange({...draft,provider:e.target.value,key:'',configured:e.target.value===draft.originalProvider&&draft.originalConfigured===true})},h('option',{value:'minimax'},t('中国大陆')),h('option',{value:'minimax-global'},t('国际')))),
       h('label',{className:'ws-fld'},h('span',null,t('模型')),h('select',{'aria-label':t('云配音模型'),'data-cloud-field':'model',value:draft.model,disabled:busy,onChange:e=>onChange({...draft,model:e.target.value})},...models.map(model=>h('option',{key:model,value:model},model)))),
       field('key','MiniMax API Key','password',draft.configured?'已保存；留空保留原 Key':'粘贴 API Key')),
-    h('p',{className:'settings-note'},cloudIcon('shield',14),t('Key 加密保存在这台电脑上，保存后不会再显示。保存配置不会上传任何声音。')),
+    h('p',{className:'settings-note'},cloudIcon('shield',14),t('Key 加密保存在这台电脑上，保存后不会再显示。保存配置不会上传任何声音。'),' ',t('更改地区后，请填写该地区平台的 API Key')),
     actions&&h('div',{className:'ws-srow'},h('button',{type:'button',className:'ui-btn sm',disabled:busy,onClick:onCancel},t('取消')),h('button',{type:'submit',className:'ui-btn sm primary','data-cloud-save':true,disabled:busy||!draft.name.trim()||!draft.configured&&!draft.key.trim()},t('保存'))));
 }
 
@@ -38,7 +38,7 @@ export function CloudVoiceConnectionManager({connections=emptyConnections,sessio
   async function run(op,payload,after){
     if(flight.current||locked)return;
     flight.current=true;setBusy(true);setError('');
-    try{const result=await session?.runAction(op,payload);if(result===undefined)return;after?.(result);}catch(error){setError(String(error?.message??error));}
+    try{const result=await session?.runAction(op,payload);if(result===undefined)return;after?.(result);if(result.warningCode)setError(cloudVoiceError({code:result.warningCode,message:result.message}));}catch(error){setError(String(error?.message??error));}
     finally{flight.current=false;setBusy(false);}
   }
   const disabled=busy||locked;
@@ -70,13 +70,15 @@ const busyRowStates=new Set(['preparing','running','activating','upload-submitte
 const missingStates=new Set(['missing','profile-missing','profile-incomplete','profileMissing']);
 const rowTone=row=>readyStates.has(rowStage(row))?'ok':busyRowStates.has(rowStage(row))?'busy':missingStates.has(rowStage(row))?'warn':['failed','unknown','remote-unknown','expired','account-confirmation-required','unavailable','activation-confirmed-query-pending'].includes(rowStage(row))?'warn':'idle';
 const unpickable=row=>['ok','busy'].includes(rowTone(row))||missingStates.has(rowStage(row));
-function CloudCharacterRows({items,currentId,selectedIds,onToggle,locked=false}){
+function CloudCharacterRows({items,currentId,selectedIds,onToggle,onReclone,locked=false}){
   return h('ul',{className:'vx-clist'+(onToggle?' pick':'')},...items.map(row=>{
     const id=cloudCharacterId(row),tone=rowTone(row),stage=rowStage(row),label=missingStates.has(stage)?t('还没有声音档案'):stage==='not-prepared'||stage==='idle'?t('还没准备'):stageLabel(stage);
     return h('li',{key:id,className:'vx-crow'+(id===currentId?' cur':'')},
       onToggle&&h('input',{type:'checkbox',className:'vx-chk','data-cloud-character':id,'aria-label':cloudCharacterLabel(row),checked:selectedIds.includes(id),disabled:locked||unpickable(row),onChange:e=>onToggle(id,e.target.checked)}),
       h(CloudCharacterFace,{row}),h('b',null,cloudCharacterLabel(row)),id===currentId&&!onToggle&&h('span',{className:'ws-tag'},t('当前角色')),h('span',{className:'mk-grow'}),
       h('small',{className:'vx-cst '+tone},tone==='busy'?h('span',{className:'ui-spinner','aria-hidden':true}):h('i',{className:'vx-vdot','aria-hidden':true}),label),
+      stage==='expired'&&h('span',{className:'vx-cloud-row-error'},t('这个云端音色已经过期。')),
+      stage==='expired'&&onReclone&&h('button',{type:'button',className:'ui-btn sm','data-cloud-reclone':id,disabled:locked,onClick:()=>onReclone(id)},t('重新克隆…')),
       (row.message||row.code)&&h('span',{className:'vx-cloud-row-error',role:stage==='failed'?'alert':undefined},cloudVoiceError(row)));
   }));
 }
@@ -181,7 +183,7 @@ function CloudVoiceChoices({snapshot,session,state,selected,batch,selectionKey,l
     h('div',{className:'vx-cols'},
       h('section',{className:'ws-card vx-voices'},
         h('div',{className:'vx-sec-h'},h('h3',{className:'ws-sec'},t('角色的云端声音')),h('small',{className:'ws-muted'},t('{ready} 个已就绪 · {preparing} 个准备中').replace('{ready}',String(readyCount)).replace('{preparing}',String(preparingCount)))),
-        h(CloudCharacterRows,{items,currentId:state?.scope?.characterId}),
+        h(CloudCharacterRows,{items,currentId:state?.scope?.characterId,locked,onReclone:id=>{if(locked)return;choiceRevision.current++;previewFlight.current++;setPreview(null);setPreviewError('');setSelectedIds([id]);setBatchProgress(false);setBatchOpen(true);setVoiceOpen(false);}}),
         h('div',{className:'vx-voices-f'},btn(t('给 {name} 换音色…').replace('{name}',characterLabel),{'data-cloud-open-voices':true,disabled:selectionUnavailable,onClick:()=>{setVoiceOpen(true);setBatchOpen(false);}},'speaker'),h('span',{className:'mk-grow'}),btn(t('批量准备…'),{className:'ui-btn sm primary','data-cloud-open-batch':true,disabled:selectionUnavailable,onClick:()=>{setBatchProgress(!!preparing);setBatchOpen(true);setVoiceOpen(false);}},'upload'))),
       h('div',{className:'vx-side'},whereControl,
         h('section',{className:'ws-card vx-cfg'},h('div',{className:'vx-sec-h'},h('h3',{className:'ws-sec'},t('云配音账号')),btn(t('管理配置'),{className:'ui-btn sm ghost','data-manage-connections':'voice',onClick:onManage},'sliders')),

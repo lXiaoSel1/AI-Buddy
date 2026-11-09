@@ -1,7 +1,8 @@
+import {replyNetworkRoute} from './network-worker.mjs';
 export const PLUGIN_MAINTENANCE_BUSY = Symbol('host-only extension maintenance status');
 // The facade survives failed starts and process restarts. Consumers (including
 // Harness factories) retain one stable identity for the entire app lifetime.
-export async function createPluginMaintenanceClient({runnerPath, root, dataRoot, appVersion, voiceTestFingerprint, busy = () => false, onUpdate = () => {},
+export async function createPluginMaintenanceClient({runnerPath, root, dataRoot, appVersion, voiceTestFingerprint, network, busy = () => false, onUpdate = () => {},
   processFactory, timeoutMs = 30 * 60 * 1000, initializeTimeoutMs = 10000, closeTimeoutMs = 5000} = {}) {
   const factory = processFactory ?? (await import('electron')).utilityProcess.fork;
   let current = null, generation = 0, serial = 0, closing = false, closePromise = null, retryPromise = null;
@@ -63,9 +64,10 @@ export async function createPluginMaintenanceClient({runnerPath, root, dataRoot,
       holder.onMessage = raw => {
         if (current !== holder || holder.disposing || holder.exited || holder.generation !== generation) return;
         const value = raw?.data ?? raw;
+        if(value?.type==='network-route'&&network){void replyNetworkRoute(child,value,{resolveRoutes:url=>network.resolveRoutes(url,holder.networkSnapshot)});return;}
         if (value?.type === 'response') {
           const row = holder.pending.get(value.id);
-          if (row) { holder.pending.delete(value.id); clearTimeout(row.timer); value.error ? row.reject(Object.assign(Error(value.error.message), {code: value.error.code})) : row.resolve(value.result); }
+          if (row) { holder.pending.delete(value.id); clearTimeout(row.timer); value.error ? row.reject(Object.assign(Error(value.error.message), {code:value.error.code,host:value.error.host,retryOfficial:value.error.retryOfficial===true,originKnownMirror:value.error.originKnownMirror===true,technicalCode:value.error.technicalCode})) : row.resolve(value.result); }
         } else if (closing) return;
         else if (value?.type === 'update') publish(normalize(value.value));
         else if (value?.type === 'busy') void Promise.resolve().then(busy).catch(() => true).then(result => {
@@ -75,7 +77,8 @@ export async function createPluginMaintenanceClient({runnerPath, root, dataRoot,
       holder.onError = cause => processFailure(holder, cause);
       holder.onExit = code => { holder.exited = true; processFailure(holder, error('扩展维护进程已结束：' + code, 'PLUGIN_PROCESS_EXIT')); };
       child.on('message', holder.onMessage); child.once('error', holder.onError); child.once('exit', holder.onExit);
-      const value = await request(holder, 'initialize', {root, dataRoot, appVersion, ...(voiceTestFingerprint ? {voiceTestFingerprint} : {})}, initializeTimeoutMs);
+      holder.networkSnapshot=network?.snapshot();
+      const value = await request(holder, 'initialize', {root, dataRoot, appVersion, ...(voiceTestFingerprint ? {voiceTestFingerprint} : {}),...(holder.networkSnapshot?{network:holder.networkSnapshot}:{})}, initializeTimeoutMs);
       if (!closing && current === holder && !holder.disposing) { holder.initialized = true; publish(normalize(value)); }
     } catch (cause) {
       if (!closing && (!holder || current === holder)) state('failed', cause);
@@ -101,22 +104,25 @@ export async function createPluginMaintenanceClient({runnerPath, root, dataRoot,
   async function readyRequest(method, params) {
     if (closing) throw error('扩展服务已关闭', 'PLUGIN_CLOSED');
     if (!cache.service.usable) throw error('扩展服务尚未就绪', 'PLUGIN_SERVICE_NOT_READY');
-    return request(current, method, params);
+    configureNetwork();return request(current, method, params);
   }
+  function configureNetwork(){const holder=current;if(!network||!holder?.initialized||holder.exited||holder.disposing||holder.pending.size||cache.operation)return false;const next=network.snapshot();if(JSON.stringify(next)===JSON.stringify(holder.networkSnapshot))return true;holder.networkSnapshot=next;holder.child.postMessage({type:'network-configure',network:next});return true;}
+  async function reopen(){try{await closePromise;}catch{}if(current&&!current.exited&&!await dispose(current))throw error('旧扩展维护进程尚未确认退出','PLUGIN_PROCESS_EXIT_TIMEOUT');closing=false;closePromise=null;retryPromise=null;await start();if(!cache.service.usable&&cache.service.state!=='waiting-installation')throw error('扩展维护进程未能恢复','PLUGIN_RESTORE_FAILED');return snapshot();}
   function close() {
     if (closePromise) return closePromise;
     closing = true; state('closing');
     closePromise = (async () => {
-      const holder = current, end = Date.now() + closeTimeoutMs;
+      const holder = current, end = Date.now() + closeTimeoutMs;let closeError;
       if (holder && !holder.disposing && !holder.exited) {
-        try { await request(holder, 'close', {}, Math.max(1, Math.floor(closeTimeoutMs / 2)), true); } catch {}
+        try { await request(holder, 'close', {}, Math.max(1, Math.floor(closeTimeoutMs / 2)), true); } catch(cause){closeError=cause;}
       }
       const exited = await dispose(holder, Math.max(1, end - Date.now())); state('closed', exited ? null : error('扩展维护进程尚未确认退出。', 'PLUGIN_PROCESS_EXIT_TIMEOUT'));
+      if(!exited)throw error('扩展维护进程尚未确认退出。','PLUGIN_PROCESS_EXIT_TIMEOUT');if(closeError&&!['PLUGIN_PROCESS_EXIT','PLUGIN_REQUEST_TIMEOUT'].includes(closeError.code))throw closeError;
     })();
     return closePromise;
   }
   const facade = {snapshot, [PLUGIN_MAINTENANCE_BUSY]: () => cache.operation !== null, action: value => value?.action === 'status' ? Promise.resolve(snapshot()) : value?.action === 'retry' ? retry() : readyRequest('action', value),
-    prepareOffline: (directory, requests) => readyRequest('prepareOffline', {directory, requests}), resolveInstalled: (id, options) => readyRequest('resolveInstalled', {id, options}), resolveTrustedSource: sourceId => readyRequest('resolveTrustedSource', {sourceId}), close};
+    prepareOffline: (directory, requests) => readyRequest('prepareOffline', {directory, requests}), resolveInstalled: (id, options) => readyRequest('resolveInstalled', {id, options}), resolveTrustedSource: sourceId => readyRequest('resolveTrustedSource', {sourceId}), close,reopen,configureNetwork};
   await start();
   return facade;
 }

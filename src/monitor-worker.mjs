@@ -4,7 +4,9 @@ import { TokenMonitor } from './token-monitor.mjs';
 import { appendFile,mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {createMonitorWorkerLifecycle} from './monitor-worker-lifecycle.mjs';
-const monitor=new TokenMonitor({...workerData,onSources:value=>parentPort.postMessage({type:'sources',value}),onUpdate:value=>parentPort.postMessage({type:'snapshot',value}),onTaskFeedback:value=>parentPort.postMessage({type:'task-feedback',value}),onAudit:value=>parentPort.postMessage({type:'audit',value})});
+import {createWorkerNetwork} from './network-worker.mjs';
+let network=workerData.network?createWorkerNetwork(parentPort,workerData.network):null;
+const monitor=new TokenMonitor({...workerData,fetchImpl:(...args)=>(network?.fetch??fetch)(...args),onSources:value=>parentPort.postMessage({type:'sources',value}),onUpdate:value=>parentPort.postMessage({type:'snapshot',value}),onTaskFeedback:value=>parentPort.postMessage({type:'task-feedback',value}),onAudit:value=>parentPort.postMessage({type:'audit',value})});
 const ready=monitor.start().then(async()=>{await monitor.configure(workerData);return monitor;});ready.catch(error=>parentPort.postMessage({type:'error',message:error.stack}));
 const lifecycle=createMonitorWorkerLifecycle({ready,postMessage:value=>parentPort.postMessage(value),close:()=>monitor.close(),closePort:()=>parentPort.close(),run:async message=>{
     if(message.type==='managed-work-source'){if(workerData.hostOwnsRegistry)throw Error('Managed registration belongs to the host');await ready;const value=await monitor.registerManagedWorkSource(message.value);parentPort.postMessage({type:'source-result',id:message.id,value});}
@@ -19,4 +21,4 @@ const lifecycle=createMonitorWorkerLifecycle({ready,postMessage:value=>parentPor
     monitor.ingestCompanion(message);monitor.emit();
   }
 }});
-parentPort.on('message',message=>{void lifecycle.dispatch(message);});
+parentPort.on('message',message=>{if(message?.type==='network-route-result')return;if(message?.type==='network-configure'){network?.close();network=createWorkerNetwork(parentPort,message.network);return;}void lifecycle.dispatch(message);});

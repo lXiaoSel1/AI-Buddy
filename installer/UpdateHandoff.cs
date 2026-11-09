@@ -29,6 +29,10 @@ public static class UpdateHandoff {
         var result=new List<string>{"--root="+Path.GetFullPath(options.Root),"--cache="+Path.GetFullPath(options.Cache),"--edition="+options.Edition,"--characters="+string.Join(',',options.Characters),"--initial="+options.InitialCharacter,"--language="+language,"--shortcuts="+shortcuts.ToString().ToLowerInvariant(),"--launch="+launch.ToString().ToLowerInvariant()};
         if(options.DataPath is {} data){Text(data,"data");result.Add("--data="+DataPaths.Registered(options.Root,data,false));}
         if(options.Pipe is {} pipe){Text(pipe,"pipe");result.Add("--pipe="+pipe);}
+        var network=InstallerNetwork.Current;
+        if(network.Mode!="system"){result.Add("--proxy-mode="+network.Mode);if(network.Mode=="manual")result.Add("--proxy-url="+network.ProxyUrl);}
+        if(network.GithubMirror.Length>0)result.Add("--github-mirror="+network.GithubMirror);
+        if(network.HuggingFaceMirror.Length>0)result.Add("--huggingface-mirror="+network.HuggingFaceMirror);
         // Offline mode intentionally has no cross-version handoff: that directory
         // contains the current version's pinned packages, not the newer version's.
         return result.ToArray();

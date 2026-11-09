@@ -1,3 +1,7 @@
+import {readFile,mkdtemp,rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {downloadPinnedFile} from '../network-download.mjs';
 import {createHash} from 'node:crypto';
 
 export const DSH_PUBLIC_COMPONENT=Object.freeze({schemaVersion:1,sourceCommit:'22ddee3792402c3e70ec5f86a63c3e3e895a2f60',nodeVersion:'24.21.0',pnpmVersion:'11.28.5',bytes:198580207,sha256:'b2dbb9fdd654099e403075c2cb00c6aaa8f51e35514544c9052591433ae78b12',manifestSha256:'1c27979fa533f279e0dd027d91845faeacadc896e0585d9ae4cb14003d026e2f',filename:'ai-buddy-dsh-22ddee379240-node24.21.0-win-x64.tgz',url:'https://github.com/lXiaoSel1/AI-Buddy-Extensions/releases/download/dsh-component-22ddee379240-node24.21.0/ai-buddy-dsh-22ddee379240-node24.21.0-win-x64.tgz'});
@@ -19,26 +23,12 @@ export function assertDshComponentDownloadUrl(value,{initial=false,fixtureOrigin
 // The fixture origin is available only to a constructor-injected fetch transport.
 // Production always starts at the exact host-owned URL and follows official CDN
 // HTTPS redirects manually. Signed locations are never returned or put in errors.
-export async function downloadDshComponent(item,{fetchImpl=fetch,signal,timeoutMs=300000,maxRedirects=3,fixtureOrigin=null,onProgress=()=>{},check=()=>{}}={}){
-  let url=assertDshComponentDownloadUrl(item.url,{initial:true,fixtureOrigin}),response,total=0;const controller=new AbortController(),cancel=()=>controller.abort(signal.reason),timer=setTimeout(()=>controller.abort(fault('Component download timed out','DSH_COMPONENT_DOWNLOAD_TIMEOUT')),timeoutMs);
-  signal?.addEventListener('abort',cancel,{once:true});if(signal?.aborted)cancel();
-  const checkpoint=()=>{check();controller.signal.throwIfAborted();};
+export async function downloadDshComponent(item,{fetchImpl=fetch,planDownload,signal,timeoutMs=30000,idleMs=60000,maxRedirects=3,fixtureOrigin=null,transportOrigin,onProgress=()=>{},check=()=>{},cacheDirectory}={}){
+  const temporary=!cacheDirectory,root=cacheDirectory??await mkdtemp(join(tmpdir(),'buddy-dsh-download-'));
+  const target=join(root,item.sha256+'.tgz');
   try{
-    for(let count=0;;count++){
-      checkpoint();response=await fetchImpl(url.href,{signal:controller.signal,redirect:'manual',credentials:'omit'});checkpoint();
-      if(!redirected.has(response.status))break;
-      const location=response.headers.get('location');await response.body?.cancel();if(count>=maxRedirects)throw fault('Too many component download redirects','DSH_COMPONENT_DOWNLOAD_REDIRECTS');
-      if(!location)throw fault('Component download redirect has no destination','DSH_COMPONENT_DOWNLOAD_ORIGIN');
-      let target;try{target=new URL(location,url);}catch{throw fault('Invalid component redirect destination','DSH_COMPONENT_DOWNLOAD_ORIGIN');}
-      url=assertDshComponentDownloadUrl(target.href,{fixtureOrigin});
-    }
-    if(response.status!==200||!response.body)throw fault('Component download HTTP '+response.status);
-    const length=response.headers.get('content-length');if(length!==null&&(!/^\d+$/.test(length)||Number(length)!==item.bytes))throw fault('Component archive digest or size differs','DSH_COMPONENT_INVALID');
-    const chunks=[],digest=createHash('sha256');for await(const chunk of response.body){checkpoint();total+=chunk.length;if(total>item.bytes)throw fault('Component exceeds pinned size','DSH_COMPONENT_INVALID');const bytes=Buffer.from(chunk);digest.update(bytes);chunks.push(bytes);onProgress({phase:'downloading',receivedBytes:total,totalBytes:item.bytes});}
-    checkpoint();if(total!==item.bytes||digest.digest('hex')!==item.sha256)throw fault('Component archive digest or size differs','DSH_COMPONENT_INVALID');return Buffer.concat(chunks,total);
-  }catch(cause){
-    if(controller.signal.aborted)throw controller.signal.reason?.code==='DSH_COMPONENT_DOWNLOAD_TIMEOUT'?controller.signal.reason:fault('Component installation cancelled','ABORT_ERR');
-    if(typeof cause?.code==='string'&&/^(DSH_COMPONENT_|ABORT_ERR$)/.test(cause.code))throw cause;
-    throw fault('Component download failed');
-  }finally{clearTimeout(timer);signal?.removeEventListener('abort',cancel);if(response?.body&&!response.body.locked)await response.body.cancel().catch(()=>{});}
+    await downloadPinnedFile(item,target,{fetchImpl,planDownload,transportOrigin,maxRedirects,signal,onProgress,check,connectMs:Math.min(timeoutMs,30000),idleMs,validateUrl:(url,options)=>assertDshComponentDownloadUrl(url,{initial:options.initial,fixtureOrigin})});
+    return await readFile(target,{signal});
+  }catch(cause){if(signal?.aborted)throw fault('Component installation cancelled','ABORT_ERR');if(cause.code==='NETWORK_MIRROR_MISMATCH')throw cause;if(cause.code==='NETWORK_TIMEOUT')throw fault('Component download timed out','DSH_COMPONENT_DOWNLOAD_TIMEOUT');if(cause.code==='NETWORK_DOWNLOAD_REDIRECT')throw fault('Too many component redirects','DSH_COMPONENT_DOWNLOAD_REDIRECTS');if(/^NETWORK_DOWNLOAD_(HASH|SIZE|RANGE)$/.test(cause.code??''))throw fault('Component archive digest or size differs','DSH_COMPONENT_INVALID');if(cause.code?.startsWith('DSH_'))throw cause;throw fault('Component download failed');}
+  finally{if(temporary)await rm(root,{recursive:true,force:true});}
 }

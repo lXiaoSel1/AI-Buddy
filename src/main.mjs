@@ -8,6 +8,7 @@ import {createMainProfileDiagnostic} from './main-profile-diagnostic.mjs';
 import {createPluginMaintenanceClient} from './plugin-maintenance-client.mjs';
 import {pluginActionResult} from './plugin-ipc.mjs';
 import {createPluginPlatform} from './plugin-platform.mjs';
+import {closePluginServices,closeAppServices} from './plugin-shutdown.mjs';
 import {createVoiceHost,trustedVoiceSender} from './voice/host.mjs';
 import {createBiliSheetRenderer,createBiliFrameAnalyzer} from './bili-sheet-renderer.mjs';
 import {createPluginEmbed,embedCapable,EMBED_CHANNEL,EMBED_EVENT,EMBED_TARGETS} from './plugin-embed.mjs';
@@ -19,6 +20,10 @@ import {createInstalledResources} from './installed-resources.mjs';
 import {spawn,spawnSync} from 'node:child_process';
 import {createAppUpdateBackend} from './update-backend-client.mjs';
 import {createAppBootstrapBackend} from './update-bootstrap-backend.mjs';
+import {createAppReleaseClient} from './update-release-proof.mjs';
+import {createNetworkService} from './network-service.mjs';
+import {replyNetworkRoute} from './network-worker.mjs';
+import {createNetworkActions} from './network-ipc.mjs';
 import {createUpdateService} from './update-service.mjs';
 import {createUpdateReservation,updateError} from './update-reservation.mjs';
 import {startDesktopSample,stopDesktopSample,measureDesktopDiagnostic} from './desktop-diagnostics.mjs';
@@ -91,7 +96,7 @@ const arg=name=>process.argv.find(x=>x.startsWith('--'+name+'='))?.slice(name.le
 const localCardBuild=typeof __AI_BUDDY_LOCAL_CARD_BUNDLE_SHA256__==='string';
 const cardRehearsal=localCardBuild&&arg('local-card-rehearsal')==='1';
 let cardQuiet=localCardBuild&&arg('local-card-quiet')==='1';
-const automaticWorkAllowed=()=>!cardQuiet&&!importBarrier&&!updateReservation.active()&&dataImport.automaticWorkAllowed();
+const automaticWorkAllowed=()=>!shutdownRecoveryFailed&&!shuttingDown&&!cardQuiet&&!importBarrier&&!updateReservation.active()&&dataImport.automaticWorkAllowed();
 function handoffCardVerification(){
  if(!cardQuiet||cardRehearsal||quitting||!game)return;
  cardQuiet=false;cg?.start();quotas?.start();audit({type:'local-card-handoff'});
@@ -133,7 +138,7 @@ let buttonObserver=null,nativeButtons=0;
 let fullscreenObserver=null,fullscreenHidden=false;
 const fullscreenPolicy=createPetFullscreenPolicy({onChange:hidden=>{fullscreenHidden=hidden;applyPetVisibility(false);}});
 let dailyCgScheduler;
-let pet,panel,tray,worker,game,provider,snapshot={indexing:true,sessions:[],active:[],todayUsage:{codex:{total:0},claude:{total:0}},workTotal:0},settings={},drag=null,lastWork=null,quitting=false,gestureMode=false,lastPetHit=false,ignoringMouse=true,petAssetsReady=false;
+let network,networkMaintenance,pet,panel,tray,worker,game,provider,snapshot={indexing:true,sessions:[],active:[],todayUsage:{codex:{total:0},claude:{total:0}},workTotal:0},settings={},drag=null,lastWork=null,quitting=false,gestureMode=false,lastPetHit=false,ignoringMouse=true,petAssetsReady=false;
 const monitorProfile=createMonitorProfileDiagnostic({getWorker:()=>worker,isClosing:()=>quitting||shuttingDown,processId:process.pid,build});
 // No user gesture: the probe must not unlock audio playback the user has not allowed yet.
 const panelProbe=script=>panel&&!panel.isDestroyed()?panel.webContents.executeJavaScript(script,false):null;
@@ -141,6 +146,7 @@ const mainProfile=createMainProfileDiagnostic({isClosing:()=>quitting||shuttingD
 const settingsStore=createSnapshotStorage(join(dataRoot,'settings.json'));
 let cg,quotas,agents,plugins,petDiagnostics,pluginUsage,pluginEmbed,appUpdates,chatPreferences,voiceHost;
 let cardVoiceMix={voice:1,muted:false};
+let attachPluginRuntime,pluginClientStateOff,shutdownRecoveryFailed=false;
 const updateReservation=createUpdateReservation({external:()=>[
   ...(gameRequests||provider?.status().busy||activityClock.busy.size||game?.r95?.busy?.()?['chat']:[]),
   ...(cg?.status().busy?['cg']:[]),...(agents?.busy()?['work']:[]),...(voiceHost?.busy()?['voice']:[]),
@@ -150,7 +156,7 @@ const bootstrapUrl='https://github.com/lXiaoSel1/AI-Buddy/releases/latest';
 const updateCommands=new Set(['status','check','download','apply','cancel','automatic','bootstrap','manual-help','later']);
 const gameReads=new Set(['view','settings-get','companion-state','companion-memory-view','companion-life-list','cg-gallery','cg-data','cg-thumbnail','sprite-data','bg-data']);
 const gameStops=new Set(['companion-chat-cancel','companion-group-stop','companion-group-auto-pause','companion-group-auto-stop','cg-cancel']);
-function updateGuard(capability,run){return updateReservation.run(capability,run);}
+function updateGuard(capability,run){if(shutdownRecoveryFailed||shuttingDown)return Promise.reject(Object.assign(Error('退出尚未完成，请重试退出后重新打开。'),{code:'SHUTDOWN_RECOVERY_REQUIRED'}));return updateReservation.run(capability,run);}
 const stateBefore=new Map();const rendererErrors=[];
 // Set when startup could not bring up the companion features (or the app);
 // the app keeps running in safe mode instead of exiting on every launch.
@@ -256,7 +262,7 @@ function moveDrag(point){
 }
 function serializeSettings(run){const result=settingsWriteTail.then(run);settingsWriteTail=result.catch(()=>{});return result;}
 function saveSettings(){return serializeSettings(()=>settingsStore.writeText(JSON.stringify(settings)));}
-function settingsView(){return {startupFailure,safeMode:!!startupFailure,interactionMedia:Object.fromEntries(resources.status().characters.map(c=>[c.id,interactionMediaReady(c.id)])),resources:resources.status(),effectivePetCharacter:effectivePetCharacter(),petResourceNotice:validPetCharacter(themeCharacter)?null:'当前角色没有桌宠资源，保留当前桌宠',preferences:{...settings.preferences},themeCharacter,petCharacterId:petState.characterId??resources.fallback('deepseek'),version:appVersion,build:build.split(/[\\/]/).at(-1),dataRoot,logRoots,tokenSources,defaultModel:provider?.defaultModel,modelConnections:provider?.state?connectionView(provider):null,cgConnections:cg?.state?connectionView(cg):null,systemTimeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,monitorAppliedInterval};}
+function settingsView(){return {network:network?.snapshot(),startupFailure,safeMode:!!startupFailure,interactionMedia:Object.fromEntries(resources.status().characters.map(c=>[c.id,interactionMediaReady(c.id)])),resources:resources.status(),effectivePetCharacter:effectivePetCharacter(),petResourceNotice:validPetCharacter(themeCharacter)?null:'当前角色没有桌宠资源，保留当前桌宠',preferences:{...settings.preferences},themeCharacter,petCharacterId:petState.characterId??resources.fallback('deepseek'),version:appVersion,build:build.split(/[\\/]/).at(-1),dataRoot,logRoots,tokenSources,defaultModel:provider?.defaultModel,modelConnections:provider?.state?connectionView(provider):null,cgConnections:cg?.state?connectionView(cg):null,systemTimeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,monitorAppliedInterval};}
 // a stop the user asked for (companion-chat-cancel) is not a chat failure
 const userStopped=message=>/用户停止回复$/.test(String(message??''));
 function broadcastSettings(){const value=settingsView();for(const win of [pet,panel])if(win&&!win.isDestroyed())win.webContents.send('settings:update',value);void plugins?.refreshAppearance?.().catch(()=>{});return value;}
@@ -450,6 +456,8 @@ ipcMain.handle('plugins:choose',async event=>{if(event.sender!==panel?.webConten
 ipcMain.handle('plugins:choose-package',async event=>{if(event.sender!==panel?.webContents)throw Error('Invalid extension sender');assertImportIdle();if(!plugins)throw Error('扩展服务尚未就绪');const result=await dialog.showOpenDialog(panel,{title:t('选择插件包文件'),properties:['openFile'],filters:[{name:t('AI Buddy 插件包'),extensions:[OFFLINE_BUNDLE_EXTENSION,'tgz']}]});if(result.canceled)return {cancelled:true};return pluginActionResult({action:()=>plugins.prepareDshOffline(result.filePaths[0])},{});});
 ipcMain.handle('plugins:preferences-file',async(event,mode)=>{if(event.sender!==panel?.webContents)throw Error('Invalid extension sender');assertImportIdle();if(!plugins)throw Error('扩展服务尚未就绪');if(mode==='export'){const value=await pluginActionResult(plugins,{action:'community-export-preferences'});if(value?.error)return value;const result=await dialog.showSaveDialog(panel,{title:t('导出收藏与关注'),defaultPath:'ai-buddy-favorites.json',filters:[{name:'JSON',extensions:['json']}]});if(result.canceled)return {cancelled:true};writeFileSync(result.filePath,JSON.stringify(value,null,2),'utf8');return {saved:true};}if(mode!=='import')throw Error('Invalid favourites file mode');const result=await dialog.showOpenDialog(panel,{title:t('导入收藏与关注'),properties:['openFile'],filters:[{name:'JSON',extensions:['json']}]});if(result.canceled)return {cancelled:true};return pluginActionResult({action:async()=>plugins.action({action:'community-import-preferences',value:await readPreferencesFile(result.filePaths[0])})},{});});
 ipcMain.handle('plugins:work-engines',event=>{if(event.sender!==panel?.webContents)throw Error('Invalid extension sender');return detectWorkEngines({root,connections:provider?.view?.().profiles??[]});});
+const networkAction=createNetworkActions({getNetwork:()=>network,isTrusted:event=>event.sender===panel?.webContents,onSaved:async value=>{worker?.postMessage({type:'network-configure',network:value});if(plugins)await plugins?.configureNetwork?.();else await networkMaintenance?.configureNetwork?.();broadcastSettings();}});
+for(const operation of ['get','save','test'])ipcMain.handle('network:'+operation,async(event,value)=>{try{return await networkAction(event,operation,value);}catch(error){return {__buddyError:true,code:error.code??'NETWORK_ERROR',message:String(error.message),details:{host:error.host??null}};}});
 ipcMain.handle('chat:status',()=>provider.status());
 ipcMain.handle('chat:enabled',(_,enabled)=>updateGuard('storage',async()=>{assertImportIdle();await setPreferences({chatEnabled:enabled});audit({type:'chat-enabled',enabled:provider.enabled});return provider.status();}));
 ipcMain.handle('models:get',()=>connectionView(provider));
@@ -668,20 +676,25 @@ control.on('error',error=>{
   if(control.listening)audit({type:'control-error',message:error.message});
 });
 
-let shuttingDown=false;
+let shuttingDown=false;const closedServiceSteps=new Set();
 async function shutdown(forUpdate=false) {
   if(quitting||shuttingDown)return;
   forUpdate ||= updateReservation.committed();
-  shuttingDown=true;
+  shuttingDown=true;let phase='preparing';
   try{
   await deferredSaves.flushAll({scope:dataRoot});
   if(agents?.busy()){const choice=await dialog.showMessageBox(panel??pet,{type:'question',title:'工作与协作',message:'仍有工作任务正在运行。',buttons:['完成后退出','停止并保存后退出','返回'],defaultId:2,cancelId:2});if(choice.response===2)return;await agents.prepareExit(choice.response===0?'finish':'stop-save');}
   quitting=true;monitorProfile.cancel();mainProfile.cancel();closePetFullscreen();applyPetVisibility(false);
-  await dailyCgScheduler?.stopAndDrain();await rewardTail;await agents?.close();pluginEmbed?.close();await plugins?.close();await voiceHost?.close();await pluginUsage?.close();petDiagnostics?.dispose();dataImport?.close();buttonObserver?.close();trajectoryWindow?.destroy();trajectoryWindow=null;quotas?.close();await settingsTail;await settingsWriteTail;provider?.close();await cg?.close();await game?.flushWorkLedger?.().catch(()=>{});await game?.close();
-  await workSourceRegistry?.flush();
-  if(worker)await closeMonitorWorker(worker,{onDiagnostic:value=>audit({type:'monitor-worker-close',...value})});
-  appUpdates?.close({keepApply:forUpdate});control.close();deferredSaves.stop();app.exit(0);
-  }catch(error){quitting=false;syncPetFullscreenObserver();applyPetVisibility(false);if(forUpdate)updateReservation.reopenAfterFailedShutdown();audit({type:'shutdown-blocked',code:error.code,message:error.message});await dialog.showMessageBox(panel??pet,{type:'error',title:'工作尚未停止',message:'退出未完成，已保留当前运行状态。',detail:String(error.message),buttons:['返回']});}
+  phase='plugins';await closePluginServices({voice:voiceHost,platform:plugins,attach:replacement=>attachPluginRuntime(replacement)});
+  phase='closing';await closeAppServices([
+    ['daily-cg',()=>dailyCgScheduler?.stopAndDrain()],['rewards',()=>rewardTail],['agents',()=>agents?.close()],
+    ['plugin-pages',()=>{pluginClientStateOff?.();pluginClientStateOff=null;pluginEmbed?.close();}],['voice',()=>voiceHost?.close()],['plugin-usage',()=>pluginUsage?.close()],
+    ['pet-diagnostics',()=>petDiagnostics?.dispose()],['data-import',()=>dataImport?.close()],['buttons',()=>buttonObserver?.close()],['trajectory',()=>{trajectoryWindow?.destroy();trajectoryWindow=null;}],['quotas',()=>quotas?.close()],
+    ['settings',()=>settingsTail],['settings-write',()=>settingsWriteTail],['provider',()=>provider?.close()],['cg',()=>cg?.close()],['work-ledger',()=>game?.flushWorkLedger?.()],['game',()=>game?.close()],['work-sources',()=>workSourceRegistry?.flush()],
+    ['monitor',()=>worker&&closeMonitorWorker(worker,{onDiagnostic:value=>audit({type:'monitor-worker-close',...value})})],
+  ],closedServiceSteps);
+  appUpdates?.close({keepApply:forUpdate});await network?.close();control.close();deferredSaves.stop();app.exit(0);
+  }catch(error){shutdownRecoveryFailed=phase==='closing'||error.shutdownRecovery==='failed';quitting=false;syncPetFullscreenObserver();applyPetVisibility(false);if(forUpdate&&!shutdownRecoveryFailed)updateReservation.reopenAfterFailedShutdown();audit({type:'shutdown-blocked',code:error.code,message:error.message,phase,recovery:error.shutdownRecovery??null});await dialog.showMessageBox(panel??pet,{type:'error',title:t('退出未完成'),message:t(shutdownRecoveryFailed?'部分服务已停止，请重试退出后重新打开。':error.shutdownRecovery==='restored'?'扩展服务已恢复，已停止的活动不会自动重新开始。':'当前活动尚未停止，请稍后重试退出。'),detail:String(error.message),buttons:[t('返回')]});}
   finally{shuttingDown=false;}
 }
 app.on('before-quit',event=>{event.preventDefault();if(!quitting)void shutdown();});
@@ -698,6 +711,7 @@ app.whenReady().then(async()=>{
    app.exit(1);return;
   }
   deferredSaves.start();
+  network=await createNetworkService({dataRoot,session});
   onboarding=arg('data')===undefined&&!await hasBusinessData(dataRoot);
   dataImport=createDataImportService({root,dataRoot,build,pipe,manager:resources.manager(),onboarding,
    chooseSource:async()=>{if(arg('validation')==='1'&&arg('validation-import-source'))return arg('validation-import-source');const result=await dialog.showOpenDialog(panel??undefined,{title:'选择旧程序或实际存档目录',properties:['openDirectory']});return result.canceled?null:result.filePaths[0];},
@@ -726,11 +740,13 @@ app.whenReady().then(async()=>{
   const model=config.match(/^model\s*=\s*"([^"]+)"/m)?.[1] || 'gpt-6.1-sol';
   const binary=options=>resolveCodexBinary({root,explicit:arg('codex'),requireSearchHost:options?.requireSearchHost===true});
   const codex=new CodexProvider({binary,defaultModel:model,dataRoot,onUsage:usage=>worker?.postMessage({type:'companion-usage',...usage}),audit});
-  provider=new ModelRouter({codex,dataRoot,crypto:safeStorage,outputLimit:()=>settings.preferences?.maxOutputTokens??8192,searchPolicy:request=>game?.r95?.searchPolicy(request)??false,onNativeSearch:event=>game?.r95?.recordNativeSearch(event),legacy:existsSync(settingsStore.target+'.snapshots'),onActivity:internalActivity,onChange:()=>broadcastSettings(),onUsage:usage=>{appendFileSync(join(dataRoot,'api-usage.jsonl'),JSON.stringify(usage)+'\n');worker?.postMessage({type:'refresh'});},audit});
+  provider=new ModelRouter({fetchImpl:network.fetch,codex,dataRoot,crypto:safeStorage,outputLimit:()=>settings.preferences?.maxOutputTokens??8192,searchPolicy:request=>game?.r95?.searchPolicy(request)??false,onNativeSearch:event=>game?.r95?.recordNativeSearch(event),legacy:existsSync(settingsStore.target+'.snapshots'),onActivity:internalActivity,onChange:()=>broadcastSettings(),onUsage:usage=>{appendFileSync(join(dataRoot,'api-usage.jsonl'),JSON.stringify(usage)+'\n');worker?.postMessage({type:'refresh'});},audit});
   await provider.ready;
   chatPreferences=createChatPreferences({provider,read:()=>settings.preferences,write:preferences=>settingsStore.writeText(JSON.stringify({...settings,preferences})),apply:preferences=>{settings.preferences=preferences;},serialize:serializeSettings,audit});
-  const publishPlugins=value=>{const snapshot=plugins?.snapshot()??value;if(panel&&!panel.isDestroyed())panel.webContents.send('plugins:update',snapshot);if(Array.isArray(snapshot?.dsh?.installed))pluginEmbed?.recordsChanged(snapshot.dsh.installed);void voiceHost?.refreshPresetPackages();};
-  const legacyPlugins=await createPluginMaintenanceClient({runnerPath:join(build,'plugin-maintenance.cjs'),root,dataRoot,appVersion,busy:async()=>!!agents?.busy(),onUpdate:publishPlugins});
+  let extensionsUsable=false;
+  const publishPlugins=value=>{const usable=value?.service?.usable;if(usable===true&&!extensionsUsable&&plugins){extensionsUsable=true;queueMicrotask(()=>void plugins?.extensionsReady?.().catch(error=>audit({type:'extensions-ready-failed',code:error.code,message:error.message})));}else if(usable===false)extensionsUsable=false;const snapshot=plugins?.snapshot()??value;if(panel&&!panel.isDestroyed())panel.webContents.send('plugins:update',snapshot);if(Array.isArray(snapshot?.dsh?.installed))pluginEmbed?.recordsChanged(snapshot.dsh.installed);void voiceHost?.refreshPresetPackages();};
+  const legacyPlugins=await createPluginMaintenanceClient({network,runnerPath:join(build,'plugin-maintenance.cjs'),root,dataRoot,appVersion,busy:async()=>!!agents?.busy(),onUpdate:publishPlugins});
+  networkMaintenance=legacyPlugins;
   pluginUsage=createPluginUsageRecorder({dataRoot,onRecorded:()=>worker?.postMessage({type:'refresh'})});
   agents=createWorkPluginGate({dataRoot,build,verifyOwnerAuthority:(...args)=>{if(!game?.r95)throw Error('主人授权服务尚未就绪');return game.r95.owner.verifyProof(...args);},getPlatform:()=>plugins,getGame:()=>game,getProvider:()=>provider,binaryResolver:binary,audit,automaticWorkAllowed,
     confirmResumeApproval:createWorkResumeConfirmation({dialog,BrowserWindow,language:()=>settings.preferences.language}),
@@ -739,12 +755,12 @@ app.whenReady().then(async()=>{
     onRegisterUsageSource:async value=>{await managedWorkSource({id:value.id,tool:value.engine,path:value.path,name:'工作插件 · '+value.engine,format:'auto',enabled:true,mode:value.usageMode==='cumulative'?'cumulative':'request',workAttribution:value.workAttribution,...(value.nativeHistoryRange?{nativeHistoryRange:value.nativeHistoryRange}:{})});return {sourceId:value.id,registered:true};},
     onEvent:()=>{if(panel&&!panel.isDestroyed())panel.webContents.send('work:event',{type:'work-status-changed',busy:!!agents?.busy()});},
   });
-  voiceHost=createVoiceHost({dataRoot,build,crypto:safeStorage,getGame:()=>game,getPlatform:()=>plugins,audit,
+  voiceHost=createVoiceHost({network,dataRoot,build,crypto:safeStorage,getGame:()=>game,getPlatform:()=>plugins,audit,
     send:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('voice:event',value);},
     chooseAssets:async kind=>{const result=await dialog.showOpenDialog(panel,{title:'选择匹配的语音组件目录 · '+kind,properties:['openDirectory']});return result.canceled?null:result.filePaths[0];},
     chooseReference:async()=>{const result=await dialog.showOpenDialog(panel,{title:'选择当前角色的平静参考音',properties:['openFile'],filters:[{name:'WAV',extensions:['wav']}]});return result.canceled?null:{file:result.filePaths[0]};},
   });
-  plugins=await createPluginPlatform({voice:{quiesce:()=>voiceHost.quiesce(),snapshot:()=>voiceHost.snapshot(),audioSettings:value=>{cardVoiceMix={voice:value.voice,muted:value.muted};if(panel&&!panel.isDestroyed())panel.webContents.send('voice:event',{type:'card-volume',...cardVoiceMix});return cardVoiceMix;},cardEvent:request=>request?.type==='scope-update'?voiceHost.cardEvent(request):updateGuard('voice',()=>voiceHost.cardEvent(request)),cardPresentation:request=>voiceHost.cardPresentation(request)},pageAppearance:options=>pluginPageAppearance(settings.preferences,themeCharacter,{...options,faces:pluginFaces(),portraits:(builtinPluginPortraits??=builtinPortraits(build))}),root,build,dataRoot,crypto:safeStorage,legacyManager:legacyPlugins,getSocialHost:()=>game?.r95?.socialHost,getGame:()=>game,getProvider:()=>provider,BrowserWindow,session,ipcMain,pluginClientPreloadPath:join(build,'plugin-client-preload.cjs'),openSocialSetup:request=>openSocialLogin(request),renderBiliSheet:createBiliSheetRenderer(nativeImage),analyzeBiliFrames:createBiliFrameAnalyzer(nativeImage),onReadingOpen:async()=>{assertImportIdle();if(!pluginEmbed)throw Object.assign(Error('Plugin page is not ready'),{code:'PLUGIN_EMBED_UNAVAILABLE'});await pluginEmbed.handle({op:'open',target:'bilibili'});},
+  plugins=await createPluginPlatform({network,voice:{quiesce:()=>voiceHost.quiesce(),snapshot:()=>voiceHost.snapshot(),audioSettings:value=>{cardVoiceMix={voice:value.voice,muted:value.muted};if(panel&&!panel.isDestroyed())panel.webContents.send('voice:event',{type:'card-volume',...cardVoiceMix});return cardVoiceMix;},cardEvent:request=>request?.type==='scope-update'?voiceHost.cardEvent(request):updateGuard('voice',()=>voiceHost.cardEvent(request)),cardPresentation:request=>voiceHost.cardPresentation(request)},pageAppearance:options=>pluginPageAppearance(settings.preferences,themeCharacter,{...options,faces:pluginFaces(),portraits:(builtinPluginPortraits??=builtinPortraits(build))}),root,build,dataRoot,crypto:safeStorage,legacyManager:legacyPlugins,getSocialHost:()=>game?.r95?.socialHost,getGame:()=>game,getProvider:()=>provider,BrowserWindow,session,ipcMain,pluginClientPreloadPath:join(build,'plugin-client-preload.cjs'),openSocialSetup:request=>openSocialLogin(request),renderBiliSheet:createBiliSheetRenderer(nativeImage),analyzeBiliFrames:createBiliFrameAnalyzer(nativeImage),onReadingOpen:async()=>{assertImportIdle();if(!pluginEmbed)throw Object.assign(Error('Plugin page is not ready'),{code:'PLUGIN_EMBED_UNAVAILABLE'});await pluginEmbed.handle({op:'open',target:'bilibili'});},
     hostServices:{'work.host':{capability:'work.host',handler:request=>agents.service(request)}},resolveToolScope:context=>agents.nativeToolScope(context),
     runtimeLockPath:arg('dsh-runtime-lock'),busy:()=>!!agents?.busy(),onUpdate:publishPlugins,audit,automaticWorkAllowed,maintenanceAdmission:()=>!updateReservation.active(),
     openExternal:async url=>{const parsed=new URL(url);if(!['http:','https:'].includes(parsed.protocol)||parsed.username||parsed.password)throw Error('外部页面地址无效');await shell.openExternal(parsed.href);},
@@ -752,6 +768,8 @@ app.whenReady().then(async()=>{
     onUsage:value=>pluginUsage.record(value),
     onNotification:async value=>{audit({type:'plugin-notification',...value});if(value.kind==='social-activity'&&!value.clear&&value.title){const title=String(value.title).slice(0,80),seen=recentPluginActivity.findIndex(row=>row.pluginId===value.pluginId&&row.title===title);if(seen>=0)recentPluginActivity.splice(seen,1);recentPluginActivity.unshift({pluginId:value.pluginId,title,at:Date.now()});recentPluginActivity.splice(5);}if(value.kind==='social-activity'&&settings.preferences?.petVisible!==false)petEvent({kind:'social-activity',value});if(panel&&!panel.isDestroyed())panel.webContents.send('plugins:notification',value);},
   });
+  attachPluginRuntime=replacement=>{
+  pluginClientStateOff?.();pluginClientStateOff=null;pluginEmbed?.close();plugins=replacement;extensionsUsable=false;
   plugins.setWorkClientOpener(()=>agents.open());
   void voiceHost.refreshPresetPackages();
   const embedRecord=target=>plugins.snapshot().dsh.installed.find(value=>value.packageName===EMBED_TARGETS[target].packageName);
@@ -763,17 +781,18 @@ app.whenReady().then(async()=>{
       const record=embedRecord(target);if(!record?.enabled)throw Object.assign(Error('插件没有启用'),{code:'PLUGIN_EMBED_NOT_ENABLED'});if(!embedCapable(target,record.exactVersion))throw Object.assign(Error('这个版本的插件还不能放进主窗口'),{code:'PLUGIN_EMBED_UNSUPPORTED'});
       return plugins.openClientEmbedded({packageKey:record.packageKey,surface});},
     openWindow:async target=>{if(target==='work')return agents.open();const record=embedRecord(target);if(!record?.enabled)throw Object.assign(Error('插件没有启用'),{code:'PLUGIN_EMBED_NOT_ENABLED'});return plugins.action({action:'dsh-open-client',packageKey:record.packageKey});}});
-  plugins.onClientState(value=>pluginEmbed?.hostState(value));pluginEmbed.announce();
+  pluginClientStateOff=plugins.onClientState(value=>pluginEmbed?.hostState(value));pluginEmbed.announce();publishPlugins(plugins.snapshot());
+  };attachPluginRuntime(plugins);
   await agents.recoverUsage();
-  quotas=new QuotaService({dataRoot,home,crypto:safeStorage,binary,onChange:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('quotas:update',value);}});await quotas.ready;if(!cardQuiet)quotas.start();
+  quotas=new QuotaService({fetchImpl:network.fetch,dataRoot,home,crypto:safeStorage,binary,onChange:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('quotas:update',value);}});await quotas.ready;if(!cardQuiet)quotas.start();
   const cgUsage=usage=>{appendFileSync(join(dataRoot,'cg-usage.jsonl'),JSON.stringify({timestamp:new Date().toISOString(),...usage})+'\n');worker?.postMessage({type:'refresh'});};
-  cg=new CgService({canViewDailyScope:scope=>!!game&&scope?.personaId===game.context().personaId&&game.assertDailyCgScope(scope)===true,validateDailyScope:scope=>!quitting&&game?.assertDailyCgScope(scope)===true,captureRewardScope:()=>game?.r95?.activeScope()??null,onRewardFact:fact=>{if(!game?.r95)return {accepted:false};game.r95.feeding.ingestUsageFact(fact,{trusted:true});if(fact.basis==='actual'&&Number.isSafeInteger(fact.totalTokens))game.r95.origins.recordUsage({requestKey:fact.canonicalRequestId,totalTokens:fact.totalTokens,live:fact.live===true&&!fact.baseline});return {accepted:true};},automaticWorkAllowed,resourceCheck:ids=>resources.require(ids.filter(validPetCharacter)),themePlanner:new CgThemePlanner(provider,()=>settings.preferences?.language|| (app.getLocale().startsWith('zh')?'zh-CN':'en')),codex:new CodexImageProvider({binary,defaultModel:model,dataRoot,onUsage:cgUsage,audit}),dataRoot,crypto:safeStorage,imageCodec:createCgCodec(nativeImage),onUsage:cgUsage,onActivity:internalActivity,onChange:()=>{broadcastSettings();if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',{});},audit,referenceResolver:createCharacterReferenceResolver(build,ref=>cg.readAsset(ref))});
+  cg=new CgService({fetchImpl:network.fetch,canViewDailyScope:scope=>!!game&&scope?.personaId===game.context().personaId&&game.assertDailyCgScope(scope)===true,validateDailyScope:scope=>!quitting&&game?.assertDailyCgScope(scope)===true,captureRewardScope:()=>game?.r95?.activeScope()??null,onRewardFact:fact=>{if(!game?.r95)return {accepted:false};game.r95.feeding.ingestUsageFact(fact,{trusted:true});if(fact.basis==='actual'&&Number.isSafeInteger(fact.totalTokens))game.r95.origins.recordUsage({requestKey:fact.canonicalRequestId,totalTokens:fact.totalTokens,live:fact.live===true&&!fact.baseline});return {accepted:true};},automaticWorkAllowed,resourceCheck:ids=>resources.require(ids.filter(validPetCharacter)),themePlanner:new CgThemePlanner(provider,()=>settings.preferences?.language|| (app.getLocale().startsWith('zh')?'zh-CN':'en')),codex:new CodexImageProvider({binary,defaultModel:model,dataRoot,onUsage:cgUsage,audit}),dataRoot,crypto:safeStorage,imageCodec:createCgCodec(nativeImage),onUsage:cgUsage,onActivity:internalActivity,onChange:()=>{broadcastSettings();if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',{});},audit,referenceResolver:createCharacterReferenceResolver(build,ref=>cg.readAsset(ref))});
   await cg.ready;
   let legacyGameSettings={};
   try{
   game=await createGalgame({voice:voiceHost.controller,workBridge:agents.lifeBridge,r95Options:{tickAllowed:automaticWorkAllowed,getTimeZone:()=>settings.preferences?.statisticsTimeZone??'local',work:{ownerAction:(...args)=>agents.ownerAction(...args),getOwnerPlan:value=>agents.getOwnerPlan(value),ownerWorkOptions:value=>agents.ownerWorkOptions(value)},getRuntimeState:scope=>({sleepPhase:activityClock.phase,sleepIntentVersion:activityClock.sleepIntentVersion,waitingForReply:gameRequests>0,presenting:petState.socialPresentation===true,canPresent:(!!panel&&!panel.isDestroyed()&&panel.isVisible()&&!panel.webContents.isLoading())||(!!pet&&!pet.isDestroyed()&&pet.isVisible()&&petState.characterId===scope.characterId&&!petState.manual),activityAllowed:false}),onSpeech:value=>{const petShown=!!pet&&!pet.isDestroyed()&&pet.isVisible()&&petState.characterId===value.scope.characterId;if(petShown)petEvent({kind:'social-line',value});if(panel&&!panel.isDestroyed()&&(panel.isVisible()||petShown))panel.webContents.send('game:output',{type:'social.updated',...(petShown?{petMessageId:value.messageId}:{})});},onSleepIntent:value=>{if(value.kind==='temporary-feeding-start')activityClock.beginTemporaryWake(value.activityOriginId);else if(value.resumeOriginalSleep)activityClock.endTemporaryWake(value.activityOriginId);publishInteraction(true);}},dataRoot,provider,model,cg,resources,audit,imageConverter:rasterizeImage,onActivity:internalActivity,onPetVisibility:syncPetVisibility,onChatCommitted:chatCommitted,onOutput:event=>{if(panel&&!panel.isDestroyed())panel.webContents.send('game:output',event);},automaticWorkAllowed,getReplyStyle:()=>settings.preferences?.replyStyle??'natural',getLanguage:()=>settings.preferences?.language||(settings.preferences?'zh-CN':app.getLocale().startsWith('zh')?'zh-CN':'en'),onCharacter:id=>applyChrome(id),onCgUpdated:value=>{if(panel&&!panel.isDestroyed())panel.webContents.send('cg:updated',value?.kind==='daily'?{id:value.id,status:value.status}:value);}});
   await cg.drainRewardFacts();if(!cardQuiet)cg.start();
-   dailyCgScheduler=createDailyCgScheduler({dataRoot,now:Date.now,getTimeZone:()=>settings.preferences?.statisticsTimeZone??'local',admission:()=>!!game&&!quitting&&cg.enabled&&cg.available()&&automaticWorkAllowed()&&activityClock.phase==='awake',capture:context=>{const captured=game.captureDailyCg(context);return {...captured,profile:structuredClone(cg.selected()),themeConnection:structuredClone(cg.themePlanner.capture(captured.modelBinding))};},enqueue:(snapshot,context)=>game.enqueueDailyCg({...snapshot,signal:context.signal}),onError:error=>audit({type:'daily-cg-failed',code:error.code??'DAILY_CG_FAILED',message:String(error.message).slice(0,300)})});
+   dailyCgScheduler=createDailyCgScheduler({dataRoot,now:Date.now,getTimeZone:()=> 'local',admission:()=>!!game&&!quitting&&cg.enabled&&cg.available()&&automaticWorkAllowed()&&activityClock.phase==='awake',capture:context=>{const captured=game.captureDailyCg(context);return {...captured,profile:structuredClone(cg.selected()),themeConnection:structuredClone(cg.themePlanner.capture(captured.modelBinding))};},enqueue:(snapshot,context)=>game.enqueueDailyCg({...snapshot,signal:context.signal}),onError:error=>audit({type:'daily-cg-failed',code:error.code??'DAILY_CG_FAILED',message:String(error.message).slice(0,300)})});
    await dailyCgScheduler.ready;dailyCgScheduler.start();
   legacyGameSettings=await game.action('settings-get');
   markInstallationInitialized(installationResolution,dataRoot);
@@ -829,8 +848,8 @@ app.whenReady().then(async()=>{
   monitorAppliedInterval=settings.preferences.monitorRefreshMs;
   // The monitor worker is restarted with backoff if it exits unexpectedly.
   superviseWorker(()=>{
-  worker=new Worker(join(build,'monitor-worker.cjs'),{name:'buddy-monitor',workerData:{hostOwnsRegistry:true,roots:arg('roots')?logRoots:undefined,home,env:process.env,dataRoot,refreshIntervalMs:settings.preferences.monitorRefreshMs,statisticsTimeZone:settings.preferences.statisticsTimeZone,autoPriceUpdates:settings.preferences.autoPriceUpdates}});
-  worker.on('message',message=>{if(message.type==='sources'){tokenSources=message.value;if(panel&&!panel.isDestroyed())panel.webContents.send('tokens:update',message.value);}if(message.type==='source-result'){const pending=sourceRequests.get(message.id);if(pending){clearTimeout(pending.timer);sourceRequests.delete(message.id);message.error?pending.fail(Error(message.error)):pending.done(message.value);}}if(message.type==='snapshot'){publish(message.value);requestRewardDrain();}if(message.type==='configured'){monitorAppliedInterval=message.refreshIntervalMs;broadcastSettings();}if(message.type==='refreshed')broadcastSettings();if(message.type==='error')audit({type:'monitor-error',message:message.message});});
+  worker=new Worker(join(build,'monitor-worker.cjs'),{name:'buddy-monitor',workerData:{network:network.snapshot(),hostOwnsRegistry:true,roots:arg('roots')?logRoots:undefined,home,env:process.env,dataRoot,refreshIntervalMs:settings.preferences.monitorRefreshMs,statisticsTimeZone:settings.preferences.statisticsTimeZone,autoPriceUpdates:settings.preferences.autoPriceUpdates}});
+  worker.on('message',message=>{if(message.type==='network-route'){void replyNetworkRoute(monitoredWorker,message,network);return;}if(message.type==='sources'){tokenSources=message.value;if(panel&&!panel.isDestroyed())panel.webContents.send('tokens:update',message.value);}if(message.type==='source-result'){const pending=sourceRequests.get(message.id);if(pending){clearTimeout(pending.timer);sourceRequests.delete(message.id);message.error?pending.fail(Error(message.error)):pending.done(message.value);}}if(message.type==='snapshot'){publish(message.value);requestRewardDrain();}if(message.type==='configured'){monitorAppliedInterval=message.refreshIntervalMs;broadcastSettings();}if(message.type==='refreshed')broadcastSettings();if(message.type==='error')audit({type:'monitor-error',message:message.message});});
   const monitoredWorker=worker;worker.on('message',message=>{if(message.type==='reward-facts')consumeRewardFacts(message.value,monitoredWorker);});
   worker.on('message',message=>{if(message.type==='task-feedback'&&!quitting)feedback(message.value);if(message.type==='audit'&&message.value?.type)audit({...message.value,type:String(message.value.type)});});
   worker.on('error',error=>audit({type:'monitor-worker-error',message:error.stack}));
@@ -840,7 +859,7 @@ app.whenReady().then(async()=>{
   const updateStore=createSnapshotStorage(join(dataRoot,'app-update.json'));
   const updatePrefs=await readJson(updateStore,{}).catch(()=>({}));
   const updateBackend=createAppUpdateBackend({root,build,dataRoot,pipe,installation:installationResolution?.installation,version:appVersion});
-  const bootstrapBackend=createAppBootstrapBackend({root,build,dataRoot,pipe,installation:installationResolution?.installation,version:appVersion});
+  const bootstrapBackend=createAppBootstrapBackend({releaseClient:createAppReleaseClient({fetch:network.fetch,planDownload:network.planDownload}),root,build,dataRoot,pipe,installation:installationResolution?.installation,version:appVersion});
   appUpdates=createUpdateService({version:appVersion,build:build.split(/[\\/]/).at(-1),supported:updateBackend.supported&&!startupFailure,run:updateBackend.run,
     recoveryRequired:!!startupFailure,bootstrapRun:startupFailure?undefined:bootstrapBackend.run,
     load:()=>updatePrefs,save:value=>updateGuard('storage',()=>updateStore.writeText(JSON.stringify(value))),

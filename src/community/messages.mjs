@@ -1,4 +1,5 @@
 import {locale} from '../i18n.mjs';
+import {networkErrorMessage} from '../network-errors.mjs';
 export const communityMessages = Object.freeze({
   '正在核验 DSH 运行组件…': 'Verifying the DSH runtime component…', '正在启动原生宿主并检查插件…': 'Starting the native host and inspecting the plugin…', '正在检查插件安装计划…': 'Inspecting the plugin installation plan…', '正在提交插件安装请求…': 'Submitting the plugin installation request…', '正在安装插件…': 'Installing the plugin…', '正在应用插件变更…': 'Applying plugin changes…', '正在处理插件请求…': 'Processing the plugin request…', '首次启动会完整核对运行组件，检查完成后将显示安装计划。': 'The first launch verifies the full runtime component. The installation plan appears after inspection.',
   '尚未启动': 'Not started', '需要准备运行组件': 'Runtime component required', '已排队': 'Queued', '正在维护': 'Maintenance in progress', '维护完成': 'Maintenance completed', '维护失败': 'Maintenance failed', '已取消': 'Cancelled', '需要重新确认': 'Review required', '上次维护中断，需检查实际状态': 'Maintenance was interrupted; inspect its actual state',
@@ -69,5 +70,5 @@ const FAILURES = {
   COMMUNITY_OFFLINE_IDENTITY: ['插件包里的名字或版本和签名不一致。', 'The package name or version differs from what is signed.'],
   COMMUNITY_REVIEW_NOT_CONFIGURED: ['这个作品还没有接入评价。', 'This work does not take reviews yet.'], COMMUNITY_REVIEW_INVALID: ['GitHub 没有确认这条评价。', 'GitHub did not confirm this review.'], COMMUNITY_REVIEW_NOT_FOUND: ['没有找到这条评价草稿。', 'This review draft was not found.'],
 };
-export function communityErrorText(code, language = locale()) { const row = FAILURES[code]; return row ? row[language === 'en' ? 1 : 0] : null; }
+export function communityErrorText(code, language = locale()) { if(code?.startsWith('NETWORK_')||/^(PLUGIN_SOURCE_FETCH_FAILED|PLUGIN_DOWNLOAD_FAILED|DSH_COMPONENT_DOWNLOAD_|FFMPEG_COMPONENT_DOWNLOAD)/.test(code??''))return networkErrorMessage(code?.includes('TIMEOUT')?'NETWORK_TIMEOUT':code,{language,offline:true});const row = FAILURES[code]; return row ? row[language === 'en' ? 1 : 0] : null; }
 export function communityCount(key, n, translate) { const forms = locale() === 'en' && communityPlurals[key]; return (forms ? forms[n === 1 ? 0 : 1] : translate(key)).replaceAll('{n}', n); }

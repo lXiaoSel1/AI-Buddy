@@ -1,5 +1,6 @@
 import React,{useEffect,useState} from 'react';
-import {t} from './i18n.mjs';
+import {t,locale} from './i18n.mjs';
+import {networkErrorMessage} from './network-errors.mjs';
 import {Switch} from './ui-controls.mjs';
 
 const h=React.createElement;
@@ -58,8 +59,9 @@ export function UpdateSettingsView({version,onPlugins,state,plugins,error,checki
     state?.progress&&active&&h('div',null,h('progress',{max:total>0?total:undefined,value:total>0&&downloaded!=null?Math.min(downloaded,total):undefined,'aria-label':t('更新进度')}),
       downloaded!=null&&h('small',null,' '+size(downloaded)+(total>0?' / '+size(total):'')+(speed?' · '+speed+'/s':''))),
     !!state?.reasons?.length&&h('p',{role:'status'},state.reasons.map(row=>t(reasons[row.capability]??'后台活动')).join('、')),
-    problem&&h('div',{className:'settings-error',role:'alert'},t(errors[problem]??'操作未完成，请检查更新状态后重试。'),h('details',null,h('summary',null,t('技术详情')),h('code',null,problem))),
+    problem&&h('div',{className:'settings-error',role:'alert'},state?.retryOfficial?networkErrorMessage('NETWORK_MIRROR_MISMATCH',{language:locale()}):problem.startsWith('NETWORK_')?networkErrorMessage(problem,{host:state?.errorHost,language:locale()}):t(errors[problem]??'操作未完成，请检查更新状态后重试。'),h('details',null,h('summary',null,t('技术详情')),h('code',null,problem))),
     h('div',{className:'ws-srow'},
+      state?.retryOfficial&&state.retryAction&&button('retry-official','改用官方地址重试',()=>act(state.retryAction,{official:true})),
       state?.target?.requiresBootstrap&&h('p',{className:'settings-note'},t('此发布尚不支持应用内更新，请等待兼容版本。')),
       !state?.target?.requiresBootstrap&&(phase==='available'||state?.retryAction==='download')&&button('download','下载更新',()=>act('download')),
       (phase==='ready'||state?.retryAction==='apply')&&button('apply','安装并重启',()=>act('apply')),

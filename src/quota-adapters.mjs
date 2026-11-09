@@ -35,7 +35,7 @@ export async function fetchQuota(profile,{key,home,binary,folder,fetchImpl=fetch
  if(profile.kind==='claude')url='https://api.anthropic.com/api/oauth/usage';
  if(profile.kind==='glm')url=(profile.region==='global'?'https://api.z.ai':'https://open.bigmodel.cn')+'/api/monitor/usage/quota/limit';
  if(profile.kind==='kimi')url='https://api.kimi.com/coding/v1/usages';
- if(profile.kind==='minimax')url=(profile.region==='global'?'https://api.minimax.io':'https://api.minimaxi.com')+'/v1/token_plan/remains';
+ if(profile.kind==='minimax')url=(profile.region==='global'?'https://www.minimax.io':'https://www.minimax.cn')+'/v1/token_plan/remains';
  if(profile.kind==='deepseek')url='https://api.deepseek.com/user/balance';
  if(profile.kind==='gemini'){const capability=await call('https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist',{metadata:{ideType:'GEMINI_CLI',pluginType:'GEMINI'}});if(capability.ineligibleTiers?.some(t=>t.reasonCode==='UNSUPPORTED_CLIENT'))throw new QuotaError('此 Gemini 账号已停止旧 CLI 通道，请查看 Google 官方迁移说明','unsupported');const project=capability.cloudaicompanionProject;url='https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota';j=await call(url,project?{project:typeof project==='string'?project:project.id}:{});}
  j??=await call(url);return {...parseQuota(profile.kind,j),account,source:url,identity:createHash('sha256').update(token).digest('hex')};

@@ -14,9 +14,10 @@ export const MODEL_PRESETS=Object.freeze([
 export const presetFor=kind=>MODEL_PRESETS.find(value=>value.kind===kind);
 export function apiBaseUrl(value){
   let url;try{url=new URL(value);}catch{throw Error('请填写有效的服务地址');}
-  const local=['localhost','127.0.0.1','[::1]'].includes(url.hostname);
-  if(url.protocol!=='https:'&&!(local&&url.protocol==='http:'))throw Error('服务地址须使用 HTTPS；本机接口可使用 HTTP');
+  const local=localEndpoint(url.href);
+  if(url.protocol!=='https:'&&!(local&&url.protocol==='http:'))throw Error('服务地址须使用 HTTPS；本机或局域网接口可使用 HTTP');
   if(url.username||url.password||url.search||url.hash)throw Error('服务地址不能包含密钥、查询参数或用户名');
+  url.pathname=url.pathname.replace(/\/+$/,'').replace(/\/(?:chat\/completions|models)$/,'');
   return url.toString().replace(/\/+$/,'');
 }
-export const localEndpoint=value=>{try{return ['localhost','127.0.0.1','[::1]'].includes(new URL(value).hostname);}catch{return false;}};
+export const localEndpoint=value=>{try{const host=new URL(value).hostname.toLowerCase();if(['localhost','127.0.0.1','[::1]'].includes(host)||host.endsWith('.local'))return true;const parts=host.split('.');if(parts.length!==4||parts.some(x=>!/^\d+$/.test(x)||Number(x)>255))return false;const [a,b]=parts.map(Number);return a===10||a===172&&b>=16&&b<=31||a===192&&b===168;}catch{return false;}};

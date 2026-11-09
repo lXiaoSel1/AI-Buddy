@@ -1,4 +1,6 @@
+import {networkErrorMessage} from './network-errors.mjs';
 const messages={
+ SOCIAL_LOGIN_RETRY_STALE:['原下载失败记录已变化，请重新连接。','The original failed download changed. Start a new connection.'],
  SOCIAL_LOGIN_EXPIRED:['登录已过期，请重新扫码。','Login expired. Scan again.'],
  SOCIAL_LOGIN_IDENTITY_MISMATCH:['账号核对不一致，请取消后选择正确账号重新扫码。','Account identities do not match. Cancel and scan with the intended account.'],
  SOCIAL_LOGIN_CONNECTION_CHANGED:['连接设置已变化，本次结果已作废，请重试。','Connection settings changed. This result was discarded; retry.'],
@@ -14,4 +16,4 @@ const messages={
  QQ_RESTORE_NOT_AUTHORIZED:['角色或人生状态已变化，请重新确认接管者和允许范围。','The character or life changed. Confirm the operator and allowed conversations again.'],
  QQ_CACHE_LIMIT_REACHED:['连接组件的临时缓存达到上限，已停止本次连接以保护磁盘空间。请重试。','The connector reached its temporary cache limit and was stopped to protect disk space. Retry.'],
 };
-export function socialLoginErrorText(code,en=false){return messages[code]?.[en?1:0]??(en?'Connection did not complete. Retry or use Advanced connections.':'连接未完成，请重试或使用高级连接。');}
+export function socialLoginErrorText(code,en=false,host=''){if(typeof code==='string'&&code.startsWith('NETWORK_'))return networkErrorMessage(code,{host,language:en?'en':'zh-CN',offline:true});return messages[code]?.[en?1:0]??(en?'Connection did not complete. Retry or use Advanced connections.':'连接未完成，请重试或使用高级连接。');}

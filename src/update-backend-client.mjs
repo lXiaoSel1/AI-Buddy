@@ -34,12 +34,13 @@ export function createAppUpdateBackend({root,build,dataRoot,pipe,installation,ve
     if(hash.digest('hex')!==record.managerSha256||!sameFile(before,await lstat(path,{bigint:true}))||!samePath(await realpath(path),path))throw updateError('APP_UPDATE_MANAGER_UNTRUSTED');
     return path;
   }
-  async function run(command,{nonce,signal,selectionId,onProgress=()=>{}}){
+  async function run(command,{nonce,signal,selectionId,onProgress=()=>{},official=false}){
     if(!commands.has(command)||!digest.test(nonce)||(['prepare','apply'].includes(command)&&!digest.test(selectionId??'')))throw updateError('APP_UPDATE_PROTOCOL');
     const path=await verifiedManager(signal);
     signal?.throwIfAborted();
     const args=[`--app-update=${command}`,`--app-root=${root}`,`--app-nonce=${nonce}`,`--app-pid=${pid}`];
     if(selectionId)args.push(`--app-selection=${selectionId}`);
+    if(official)args.push('--network-official=true');
     const child=start(path,args,{cwd:root,stdio:['pipe','pipe','ignore'],windowsHide:true,detached:command==='apply'});
     return readUpdateWorker(child,{command,nonce,signal,onProgress,validateReady:event=>event.version===version&&event.manifestSha256===installation.manifestSha256});
   }

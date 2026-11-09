@@ -10,7 +10,7 @@ import { renamePluginPath } from '../plugin-files.mjs';
 import {createVoiceAssetVerifier} from './asset-verifier.mjs';
 import {waitVoiceOperation} from './operation-wait.mjs';
 import {voiceAssetRecovery} from './asset-errors.mjs';
-import {voiceAssetDownloadUrl,voiceAssetDownloadStream,parseVoiceAssetDownloads,writeVoiceAsset,checkVoiceAssetDisk,extractVoiceAssetArchive} from './asset-downloads.mjs';
+import {voiceAssetDownloadUrl,voiceAssetDownloadStream,downloadVoiceAsset,parseVoiceAssetDownloads,writeVoiceAsset,checkVoiceAssetDisk,extractVoiceAssetArchive} from './asset-downloads.mjs';
 
 const ids = { breeze: 'ai-buddy.voice-breeze', gpt: 'ai-buddy.voice-gpt-sovits' };
 const scripts = { asr: 'asr_worker.py', breeze: 'breeze_worker.py', gpt: 'gpt_worker.py' };
@@ -53,7 +53,7 @@ function validate(kind, descriptor) {
   return total;
 }
 
-export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = fetch,promote=renamePluginPath,verificationWorker }) {
+export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = fetch,planDownload,downloadOptions={},promote=renamePluginPath,verificationWorker }) {
   const root = join(dataRoot, 'voice', 'components');
   const pending = new Map();
   const descriptors = new Map();
@@ -179,7 +179,7 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
       ...(descriptor.ffmpegDirectory ? { ffmpegDirectory: join(destination, descriptor.ffmpegDirectory) } : {}) };
   }
 
-  async function prepare(kind, { engineId, localRoot, verifyOnly=false,forceDownload=false,signal, onProgress = () => {} } = {}) {
+  async function prepare(kind, { engineId, localRoot, verifyOnly=false,forceDownload=false,official=false,signal, onProgress = () => {} } = {}) {
     signal=signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal;
     signal.throwIfAborted();
     if (localRoot != null && !isAbsolute(localRoot)) throw fault('VOICE_ASSET_SOURCE', '本地语音组件目录无效');
@@ -248,18 +248,17 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
             if (!info.isFile() || info.size !== file.bytes) throw fault('VOICE_ASSET_HASH', '本地语音资源不符合清单');
             input = createReadStream(source, { signal });
           } else {
-            input = await voiceAssetDownloadStream(file,{signal,fetchImpl});
+            const cached=join(parent,'downloads',file.sha256+'.file');
+            await downloadVoiceAsset(file,cached,{...downloadOptions,official,signal,fetchImpl,planDownload,onBytes:count=>{downloadReceivedBytes+=count;report('downloading');}});
+            input=createReadStream(cached,{signal});
           }
-          await writeVoiceAsset(input,target,file,{signal,onBytes:count=>{receivedBytes+=count;if(!localRoot)downloadReceivedBytes+=count;report(localRoot?'copying':'downloading');}});
+          await writeVoiceAsset(input,target,file,{signal,onBytes:count=>{receivedBytes+=count;report(localRoot?'copying':'downloading');}});
           report(localRoot?'copying':'downloading');
         }
         if(!localRoot)for(const archive of selected.downloads?.archives??[]){
-          signal.throwIfAborted();const temporary=join(staging,archive.id+'.'+randomUUID()+'.download');
-          try{
-            report('downloading');const input=await voiceAssetDownloadStream(archive,{signal,fetchImpl});
-            await writeVoiceAsset(input,temporary,archive,{signal,onBytes:count=>{downloadReceivedBytes+=count;report('downloading');}});
-            report('extracting');await extractVoiceAssetArchive(temporary,staging,archive,{signal,onBytes:count=>{receivedBytes+=count;report('extracting');}});report('extracting');
-          }finally{await rm(temporary,{force:true});}
+          signal.throwIfAborted();const temporary=join(parent,'downloads',archive.sha256+'.archive');
+          report('downloading');await downloadVoiceAsset(archive,temporary,{...downloadOptions,official,signal,fetchImpl,planDownload,onBytes:count=>{downloadReceivedBytes+=count;report('downloading');}});
+          report('extracting');await extractVoiceAssetArchive(temporary,staging,archive,{signal,onBytes:count=>{receivedBytes+=count;report('extracting');}});report('extracting');
         }
         await flushProgress();signal?.throwIfAborted();
         await admit();
@@ -284,12 +283,12 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
     finally { clearTimeout(progressTimer);pending.delete(selected.destination); }
   }
 
-  async function prepareSelected({engineId,provider='local',signal,onProgress=()=>{}}={}){
+  async function prepareSelected({engineId,provider='local',official=false,signal,onProgress=()=>{}}={}){
     if(!['local','minimax'].includes(provider))throw fault('VOICE_ASSET_MANIFEST','未知语音服务');
     const selectedEngine=Object.keys(ids).find(key=>key===engineId||ids[key]===engineId);
     if(!selectedEngine)throw fault('VOICE_PLUGIN_REQUIRED','请启用一个语音插件');
     const components=[];
-    for(const kind of provider==='minimax'?['asr']:['asr',selectedEngine]){signal?.throwIfAborted();const result=await prepare(kind,{engineId:selectedEngine,signal,onProgress});components.push({kind,...result});}
+    for(const kind of provider==='minimax'?['asr']:['asr',selectedEngine]){signal?.throwIfAborted();const result=await prepare(kind,{engineId:selectedEngine,official,signal,onProgress});components.push({kind,...result});}
     return {state:'ready',components};
   }
 

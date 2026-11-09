@@ -190,7 +190,7 @@ export async function createCompanionR95({store,dataRoot,provider,memory,getCont
   if(name.startsWith('auto-')&&(scope.channel!=='app-group'||args.groupId&&args.groupId!==scope.conversationId))throw Error('当前群聊范围已变化');
   if(name==='auto-start'){const result=await auto.start({...args,groupId:scope.conversationId,scope,authorizationId:args.requestId??randomUUID()});await auto.next({groupId:scope.conversationId});return result;}
   if(name==='auto-pause')return auto.pauseForUser({groupId:scope.conversationId});
-  if(name==='auto-continue'){await auto.continue({groupId:scope.conversationId});return auto.next({groupId:scope.conversationId});}
+  if(name==='auto-continue'){await auto.continue({groupId:scope.conversationId,resumeFromNext:args.resumeFromNext===true,requestId:args.requestId});return auto.next({groupId:scope.conversationId});}
   if(name==='auto-stop'){const result=await auto.stop({groupId:scope.conversationId});if(sameSocialScope(result.scope,scope))presentation.cancelAutoPresentations(scope,result);return result;}
   // Read-only list for the trusted-owner picker: private QQ senders Core has recorded for one connected account.
   if(name==='owner-contacts'){if(typeof args.accountBindingId!=='string'||!args.accountBindingId||args.accountBindingId.length>300)throw Error('QQ 账号无效');return {contacts:socialHost.privateContacts({accountBindingId:args.accountBindingId})};}

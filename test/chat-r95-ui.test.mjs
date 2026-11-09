@@ -135,7 +135,7 @@ test('sidebar dot, kept lines on the pet, pet line notice and plugin detail are 
  const dashboard=await read('src/dashboard.mjs'),main=await read('src/main.mjs'),broker=await read('src/buddy-plugin-services/social-plugin-broker.mjs'),css=await read('src/workspace.css');
  assert.match(dashboard,/const unread=useGalgameUnread\(\),navDot=id=>id==='galgame'&&!settings\?\.safeMode\?unread:null;/);assert.match(dashboard,/navDot\(id\)&&h\('i',\{className:'nav-dot',role:'img','aria-label':navDot\(id\)\.title/);assert.match(css,/nav button>\.nav-dot\{/);
  const speech=main.slice(main.indexOf('onSpeech:'),main.indexOf('onSleepIntent:'));assert.match(speech,/\(panel\.isVisible\(\)\|\|petShown\)\)panel\.webContents\.send\('game:output',\{type:'social\.updated',\.\.\.\(petShown\?\{petMessageId:value\.messageId\}:\{\}\)\}\)/);
- assert.match(main,/if\(!wasVisible\)\{triggerPet\('wave','show'\);void deliverKeptLine\(\);\}/);assert.match(main,/petState\.characterId===view\.scope\?\.characterId\)petEvent\(\{kind:'social-line',value:\{\.\.\.line,scope:view\.scope\}\}\)/);
+ assert.match(main,/if\(visible\)\{pet\.showInactive\(\);if\(greet\)triggerPet\('wave','show'\);void deliverKeptLine\(\);\}/);assert.match(main,/petState\.characterId===view\.scope\?\.characterId\)petEvent\(\{kind:'social-line',value:\{\.\.\.line,scope:view\.scope\}\}\)/);
  assert.match(main,/fullness:feeding\?\.hunger\?\.satiety,canFeed/);
  assert.match(broker,/\.\.\.\(typeof payload\.detail==='string'&&payload\.detail\.trim\(\)\?\{detail:payload\.detail\.trim\(\)\.slice\(0,120\)\}:\{\}\)/);
 });
@@ -159,4 +159,11 @@ test('pet menu: Feed names her fullness; Recent plugin messages shows how many (
  assert.equal(menu.find(item=>item.label==='投喂').submenu[0].label,'喂 DeepSeek · 饱食 72');assert.ok(menu.some(item=>item.label==='最近的插件消息 · 2'));
  assert.equal(petContextTemplate({...base,foods:[{id:'pudding',label:'小布丁'}],feedTarget:'DeepSeek'}).find(item=>item.label==='投喂').submenu[0].label,'喂给 DeepSeek','unknown fullness keeps the old title');
  const en=petContextTemplate({...base,language:'en',foods:[{id:'pudding',label:'Pudding'}],feedTarget:'Claude',fullness:30,recent:[{pluginId:'a',title:'x'}]});assert.equal(en.find(item=>item.label==='Feed').submenu[0].label,'Feed Claude · fullness 30');assert.ok(en.some(item=>item.label==='Recent plugin messages · 1'));for(const language of ['zh-CN','en']){const empty=petContextTemplate({...base,language,foods:[],feedTarget:'DeepSeek',fullness:30});assert.deepEqual(empty.find(item=>item.label===(language==='en'?'Feed':'投喂')).submenu.map(item=>item.label),[language==='en'?'Buy in shop…':'去商店买…']);}
+});
+
+test('restart unknown Auto exposes explicit next-member recovery in both languages',()=>{
+ for(const language of ['zh-CN','en']){setLocale(language);const value=r95({auto:auto({status:'paused',pending:{requestId:'unknown-request',characterId:'claude',status:'unknown'}})});const label=language==='en'?'Continue with the next member':'从下一位继续';
+ const panel=render(GroupAutoPanel,{view:value,onAction:noop,nameOf}),strip=render(AutoRoundStrip,{view:value,onAction:noop,nameOf});assert(panel.includes(label));assert(strip.includes(label));assert.doesNotMatch(panel,/<button[^>]*disabled[^>]*>[^<]*Continue with the next member/);
+ assert.match(panel,language==='en'?/The previous turn did not finish/:/上一轮没有完成/);}
+ setLocale('zh-CN');
 });

@@ -14,7 +14,7 @@ const resultFields=result=>({...Object.fromEntries(['version','notes','installer
 export function createUpdateService({version,build,supported,run,bootstrapRun,recoveryRequired=false,onChange=()=>{},load=()=>({}),save=async()=>{},now=Date.now}){
   let record=load()??{},selected=null,task=null,closed=false,started=false,timer=null,retryAt=0,receiptTimer=null,lastProgress=null;
   let state={version,build,revision:0,phase:recoveryRequired?'recovery-required':supported?'idle':'bootstrap',checkedAt:record.checkedAt??null,
-    automatic:record.automatic!==false,target:null,error:recoveryRequired?'APP_UPDATE_RECOVERY_REQUIRED':null,retryAction:null,progress:null,reasons:[],canCancel:false};
+    automatic:record.automatic!==false,target:null,error:recoveryRequired?'APP_UPDATE_RECOVERY_REQUIRED':null,retryAction:null,progress:null,reasons:[],canCancel:false,retryOfficial:false,errorHost:''};
   const view=()=>structuredClone(state);
   const update=patch=>{state={...state,...patch,revision:state.revision+1};onChange(view());};
   let saveTail=Promise.resolve();
@@ -35,7 +35,7 @@ export function createUpdateService({version,build,supported,run,bootstrapRun,re
       progress:{bytes,total,bytesPerSecond}});
   }
   function accept(result,op){
-    if(result.ok!==true)throw Object.assign(updateError(result.code??'APP_UPDATE_FAILED'),{retryAfterMs:result.retryAfterMs});
+    if(result.ok!==true)throw Object.assign(updateError(result.code??'APP_UPDATE_FAILED'),{retryAfterMs:result.retryAfterMs,retryOfficial:result.retryOfficial===true,host:result.host});
     const {stage}=result;
     if(op==='status'&&['idle','current'].includes(stage)){if(state.phase==='initializing'||state.phase==='verifying')update({phase:stage,target:null,canCancel:false});return;}
     if(op==='status'&&stage==='applying'){
@@ -48,15 +48,15 @@ export function createUpdateService({version,build,supported,run,bootstrapRun,re
     else if(stage!=='completed')selected=null;
     const target=['available','ready','completed'].includes(stage)?resultFields(result):null;
     if(target&&op==='prepare'&&state.target){target.notes??=state.target.notes;target.installerBytes??=state.target.installerBytes;}
-    update({phase:stage,target,error:stage==='recovery-required'?(result.code??'APP_UPDATE_RECOVERY_REQUIRED'):null,retryAction:null,progress:null,reasons:[],canCancel:false});
+    update({phase:stage,target,error:stage==='recovery-required'?(result.code??'APP_UPDATE_RECOVERY_REQUIRED'):null,retryAction:null,progress:null,reasons:[],canCancel:false,retryOfficial:false,errorHost:''});
   }
-  async function operate(op){
+  async function operate(op,{official=false}={}){
     if(task)throw updateError('APP_UPDATE_BUSY');
     if(op==='check'&&now()<retryAt)return view();
     const previous=state.phase;
     const controller=new AbortController(),nonce=randomBytes(32).toString('hex');
     task={op,controller,nonce};lastProgress=null;
-    if(op!=='status')update({phase:op==='check'?'checking':op==='prepare'?'downloading':'waiting-safe-point',error:null,retryAction:null,progress:null,reasons:[],canCancel:true});
+    if(op!=='status')update({phase:op==='check'?'checking':op==='prepare'?'downloading':'waiting-safe-point',error:null,retryAction:null,retryOfficial:false,errorHost:'',progress:null,reasons:[],canCancel:true});
     try{
       if(op==='check'){
         const checkedAt=now();
@@ -64,7 +64,7 @@ export function createUpdateService({version,build,supported,run,bootstrapRun,re
       }
       const backend=supported?run:bootstrapRun;
       if(!backend)throw updateError('APP_UPDATE_BOOTSTRAP');
-      const result=await backend(op,{nonce,signal:controller.signal,onProgress:progress,...(['apply','prepare'].includes(op)?{selectionId:selected}:{})});
+      const result=await backend(op,{nonce,signal:controller.signal,onProgress:progress,official,...(['apply','prepare'].includes(op)?{selectionId:selected}:{})});
       accept(result,op);
     }catch(error){
       const cancelled=error.code==='APP_UPDATE_CANCELLED'||error.name==='AbortError';
@@ -75,7 +75,7 @@ export function createUpdateService({version,build,supported,run,bootstrapRun,re
       else if(error.code==='APP_UPDATE_RECOVERY_REQUIRED')phase='recovery-required';
       const clearTarget=phase==='recovery-required'||phase==='bootstrap'||(op==='check'&&!cancelled);
       update({phase,error:cancelled?null:error.code??'APP_UPDATE_FAILED',retryAction:phase==='error'?({prepare:'download',apply:'apply'}[op]??'check'):null,
-        progress:null,reasons:[],canCancel:false,...(clearTarget?{target:null}:{})});
+        progress:null,reasons:[],canCancel:false,retryOfficial:phase==='error'&&error.retryOfficial===true,errorHost:typeof error.host==='string'?error.host:'',...(clearTarget?{target:null}:{})});
       if(clearTarget)selected=null;
     }finally{task=null;}
     return view();
@@ -91,8 +91,10 @@ export function createUpdateService({version,build,supported,run,bootstrapRun,re
       return view();
     }
     if(closed||(!supported&&!bootstrapRun)||state.phase==='recovery-required')throw updateError('APP_UPDATE_INVALID_STATE');
-    if(command==='check'||command==='bootstrap')return operate('check');
-    if(command==='download'&&selected&&!state.target?.requiresBootstrap&&(state.phase==='available'||state.retryAction==='download'))return operate('prepare');
+    const official=value?.official===true;
+    if(official&&(!state.retryOfficial||command!==state.retryAction))throw updateError('APP_UPDATE_INVALID_STATE');
+    if(command==='check'||command==='bootstrap')return operate('check',{official});
+    if(command==='download'&&selected&&!state.target?.requiresBootstrap&&(state.phase==='available'||state.retryAction==='download'))return operate('prepare',{official});
     if(command==='apply'&&selected&&(state.phase==='ready'||state.retryAction==='apply'))return operate('apply');
     throw updateError('APP_UPDATE_INVALID_STATE');
   }

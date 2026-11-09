@@ -4,7 +4,8 @@ import {createHash,randomUUID} from 'node:crypto';
 export const harnessFailure=(message,code)=>Object.assign(Error(message),{code});
 export const profileHash=value=>createHash('sha256').update(value).digest('hex');
 const ENV_KEYS=new Set(['systemroot','comspec','path','pathext','userprofile','home','homedrive','homepath','localappdata','appdata','temp','tmp','programfiles','programfiles(x86)','programdata','windir','codex_home','kimi_shell_path','lang','lc_all','term']);
-export function agentProcessEnvironment(env=process.env){return Object.fromEntries(Object.entries(env).filter(([key,value])=>ENV_KEYS.has(key.toLowerCase())&&typeof value==='string'));}
+const NETWORK_ENV_KEYS=new Set(['HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','NODE_USE_SYSTEM_CA','NODE_USE_ENV_PROXY']);
+export function agentProcessEnvironment(env=process.env,networkEnvironment={}){return {...Object.fromEntries(Object.entries(env).filter(([key,value])=>ENV_KEYS.has(key.toLowerCase())&&typeof value==='string')),...Object.fromEntries(Object.entries(networkEnvironment).filter(([key,value])=>NETWORK_ENV_KEYS.has(key.toUpperCase())&&typeof value==='string'))};}
 export const profileToml=value=>JSON.stringify(String(value));
 function assertInside(root,path){const part=relative(root,path);if(part==='..'||part.startsWith('..'+sep)||isAbsolute(part))throw harnessFailure('工作执行器资料路径越界','AGENT_PROFILE_PATH_INVALID');}
 async function safeDirectory(root,path){assertInside(root,path);const parts=relative(root,path).split(sep).filter(Boolean);let cursor=root;for(const part of parts){cursor=join(cursor,part);try{const info=await lstat(cursor);if(info.isSymbolicLink()||!info.isDirectory())throw harnessFailure('工作执行器资料目录含链接或普通文件','AGENT_PROFILE_PATH_INVALID');}catch(error){if(error.code!=='ENOENT')throw error;await mkdir(cursor);}}const actual=await realpath(path);assertInside(root,actual);return actual;}

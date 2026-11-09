@@ -4,6 +4,7 @@ import {lstat,mkdir,open,realpath,rename,unlink} from 'node:fs/promises';
 import {dirname,join,resolve} from 'node:path';
 import {verifyRawSshSignature} from './raw-sshsig.mjs';
 import {updateError} from './update-reservation.mjs';
+import {fetchDownloadResponse,downloadPinnedFile} from './network-download.mjs';
 
 export const APP_RELEASE_REPOSITORY='lXiaoSel1/AI-Buddy';
 export const APP_RELEASE_PUBLIC_KEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFLmFoAgOaffTLAwNJ+U1v0MK4iaTHbMZ+BjaidVla05';
@@ -14,6 +15,7 @@ const sha=value=>createHash('sha256').update(value).digest('hex');
 const invalid=()=>updateError('APP_UPDATE_VERIFICATION_FAILED');
 const requireProof=value=>{if(!value)throw invalid();};
 const localVerify=(payload,signature)=>verifyRawSshSignature(Buffer.from(payload,'utf8'),signature,APP_RELEASE_PUBLIC_KEY,'git');
+export const APP_RELEASE_PROOF_URLS=Object.freeze(['https://github.com/'+APP_RELEASE_REPOSITORY+'/releases/latest/download/app-release-proof.json','https://raw.githubusercontent.com/'+APP_RELEASE_REPOSITORY+'/main/app-release-proof.json']);
 function versionParts(value){requireProof(typeof value==='string'&&value.length<=128&&/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(value));return value.split('.').map(BigInt);}
 function newer(a,b){const x=versionParts(a),y=versionParts(b);for(let n=0;n<3;n++)if(x[n]!==y[n])return x[n]>y[n];return false;}
 function lines(text,separator){const result=new Map();for(const line of text.split('\n')){const n=line.indexOf(separator);if(n<0)continue;const key=line.slice(0,n);requireProof(!result.has(key));result.set(key,line.slice(n+separator.length));}return result;}
@@ -38,6 +40,8 @@ export function verifyAppReleaseProof(release,{verifySignature=localVerify}={}){
     bindings.get('App Update Protocol')==='1'&&bindings.get('App Bootstrap Protocol')==='1');
   return Object.freeze({...release});
 }
+export function parseAppReleaseProofEnvelope(value,options){requireProof(value?.schemaVersion===1&&Object.keys(value).every(key=>['schemaVersion','release'].includes(key)));return verifyAppReleaseProof(value.release,options);}
+export function encodeAppReleaseProofEnvelope(release,options){return JSON.stringify({schemaVersion:1,release:verifyAppReleaseProof(release,options)},null,2)+'\n';}
 export function bootstrapSelectionId(source,release){
   requireProof(digest.test(source?.installationSha256??'')&&digest.test(source?.pointerSha256??''));
   return sha(['AI-Buddy-App-Bootstrap-1',source.installationSha256,source.pointerSha256,release.version,release.installerSha256,
@@ -74,21 +78,21 @@ function httpFailure(response){
   const retry=Number(response.headers?.get('retry-after'));
   const reset=Number(response.headers?.get('x-ratelimit-reset'));
   const delay=Number.isFinite(retry)&&retry>0?retry*1000:response.headers?.get('x-ratelimit-remaining')==='0'&&reset>0?reset*1000-Date.now():null;
-  return Object.assign(updateError(delay>0||response.status===429?'APP_UPDATE_RATE_LIMITED':'APP_UPDATE_NETWORK_FAILED'),{retryAfterMs:delay>0?Math.min(86400000,delay):undefined});
+  return Object.assign(updateError(delay>0||response.status===429||response.headers?.get('x-ratelimit-remaining')==='0'?'APP_UPDATE_RATE_LIMITED':'APP_UPDATE_NETWORK_FAILED'),{retryAfterMs:delay>0?Math.min(86400000,delay):undefined});
 }
-export function createAppReleaseClient({fetch:request=globalThis.fetch,verifySignature=localVerify,idleMs=60000}={}){
+export function createAppReleaseClient({fetch:request=globalThis.fetch,planDownload,verifySignature=localVerify,idleMs=60000}={}){
   const verify=release=>verifyAppReleaseProof(release,{verifySignature});
-  async function consume(url,limit,signal,handle,{expectedBytes,download=false}={}){
+  async function consume(url,limit,signal,handle,{expectedBytes,download=false,official=false}={}){
     const controller=new AbortController();let timer;
     const reset=()=>{clearTimeout(timer);timer=setTimeout(()=>controller.abort(),idleMs);timer.unref?.();};reset();
     const combined=signal?AbortSignal.any([signal,controller.signal]):controller.signal;
     try{
-      const response=await request(url,{signal:combined,redirect:download?'follow':'error',headers:{'User-Agent':'AI-Buddy-App-Update','Accept-Encoding':'identity',...(download?{}:{Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})}});
+      const init={signal:combined,redirect:'error',headers:{'User-Agent':'AI-Buddy-App-Update','Accept-Encoding':'identity',...(download?{}:{Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})}};
+      const response=download?await fetchDownloadResponse(url,{...init,fetchImpl:request,planDownload,official,validateUrl:value=>{const target=new URL(value);requireProof(target.protocol==='https:'&&!target.username&&!target.password&&['github.com','raw.githubusercontent.com','release-assets.githubusercontent.com','objects.githubusercontent.com'].includes(target.hostname));return target;}}):await request(url,init);
       if(response.status!==200)throw httpFailure(response);
       const length=response.headers?.get('content-length'),encoding=response.headers?.get('content-encoding');
       requireProof((!encoding||encoding==='identity')&&(!length||/^\d+$/.test(length)&&Number(length)<=limit&&(expectedBytes===undefined||Number(length)===expectedBytes)));
-      if(response.url){const end=new URL(response.url);requireProof(end.protocol==='https:'&&!end.username&&!end.password&&
-        (download?['github.com','release-assets.githubusercontent.com','objects.githubusercontent.com'].includes(end.hostname):response.url===url));}
+      if(!download&&response.url)requireProof(response.url===url);
       requireProof(response.body&&typeof response.body[Symbol.asyncIterator]==='function');
       let total=0;for await(const value of response.body){combined.throwIfAborted();reset();const bytes=Buffer.from(value);total+=bytes.length;requireProof(total<=limit);await handle(bytes,total);}
       combined.throwIfAborted();if(expectedBytes!==undefined)requireProof(total===expectedBytes);return total;
@@ -96,7 +100,7 @@ export function createAppReleaseClient({fetch:request=globalThis.fetch,verifySig
     finally{clearTimeout(timer);controller.abort();}
   }
   async function json(url,signal){const chunks=[];await consume(url,apiLimit,signal,bytes=>chunks.push(bytes));try{return JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw invalid();}}
-  async function check(currentVersion,{signal}={}){
+  async function checkApi(currentVersion,{signal}={}){
     versionParts(currentVersion);const r=await json(api+'/releases/latest',signal);
     requireProof(r&&r.draft===false&&r.prerelease===false&&typeof r.tag_name==='string'&&r.tag_name.startsWith('v'));
     const version=r.tag_name.slice(1);versionParts(version);
@@ -113,22 +117,28 @@ export function createAppReleaseClient({fetch:request=globalThis.fetch,verifySig
       installerSha256:installer.hash,manifestSha256:manifest.hash,sourceCommit:r.target_commitish,tagObjectSha:tag.sha,
       signedPayload:v.payload,signature:v.signature,checksumsSha256:checksums.hash});
   }
-  async function download(release,cache,{signal,onProgress=()=>{}}={}){
+  async function check(currentVersion,{signal,official=false}={}){
+    try{return await checkApi(currentVersion,{signal});}catch(cause){
+      if(!['APP_UPDATE_RATE_LIMITED','APP_UPDATE_NETWORK_FAILED'].includes(cause.code))throw cause;
+      for(const url of APP_RELEASE_PROOF_URLS){
+        try{const chunks=[];await consume(url,apiLimit,signal,bytes=>chunks.push(bytes),{download:true,official});let envelope;try{envelope=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw invalid();}const release=parseAppReleaseProofEnvelope(envelope,{verifySignature});return newer(release.version,currentVersion)?release:null;}
+        catch(error){if(error.code==='APP_UPDATE_VERIFICATION_FAILED'){if(planDownload?.(url,{official})?.mirror)error.retryOfficial=true;throw error;}if(error.code==='APP_UPDATE_CANCELLED')throw error;}
+      }
+      throw Object.assign(cause,{fallbackUnavailable:true});
+    }
+  }
+  async function download(release,cache,{signal,onProgress=()=>{},official=false}={}){
     release=verify(release);await assertNoUpdateLinks(cache);await mkdir(cache,{recursive:true});await assertNoUpdateLinks(cache);
     const final=join(cache,release.installerSha256+'-'+release.installerName);
     try{return await verifyCachedInstaller(final,release,signal);}catch(error){if(error.code!=='ENOENT'&&error.code!=='APP_UPDATE_VERIFICATION_FAILED')throw error;}
-    const partial=final+'.'+randomBytes(16).toString('hex')+'.partial';let output;
     try{
-      signal?.throwIfAborted();output=await open(partial,'wx');const hash=createHash('sha256');
-      await consume(release.installerUrl,release.bytes,signal,async(bytes,total)=>{await output.writeFile(bytes);hash.update(bytes);onProgress({phase:'update-download',bytes:total,total:release.bytes});},{expectedBytes:release.bytes,download:true});
-      requireProof(hash.digest('hex')===release.installerSha256);await output.sync();await output.close();output=null;
-      signal?.throwIfAborted();await assertNoUpdateLinks(cache);await assertNoUpdateLinks(final);
-      await rename(partial,final);return await verifyCachedInstaller(final,release,signal);
+      await downloadPinnedFile({url:release.installerUrl,bytes:release.bytes,sha256:release.installerSha256},final,{fetchImpl:request,planDownload,official,signal,idleMs,onProgress:value=>onProgress({phase:'update-download',bytes:value.receivedBytes,total:value.totalBytes}),validateUrl:value=>{const target=new URL(value);requireProof(target.protocol==='https:'&&!target.username&&!target.password&&['github.com','release-assets.githubusercontent.com','objects.githubusercontent.com'].includes(target.hostname));return target;}});
+      return await verifyCachedInstaller(final,release,signal);
     }catch(error){
       if(signal?.aborted)throw updateError('APP_UPDATE_CANCELLED');
       if(['ENOSPC','EDQUOT'].includes(error.code))throw updateError('APP_UPDATE_DISK_SPACE');
-      throw error;
-    }finally{await output?.close();await unlink(partial).catch(error=>{if(error.code!=='ENOENT')throw error;});}
+      if(error.code?.startsWith('NETWORK_DOWNLOAD_'))throw invalid();throw error;
+    }
   }
   return {check,download,verify};
 }

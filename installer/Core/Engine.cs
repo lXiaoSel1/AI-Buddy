@@ -53,12 +53,23 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         var initial=existing is not null&&characters.Contains(existing.InitialCharacter)?existing.InitialCharacter:portableInitial is not null&&characters.Contains(portableInitial)?portableInitial:characters.Contains(manifest.DefaultCharacterId)?manifest.DefaultCharacterId:characters.First();
         return new(edition,characters,initial);
     }
-    public DiskEstimate Estimate(InstallOptions options) {
+    public DiskEstimate Estimate(InstallOptions options,CancellationToken cancel=default) {
+        cancel.ThrowIfCancellationRequested();
         var packages=Manifests.Select(m,options.Edition,options.Characters,options.InitialCharacter);
-        long download=packages.Sum(p=>p.Bytes),expanded=packages.Sum(p=>p.UnpackedBytes);
-        long missing=packages.Where(p=>!File.Exists(Path.Combine(options.Cache,p.Sha256+".zip"))||new FileInfo(Path.Combine(options.Cache,p.Sha256+".zip")).Length!=p.Bytes).Sum(p=>p.Bytes);
-        long retained=0;var previous=Existing(options.Root);
-        if(previous is not null)foreach(var dir in new[]{previous.Build,previous.Runtime}){var path=SafePaths.Under(options.Root,dir);if(Directory.Exists(path))retained+=Directory.EnumerateFiles(path,"*",SearchOption.AllDirectories).Sum(p=>new FileInfo(p).Length);}
+        long expanded=packages.Sum(p=>p.UnpackedBytes);
+        var local=options.OfflineDirectory is {} folder?LocalInstallSource.Open(folder,manifestHash):null;
+        long download=0;var previous=Existing(options.Root);
+        foreach(var package in packages) {
+            cancel.ThrowIfCancellationRequested();
+            if(local is not null)continue;
+            if(options.OfflineDirectory is not null)continue;
+            if(Task.Run(()=>Reusable(package,options.Root,previous,cancel),cancel).GetAwaiter().GetResult() is not null)continue;
+            if(Task.Run(()=>Hashing.Matches(SafePaths.Under(options.Cache,package.Sha256+".zip"),package.Bytes,package.Sha256,cancel),cancel).GetAwaiter().GetResult())continue;
+            download+=package.Bytes;
+        }
+        long missing=download;
+        long retained=0;
+        if(previous is not null)foreach(var dir in new[]{previous.Build,previous.Runtime}){cancel.ThrowIfCancellationRequested();var path=SafePaths.Under(options.Root,dir);if(Directory.Exists(path))foreach(var file in Directory.EnumerateFiles(path,"*",SearchOption.AllDirectories)){cancel.ThrowIfCancellationRequested();retained+=new FileInfo(file).Length;}}
         // Existing files remain until a validated new version has started. The stage becomes the final tree by rename.
         var rootBytes=packages.Where(p=>p.Mount=="root").Sum(p=>p.UnpackedBytes);
         var managerBytes=File.Exists(selfExe)?new FileInfo(selfExe).Length:64L*1024*1024;
@@ -95,13 +106,17 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         var options=requested with {Root=root,DataPath=profile.DataPath,Pipe=profile.Pipe};
         var packages=Manifests.Select(m,options.Edition,options.Characters,options.InitialCharacter);
         Dictionary<string,string>? offline=null;
+        LocalInstallSource? local=null;
         if(options.OfflineDirectory is {} folder) {
             SafePaths.NoLinks(folder);
+            local=LocalInstallSource.Open(folder,manifestHash);
+            if(local is null) {
             var supplied=SafePaths.Under(folder,ReleaseIdentity.ManifestFileName);
             Manifests.Parse(await File.ReadAllBytesAsync(supplied,cancel),manifestHash);
             var missing=packages.Where(p=>!File.Exists(SafePaths.Under(folder,p.AssetName))).Select(p=>p.AssetName).ToArray();
             if(missing.Length>0)throw new FileNotFoundException("Offline packages missing:\n"+string.Join("\n",missing));
             offline=packages.ToDictionary(p=>p.Id,p=>SafePaths.Under(folder,p.AssetName));
+            }
         }
         var estimate=Estimate(options);
         InstallJournal? journal=File.Exists(journalPath)?Json.Read<InstallJournal>(journalPath):null;
@@ -125,18 +140,18 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
             var reusable=new Dictionary<string,string>();
             foreach(var package in packages) {
                 if(appUpdate&&await PackageMatches(package,SafePaths.Under(stage,package.Mount),cancel))continue;
-                if(appUpdate&&previous!.PackageHashes.TryGetValue(package.Id,out var oldHash)&&oldHash==package.Sha256) {
-                    var original=package.Mount switch{"root"=>root,"runtime"=>SafePaths.Under(root,previous.Runtime),_=>SafePaths.Under(root,previous.Build)};
-                    if(await PackageMatches(package,original,cancel)){reusable.Add(package.Id,original);continue;}
-                }
+                var original=await Reusable(package,root,previous,cancel);
+                if(original is null&&local is not null&&await PackageMatches(package,local.Mount(package),cancel))original=local.Mount(package);
+                if(original is not null){reusable.Add(package.Id,original);continue;}
+                if(local is not null)throw new InvalidDataException("Local source files are missing or damaged: "+package.Id+" / 本地资源缺失或损坏");
                 remaining.Add(package);
             }
             var downloadBytes=estimate.CacheAdditionalBytes;
-            if(appUpdate) {
+            {
                 downloadBytes=0;
-                if(offline is null)foreach(var p in remaining)
+                if(offline is null&&local is null)foreach(var p in remaining)
                     if(!await Hashing.Matches(SafePaths.Under(options.Cache,p.Sha256+".zip"),p.Bytes,p.Sha256,cancel))downloadBytes+=p.Bytes;
-                estimate=estimate with{CacheAdditionalBytes=downloadBytes};
+                estimate=estimate with{DownloadBytes=downloadBytes,CacheAdditionalBytes=downloadBytes};
                 progress?.Report(new("estimate","",downloadBytes,estimate.InstallAdditionalBytes));
             }
             CheckSpace(root,options.Cache,estimate);
@@ -241,6 +256,11 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
             }
         }
     }
+    static async Task<string?> Reusable(Package package,string root,Installation? previous,CancellationToken cancel) {
+        if(previous?.PackageHashes is null||!previous.PackageHashes.TryGetValue(package.Id,out var oldHash)||oldHash!=package.Sha256)return null;
+        var original=package.Mount switch {"root"=>root,"runtime"=>SafePaths.Under(root,previous.Runtime),_=>SafePaths.Under(root,previous.Build)};
+        return await PackageMatches(package,original,cancel)?original:null;
+    }
     static async Task<bool> PackageMatches(Package package,string directory,CancellationToken cancel) {
         foreach(var file in package.Files)
             if(!await Hashing.Matches(SafePaths.Under(directory,file.Path),file.Bytes,file.Sha256,cancel))return false;
@@ -294,7 +314,7 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         const string none="No previous version is available / 没有可回退的上一版";
         try{
             root=SafePaths.Full(root);var path=SafePaths.Under(root,"local/installer/rollback.json");if(!File.Exists(path))return none;
-            var journal=Json.Read<InstallJournal>(path);if(journal.PreviousPointer is null)return none;ValidateJournal(journal);
+            var journal=Json.Read<InstallJournal>(path);if(journal.PreviousPointer is null||journal.Phase=="rollback-used")return none;ValidateJournal(journal);
             using(var pointer=JsonDocument.Parse(journal.PreviousPointer))if(!pointer.RootElement.TryGetProperty("path",out var p)||p.ValueKind!=JsonValueKind.String||!Directory.Exists(SafePaths.Under(root,p.GetString()!)))return "The previous program files are no longer present / 上一版程序文件已不存在";
             await GuardDowngrade(root,journal,cancel);return null;
         }catch(IncompatibleRollbackException ex){return ex.Message;}
@@ -329,9 +349,11 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         Json.Save(receipt,new{installerRevision=ReleaseIdentity.InstallerRevision,phase=journal.Phase,journal,failedAt=DateTimeOffset.UtcNow,failure=failure.ToString(),compatibility=compatibility.Message,personalDataRetained=true,previousProgramRetained=true,compatibleRepairVersion=m.AppVersion});
         progress?.Report(new("recovery-required",receipt,Detail:$"Personal data and program backups retained; run this AI Buddy {m.AppVersion} installer again for compatible repair"));return receipt;
     }
-    async Task<InstallJournal> RollbackJournal(string root,InstallJournal journal,IProgress<InstallProgress>? progress,CancellationToken cancel) {
+    async Task<InstallJournal> RollbackJournal(string root,InstallJournal journal,IProgress<InstallProgress>? progress,CancellationToken cancel,bool confirmPluginDowngrade=false) {
         ValidateJournal(journal,root);
         var data=PersonalDataProtection.Read(root,journal);
+        var notice=PluginRollbackNotice(root,journal);
+        if(notice is not null&&!confirmPluginDowngrade)throw new IncompatibleRollbackException(notice);
         await host.Stop(root,Existing(root),progress,cancel);
         // Initialization may finish before readiness or before a power loss. Once
         // real data exists, every later retry must preserve that same profile.
@@ -397,12 +419,28 @@ public sealed class InstallEngine(InstallManifest manifest,byte[] manifestBytes,
         }
         if(lines.Any(line=>!string.IsNullOrWhiteSpace(line)))throw new IncompatibleRollbackException("Cannot verify companion data for a safe downgrade; program and personal data were retained");
     }
-    public async Task Rollback(string root,IProgress<InstallProgress>? progress,CancellationToken cancel) {
+    public string? RollbackNotice(string root) {
+        var path=SafePaths.Under(root,"local/installer/rollback.json");
+        return File.Exists(path)?PluginRollbackNotice(root,Json.Read<InstallJournal>(path)):null;
+    }
+    static string? PluginRollbackNotice(string root,InstallJournal journal) {
+        if(journal.PreviousPointer is null)return null;
+        using var pointer=JsonDocument.Parse(journal.PreviousPointer);var p=pointer.RootElement;
+        var version=p.TryGetProperty("appVersion",out var av)?av.GetString():p.TryGetProperty("version",out var v)?v.GetString():null;
+        if(!Version.TryParse(version,out var target)||target>=new Version(2,0,12))return null;
+        var registry=SafePaths.Under(root,"local/plugins/registry-v2.json");if(!File.Exists(registry))return null;
+        using var document=JsonDocument.Parse(File.ReadAllBytes(registry));
+        if(document.RootElement.TryGetProperty("packages",out var packages)&&packages.ValueKind==JsonValueKind.Object&&packages.EnumerateObject().Any(row=>row.Name.StartsWith("ai-buddy.voice-",StringComparison.Ordinal)&&row.Value.TryGetProperty("dataNamespace",out var ns)&&ns.GetString()=="legacy"))
+            return $"回退到 {version} 后，语音插件需要重新安装。角色声音和设置会保留。 / After rolling back to {version}, reinstall the voice plugins. Character voices and settings will be retained.";
+        return null;
+    }
+    public async Task Rollback(string root,IProgress<InstallProgress>? progress,CancellationToken cancel,bool confirmPluginDowngrade=false) {
         root=SafePaths.Full(root);var control=SafePaths.Under(root,"local/installer");
         await using var installationLock=new FileStream(Path.Combine(control,"install.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
         var journal=Json.Read<InstallJournal>(Path.Combine(control,"rollback.json"));
-        if(journal.PreviousPointer is null)throw new IOException("No previous version is available");
-        journal=await RollbackJournal(root,journal,progress,cancel);Json.Save(Path.Combine(control,"transaction.json"),journal with{Phase="rolled-back"});
+        if(journal.PreviousPointer is null||journal.Phase=="rollback-used")throw new IOException("No previous version is available / 没有可回退的上一版");
+        journal=await RollbackJournal(root,journal,progress,cancel,confirmPluginDowngrade);Json.Save(Path.Combine(control,"transaction.json"),journal with{Phase="rolled-back"});
+        Json.Save(Path.Combine(control,"rollback.json"),journal with{Phase="rollback-used"});
     }
     public async Task Uninstall(string root,bool deletePersonalData,IProgress<InstallProgress>? progress,CancellationToken cancel,string? cache=null) {
         root=SafePaths.Full(root);var installed=Existing(root)??throw new IOException("Installation record is missing");

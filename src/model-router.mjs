@@ -24,7 +24,7 @@ export class ModelRouter{
   get currentName(){return this.selected()?.name??'尚未选择模型';}
   get currentKind(){return this.selected()?.kind??null;}
   status(){return {enabled:this.enabled,model:this.defaultModel,provider:this.currentKind,name:this.currentName,busy:this.activeTurns>0};}
-  publicProfile(profile){return {id:profile.id,kind:profile.kind,name:profile.name,protocol:profile.protocol,baseUrl:profile.baseUrl,model:profile.model,models:profile.models??[],...(this.protocols===API_PROTOCOLS?{reasoningEffort:profileEffort(profile),contextTokens:profile.contextTokens??null,imageCapability:this.imageCapability(profile)}:{}),keyConfigured:!!profile.keyCiphertext};}
+  publicProfile(profile){return {id:profile.id,kind:profile.kind,name:profile.name,protocol:profile.protocol,baseUrl:profile.baseUrl,model:profile.model,models:profile.models??[],...(this.protocols===API_PROTOCOLS?{reasoningEffort:profileEffort(profile),contextTokens:profile.contextTokens??null,imageCapability:this.imageCapability(profile)}:{}),...(profile.region?{region:profile.region}:{}),keyConfigured:!!profile.keyCiphertext};}
   view(){return {...this.status(),codexModel:this.codex.defaultModel,activeId:this.state.activeId,presets:this.presets,profiles:this.state.profiles.map(profile=>this.publicProfile(profile))};}
   async mutate(fn){const result=this.tail.then(async()=>{await this.ready;const previous=this.state,next=structuredClone(previous);const value=await fn(next);await this.store.writeText(JSON.stringify(next));this.state=next;this.onChange(this.view());return value??this.view();});this.tail=result.catch(()=>{});return result;}
   validateDraft(draft,previous=null){
@@ -38,6 +38,7 @@ export class ModelRouter{
     if(draft.key?.trim()){if(!this.crypto.isEncryptionAvailable())throw Error('系统密钥加密不可用，请修复 Windows 密钥存储');keyCiphertext=this.crypto.encryptString(draft.key.trim()).toString('base64');}
     const models=cleanModelCatalog(Array.isArray(draft.models)?draft.models:previous?.baseUrl===baseUrl&&previous?.protocol===protocol?previous.models??[]:[]);
     const profile={id:previous?.id??randomUUID(),kind:preset.kind,name,protocol,baseUrl,model,keyCiphertext,models};
+    if(['kimi','minimax'].includes(preset.kind)&&draft.region!==undefined){if(!['cn','global'].includes(draft.region))throw Error('请选择中国大陆或国际地区');profile.region=draft.region;}
     if(this.protocols===API_PROTOCOLS){
       const capacity=Object.hasOwn(draft,'contextTokens')?draft.contextTokens:previous?.model===model?previous.contextTokens:null;
       if(capacity!=null&&capacity!==''&&(!Number.isSafeInteger(Number(capacity))||Number(capacity)<2048||Number(capacity)>2000000))throw Error('上下文容量应为 2048–2000000 tokens，未知请留空');
@@ -50,7 +51,7 @@ export class ModelRouter{
   unlocked(id){if(this.activeTurns&&(id===undefined||[...(this.lanes?.values()??[])].some(lane=>lane.executing===id||lane.queue.some(turn=>turn.profile.id===id))||id===this.state.activeId))throw Error('请等待当前对话完成后再修改或切换连接');}
   async save(draft){return this.mutate(state=>{const previous=draft.id?state.profiles.find(profile=>profile.id===draft.id):null;if(draft.id&&!previous)throw Error('连接不存在');this.unlocked(previous?.id??'new');const profile=this.validateDraft(draft,previous);const index=state.profiles.findIndex(value=>value.id===profile.id);if(index<0)state.profiles.push(profile);else state.profiles[index]=profile;return this.publicProfile(profile);});}
   async remove(id){return this.mutate(state=>{this.unlocked(id);if(!state.profiles.some(profile=>profile.id===id))throw Error('连接不存在');state.profiles=state.profiles.filter(profile=>profile.id!==id);if(state.activeId===id){state.activeId=null;this.setEnabled(false);}});}
-  materialize(profile){if(!profile||!profile.model)throw Error('请先选择连接并填写模型 ID');if(profile.kind==='codex')return {...profile};let key='';if(profile.keyCiphertext){try{key=this.crypto.decryptString(Buffer.from(profile.keyCiphertext,'base64'));}catch{throw Error('API Key 无法解密，请重新填写');}}if(!key&&!(profile.kind==='custom'&&localEndpoint(profile.baseUrl)))throw Error('请先填写 API Key');return {...profile,key};}
+  materialize(profile){if(!profile||!profile.model)throw Error('请先选择连接并填写模型 ID');if(profile.kind==='codex')return {...profile};let key='';if(profile.keyCiphertext){try{key=this.crypto.decryptString(Buffer.from(profile.keyCiphertext,'base64'));}catch{throw Error('API Key 无法解密，请重新填写');}}if(!key&&!localEndpoint(profile.baseUrl))throw Error('请先填写 API Key');return {...profile,key};}
   async activate(id){return this.mutate(state=>{this.unlocked();const profile=state.profiles.find(value=>value.id===id);this.materialize(profile);state.activeId=id;if(this.codex.enabled)this.codex.setEnabled(false);});}
   setEnabled(value){if(value)this.materialize(this.selected());this.enabled=!!value;if(!this.enabled){for(const controller of this.controllers)controller.abort();this.codex.setEnabled(false);}this.onChange(this.state?this.view():null);}
   listProviders(){return this.state.profiles.map(profile=>({id:profile.id,name:profile.name}));}
@@ -102,14 +103,15 @@ export class ModelRouter{
     }}finally{lane.running=false;}
   }
   requestController(signal,timeout=this.timeoutMs,{idle=false}={}){
-    const controller=new AbortController(),abort=()=>controller.abort(signal?.reason);let timer;
+    const controller=new AbortController(),abort=()=>controller.abort(signal?.reason);let timer,totalTimer;
     const reset=()=>{clearTimeout(timer);if(timeout>0&&!controller.signal.aborted)timer=setTimeout(()=>controller.abort(idle?Object.assign(Error('模型长时间未返回数据'),{code:'GAME_MODEL_TIMEOUT'}):undefined),timeout);};
     if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});reset();this.controllers.add(controller);
-    return {controller,reset,dispose:()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);this.controllers.delete(controller);}};
+    if(idle){totalTimer=setTimeout(()=>controller.abort(Object.assign(Error('模型回复超过最长等待时间'),{code:'MODEL_TOTAL_TIMEOUT'})),30*60*1000);totalTimer.unref?.();}
+    return {controller,reset,dispose:()=>{clearTimeout(timer);clearTimeout(totalTimer);signal?.removeEventListener('abort',abort);this.controllers.delete(controller);}};
   }
   async *stream(options){
     options={...this.requestContext?.getStore(),...options};
-    await this.ready;if(!this.enabled)throw Error('联网聊天已关闭');const profile=this.materialize(this.selected());const idle=!!options.gameBinding,request=this.requestController(options.signal,idle?this.gameIdleTimeoutMs:this.timeoutMs,{idle});
+    await this.ready;if(!this.enabled)throw Error('联网聊天已关闭');const profile=this.materialize(this.selected());const idle=true,request=this.requestController(options.signal,options.gameBinding?this.gameIdleTimeoutMs:this.timeoutMs,{idle});
     const activityId='chat:'+randomUUID(),activity={id:activityId,kind:options.purpose==='cg-theme'?'cg-theme':'chat',purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId};this.onActivity({...activity,active:true});
     try{
       const selectedPolicy=(options.singleSubmission===true||options.gameBinding)?false:await this.searchPolicy({profile:this.publicProfile(profile),purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId}),policy=selectedPolicy===true?{allowed:true}:selectedPolicy&&typeof selectedPolicy==='object'?selectedPolicy:{allowed:false},capability=nativeSearchCapability(profile);
@@ -124,7 +126,7 @@ export class ModelRouter{
   }
   withRequestContext(metadata,fn){this.requestContext??=new AsyncLocalStorage();return this.requestContext.run(metadata,fn);}
   withFrozenBudget({outputLimit,contextTokens},fn){if(outputLimit!=='auto'&&(!Number.isSafeInteger(outputLimit)||outputLimit<256||outputLimit>65536)||!Number.isSafeInteger(contextTokens)||contextTokens<2048||contextTokens>2000000)throw Error('Invalid captured request budget');this.budgetContext??=new AsyncLocalStorage();return this.budgetContext.run(Object.freeze({outputLimit,contextTokens}),fn);}
-  async *observeNativeSearch(stream,options){for await(const chunk of stream){if(chunk.type?.startsWith('native-search-'))this.onNativeSearch?.({activityOriginId:options.activityOriginId,scope:options.scope,event:structuredClone(chunk)});yield chunk;}}
+  async *observeNativeSearch(stream,options){for await(const chunk of stream){options.onStreamActivity?.();if(chunk.type?.startsWith('native-search-'))this.onNativeSearch?.({activityOriginId:options.activityOriginId,scope:options.scope,event:structuredClone(chunk)});yield chunk;}}
   // Output limit for one request: the user's setting ('auto' or 256-65536) for
   // callers that follow it, never below the caller's own floor, and never above
   // the model's declared output limit, 65536 or what the context window leaves.

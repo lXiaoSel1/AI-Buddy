@@ -88,6 +88,8 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
   const row=running.get(t.id);
   return t.status==='active'&&row?.expectedVersion===t.version?row:null;
  }
+ const bindingIdFor=(t,p,handId=t.state.handId)=>t.bindings?.[handId+':'+p.id]??handId+':'+p.id;
+ function bindingRevoked(t){if(t.status!=='paused')return false;for(const p of t.players.filter(row=>row.kind!=='user'))try{models.assert(bindingIdFor(t,p));}catch(error){if(['GAME_BINDING_REVOKED','GAME_BINDING_MISSING'].includes(error.code))return true;throw error;}return false;}
  function view(t){
   const user=t.players.find(p=>p.kind==='user'),turn=pendingTurn(t)?.turn,fault=faults.get(t.id);
   const topups={},remainingHands=settledHands(t.state);
@@ -97,7 +99,7 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
    if(amount>0)topups[p.id]=amount;
   }
   return {tableId:t.id,version:t.version,status:t.status,type:t.type,hand:t.hand,userSeatId:user.id,leaveAfter:t.leaveAfter===true,currentCharacterId:getGame().context().characterId??null,pendingSeats:t.pendingSeats?.map(({id,kind,characterId})=>({id,kind,characterId}))??null,topups,
-   modelTurn:turn?copy(turn):null,
+   modelTurn:turn?copy(turn):null,bindingRecovery:bindingRevoked(t),
    modelStatus:t.status==='paused'&&fault?.version===t.version?copy(fault.status):null,
    presentation:{...copy(t.presentation??{emotions:{},lastSpeech:null,events:[]}),showdown:settledShowdown(t.state),...remainingHands&&{remainingHands}},relationshipProgress:Object.fromEntries(t.players.filter(p=>p.kind==='ai'&&economy.relationshipProgress).map(p=>[p.id,economy.relationshipProgress(t.type,p,t.state.handId)])),actorKind:t.players.find(p=>p.id===t.state.actorId)?.kind??null,projection:ready().project(t,{actorId:user.id,channel:'user'}),accounts:t.players.map(p=>({playerId:p.id,...economy.account(p)})),history:copy(t.history),charactersAvailable:characters(),pendingAiAiFacts:economy.pendingRelationshipFacts().filter(f=>f.tableId===t.id).length,outboxPending:economy.outbox().filter(o=>t.history.includes(o.handId)).length};
  }
@@ -116,8 +118,9 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
    return {action,body:{op:moveMethod,tableId,expectedVersion,action:canonical},legacy:[{op:'action',tableId,expectedVersion,action}]};
   }
   if(method!==leaveMethod)throw fail('GAME_COMMAND_RECEIPT_INVALID');
-  const {afterHand=false,immediate=false}=payload;
-  if(typeof afterHand!=='boolean'||typeof immediate!=='boolean'||afterHand&&immediate)throw fail('GAME_COMMAND_RECEIPT_INVALID');
+  const {afterHand=false,immediate=false,voidHand=false,confirmed=false}=payload;
+  if(typeof afterHand!=='boolean'||typeof immediate!=='boolean'||typeof voidHand!=='boolean'||typeof confirmed!=='boolean'||afterHand&&immediate)throw fail('GAME_COMMAND_RECEIPT_INVALID');
+  if(voidHand)return {body:{op:leaveMethod,tableId,expectedVersion,voidHand,confirmed},legacy:[]};
   const legacy=afterHand?[{op:'leave-after',tableId,expectedVersion}]:[
    {op:'close',tableId,expectedVersion},
    t.type==='doudizhu'?{op:'leave-after',tableId,expectedVersion}:{op:'action',tableId,expectedVersion,action:{type:'leave',actorId:'user'}},
@@ -168,7 +171,7 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
    try{
     const context=await getGame().gameContext(p);
     checkHand();
-    const prompt=publicChatPrompt({projection:economy.project(t,{channel:'public'}),character:context.character,text:payload.text,history:t.chat.filter(m=>m.source!=='game-action').slice(-20)}),bindingId=t.state.handId+':'+p.id;
+    const prompt=publicChatPrompt({projection:economy.project(t,{channel:'public'}),character:context.character,text:payload.text,history:t.chat.filter(m=>m.source!=='game-action').slice(-20)}),bindingId=bindingIdFor(t,p);
     const result=await models.request({bindingId,requestId,receiptKey,...prompt,scope:p,guard:async()=>{await options.check?.();checkHand();},signal});
     checkHand();models.assert(bindingId);
     if(!result.text||result.text.length>200000)throw fail('GAME_CHAT_REPLY_INVALID');
@@ -202,7 +205,7 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
   if(models.status(requestId+':0'))throw fail('GAME_REQUEST_ALREADY_SUBMITTED');
   const controller=new AbortController(),combined=signal?AbortSignal.any([signal,controller.signal]):controller.signal,started=performance.now();
   const turn={requestId,actorId:p.id,stage:'queued',attempt:1,startedAt:now()};
-  const bindingId=t.state.handId+':'+p.id;
+  const bindingId=bindingIdFor(t,p);
   const guardSync=()=>{
    checkSync?.();combined.throwIfAborted();
    const current=table(t.id);
@@ -270,6 +273,10 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
     if(!legal)throw fail('GAME_USER_ACTION_DENIED');
     if(action.type==='all-in'&&action.raiseTo!==undefined&&action.raiseTo!==legal.raiseTo)throw fail('GAME_ALLIN_AMOUNT_INVALID');
     const next=economy.action({...payload,action},undefined,intent.body);announce(committedCardSpeechFacts(next,action));
+   }else if(payload.voidHand){
+    if(payload.confirmed!==true)throw fail('GAME_RECOVERY_CONFIRMATION_REQUIRED');if(!bindingRevoked(t))throw fail('GAME_BINDING_RECOVERY_DENIED');
+    if([...auxiliary.values()].some(row=>row.tableId===t.id))throw fail('GAME_MODEL_BUSY');
+    economy.control({...payload,op:'void-hand'},intent.body);
    }else if(t.status==='closed'){
     throw fail('GAME_PAUSED_OR_COMPLETED');
    }else if(t.status==='completed'||t.type==='doudizhu'||payload.afterHand){
@@ -282,18 +289,25 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
   }
   if(method==='games.table.next'){const bindings=t.state.phase==='redeal-required'?[]:await prepareBindings(t.pendingSeats??t.players,t.id+':'+(t.hand+1));options.checkSync?.();table(t.id);for(const value of bindings)models.assertPrepared(value);const next=economy.next({...payload,bindings});announce(committedCardSpeechFacts(next,null));return view(next);}
   if(['games.table.pause','games.table.resume','games.table.seats','games.table.topup'].includes(method)){
+   let recoveryBindings=[];
+   if(method==='games.table.resume'){
+    const body={op:'resume',tableId:t.id,expectedVersion:payload.expectedVersion,amount:payload.amount,players:payload.players,...payload.rebindCurrent&&{rebindCurrent:payload.rebindCurrent,confirmed:payload.confirmed}};
+    if(economy.commandReceipt(payload.commandId,body))return view(t);
+    if(payload.rebindCurrent){if(payload.confirmed!==true)throw fail('GAME_RECOVERY_CONFIRMATION_REQUIRED');if(!bindingRevoked(t))throw fail('GAME_BINDING_RECOVERY_DENIED');checkVersion(t,payload.expectedVersion);if(running.has(t.id)||[...auxiliary.values()].some(row=>row.tableId===t.id))throw fail('GAME_MODEL_BUSY');recoveryBindings=await prepareBindings(t.players,t.state.handId+':rebind:'+digest(payload.commandId).slice(0,16));options.checkSync?.();checkVersion(table(t.id),t.version);for(const value of recoveryBindings)models.assertPrepared(value);}
+    else for(const p of t.players.filter(row=>row.kind!=='user'))models.assert(bindingIdFor(t,p));
+   }
    if(method==='games.table.topup'){
     const {commandId,expectedVersion,amount,players}=payload;
     const prior=economy.commandReceipt(commandId,{op:'topup',tableId:t.id,expectedVersion,amount,players});
     if(prior)return view(t);
     if(pendingTurn(t))throw fail('GAME_MODEL_BUSY');
    }
-   const result=economy.control({...payload,op:method.split('.').at(-1),...(method.endsWith('.seats')?{players:resolvePlayers(payload.players)}:{})});
+   const result=economy.control({...payload,op:method.split('.').at(-1),bindings:recoveryBindings,...(method.endsWith('.seats')?{players:resolvePlayers(payload.players)}:{})});
    if(method==='games.table.pause'&&!result.duplicate&&result.status==='paused')running.get(t.id)?.controller.abort(modelCancelled());
    announce(committedCardSpeechFacts(table(result.id),null));
    return view(table(result.id));
   }
-  if(method==='games.chat.read')return {messages:copy(t.chat)};
+  if(method==='games.chat.read'){if(payload.handId&&!t.history.includes(payload.handId)&&payload.handId!==t.state.handId)throw fail('GAME_REPLAY_NOT_SETTLED');return economy.chatPage(t.id,{before:payload.before??null,limit:payload.limit??200,handId:payload.handId??null});}
   if(method==='games.chat.send')return chatSend(t,payload,options);
   if(method==='games.replay.read'||method==='games.replay.review'){
    if(!t.history.includes(payload.handId))throw fail('GAME_REPLAY_NOT_SETTLED');
@@ -309,7 +323,7 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
      if(scope.lifeId!==p.lifeId||scope.operationId!==p.operationId)throw fail('GAME_LIFE_CHANGED');
     };
     const context=await getGame().gameContext(p);checkReview();
-    const prompt=reviewPrompt({replay,character:context.character,question:payload.question}),bindingId=payload.handId+':'+p.id;
+    const prompt=reviewPrompt({replay,character:context.character,question:payload.question}),bindingId=bindingIdFor(t,p,payload.handId);
     const result=await models.request({bindingId,requestId:payload.requestId,...prompt,scope:p,guard:async()=>{await options.check?.();checkReview();},signal});
     checkReview();models.assert(bindingId);beginCommit();
     await getGame().recordGameFact({id:payload.requestId+':review',kind:'review',scope:p,handId:payload.handId,text:result.text,knowledge:'post-settlement-review'});

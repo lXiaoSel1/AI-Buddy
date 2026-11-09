@@ -8,7 +8,7 @@ const digest=bytes=>createHash('sha256').update(bytes).digest('hex'),asset='http
 // Only the injected transport maps validated official URLs to this loopback fixture.
 async function httpFixture(t,handler){
   const requests=[],server=createServer(handler);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));});
-  const origin='http://127.0.0.1:'+server.address().port,fetchImpl=(url,options)=>{requests.push({url,...options});const parsed=new URL(url),path=parsed.hostname==='github.com'?'/start':parsed.hostname==='release-assets.githubusercontent.com'?'/asset':'/object';return fetch(origin+path,options);};return {fetchImpl,requests};
+  const origin='http://127.0.0.1:'+server.address().port,fetchImpl=(url,options)=>{requests.push({url,...options});const parsed=new URL(url),path=parsed.hostname==='github.com'?'/start':parsed.hostname==='release-assets.githubusercontent.com'?'/asset':'/object';return fetch(origin+path,options);};return {fetchImpl,requests,transportOrigin:origin};
 }
 const item=bytes=>({...DSH_PUBLIC_COMPONENT,bytes:bytes.length,sha256:digest(bytes)});
 test('public component follows bounded official HTTPS redirects through real HTTP fixtures',async t=>{
@@ -32,5 +32,5 @@ test('wrong declared size, overflow, hash and a partial response cannot pass dow
   });
 });
 test('cancel and download timeout abort their exact request without returning partial data',async t=>{
-  for(const timeout of [false,true])await t.test(timeout?'timeout':'cancel',async t=>{const controller=new AbortController(),fixture=await httpFixture(t,(_,response)=>{response.writeHead(200);response.write('c');if(!timeout)setImmediate(()=>controller.abort());});await assert.rejects(downloadDshComponent(item(Buffer.from('component')),{...fixture,signal:controller.signal,timeoutMs:timeout?40:5000}),{code:timeout?'DSH_COMPONENT_DOWNLOAD_TIMEOUT':'ABORT_ERR'});});
+  for(const timeout of [false,true])await t.test(timeout?'timeout':'cancel',async t=>{const controller=new AbortController(),fixture=await httpFixture(t,(_,response)=>{response.writeHead(200);response.write('c');if(!timeout)setImmediate(()=>controller.abort());});await assert.rejects(downloadDshComponent(item(Buffer.from('component')),{...fixture,signal:controller.signal,timeoutMs:timeout?40:5000,idleMs:timeout?40:5000}),{code:timeout?'DSH_COMPONENT_DOWNLOAD_TIMEOUT':'ABORT_ERR'});});
 });

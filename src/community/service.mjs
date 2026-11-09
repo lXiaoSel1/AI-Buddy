@@ -6,6 +6,7 @@ import {assertPluginTreeNoLinks} from '../plugin-archive.mjs';
 import {canonicalPluginJson, compareVersions, satisfiesHostVersionRange, satisfiesVersionRange} from '../plugin-manifest.mjs';
 import {stablePatchUpdate, legacyUpdateKey} from '../plugin-update-policy.mjs';
 import {fetchPluginJson, isVoiceSourceAuthorized} from '../plugin-sources.mjs';
+import {verifyPluginMetadata} from '../plugin-download-integrity.mjs';
 import {isVoiceCommunityWork} from '../voice/package-contract.mjs';
 import {createPluginBackendRegistry} from '../plugin-backends.mjs';
 import {BUDDY_PLUGIN_CAPABILITIES} from '../buddy-plugin-services/capability-grants.mjs';
@@ -23,7 +24,7 @@ const json = async (path, fallback) => { try { return JSON.parse(await readFile(
 const copy = value => structuredClone(value);
 const omit = (value, fields) => Object.fromEntries(Object.entries(value).filter(([key]) => !fields.includes(key)));
 const redact = value => String(value).replace(/([?&]token=)[^\s&]+/gi, '$1[REDACTED]');
-const publicFailure = cause => ({code: cause.code ?? 'COMMUNITY_OPERATION_FAILED', message: redact(cause.message).slice(0, 2000)});
+const publicFailure = cause => ({code: cause.code ?? 'COMMUNITY_OPERATION_FAILED', message:redact(cause.message).slice(0,2000),...(cause.retryOfficial===true?{retryOfficial:true,originKnownMirror:cause.originKnownMirror===true,...(typeof cause.host==='string'?{host:cause.host}:{}),...(typeof cause.technicalCode==='string'?{technicalCode:cause.technicalCode}:{})}:{})});
 const safeNativeResult = result => { const output = {}; for (const key of ['runtimeId', 'profileId', 'installed', 'loaded', 'enabled', 'clientState', 'state', 'phase', 'needsConfiguration', 'version', 'packageName', 'exactVersion', 'sourceDigest', 'dataSchemaVersion', 'actualVersion', 'ready', 'backend', 'code', 'message', 'sourceCommit', 'nodeVersion', 'pnpmVersion']) if (['string', 'boolean', 'number'].includes(typeof result?.[key])) output[key] = key === 'message' ? redact(result[key]) : result[key]; return output; };
 // README links (B2): public web pages only, never credentials, loopback, link-local or private-network hosts.
 export function publicWebUrl(value) {
@@ -39,7 +40,7 @@ const pluginIdentity = ref => 'dsh.' + communityDigest({sourceId: ref.sourceId, 
 function publicInstallation(record, verified = false) { if (!record) return null; const value = copy(omit(record, ['sourceProof', 'backendPlan', 'previous'])); value.previous = record.previous ? {version: record.previous.packageRef.exactVersion} : null; value.runtimeVerified = verified; value.enabledIntent = record.enabled === true; value.runtimeState = record.runtimeFailure && !verified ? 'failed' : record.enabled ? verified ? 'loaded' : 'pending-load' : 'disabled'; value.phase = value.runtimeState; return value; }
 const publicJob = job => Object.fromEntries(['id', 'packageKey', 'operation', 'state', 'createdAt', 'updatedAt'].map(key => [key, job[key]]));
 
-export async function createCommunityService({root, dataRoot, legacyManager, dshBackend, voiceEnabled=false, voiceTestFingerprint, hostDependencies = null, bridgeCompatibilityVersion = BUDDY_BRIDGE_COMPATIBILITY_VERSION, busy = async () => false, onUpdate = () => {}, onPackageState = async () => {}, onOpenClient, onOpenExternal, fetchImpl = globalThis.fetch, now = Date.now, pollMs = 5000, automaticWorkAllowed = () => true, maintenanceAdmission = () => true, minimumWatermarks = COMMUNITY_MINIMUM_WATERMARKS, officialFingerprints = officialScopeFingerprints()} = {}) {
+export async function createCommunityService({root, dataRoot, legacyManager, dshBackend, voiceEnabled=false, voiceTestFingerprint, hostDependencies = null, bridgeCompatibilityVersion = BUDDY_BRIDGE_COMPATIBILITY_VERSION, busy = async () => false, onUpdate = () => {}, onPackageState = async () => {}, onOpenClient, onOpenExternal, fetchImpl = globalThis.fetch, planDownload, now = Date.now, pollMs = 5000, automaticWorkAllowed = () => true, maintenanceAdmission = () => true, minimumWatermarks = COMMUNITY_MINIMUM_WATERMARKS, officialFingerprints = officialScopeFingerprints()} = {}) {
   if (!legacyManager?.action || !legacyManager?.snapshot) throw Error('Existing signed plugin manager is required');
   const control = join(resolve(root), 'local/community'), preferencesDirectory = join(resolve(dataRoot), 'community');
   await assertPluginTreeNoLinks(control); await assertPluginTreeNoLinks(preferencesDirectory); await mkdir(control, {recursive: true}); await mkdir(preferencesDirectory, {recursive: true});
@@ -70,7 +71,10 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
   const persistRegistry = () => writeAtomic(registryFile, canonicalPluginJson(registry));
   const persistCache = () => writeAtomic(cacheFile, canonicalPluginJson(cache));
   const update = () => { if (!closed) try { onUpdate(snapshot()); } catch {} };
-  const writePreferences = run => { const result = prefSerial.then(async () => { if (closed) fail('Community is closed', 'COMMUNITY_CLOSED'); const value = await run(); await assertPluginTreeNoLinks(preferencesFile); writeAtomic(preferencesFile, canonicalPluginJson(preferences)); update(); return value; }); prefSerial = result.catch(() => {}); return result; };
+  const writePreferences = run => { const result = prefSerial.then(async () => { if (closed) fail('Community is closed', 'COMMUNITY_CLOSED'); repairPreferenceKeys();const value = await run(); await assertPluginTreeNoLinks(preferencesFile); writeAtomic(preferencesFile, canonicalPluginJson(preferences)); update(); return value; }); prefSerial = result.catch(() => {}); return result; };
+  function repairPreferenceKeys(){let changed=false;for(const[id,row]of Object.entries(legacyManager.snapshot().installed??{}))if(row.sourceId==='official'&&row.dataNamespace==='legacy')for(const field of ['updatePolicies','failedPluginUpdates']){const values=preferences[field],from=legacyUpdateKey('legacy',id),to=legacyUpdateKey('official',id);if(values&&Object.hasOwn(values,from)){if(!Object.hasOwn(values,to))values[to]=values[from];delete values[from];changed=true;}}return changed;}
+  let cachedSourceRecovery=null;
+  function extensionsReady(){if(cachedSourceRecovery)return cachedSourceRecovery;if(closed||legacyManager.snapshot().service?.usable===false)return Promise.resolve(snapshot());cachedSourceRecovery=(async()=>{if(repairPreferenceKeys())await writePreferences(async()=>{});const saved=await json(cacheFile,{schemaVersion:1,sources:{}});for(const[sourceId,row]of Object.entries(saved.sources))if(!catalogs.has(sourceId))try{await loadCatalog({sourceId,envelope:row.envelope,reviewEnvelope:row.reviewEnvelope??undefined},{persist:false,reviewsOptional:true});}catch{}await pluginUpdates.check({refresh:false});update();return snapshot();})().finally(()=>{cachedSourceRecovery=null;});return cachedSourceRecovery;}
   async function trustedSource(sourceId) { if (typeof legacyManager.resolveTrustedSource !== 'function') fail('Pinned source lookup is unavailable', 'COMMUNITY_SOURCE_UNAVAILABLE'); return normalizeCommunitySource(await legacyManager.resolveTrustedSource(sourceId)); }
   async function availableSource(sourceId) { const source = await trustedSource(sourceId); const available = source.enabled !== false && source.removed !== true; sourceAvailability.set(sourceId, available); if (!available) fail('Community source is disabled or removed', 'COMMUNITY_SOURCE_UNAVAILABLE'); return source; }
   const metadataRequests = new Map(), refreshFlights = new Map(); let officialOpening = null;
@@ -116,7 +120,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
   // recordError: false for offline files, so a refused file does not mark the valid catalog as stale (review 低-1).
   // reviewsOptional: the startup cache load keeps the catalog even when its saved review index no longer fits it (中-5).
   function loadCatalog(request, options = {}) { return withSourceLock(request.sourceId, () => loadCatalogLocked(request, options)); }
-  async function loadCatalogLocked({sourceId, url, envelope, reviewUrl, reviewEnvelope}, {persist = true, allowRemoved = false, recordError = true, reviewsOptional = false, expectedSource} = {}) {
+  async function loadCatalogLocked({sourceId, url, envelope, reviewUrl, reviewEnvelope,official=false}, {persist = true, allowRemoved = false, recordError = true, reviewsOptional = false, expectedSource} = {}) {
     if (closed) fail('Community is closed', 'COMMUNITY_CLOSED');
     const source = allowRemoved ? await trustedSource(sourceId) : await availableSource(sourceId), verifiedSource = allowRemoved ? {...source, enabled: true, removed: false} : source, controller = new AbortController();
     if (expectedSource && !sameSource(source, expectedSource)) fail('Community source changed before metadata loading', 'COMMUNITY_SOURCE_CHANGED');
@@ -124,11 +128,11 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     const recheck = async () => { if (closed) fail('Community is closed', 'COMMUNITY_CLOSED'); const current = allowRemoved ? await trustedSource(sourceId) : await availableSource(sourceId); if (!sameSource(current, source)) fail('Community source changed during metadata loading', 'COMMUNITY_SOURCE_CHANGED'); };
     try {
       await recheck();
-      const incoming = envelope ?? await fetchPluginJson(communityHttps(url), {fetchImpl, signal: controller.signal, maximum: 16 * 1024 * 1024 + 20000});
+      const incoming = envelope ?? await fetchPluginJson(communityHttps(url), {fetchImpl,planDownload,official, signal: controller.signal, maximum: 16 * 1024 * 1024 + 20000});
       await recheck();
-      const catalog = verifyCommunityCatalog(incoming, verifiedSource), prior = cache.sources[sourceId];
+      const catalog = verifyPluginMetadata(incoming,value=>verifyCommunityCatalog(value, verifiedSource)), prior = cache.sources[sourceId];
       assertCatalogAllowed(catalog, verifiedSource);
-      const receivedReviews = reviewEnvelope ?? (reviewUrl ? await fetchPluginJson(communityHttps(reviewUrl), {fetchImpl, signal: controller.signal, maximum: 16 * 1024 * 1024 + 20000}) : null);
+      const receivedReviews = reviewEnvelope ?? (reviewUrl ? await fetchPluginJson(communityHttps(reviewUrl), {fetchImpl,planDownload,official, signal: controller.signal, maximum: 16 * 1024 * 1024 + 20000}) : null);
       await recheck();
       // From here to the commit there is no await: these checks see exactly the state they replace.
       assertCatalogCurrent(catalog, sourceId);
@@ -136,7 +140,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
       // Startup may still read an older cached catalog without persisting it.
       if (persist && sourceId === 'official' && officialScope(verifiedSource) && catalog.works.some(work => work.releases.some(release => release.package?.spec?.kind === 'tarball' && !publicWebUrl(release.package.spec.value)?.startsWith('https://')))) fail('Official discovery catalogs require public HTTPS tarball URLs; use a custom source for local maintenance packages', 'COMMUNITY_OFFICIAL_LOCAL_CATALOG');
       let reviewIndex = null, reviewSaved = null;
-      if (receivedReviews) { try { reviewIndex = reviewsFor(receivedReviews, verifiedSource, catalog, sourceId); reviewSaved = receivedReviews; } catch (cause) { if (!reviewsOptional) throw cause; } }
+      if (receivedReviews) { try { reviewIndex = verifyPluginMetadata(receivedReviews,value=>reviewsFor(value, verifiedSource, catalog, sourceId)); reviewSaved = receivedReviews; } catch (cause) { if (!reviewsOptional) throw cause; } }
       else if (prior?.reviewEnvelope) { try { reviewIndex = reviewsFor(prior.reviewEnvelope, verifiedSource, catalog, sourceId, {replay: false}); reviewSaved = prior.reviewEnvelope; } catch {} }
       catalogs.set(sourceId, catalog); if (reviewIndex) reviews.set(sourceId, reviewIndex); else reviews.delete(sourceId); errors.delete(sourceId);
       if (persist) { cache.sources[sourceId] = {url: url ?? prior?.url ?? null, reviewUrl: reviewUrl ?? prior?.reviewUrl ?? null, envelope: incoming, reviewEnvelope: reviewSaved, cachedAt: new Date(now()).toISOString(), watermark: {generatedAt: catalog.generatedAt, digest: catalog.verified.payloadSha256}}; persistCache(); }
@@ -146,13 +150,13 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
   }
   // Opening the center discovers the fixed official endpoint once per source generation. Explicit refresh can retry.
   // Metadata is single-flight; status/search and the maintenance timer never enter this path.
-  async function refreshCatalogSource(sourceId) {
+  async function refreshCatalogSource(sourceId,{official=false}={}) {
     try {
       const source = await availableSource(sourceId), saved = cache.sources[sourceId], official = isOfficialCommunitySource(source), url = official ? OFFICIAL_COMMUNITY_CATALOG_URL : saved?.url, reviewUrl = official ? null : saved?.reviewUrl;
       if (!url) fail('No deployed community index URL is configured', 'COMMUNITY_REMOTE_NOT_CONFIGURED');
-      const key = communityDigest({source, url, reviewUrl: reviewUrl ?? null}), prior = refreshFlights.get(sourceId);
+      const key = communityDigest({source, url, reviewUrl: reviewUrl ?? null,official}), prior = refreshFlights.get(sourceId);
       if (prior?.key === key) return prior.promise;
-      const promise = loadCatalog({sourceId, url, reviewUrl}, {expectedSource: source}).then(() => ({sourceId, ok: true}), cause => ({sourceId, error: publicFailure(cause)})), flight = {key, promise};
+      const promise = loadCatalog({sourceId, url, reviewUrl,official}, {expectedSource: source}).then(() => ({sourceId, ok: true}), cause => ({sourceId, error: publicFailure(cause)})), flight = {key, promise};
       refreshFlights.set(sourceId, flight);
       try { return await promise; } finally { if (refreshFlights.get(sourceId) === flight) refreshFlights.delete(sourceId); }
     } catch (cause) { return {sourceId, error: publicFailure(cause)}; }
@@ -160,7 +164,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
   async function refreshCatalogs(request = {}) {
     const selected = new Set(request.sourceId ? [request.sourceId] : Object.keys(cache.sources));
     if (!request.sourceId) try { if (isOfficialCommunitySource(await trustedSource('official'))) selected.add('official'); } catch {}
-    const results = await Promise.all([...selected].map(refreshCatalogSource)); return {results, snapshot: snapshot()};
+    const results = await Promise.all([...selected].map(sourceId=>refreshCatalogSource(sourceId,{official:request.official===true}))); return {results, snapshot: snapshot()};
   }
   async function openCatalogs() {
     let source; try { source = await trustedSource('official'); } catch { return {results: [], snapshot: snapshot()}; }
@@ -292,7 +296,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     const keepEnabled = coordinated && old.enabled && intent.priorDataSchemaVersion === intent.packageRef.dataSchemaVersion &&
       (intent.updateMode === 'review' || intent.grantedCapabilities.every(capability => intent.priorGrantedCapabilities.includes(capability)));
     if (coordinated && (!old.backendPlan || !backends.supports('dsh', 'rollback'))) fail('An exact verified previous version is needed for a safe update', 'DSH_ROLLBACK_PLAN_REQUIRED');
-    if (job.operation === 'install') result = await backends.invoke('dsh', 'install', intent.backendPlan, {enabled: false, grantedCapabilities: intent.grantedCapabilities});
+    if (job.operation === 'install') result = await backends.invoke('dsh', 'install', intent.backendPlan, {enabled:false,grantedCapabilities:intent.grantedCapabilities,official:job.official===true});
     else if (job.operation === 'rollback') { if (!old?.previous?.backendPlan) fail('No exact prior installation plan is available', 'DSH_ROLLBACK_PLAN_REQUIRED'); result = await backends.invoke('dsh', 'rollback', {...intent.packageRef, profileId: old.profileId}, {plan: old.previous.backendPlan, enabled: false}); }
     else result = await backends.invoke('dsh', job.operation, {...intent.packageRef, profileId: old?.profileId, generation: old?.generation});
     requireNativeOutcome(result);
@@ -362,7 +366,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
       void queue.drain().catch(() => {});
       return {job: publicJob(job), snapshot: snapshot()};
     };
-    if(plan.hostDependencyToken)return hostDependencies.run({token:plan.hostDependencyToken,planId:plan.planId,confirmation:communityDigest([...grantedCapabilities].sort()),assertCurrent:()=>assertInstallationIntent(plan),materialize:options=>plan.operation==='enable'?Promise.resolve(plan):nativeInstallPlan(plan,options),enqueue,cancelJob:async id=>publicJob(await queue.cancel(id))});
+    if(plan.hostDependencyToken)return hostDependencies.run({official:request.official===true,token:plan.hostDependencyToken,planId:plan.planId,confirmation:communityDigest([...grantedCapabilities].sort()),assertCurrent:()=>assertInstallationIntent(plan),materialize:options=>plan.operation==='enable'?Promise.resolve(plan):nativeInstallPlan(plan,options),enqueue,cancelJob:async id=>publicJob(await queue.cancel(id))});
     return enqueue(plan);
   }
   async function queueInstalled(request, operation) {
@@ -467,7 +471,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     const work = allWorks().find(value => value.key === draft.key); if (!work?.reviewsRepository) fail('This work has no deployed review submission repository', 'COMMUNITY_REVIEW_NOT_CONFIGURED');
     // The draft id is in the prefilled issue title; identity, stars and text still come only from the GitHub API issue, as for a pasted link.
     const since = new Date(Date.parse(draft.createdAt) - 600000).toISOString(), marker = '#' + draft.id.slice(0, 8);
-    const issues = await fetchPluginJson('https://api.github.com/repos/' + work.reviewsRepository + '/issues?labels=community-review&state=all&sort=created&direction=desc&per_page=100&since=' + encodeURIComponent(since), {fetchImpl, maximum: 8 * 1024 * 1024});
+    const issues = await fetchPluginJson('https://api.github.com/repos/' + work.reviewsRepository + '/issues?labels=community-review&state=all&sort=created&direction=desc&per_page=100&since=' + encodeURIComponent(since), {fetchImpl,planDownload, maximum: 8 * 1024 * 1024});
     const found = (Array.isArray(issues) ? issues : []).filter(issue => typeof issue?.title === 'string' && issue.title.trim().endsWith(marker) && Date.parse(issue.created_at) >= Date.parse(since)).map(issue => reviewFromGitHubIssue(issue, {repository: work.reviewsRepository, validWorkIds: [work.id]})).filter(Boolean);
     // Review 低-11: when several issues carry the tag, the user picks one; each is then checked like a pasted link.
     if (found.length !== 1) return found.length ? {status: 'ambiguous', candidates: found.slice(0, 10).map(review => ({url: review.url, githubLogin: review.githubLogin, stars: review.stars, createdAt: review.createdAt}))} : {status: 'not-found'};
@@ -523,6 +527,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
       case 'community-find-review': return findReview(request);
       case 'community-offline-confirm': return confirmOfflineImport(request);
       case 'community-offline-cancel': if (pendingImport?.id === request.importId) pendingImport = null; return {cancelled: true};
+      case 'community-retry-maintenance': {assertAdmission();const prior=queue.snapshot().jobs.find(job=>job.id===request.jobId);if(request.official!==true||!prior||prior.operation!=='install'||prior.state!=='failed'||prior.error?.code!=='NETWORK_MIRROR_MISMATCH')fail('No matching mirror download failure','COMMUNITY_RETRY_INVALID');const job=await queue.enqueue({operation:prior.operation,packageKey:prior.packageKey,intent:prior.intent,idempotencyKey:'official-retry:'+prior.id,official:true});void queue.drain().catch(()=>{});return {job:publicJob(job),snapshot:snapshot()};}
       case 'community-run-maintenance': await queue.drain(); return snapshot().maintenance;
       case 'community-cancel-maintenance': return publicJob(await queue.cancel(request.id));
       case 'community-review-draft': return writePreferences(() => { const work = workFor(request.sourceId, request.id), release = currentRelease(work, request.version); if (!work.reviewsRepository) fail('This work has no deployed review submission repository', 'COMMUNITY_REVIEW_NOT_CONFIGURED'); const id = randomUUID(), url = buildReviewFormUrl({repository: work.reviewsRepository, workId: work.id, version: release.version, stars: request.stars, text: request.text ?? '', marker: id.slice(0, 8)}), draft = {id, key: work.key, version: release.version, stars: request.stars, url, status: 'pending-sync', createdAt: new Date(now()).toISOString()}; preferences.pendingReviews.push(draft); return {draft, url, status: 'pending-sync'}; });
@@ -570,13 +575,14 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     timer.unref?.();
   }
   function close() {
-    if (closePromise) return closePromise; closed = true; clearInterval(timer); offNativeEvents?.(); for (const controller of metadataRequests.keys()) controller.abort(Object.assign(Error('Community is closed'), {code: 'COMMUNITY_CLOSED'}));
-    closePromise = (async () => {
-      await Promise.allSettled([...sourceLocks.values()]); await queue.close(); await pluginUpdates.close(); await prefSerial; await Promise.allSettled([...pendingInvalidations, ...pendingPublications]);
-      const cleanup = []; for (const record of Object.values(registry.packages)) { record.generation = Math.max(record.generation, registry.generations[record.packageKey] ?? 0) + 1; registry.generations[record.packageKey] = record.generation; cleanup.push(publishPackage({...record, enabled: false, phase: 'closed'})); }
-      try { if (Object.keys(registry.packages).length) persistRegistry(); } catch (cause) { cleanup.push(Promise.reject(cause)); }
-      const results = await Promise.allSettled(cleanup), owned = []; if (backends.supports('dsh', 'close')) owned.push(Promise.resolve().then(() => backends.invoke('dsh', 'close'))); if (legacyManager.close) owned.push(Promise.resolve().then(() => legacyManager.close())); throwCleanupFailures([...results, ...await Promise.allSettled(owned)]);
-    })(); return closePromise;
+    if(closePromise)return closePromise;closed=true;clearInterval(timer);offNativeEvents?.();for(const controller of metadataRequests.keys())controller.abort(Object.assign(Error('Community is closed'),{code:'COMMUNITY_CLOSED'}));
+    closePromise=(async()=>{
+      const failures=[];const step=async run=>{try{await run();}catch(cause){failures.push({status:'rejected',reason:cause});}};
+      await step(()=>Promise.allSettled([...sourceLocks.values()]));await step(()=>queue.close());await step(()=>pluginUpdates.close());await step(()=>prefSerial);await step(()=>Promise.allSettled([...pendingInvalidations,...pendingPublications]));
+      for(const record of Object.values(registry.packages)){record.generation=Math.max(record.generation,registry.generations[record.packageKey]??0)+1;registry.generations[record.packageKey]=record.generation;await step(()=>publishPackage({...record,enabled:false,phase:'closed'}));}
+      await step(async()=>{if(Object.keys(registry.packages).length)persistRegistry();});
+      if(backends.supports('dsh','close'))await step(()=>backends.invoke('dsh','close'));if(legacyManager.close)await step(()=>legacyManager.close());throwCleanupFailures(failures);
+    })().catch(cause=>{closePromise=null;throw cause;});return closePromise;
   }
-  return {action, snapshot, close, activateInstalled, invalidateRuntime, resolveDshInstalled, confirmNativeActivation, invalidatePackageRuntime, drainMaintenance: queue.drain, runAutomaticUpdates: pluginUpdates.automatic, maintenanceBusy: () => legacyUpdateWrites > 0 || pluginUpdates.busy() || queue.isExecuting(), prepareDshOffline: importOfflineFile, prepareOffline: (...args) => legacyManager.prepareOffline(...args), resolveInstalled: (...args) => legacyManager.resolveInstalled(...args), resolveTrustedSource: trustedSource};
+  return {action, snapshot, close, extensionsReady, activateInstalled, invalidateRuntime, resolveDshInstalled, confirmNativeActivation, invalidatePackageRuntime, drainMaintenance: queue.drain, runAutomaticUpdates: pluginUpdates.automatic, maintenanceBusy: () => legacyUpdateWrites > 0 || pluginUpdates.busy() || queue.isExecuting(), prepareDshOffline: importOfflineFile, prepareOffline: (...args) => legacyManager.prepareOffline(...args), resolveInstalled: (...args) => legacyManager.resolveInstalled(...args), resolveTrustedSource: trustedSource};
 }

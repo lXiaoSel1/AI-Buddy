@@ -16,6 +16,7 @@ LIMIT = 1024 ** 3
 CHUNK_LIMIT = 950 * 1024 ** 2
 NAMES = {'deepseek': 'DeepSeek', 'claude': 'Claude', 'grok': 'Grok', 'seed': 'Seed', 'kimi': 'Kimi', 'qwen': 'Qwen', 'minimax': 'MiniMax', 'chatgpt': 'GPT', 'gemini': 'Gemini', 'glm': 'GLM', 'hunyuan': '娣峰厓'}
 MEDIA = {'.webm', '.webp', '.png', '.jpg', '.jpeg', '.ico', '.zip'}
+LOCAL_INSTALL_ENTRY = '安装或更新 AI 酱.cmd'
 APPROVED_MEDIA = '12ac599d424e678acb1c7f964c65551fdc48dc40ac31ea47facb253256a7b871'
 
 
@@ -281,7 +282,8 @@ def _write_portable(candidate, out, installer, work):
         save(tree / 'local/current-build.json', pointer, working)
         pin = 'local/install-manifests/' + digest + '.json'
         working.copy_file(output.target(manifest_path, required=True), tree / pin)
-        expected = {manager, 'local/portable-defaults.json', 'local/current-build.json', pin}
+        working.write_text(tree / LOCAL_INSTALL_ENTRY, '@echo off\r\nstart "" "%~dp0maintenance\\' + VERSION + '\\AI Buddy Setup.exe" --local-tree="%~dp0."\r\n', replace=False)
+        expected = {manager, 'local/portable-defaults.json', 'local/current-build.json', pin, LOCAL_INSTALL_ENTRY}
         for item in selected:
             prefix = '' if item['mount'] == 'root' else (build if item['mount'] == 'build' else runtime) + '/'
             expected.update(prefix + f['path'] for f in item['files'])

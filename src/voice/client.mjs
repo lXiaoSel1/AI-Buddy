@@ -409,8 +409,8 @@ export function VoiceSettingsPanel({snapshot,session,onPlugins,onChat,selectedPa
   const openImport=()=>{importRun.current++;setImporting(true);};
   useEffect(()=>{importRun.current++;setImporting(false);setText('');setFullSettings(false);},[scopeIdentity,id]);
   const choose=value=>{setLocalSelection(value);onSelectPackage?.(value);},configure=patch=>session?.configure(patch),ensureSelected=async()=>{if(id!==state?.selectedPackageId){await configure({selectedPackageId:id});return session?.snapshot?.()?.state?.selectedPackageId===id;}return true;},start=()=>configure({enabled:true,selectedPackageId:id}),where=h(VoiceWhere,{provider:options.ttsProvider,disabled:working,onChange:ttsProvider=>configure({packages:{[id]:{ttsProvider}}})});
-  const prepare=async(kind,op='assets-prepare')=>{setFullSettings(false);return session?.runAction(op,{kind,packageId:id});};
-  const parts=()=>h(VoiceParts,{snapshot,id,onPrepare:prepare,onVerify:kind=>prepare(kind,'assets-verify'),onImport:kind=>prepare(kind,'assets-import'),onCancel:()=>session?.runAction('assets-cancel'),onRefresh:()=>session?.refresh()});
+  const prepare=async(kind,op='assets-prepare',extra={})=>{setFullSettings(false);return session?.runAction(op,{kind,packageId:id,...extra});};
+  const parts=()=>h(VoiceParts,{snapshot,id,onPrepare:prepare,onPrepareOfficial:(kind,expectedProvider)=>prepare(kind,'assets-prepare',{official:true,expectedProvider}),onVerify:kind=>prepare(kind,'assets-verify'),onImport:kind=>prepare(kind,'assets-import'),onCancel:()=>session?.runAction('assets-cancel'),onRefresh:()=>session?.refresh()});
   const importRecording=async()=>{
     const ticket=++importRun.current,expectedScope=scopeIdentity,expectedId=id,transcript=text;
     const valid=()=>importMounted.current&&ticket===importRun.current&&importContext.current?.open&&importContext.current.id===expectedId&&importContext.current.scope===expectedScope&&scopeStamp(session?.snapshot?.()?.state?.scope??state?.scope)===expectedScope;

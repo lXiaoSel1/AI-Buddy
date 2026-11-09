@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
-import {CloudVoiceSettings,CloudVoiceConnectionManager} from '../src/voice/cloud-settings-ui.mjs';
+import {CloudVoiceSettings,CloudVoiceConnectionManager,CloudVoiceConnectionEditor} from '../src/voice/cloud-settings-ui.mjs';
 import {setLocale} from '../src/i18n.mjs';
 import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -60,6 +60,7 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
     const input=async(selector,value)=>{const element=find(selector);check(element,'Present: '+selector);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(element,value);element.dispatchEvent(new Event('input',{bubbles:true}));await wait();};
     let snapshot=${JSON.stringify({state})},update,releasePrepare,queryFailure=false,previewBad=false,holdQuery=false,releaseQuery;
     snapshot.state.cloudBatch.items.push({characterId:'qwen',status:'preparing'});
+    snapshot.state.cloudBatch.items.push({characterId:'expired-fixture',status:'expired'},{characterId:'unknown-fixture',status:'unknown'});
     const emit=patch=>{snapshot={...snapshot,...patch};update({...snapshot});};
     const plan=ids=>({selectedCharacterIds:ids,selectedCount:ids.length,cloneCount:1,activationCount:1,firstUseCount:1,reuseCount:0,blockedCount:0,planHash:'approved-plan',pricing:{currency:'CNY',cloneUnitPrice:9.9,cloneEstimate:9.9,checkedOn:'2026-11-07'}});
     const session={snapshot:()=>snapshot,runAction:async(op,payload)=>{
@@ -78,13 +79,17 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
     const root=createRoot(document.getElementById('root'));root.render(h(Harness));
     (async()=>{try{
       await wait();check(calls.length===0,'Opening C3 performs no provider request');
+      check(!find('[data-cloud-reclone="unknown-fixture"]'),'Unknown outcome never offers automatic recloning');
+      await click('[data-cloud-reclone="expired-fixture"]');check(find('[data-cloud-character="expired-fixture"]').checked,'Reclone selects only the expired character');
+      await click('[data-cloud-prepare]');check(find('[data-cloud-cost]').textContent==='¥9.90'&&!calls.some(row=>row.op==='cloud-batch-prepare'),'Expired voice returns to the original explicit fee review');
+      await click('dialog .ui-dlg-act .ghost');await click('dialog [aria-label="关闭"]');
       await click('[data-cloud-open-batch]');
       check(find('[data-cloud-character="deepseek"]').disabled,'Ready voice cannot be selected');
       check(find('[data-cloud-character="qwen"]').disabled,'Preparing voice cannot be selected');
       check(find('[data-cloud-character="kimi"]').disabled,'Missing profile cannot be selected');
       check(find('[data-cloud-prepare]').disabled,'Empty selection cannot advance');
       await click('[data-cloud-character="claude"]');await click('[data-cloud-prepare]');
-      check(calls.filter(row=>row.op==='cloud-batch-preview').length===1&&!calls.some(row=>row.op==='cloud-batch-prepare'),'Cost review does not upload or prepare');
+      check(calls.filter(row=>row.op==='cloud-batch-preview').length===2&&!calls.some(row=>row.op==='cloud-batch-prepare'),'Cost review does not upload or prepare');
       check(find('dialog').textContent.includes('Claude')&&find('[data-cloud-cost]').textContent==='¥9.90','Confirmation identifies selected character and actual plan cost');
       const realNow=Date.now;Date.now=()=>realNow()+6*60*1000;emit({});await wait();
       check(find('[data-cloud-confirm]').disabled,'Expired preview cannot be confirmed');Date.now=realNow;
@@ -118,6 +123,8 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
       await click('dialog .ui-dlg-act .primary');
       await click('[data-manage-connections="voice"]');await click('[data-cloud-edit="local"]');
       check(find('[data-cloud-field="key"]').value==='','Saved key is never echoed');
+      const region=find('[data-cloud-field="provider"]');check(region.options.length===2&&region.value==='minimax','Existing configuration keeps its domestic region');region.value='minimax-global';region.dispatchEvent(new Event('change',{bubbles:true}));await wait();check(find('[data-cloud-save]').disabled,'Changing region requires a new regional key');
+      region.value='minimax';region.dispatchEvent(new Event('change',{bubbles:true}));await wait();check(!find('[data-cloud-save]').disabled,'Returning to original region can keep the original key');
       await input('[data-cloud-field="name"]','Renamed configuration');await click('[data-cloud-save]');
       check(calls.find(row=>row.op==='cloud-connection-save').payload.name==='Renamed configuration'&&!Object.hasOwn(calls.find(row=>row.op==='cloud-connection-save').payload,'key'),'Blank edit keeps saved credential');
       check(find('[data-cloud-field="key"]').value==='','Editor clears key after save');
@@ -144,6 +151,14 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
     assert.ok(basename(directory).startsWith('voice-design-cloud-'));
     await rm(directory,{recursive:true,force:true});
   }
+});
+
+test('B6/C13: English new draft defaults international while saved domestic and expired labels remain explicit',()=>{
+ setLocale('en');try{
+  const fresh=renderToStaticMarkup(React.createElement(CloudVoiceConnectionManager,{connections:state.cloudConnections}));assert.match(fresh,/<option value="minimax-global" selected=""/);
+  const saved=renderToStaticMarkup(React.createElement(CloudVoiceConnectionEditor,{draft:{id:'fixture',name:'Saved',provider:'minimax',model:'speech-2.8-turbo',configured:true,key:''},onChange(){}}));assert.match(saved,/<option value="minimax" selected=""/);
+  const expired=renderToStaticMarkup(React.createElement(CloudVoiceSettings,{snapshot:{state:{...state,cloudBatch:{items:[{characterId:'fixture',status:'expired'}]}}}}));assert.match(expired,/This cloud voice has expired/);assert.match(expired,/Clone again/);
+ }finally{setLocale('zh-CN');}
 });
 
 test('browsing the other engine cannot open editing operations for the running engine',()=>{

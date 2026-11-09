@@ -111,7 +111,7 @@ function remoteError(row) {
 
 // The host supplies trusted resolvers; neither plugin code nor a renderer gets
 // the raw credential. Bindings belong to this host's private data directory.
-export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolveConnection,resolveSecret,supervisor,transport,batchProvider,fetchImpl,now=()=>Date.now()}) {
+export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolveConnection,resolveSecret,supervisor,transport,batchProvider,fetchImpl,network,now=()=>Date.now()}) {
   if (!isAbsolute(dataRoot??'')) throw fail('CLOUD_CONFIG','云配音资料目录无效');
   const root=join(dataRoot,'voice','cloud');
   const indexPath=join(root,'bindings.json');
@@ -187,7 +187,8 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
   async function start(token,ctx,op,payload) {
     const assets=await resolveRuntime({engine:ctx.request.engine,packageId:ctx.request.packageId});
     token.controller.signal.throwIfAborted();
-    const request={op,base:providers[ctx.connection.provider],key:ctx.connection.key,model:ctx.connection.model,...payload};
+    const base=providers[ctx.connection.provider],networkConfig=network?await network.childNetworkConfig(base):null;
+    const request={op,base,key:ctx.connection.key,model:ctx.connection.model,...payload,...(networkConfig?{network:networkConfig}:{})};
     token.job=await (transport??((runtime,input,options)=>launchBridge(runtime,input,{...options,supervisor})))(assets,request,{signal:token.controller.signal});
     token.resolveReady(token.job);return token.job;
   }

@@ -10,6 +10,7 @@ import {frameSequence} from './frame-sequence.mjs';
 import {DataImportSetting,DataImportModal} from './data-import-ui.mjs';
 import {DshPreviewNoticeSetting} from './dsh-preview-notice-ui.mjs';
 import {UpdateSettings} from './update-settings.mjs';
+import {NetworkSettingsPanel} from './network-settings-ui.mjs';
 import {useVoiceSession} from './voice/client.mjs';
 import {VoiceGeneralSettingsPanel} from './voice/shell-design.mjs';
 const h=React.createElement;
@@ -99,6 +100,7 @@ export function GeneralSettings({view,onSaved,onPage,onManage,onPlugins,onVoiceP
       select('throwStrength',en?'Throw strength':'抛掷力度',en?'Changes physical speed without changing animation assets.':'只调整物理力度，不复制动画。',[['gentle',en?'Gentle':'轻柔'],['standard',en?'Standard':'标准'],['strong',en?'Strong':'强力'],['exaggerated',en?'Exaggerated':'夸张']]),
       h('div',{className:'ui-note hint'},Icon('info',{size:16}),h('div',null,en?'Left-click to pet and play an expression. +1 affection at most once per 60 seconds, up to 30 per character daily. Right-click without dragging opens the workspace menu.':'左键单击触发表情并摸摸：同一角色每 60 秒最多 +1 好感，每天最多 30 点。右键单击打开工作空间菜单。',view.interactionMedia?.[petId]===false&&h('div',{className:'ws-muted',role:'status'},en?'The six new motion samples are awaiting review. Sleep and throwing remain inactive for characters without these assets.':'六段新动作尚待审核；缺少该组资源的角色暂不启用睡眠和抛掷。'))),
       h('div',{className:'ws-srow ws-end'},h('span',null),h('button',{className:'ui-btn sm','data-action':'reset-position',disabled:busy,onClick:()=>{void action('reset-position');}},t("重置桌宠位置")))),
+    h(NetworkSettingsPanel,{value:view.network,onSaved:network=>onSaved({...view,network})}),
     h(VoiceGeneralSettingsPanel,{snapshot:voice.snapshot,session:voice.session.current,onPlugins:onPlugins??(()=>onPage('plugins')),onOpen:id=>onVoicePage?onVoicePage(id):onPage('voice')}),
     h('div',{className:'ws-set2'},
       h(ConnectionSelection,{type:'model',initial:view.modelConnections,onManage:()=>onManage('model')}),

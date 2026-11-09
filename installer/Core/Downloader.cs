@@ -4,8 +4,9 @@ namespace AiBuddy.Install;
 
 public sealed record DownloadState(string PackageId,string Tag,long Bytes,string Sha256,long SavedBytes,string? ETag,string? LastModified);
 public sealed record InstallProgress(string Phase,string Item,long Completed=0,long Total=0,string? Detail=null,string[]? Reasons=null);
-public sealed class DownloadException(string message,bool retryable,TimeSpan? wait=null):IOException(message) {
+public sealed class DownloadException(string message,bool retryable,TimeSpan? wait=null,bool rateLimited=false):IOException(message) {
     public bool Retryable{get;}=retryable;public TimeSpan? Wait{get;}=wait;
+    public bool RateLimited{get;}=rateLimited;
 }
 public sealed class Downloader(HttpClient http,TimeSpan? idleTimeout=null) {
     readonly TimeSpan idle=idleTimeout??TimeSpan.FromSeconds(60);
@@ -18,11 +19,11 @@ public sealed class Downloader(HttpClient http,TimeSpan? idleTimeout=null) {
         for(int attempt=0;attempt<3;attempt++) {
             cancel.ThrowIfCancellationRequested();
             try {
-                await Transfer(p,tag,url,partial,statePath,progress,cancel);
-                if(!await Hashing.Matches(partial,p.Bytes,p.Sha256,cancel)) {File.Delete(partial);File.Delete(statePath);throw new DownloadException("SHA-256 verification failed: "+p.AssetName,true);}
+                NetworkRoute? route=null;await Transfer(p,tag,url,partial,statePath,progress,cancel,value=>route=value);
+                if(!await Hashing.Matches(partial,p.Bytes,p.Sha256,cancel)) {File.Delete(partial);File.Delete(statePath);if(route is {Mirror:true})throw new MirrorMismatchException(new Uri(route.ActualUrl).Host,"镜像返回的文件和官方记录不一致，已拒绝");throw new DownloadException("SHA-256 verification failed: "+p.AssetName,true);}
                 File.Move(partial,final,true);File.Delete(statePath);return final;
             } catch(Exception ex) when(!cancel.IsCancellationRequested && (ex is HttpRequestException or IOException or OperationCanceledException)) {
-                if(ex is DownloadException d && !d.Retryable || attempt==2)throw;
+                if(ex is MirrorMismatchException||ex is DownloadException d && !d.Retryable || attempt==2)throw;
                 var wait=(ex as DownloadException)?.Wait??TimeSpan.FromSeconds(attempt==0?1:3);
                 if(wait>TimeSpan.FromMinutes(5))throw new DownloadException("Rate limited; retry after "+wait,false,wait);
                 progress?.Report(new("retry",p.Id,Detail:ex.Message));await Task.Delay(wait,cancel);
@@ -30,7 +31,7 @@ public sealed class Downloader(HttpClient http,TimeSpan? idleTimeout=null) {
         }
         throw new IOException("Download did not finish");
     }
-    async Task Transfer(Package p,string tag,Uri url,string partial,string statePath,IProgress<InstallProgress>? progress,CancellationToken cancel) {
+    async Task Transfer(Package p,string tag,Uri url,string partial,string statePath,IProgress<InstallProgress>? progress,CancellationToken cancel,Action<NetworkRoute?> trace) {
         DownloadState? state=null;try{if(File.Exists(statePath))state=Json.Read<DownloadState>(statePath);}catch(System.Text.Json.JsonException){}
         long offset=File.Exists(partial)?new FileInfo(partial).Length:0;
         if(state is not null && state.PackageId==p.Id&&state.Tag==tag&&state.Bytes==p.Bytes&&state.Sha256==p.Sha256&&state.SavedBytes>=0&&state.SavedBytes<offset&&offset<=p.Bytes){
@@ -50,6 +51,8 @@ public sealed class Downloader(HttpClient http,TimeSpan? idleTimeout=null) {
         }
         using var headersTimeout=CancellationTokenSource.CreateLinkedTokenSource(cancel);headersTimeout.CancelAfter(idle);
         using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,headersTimeout.Token);
+        trace(InstallerNetwork.Route(response));
+        progress?.Report(new("source",p.Id,Detail:url.AbsoluteUri+" -> "+(response.RequestMessage?.RequestUri?.AbsoluteUri??request.RequestUri!.AbsoluteUri)));
         if(response.StatusCode==HttpStatusCode.RequestedRangeNotSatisfiable) {
             if(await Hashing.Matches(partial,p.Bytes,p.Sha256,cancel))return;
             File.Delete(partial);File.Delete(statePath);throw new DownloadException("Invalid resume range; restarting this package",true);
@@ -68,7 +71,7 @@ public sealed class Downloader(HttpClient http,TimeSpan? idleTimeout=null) {
             }
         } else if(response.StatusCode==HttpStatusCode.OK)offset=0;
         else throw new DownloadException("Unexpected successful HTTP status",false);
-        if(response.Content.Headers.ContentEncoding.Any(e=>e!="identity") || response.Content.Headers.ContentLength is long length && length!=p.Bytes-offset)throw new DownloadException("Download length or encoding differs from manifest",false);
+        if(response.Content.Headers.ContentEncoding.Any(e=>e!="identity") || response.Content.Headers.ContentLength is long length && length!=p.Bytes-offset)throw InstallerNetwork.IntegrityFailure(response,"Download length or encoding differs from manifest");
         var current=new DownloadState(p.Id,tag,p.Bytes,p.Sha256,offset,newETag,modified);Json.Save(statePath,current);
         await using var source=await response.Content.ReadAsStreamAsync(cancel);
         await using var output=new FileStream(partial,offset>0?FileMode.Append:FileMode.Create,FileAccess.Write,FileShare.None,1024*1024,FileOptions.Asynchronous);
@@ -77,7 +80,7 @@ public sealed class Downloader(HttpClient http,TimeSpan? idleTimeout=null) {
             while(true) {
                 using var readTimeout=CancellationTokenSource.CreateLinkedTokenSource(cancel);readTimeout.CancelAfter(idle);
                 var count=await source.ReadAsync(buffer,readTimeout.Token);if(count==0)break;
-                if(received+count>p.Bytes)throw new DownloadException("Download exceeds manifest size",false);
+                if(received+count>p.Bytes)throw InstallerNetwork.IntegrityFailure(response,"Download exceeds manifest size");
                 await output.WriteAsync(buffer.AsMemory(0,count),cancel);received+=count;
                 if(received-lastSaved>=4*1024*1024){await output.FlushAsync(cancel);Json.Save(statePath,current with {SavedBytes=received});lastSaved=received;}
                 progress?.Report(new("download",p.Id,received,p.Bytes));

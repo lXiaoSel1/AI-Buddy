@@ -1,4 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
+import {localDay} from './local-day.mjs';
 import {mkdirSync,existsSync} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -27,7 +28,6 @@ export function validateFeedingSettings(patch,previous=defaults()){
  }
  return next;
 }
-function localDay(at){const d=new Date(at);if(!Number.isFinite(d.getTime()))throw Error('采购日期无效');return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');}
 function economyCompatibility(db){
  const tables=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
  if(!tables.length)return;

@@ -11,7 +11,7 @@ const cardScope=()=>({channel:'card-table',tableId:'table-one',handId:'hand-one'
 const cardRequest=(eventId='card-one')=>({eventId,kind:'allin',text:'untrusted replacement words',scope:cardScope()});
 async function until(check){for(let i=0;i<100;i++){if(check())return;await new Promise(resolve=>setTimeout(resolve,5));}throw Error('voice host did not settle');}
 
-async function fixture(t,{packageId=ids[0],provider='local',hold=false,readiness={ready:true}}={}){
+async function fixture(t,{packageId=ids[0],provider='local',hold=false,readiness={ready:true},assetsOverride={}}={}){
   const dataRoot=await mkdtemp(join(tmpdir(),'voice-host-gateway-'));
   const settings=createVoiceSettings();
   await settings.update({enabled:true,selectedPackageId:packageId,packages:{[packageId]:{ttsProvider:provider,credentialRef:'voice:test-key'}}});
@@ -37,7 +37,7 @@ async function fixture(t,{packageId=ids[0],provider='local',hold=false,readiness
     async select({characterId,engine,profileId}){const key=characterId+':'+engine,old=profileRows.get(key),next={...old,id:profileId,version:old.version+1};profileRows.set(key,next);return next;}
   };
   const host=createVoiceHost({dataRoot,build:'unused',getGame:()=>game,getPlatform:()=>platform,send:event=>events.push(event),
-    components:{settings,profiles,runtime,local:{},cloud:{async status(){return {state:'ready'};}},credentials:{},assets:{async prepareSelected(){return {state:'ready'};},async resolve(){return {};},async status(){return {state:'ready'};}},supervisor:{async close(){}}}});
+    components:{settings,profiles,runtime,local:{},cloud:{async status(){return {state:'ready'};}},credentials:{},assets:{async prepareSelected(){return {state:'ready'};},async resolve(){return {};},async status(){return {state:'ready'};},...assetsOverride},supervisor:{async close(){}}}});
   t.after(async()=>{release?.();try{await host.close();}finally{await rm(dataRoot,{recursive:true,force:true});}});
   return {host,settings,events,spoken,ready,stops,gameReceipts,profileReads,profileRows,leases,packages,channels,
     releaseSpeech:()=>release?.(),invalidateScope:()=>{valid=false;},cancelled:()=>cancelled};
@@ -160,4 +160,14 @@ test('configuration and profile changes revoke pending card PCM, including an ex
     if(change==='profile-version')assert.equal(f.events.find(event=>event.type==='segment'&&event.state==='failed').code,'VOICE_PROFILE_CHANGED');
     else assert.equal((await f.host.cardEvent(cardRequest())).status,'interrupted');
   });
+});
+
+test('official asset retry forwards only the chosen operation and preserves mirror failure diagnostics',async t=>{
+ const calls=[],f=await fixture(t,{assetsOverride:{async prepare(kind,options){calls.push({kind,official:options.official});if(calls.length===1)throw Object.assign(Error('bad mirror bytes'),{code:'NETWORK_MIRROR_MISMATCH',retryOfficial:true,host:'mirror.invalid'});return {state:'ready'};}}});
+ await assert.rejects(f.host.action('assets-prepare',{kind:'asr',packageId:ids[0]}),{code:'NETWORK_MIRROR_MISMATCH'});
+ const failed=f.events.findLast(event=>event.type==='asset-progress');assert.equal(failed.retryOfficial,true);assert.equal(failed.kind,'asr');assert.equal(failed.host,'mirror.invalid');
+ await f.host.action('assets-prepare',{kind:'asr',packageId:ids[0],official:true,expectedProvider:'local'});
+ await f.host.action('assets-prepare',{kind:'asr',packageId:ids[0]});assert.deepEqual(calls,[{kind:'asr',official:false},{kind:'asr',official:true},{kind:'asr',official:false}]);
+ await assert.rejects(f.host.action('assets-prepare',{kind:'asr',packageId:ids[0],official:true,expectedProvider:'minimax'}),{code:'VOICE_ASSET_SELECTION_CHANGED'});
+ assert.equal(calls.length,3);
 });

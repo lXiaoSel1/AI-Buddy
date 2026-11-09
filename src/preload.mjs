@@ -1,6 +1,7 @@
 import { contextBridge,ipcRenderer } from 'electron';
 const modelRequest=(channel,...args)=>ipcRenderer.invoke(channel,...args).then(value=>{if(value?.__buddyError)throw Object.assign(Error(value.message),{code:value.code,details:value.details});return value;}).catch(error=>{error.message=error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/,'');throw error;});
 contextBridge.exposeInMainWorld('whale',{
+  network:{get:()=>modelRequest('network:get'),save:value=>modelRequest('network:save',value),test:()=>modelRequest('network:test')},
   voice:{action:(action,payload)=>modelRequest('voice:action',action,payload),onEvent:callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on('voice:event',listener);return()=>ipcRenderer.removeListener('voice:event',listener);}},
   dataImport:{state:()=>modelRequest('data-import:state'),choose:()=>modelRequest('data-import:choose'),preview:args=>modelRequest('data-import:preview',args),start:args=>modelRequest('data-import:start',args),cancel:args=>modelRequest('data-import:cancel',args),createNew:()=>modelRequest('data-import:create-new'),resumeWork:()=>modelRequest('data-import:resume-work')},
   agents:{action:(action,payload)=>modelRequest('agents:action',action,payload),chooseWorkspace:()=>modelRequest('agents:choose-workspace'),onEvent:callback=>{const listener=(_,value)=>callback(value);ipcRenderer.on('agents:event',listener);return()=>ipcRenderer.removeListener('agents:event',listener);}},

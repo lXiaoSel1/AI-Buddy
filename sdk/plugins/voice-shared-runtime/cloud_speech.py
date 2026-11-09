@@ -8,6 +8,8 @@ import sys
 import threading
 import time
 import uuid
+import ssl
+import certifi
 from urllib.parse import urlsplit
 
 import httpx
@@ -60,9 +62,38 @@ def check_status(value):
         raise CloudError('CLOUD_REMOTE_' + code, 'MiniMax 语音服务返回错误（' + code + '）')
 
 
+def network_options(request):
+    # trust_env remains disabled: only the host's private pipe may choose routes.
+    config = request.get('network') or {}
+    if not isinstance(config, dict):
+        raise CloudError('CLOUD_NETWORK', '网络设置无效')
+    origin = urlsplit(base_url(request))
+    if config.get('destinationOrigin') and config['destinationOrigin'] != origin.scheme + '://' + origin.netloc:
+        raise CloudError('CLOUD_NETWORK', '网络设置与语音服务地址不符')
+    context = ssl.create_default_context()
+    context.load_verify_locations(cafile=certifi.where())
+    if config.get('ca'):
+        if not isinstance(config['ca'], str) or len(config['ca']) > 2 * 1024 * 1024:
+            raise CloudError('CLOUD_NETWORK', '网络证书配置无效')
+        context.load_verify_locations(cadata=config['ca'])
+    routes = config.get('routes') or [{'kind': 'direct'}]
+    if not isinstance(routes, list) or not routes or not isinstance(routes[0], dict):
+        raise CloudError('CLOUD_NETWORK', '网络代理配置无效')
+    route = routes[0]
+    proxy = None
+    if route.get('kind') != 'direct':
+        proxy = route.get('url')
+        parsed = urlsplit(proxy or '')
+        if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ('', '/'):
+            raise CloudError('CLOUD_NETWORK', '暂时只支持 http 代理')
+    return context, proxy
+
+
 def client(request):
+    context, proxy = network_options(request)
     return httpx.AsyncClient(headers={'Authorization': 'Bearer ' + request['key']},
-                             timeout=httpx.Timeout(120, connect=15), trust_env=False, follow_redirects=False)
+                             timeout=httpx.Timeout(120, connect=15), trust_env=False, follow_redirects=False,
+                             verify=context, proxy=proxy)
 
 
 async def voices(request):
@@ -136,7 +167,12 @@ async def speak(request, cancelled):
     if emotion in ('happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'calm'):
         voice['emotion'] = emotion
     first_pcm, total_bytes, tail, trace_id = None, 0, b'', None
+    context, proxy = network_options(request)
+    tls_options = {'ssl': context} if endpoint.startswith('wss:') else {}
+    if proxy and proxy.startswith('https:'):
+        tls_options['proxy_ssl'] = context
     async with websockets.connect(endpoint, additional_headers={'Authorization': 'Bearer ' + request['key']},
+                                  proxy=proxy, **tls_options,
                                   open_timeout=15, close_timeout=3, ping_interval=20, ping_timeout=20,
                                   max_size=8 * 1024 * 1024) as ws:
         started = False

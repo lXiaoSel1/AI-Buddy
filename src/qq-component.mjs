@@ -1,3 +1,4 @@
+import {downloadPinnedFile} from './network-download.mjs';
 import {createReadStream,createWriteStream} from 'node:fs';
 import {mkdir,readFile,writeFile,stat,lstat,statfs,open,rename,rm,readdir} from 'node:fs/promises';
 import {join,resolve,relative,dirname,isAbsolute,sep} from 'node:path';
@@ -52,9 +53,9 @@ export async function verifyComponent(directory,descriptor){
 }
 const downloadHosts=new Set(['github.com','release-assets.githubusercontent.com','objects.githubusercontent.com','objects-origin.githubusercontent.com']);
 async function downloadResponse(url,options){for(let i=0;i<6;i++){const parsed=new URL(url);if(parsed.protocol!=='https:'||!downloadHosts.has(parsed.hostname)||parsed.username||parsed.password)throw fail('QQ_COMPONENT_DOWNLOAD_ORIGIN');const response=await fetch(parsed,{...options,redirect:'manual'});if([301,302,303,307,308].includes(response.status)){await response.body?.cancel();url=new URL(response.headers.get('location'),parsed).href;continue;}return response;}throw fail('QQ_COMPONENT_DOWNLOAD_REDIRECT');}
-export function createQqComponent({directory,descriptor,fetchDownload=downloadResponse}={}){
+export function createQqComponent({directory,descriptor,network,fetchImpl=fetch,fetchDownload}={}){
  let pending=null;
- async function ensure({signal,onProgress=()=>{}}={}){
+ async function ensure({signal,onProgress=()=>{},official=false}={}){
   if(process.platform!=='win32'||process.arch!=='x64')throw fail('QQ_COMPONENT_PLATFORM_UNSUPPORTED');
   if(pending)return pending;
   pending=(async()=>{
@@ -75,15 +76,8 @@ export function createQqComponent({directory,descriptor,fetchDownload=downloadRe
     }
     const disk=await statfs(directory);if(disk.bavail*disk.bsize<descriptor.bytes+descriptor.expandedBytes+64*1024*1024)throw fail('QQ_COMPONENT_DISK_FULL');
     stage=await transaction.begin();const part=transaction.partial;
-    await noLinks(part);let offset=0;try{offset=(await stat(part)).size;}catch(e){if(e.code!=='ENOENT')throw e;}if(offset>descriptor.bytes)throw fail('QQ_COMPONENT_SIZE_MISMATCH');
-    if(offset<descriptor.bytes){
-     await transaction.phase('downloading');
-     const response=await fetchDownload(descriptor.url,{signal:AbortSignal.any([signal??new AbortController().signal,AbortSignal.timeout(30*60*1000)]),headers:offset?{Range:'bytes='+offset+'-'}:{}});
-     if(offset&&response.status===200)offset=0;
-     if(!response.ok||offset&&response.status!==206||response.status===206&&!response.headers.get('content-range')?.startsWith('bytes '+offset+'-')){await response.body?.cancel();throw fail('QQ_COMPONENT_DOWNLOAD_FAILED');}
-     let received=offset;const limit=new Transform({transform(chunk,_enc,callback){received+=chunk.length;if(received>descriptor.bytes)return callback(fail('QQ_COMPONENT_SIZE_MISMATCH'));onProgress({downloadedBytes:received,totalBytes:descriptor.bytes});callback(null,chunk);}});
-     await pipeline(response.body,limit,createWriteStream(part,{flags:offset?'a':'w'}),{signal});
-    }
+    await noLinks(part);await transaction.phase('downloading');
+    await downloadPinnedFile(descriptor,part,{partial:part,fetchImpl:fetchDownload??fetchImpl,planDownload:network?.planDownload,official,signal,onProgress:value=>onProgress({downloadedBytes:value.receivedBytes,totalBytes:value.totalBytes}),validateUrl:value=>{const url=new URL(value);if(url.protocol!=='https:'||!downloadHosts.has(url.hostname)||url.username||url.password)throw fail('QQ_COMPONENT_DOWNLOAD_ORIGIN');return url;}});
     await transaction.phase('extracting');await extractPinnedZip(part,stage,descriptor,{signal});await writeFile(join(stage,'buddy-component.json'),JSON.stringify({sha256:descriptor.sha256,version:descriptor.version}),{flag:'wx'});signal?.throwIfAborted();await rename(stage,target);
     await transaction.phase('committed');await transaction.complete();return target;
    }catch(cause){

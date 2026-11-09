@@ -12,13 +12,20 @@ export function createSocialLogin({accounts,drivers,onUpdate=()=>{},now=Date.now
  function publish(row,patch){row.public={...row.public,...patch,updatedAt:now()};onUpdate();}
  function current(row){return !closed&&rows.get(row.platform)===row&&!row.abort.signal.aborted;}
  function fingerprint(platform){return JSON.stringify(accounts.list().filter(row=>row.pluginId===SOCIAL_LOGIN_PLUGINS[platform]).map(({ref,accountId,enabled,generation})=>({ref,accountId,enabled,generation})));}
- function start(platform,{expectedAccountId=null}={}){
-  valid(platform);const previous=rows.get(platform);if(previous?.draining||previous&&active.has(previous.public.phase))return status(platform);
+ function start(platform,options={}){
+  const {official=false,retryAttemptId}=options;let expectedAccountId=options.expectedAccountId??null;
+  valid(platform);const previous=rows.get(platform);
+  if(typeof official!=='boolean'||retryAttemptId!==undefined&&!official)throw fail('SOCIAL_LOGIN_RETRY_STALE');
+  if(official){
+   if(platform!=='qq'||!previous||previous.draining||previous.public.phase!=='failed'||previous.public.errorCode!=='NETWORK_MIRROR_MISMATCH'||previous.public.retryOfficial!==true||retryAttemptId!==previous.public.attemptId||previous.fingerprint!==fingerprint(platform)||options.expectedAccountId!==undefined&&expectedAccountId!==previous.expectedAccountId)throw fail('SOCIAL_LOGIN_RETRY_STALE');
+   expectedAccountId=previous.expectedAccountId;
+  }
+  if(previous?.draining||previous&&active.has(previous.public.phase))return status(platform);
   if(expectedAccountId!==null&&(typeof expectedAccountId!=='string'||!/^\d{1,20}$/.test(expectedAccountId)))throw fail('SOCIAL_LOGIN_ACCOUNT_INVALID');
-  const row={platform,fingerprint:fingerprint(platform),abort:new AbortController(),public:{platform,attemptId:randomUUID(),phase:'preparing',startedAt:now()}};
+  const row={platform,expectedAccountId,fingerprint:fingerprint(platform),abort:new AbortController(),public:{platform,attemptId:randomUUID(),phase:'preparing',startedAt:now()}};
   rows.set(platform,row);onUpdate();
   row.pending=Promise.resolve().then(async()=>{
-   const result=await drivers[platform].start({attemptId:row.public.attemptId,signal:row.abort.signal,expectedAccountId,update:patch=>{
+   const result=await drivers[platform].start({attemptId:row.public.attemptId,signal:row.abort.signal,expectedAccountId,official,update:patch=>{
     if(!current(row))return;const safe={};
     if(active.has(patch.phase))safe.phase=patch.phase;
     if(typeof patch.qr==='string'&&/^data:image\/(?:png|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(patch.qr)&&patch.qr.length<200000)safe.qr=patch.qr;
@@ -39,7 +46,10 @@ export function createSocialLogin({accounts,drivers,onUpdate=()=>{},now=Date.now
    if(!current(row))return;
    row.draining=true;publish(row,{phase:'cleaning-up',qr:undefined});
    try{await drivers[platform].stop?.({attemptId:row.public.attemptId});row.draining=false;}catch{publish(row,{phase:'failed',errorCode:'SOCIAL_LOGIN_STOP_PENDING'});return;}
-   if(current(row))publish(row,{phase:cause?.code==='SOCIAL_LOGIN_EXPIRED'?'needs-login':cause?.code==='SOCIAL_LOGIN_CANCELLED'?'cancelled':'failed',errorCode:typeof cause?.code==='string'&&/^[A-Z0-9_]{1,80}$/.test(cause.code)?cause.code:'SOCIAL_LOGIN_FAILED'});
+   if(current(row)){
+    const errorCode=typeof cause?.code==='string'&&/^[A-Z0-9_]{1,80}$/.test(cause.code)?cause.code:'SOCIAL_LOGIN_FAILED',host=cause?.host??cause?.details?.host;
+    publish(row,{phase:errorCode==='SOCIAL_LOGIN_EXPIRED'?'needs-login':errorCode==='SOCIAL_LOGIN_CANCELLED'?'cancelled':'failed',errorCode,retryOfficial:platform==='qq'&&!official&&errorCode==='NETWORK_MIRROR_MISMATCH'&&cause?.retryOfficial===true,...typeof host==='string'&&/^[a-zA-Z0-9.-]{1,253}$/.test(host)?{errorHost:host}:{}});
+   }
   });
   return status(platform);
  }

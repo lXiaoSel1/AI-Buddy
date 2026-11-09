@@ -24,6 +24,32 @@ public sealed class UpdateDiscovery(HttpClient http,TimeSpan? idleTimeout=null,F
     readonly Func<string,string,bool> verify=verifySignature??((payload,signature)=>SshSignature.Verify(payload,signature,ReleaseIdentity.SigningKey));
 
     public async Task<UpdateRelease?> Check(string currentVersion,CancellationToken cancel) {
+        VersionParts(currentVersion);
+        try{return await CheckApi(currentVersion,cancel);}
+        catch(DownloadException rate) when(rate.RateLimited) {
+            InvalidDataException? invalidProof=null;MirrorMismatchException? mirrorFailure=null;
+            foreach(var url in new[]{Web+"/releases/latest/download/app-release-proof.json","https://raw.githubusercontent.com/"+Repository+"/main/app-release-proof.json"}) {
+                NetworkRoute? proofRoute=null;
+                try {
+                    using var proof=await GetJson(new Uri(url),cancel,route=>proofRoute=route);var envelope=proof.RootElement;
+                    if(envelope.GetProperty("schemaVersion").GetInt32()!=1)throw Invalid("Unsupported published release proof");
+                    var selected=envelope.GetProperty("release").Deserialize<UpdateRelease>(Json.Options)??throw Invalid("Missing published release proof");
+                    if(!VerifySelected(selected))throw Invalid("Published proof lacks the application update protocol");
+                    return Compare(VersionParts(selected.Version),VersionParts(currentVersion))>0?selected:null;
+                }catch(Exception e) when(e is HttpRequestException or IOException or InvalidDataException or JsonException or KeyNotFoundException or InvalidOperationException) {
+                    cancel.ThrowIfCancellationRequested();
+                    if(e is MirrorMismatchException mirror)mirrorFailure=mirror;
+                    else if(proofRoute is {Mirror:true}&&(e is InvalidDataException or JsonException or KeyNotFoundException or InvalidOperationException))mirrorFailure=(MirrorMismatchException)InstallerNetwork.IntegrityFailure(proofRoute,e.Message);
+                    else if(e is InvalidDataException invalid)invalidProof=invalid;
+                }
+                catch(OperationCanceledException)when(!cancel.IsCancellationRequested){}
+            }
+            if(mirrorFailure is not null)throw mirrorFailure;
+            if(invalidProof is not null)throw invalidProof;
+            throw;
+        }
+    }
+    async Task<UpdateRelease?> CheckApi(string currentVersion,CancellationToken cancel) {
         var current=VersionParts(currentVersion);
         // Never re-resolve latest while validating or downloading the selected release.
         using var release=await GetJson(new Uri(Api+"/releases/latest"),cancel);
@@ -104,9 +130,10 @@ public sealed class UpdateDiscovery(HttpClient http,TimeSpan? idleTimeout=null,F
         using var request=Request(new Uri(release.InstallerUrl),false);
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancel);timeout.CancelAfter(idle);
         using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,timeout.Token);
+        progress?.Report(new("source",release.Version,Detail:release.InstallerUrl+" -> "+(response.RequestMessage?.RequestUri?.AbsoluteUri??request.RequestUri!.AbsoluteUri)));
         RequireSuccess(response);
         if(response.StatusCode!=HttpStatusCode.OK||response.Content.Headers.ContentEncoding.Any(e=>e!="identity")||
-            response.Content.Headers.ContentLength is long length&&length!=release.Bytes)throw Invalid("Installer HTTP length, encoding or status differs");
+            response.Content.Headers.ContentLength is long length&&length!=release.Bytes)throw InstallerNetwork.IntegrityFailure(response,"Installer HTTP length, encoding or status differs");
         await using var input=await response.Content.ReadAsStreamAsync(cancel);
         // Remove only the old cache entry; never truncate a possibly hard-linked file.
         if(File.Exists(partial))File.Delete(partial);
@@ -115,19 +142,19 @@ public sealed class UpdateDiscovery(HttpClient http,TimeSpan? idleTimeout=null,F
             while(true) {
                 using var readTimeout=CancellationTokenSource.CreateLinkedTokenSource(cancel);readTimeout.CancelAfter(idle);
                 var count=await input.ReadAsync(buffer,readTimeout.Token);if(count==0)break;
-                if(total+count>release.Bytes)throw Invalid("Installer download exceeds signed length");
+                if(total+count>release.Bytes)throw InstallerNetwork.IntegrityFailure(response,"Installer download exceeds signed length");
                 await output.WriteAsync(buffer.AsMemory(0,count),cancel);sha.AppendData(buffer,0,count);total+=count;
                 progress?.Report(new("update-download",release.Version,total,release.Bytes));
             }
             await output.FlushAsync(cancel);output.Flush(true);
-            if(total!=release.Bytes||Convert.ToHexStringLower(sha.GetHashAndReset())!=release.InstallerSha256)throw Invalid("Installer download SHA-256 or length differs");
+            if(total!=release.Bytes||Convert.ToHexStringLower(sha.GetHashAndReset())!=release.InstallerSha256)throw InstallerNetwork.IntegrityFailure(response,"Installer download SHA-256 or length differs");
         }
         cancel.ThrowIfCancellationRequested();File.Move(partial,final,true);return final;
     }
 
-    async Task<JsonDocument> GetJson(Uri url,CancellationToken cancel) {
+    async Task<JsonDocument> GetJson(Uri url,CancellationToken cancel,Action<NetworkRoute?>? trace=null) {
         using var request=Request(url,true);using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancel);timeout.CancelAfter(idle);
-        using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,timeout.Token);RequireSuccess(response);
+        using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,timeout.Token);trace?.Invoke(InstallerNetwork.Route(response));RequireSuccess(response);
         if(response.StatusCode!=HttpStatusCode.OK||response.Content.Headers.ContentLength>ApiLimit)throw Invalid("Invalid GitHub API response length or status");
         await using var input=await response.Content.ReadAsStreamAsync(cancel);using var output=new MemoryStream();var buffer=new byte[32*1024];
         while(true) {
@@ -150,7 +177,8 @@ public sealed class UpdateDiscovery(HttpClient http,TimeSpan? idleTimeout=null,F
         }
         bool retry=response.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests||
             response.StatusCode==HttpStatusCode.Forbidden&&wait>TimeSpan.Zero||(int)response.StatusCode>=500;
-        throw new DownloadException($"Update check/download HTTP {(int)response.StatusCode}",retry,wait>TimeSpan.Zero?wait:null);
+        var rateLimited=response.StatusCode==HttpStatusCode.TooManyRequests||response.StatusCode==HttpStatusCode.Forbidden&&(wait>TimeSpan.Zero||response.Headers.TryGetValues("X-RateLimit-Remaining",out var left)&&left.Contains("0"));
+        throw new DownloadException($"Update check/download HTTP {(int)response.StatusCode}",retry,wait>TimeSpan.Zero?wait:null,rateLimited);
     }
     static (long Bytes,string Hash,string Url) Asset(JsonElement r,string name,long limit,string expectedUrl) {
         var assets=Property(r,"assets");if(assets.ValueKind!=JsonValueKind.Array)throw Invalid("Missing release assets");

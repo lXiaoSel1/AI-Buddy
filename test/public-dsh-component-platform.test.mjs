@@ -26,7 +26,7 @@ async function fixture(t,{cold=false,componentWorkerFactory,qq=false,qqLoginFact
   if(cold&&!qq&&!realHostDependencies){platform.dependencyCoordinator.plan=async()=>({token:'already-ready-fixture',components:[]});platform.dependencyCoordinator.run=async({materialize,enqueue})=>enqueue(await materialize());}
   Object.assign(platform.dshBackend,simulatedBackend(calls));t.after(async()=>{for(const release of cleanup)release();await platform.close();await rm(root,{recursive:true,force:true});});
   if(!cold)await platform.action({action:'community-load-catalog',sourceId:source.sourceId,envelope:signed(catalog(pub),pub)});
-  return {root,platform,calls,source,key,cleanup};
+  return {root,platform,calls,source,key,cleanup,legacy};
 }
 function prepare(f){const waiting=gate(),entered=gate();let done=false;const finish=(error)=>{if(done)return;done=true;if(error)waiting.reject(error);else waiting.resolve({state:'ready',runtimeLockPath:join(f.root,'new/runtime-lock.json')});};f.platform.componentManager.install=async()=>{entered.resolve();return waiting.promise;};f.platform.componentManager.cancel=()=>{finish(abort());return {cancelled:true};};const installing=f.platform.action({action:'dsh-component-install',planId:'host-fixture'});return {entered:entered.promise,installing,finish};}
 async function queueInstall(f){const plan=await f.platform.action({action:'dsh-plan',sourceId:f.source.sourceId,id:'test.tools'});return f.platform.action({action:'dsh-install',planId:plan.planId,grantedCapabilities:plan.declaredCapabilities});}
@@ -105,4 +105,19 @@ test('explicitly confirmed missing FFmpeg bytes still prepare once and admit the
  const ff=ffmpegReadinessFixture();ff.set('missing');const f=await fixture(t,{cold:true,realHostDependencies:true,ffmpegManagerFactory:()=>ff.manager});f.platform.componentManager.status=async()=>({state:'ready'});f.platform.componentManager.plan=async()=>({planId:'pinned-dsh-fixture'});
  const plan=await f.platform.action({action:'dsh-plan-enable',packageKey:f.key});assert.equal(plan.hostComponents.find(row=>row.id==='ffmpeg').downloadBytes,266085149);
  const request={action:'dsh-install',planId:plan.planId,grantedCapabilities:plan.priorGrantedCapabilities};await f.platform.action(request);await f.platform.action(request);await f.platform.drainMaintenance();assert.equal(ff.preparations,1);assert.equal(f.calls.filter(row=>row[0]==='enable').length,1);assert.equal(f.platform.snapshot().maintenance.jobs.length,1);
+});
+
+test('C14 platform close aggregates failure and rebuilds every closed service before recovery',async t=>{
+ const f=await fixture(t),original=f.platform.ffmpegManager.close;let first=true;
+ f.platform.ffmpegManager.close=async()=>{if(first){first=false;throw Object.assign(Error('injected ffmpeg close failure'),{code:'FIXTURE_CLOSE'});}return original();};
+ await assert.rejects(f.platform.close(),error=>error.code==='PLUGIN_CLOSE_FAILED'&&error.failedSteps.includes('ffmpeg'));
+ // The stable production facade performs a real utility restart (covered separately).
+ // This composition fixture has no child process and exposes the same host-only port.
+ const optionsLegacy=f.platform.restoreAfterCloseFailure;
+ assert.equal(typeof optionsLegacy,'function');
+ // This fixture's legacy manager intentionally has no recreation port: fail explicitly.
+ await assert.rejects(f.platform.restoreAfterCloseFailure(),{code:'PLUGIN_RESTORE_UNSUPPORTED'});
+ let reopened=0;f.legacy.reopen=async()=>{reopened++;};const restored=await f.platform.restoreAfterCloseFailure();
+ assert.notEqual(restored,f.platform);assert.notEqual(restored.componentManager,f.platform.componentManager);assert.notEqual(restored.clientHost,f.platform.clientHost);assert.equal(restored.snapshot().service.usable,true);assert.equal(reopened,1);await restored.close();
+ f.platform.close=async()=>{};
 });

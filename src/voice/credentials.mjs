@@ -36,5 +36,15 @@ export function createVoiceCredentials({dataRoot,crypto}){
       try{return crypto.decryptString(Buffer.from(row.ciphertext,'base64'));}
       catch{throw fail('此系统不能解密语音密钥，请重新填写','VOICE_CREDENTIAL_ENCRYPTION');}
     },
+    removeIfUnused(ref,isReferenced){
+      const operation=tail.then(async()=>{
+        if(!valid(ref)||typeof isReferenced!=='function')throw fail('无效的语音密钥清理请求','VOICE_CREDENTIAL_INVALID');
+        if(await isReferenced(ref))return {removed:false,referenced:true};
+        const state=await read();if(!Object.hasOwn(state.keys,ref))return {removed:false};
+        delete state.keys[ref];await assertPluginTreeNoLinks(path);
+        try{writeAtomic(path,JSON.stringify(state));}catch{throw fail('配置已保存，但旧密钥清理尚未完成；原加密记录仍保留','VOICE_CREDENTIAL_CLEANUP_PENDING');}
+        return {removed:true};
+      });tail=operation.catch(()=>{});return operation;
+    },
   };
 }

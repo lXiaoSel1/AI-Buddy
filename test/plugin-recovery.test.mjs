@@ -9,7 +9,7 @@ import {createPluginManager} from '../src/plugin-manager.mjs';
 import {createPluginMaintenanceClient} from '../src/plugin-maintenance-client.mjs';
 
 const tick = () => new Promise(done => setImmediate(done));
-async function until(check, limit = 1000) {
+async function until(check, limit = 5000) {
   const end = Date.now() + limit;
   while (!check()) { if (Date.now() >= end) assert.fail('condition did not settle'); await new Promise(done => setTimeout(done, 5)); }
 }

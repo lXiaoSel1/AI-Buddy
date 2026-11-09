@@ -85,7 +85,7 @@ export function createAppBootstrapBackend({root,build,dataRoot,pipe,installation
     return selected={source,release,selectionId:saved.value.selectionId};
   }
   const fields=selection=>({selectionId:selection.selectionId,version:selection.release.version,installerBytes:selection.release.bytes,notes:appReleaseNotes(selection.release),migration:true});
-  async function run(command,{nonce,signal,selectionId,onProgress=()=>{}}={}){
+  async function run(command,{nonce,signal,selectionId,onProgress=()=>{},official=false}={}){
     if(!['status','check','prepare','apply'].includes(command)||!digest.test(nonce??'')||(['prepare','apply'].includes(command)&&!digest.test(selectionId??'')))throw updateError('APP_UPDATE_PROTOCOL');
     signal?.throwIfAborted();
     if(command==='status'){
@@ -104,7 +104,7 @@ export function createAppBootstrapBackend({root,build,dataRoot,pipe,installation
       const existing=await restoreSelection();const source=await sourceSnapshot(existing?.selectionId);
       const journal=await readJson(join(control,'transaction.json'),{optional:true});
       if(existing&&['prepared','staging'].includes(journal?.value.phase))return {ok:true,stage:'available',...fields(existing)};
-      const release=await releaseClient.check(version,{signal});
+      const release=await releaseClient.check(version,{signal,official});
       if(!release){selected=null;await assertNoUpdateLinks(selectionPath);await unlink(selectionPath).catch(error=>{if(error.code!=='ENOENT')throw error;});return {ok:true,stage:'current',version,migration:true};}
       selected={source,release,selectionId:bootstrapSelectionId(source,release)};await saveSelection(selected);
       return {ok:true,stage:'available',...fields(selected)};
@@ -113,12 +113,12 @@ export function createAppBootstrapBackend({root,build,dataRoot,pipe,installation
     if(!selection||selection.selectionId!==selectionId)throw updateError('APP_UPDATE_RECHECK_REQUIRED');
     const source=await sourceSnapshot(selection.selectionId);releaseClient.verify(selection.release);
     requireSource(bootstrapSelectionId(source,selection.release)===selectionId);
-    const path=command==='prepare'?await releaseClient.download(selection.release,cache,{signal,onProgress}):
+    const path=command==='prepare'?await releaseClient.download(selection.release,cache,{signal,onProgress,official}):
       await verifyCachedInstaller(join(cache,selection.release.installerSha256+'-'+selection.release.installerName),selection.release,signal);
     // Recheck both the source and cached executable immediately before creating the worker.
     requireSource(bootstrapSelectionId(await sourceSnapshot(selectionId),selection.release)===selectionId);
     await verifyCachedInstaller(path,selection.release,signal);signal?.throwIfAborted();
-    const initial={protocol:1,type:'bootstrap',nonce,source,release:selection.release};
+    const initial={protocol:1,type:'bootstrap',nonce,source,release:selection.release,official};
     if(Buffer.byteLength(JSON.stringify(initial),'utf8')>128*1024)throw updateError('APP_UPDATE_PROTOCOL');
     const child=start(path,[`--app-bootstrap-worker=${command}`,`--app-root=${root}`,`--nonce=${nonce}`,`--pid=${pid}`],{cwd:root,stdio:['pipe','pipe','ignore'],windowsHide:true,detached:command==='apply'});
     const result=await readUpdateWorker(child,{command,nonce,signal,onProgress,initial,validateReady:event=>event.version===selection.release.version&&event.manifestSha256===selection.release.manifestSha256&&

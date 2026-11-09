@@ -81,8 +81,18 @@ function probeTerminal(value,profile,state,streaming){
   if(profile.protocol==='gemini')return ['STOP','MAX_TOKENS'].includes(value.candidates?.[0]?.finishReason);
   return ['stop','length'].includes(value.choices?.[0]?.finish_reason);
 }
+export async function fetchModelResponse(fetchImpl,input,init={}){
+ const initial=new URL(input);let target=initial,options={...init,redirect:'manual'};
+ for(let hop=0;;hop++){
+  const response=await fetchImpl(target.href,options);if(![301,302,303,307,308].includes(response.status))return response;
+  const location=response.headers.get('location');await response.body?.cancel();if(!location||hop>=5)throw Error('服务地址重定向过多');
+  const next=new URL(location,target);if(next.hostname!==initial.hostname||next.username||next.password||!['http:','https:'].includes(next.protocol)||initial.protocol==='https:'&&next.protocol!=='https:')throw Object.assign(Error('服务地址跳转到了 '+next.origin+next.pathname+'，请直接填它'),{code:'NETWORK_REDIRECT'});
+  if(response.status===303&&options.method!=='HEAD'||[301,302].includes(response.status)&&options.method==='POST'){options={...options,method:'GET'};delete options.body;const headers=new Headers(options.headers);headers.delete('content-type');options.headers=headers;}
+  target=next;
+ }
+}
 export class ApiTransport{
-  constructor({fetchImpl=globalThis.fetch,onUsage=()=>{},audit=()=>{}}={}){this.fetch=fetchImpl;this.onUsage=onUsage;this.audit=audit;}
+  constructor({fetchImpl=globalThis.fetch,onUsage=()=>{},audit=()=>{}}={}){this.fetch=(input,init)=>fetchModelResponse(fetchImpl,input,init);this.onUsage=onUsage;this.audit=audit;}
   async *stream(profile,options){
     const submission=createModelSubmission(options,'api',{requestId:randomUUID()});
     try{await submission.prepare();yield* this.streamRequest(profile,options,submission);await submission.complete();}catch(error){throw await submission.failure(error);}
@@ -105,11 +115,11 @@ export class ApiTransport{
       if(!finished)throw probe?Object.assign(Error('MODEL_IMAGE_PROBE_INCOMPLETE'),{code:'MODEL_IMAGE_PROBE_INCOMPLETE'}):Error('模型连接中断，请重试');options.onTiming?.({name:'model-complete'});
       if(state.truncated){yield {type:'finish',reason:{kind:'length'}};return;}
       if(!outputLength)throw Error('模型没有返回正文，请重试');yield {type:'finish',reason:{kind:'stop'}};
-    }catch(error){if(diagnostic)diagnostic.errorCode=options.signal?.aborted?(options.signal.reason?.code==='MODEL_IMAGE_PROBE_TIMEOUT'?'MODEL_IMAGE_PROBE_TIMEOUT':'ABORT_ERR'):PROBE_DIAGNOSTIC_CODES.has(error?.code)?error.code:diagnostic.errorCode??'MODEL_IMAGE_PROBE_FAILED';if(!submission.attempted)throw error;if(options.signal?.aborted)throw Error('请求已取消或超时',{cause:error});if(error?.message?.startsWith('MODEL_')||error?.message?.startsWith('API')||error?.message?.startsWith('模型')||error?.message?.startsWith('当前账户')||error?.message?.startsWith('服务地址')||error?.message?.startsWith('请求受限'))throw error;throw Error('无法连接模型服务，请检查地址或网络',{cause:error});}
+    }catch(error){if(diagnostic)diagnostic.errorCode=options.signal?.aborted?(options.signal.reason?.code==='MODEL_IMAGE_PROBE_TIMEOUT'?'MODEL_IMAGE_PROBE_TIMEOUT':'ABORT_ERR'):PROBE_DIAGNOSTIC_CODES.has(error?.code)?error.code:diagnostic.errorCode??'MODEL_IMAGE_PROBE_FAILED';if(!submission.attempted)throw error;if(options.signal?.aborted)throw Error('请求已取消或超时',{cause:error});if(error.network||error?.message?.startsWith('MODEL_')||error?.message?.startsWith('API')||error?.message?.startsWith('模型')||error?.message?.startsWith('当前账户')||error?.message?.startsWith('服务地址')||error?.message?.startsWith('请求受限'))throw error;throw Error('无法连接模型服务，请检查地址或网络',{cause:error});}
     finally{if(submission.attempted)this.onUsage({requestId,profileId:profile.id,provider:profile.kind,connectionIdentity:connectionIdentity(profile),model:profile.model,purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId,scope:options.scope,timestamp:new Date().toISOString(),usage:normalizeApiUsage(state.usage||{},profile.protocol)});this.audit({type:'api-request',requestId,traceId:options.traceId,provider:profile.kind,connectionIdentity:connectionIdentity(profile),model:profile.model,status,...(httpError?{httpError}:{}),durationMs:Date.now()-started,submitted:submission.attempted,completed:finished,...diagnostic});}
   }
   async listModels(profile,signal){
-    let response;try{response=await this.fetch(profile.baseUrl+'/models',{headers:headers(profile),signal,redirect:'error'});}catch{throw Error('无法获取模型列表，请检查地址或网络；也可手动填写');}
+    let response;try{response=await this.fetch(profile.baseUrl+'/models',{headers:headers(profile),signal,redirect:'error'});}catch(error){if(error.network||error.code==='NETWORK_REDIRECT')throw error;throw Error('无法获取模型列表，请检查地址或网络；也可手动填写');}
     if(!response.ok)throw await readApiHttpError(response,{signal,secrets:[profile.key]});let data;try{data=await response.json();}catch{throw Error('模型列表格式不兼容，请手动填写模型 ID');}
     const rows=profile.protocol==='gemini'?data.models:data.data;
     if(!Array.isArray(rows))throw Error('模型列表格式不兼容，请手动填写模型 ID');
