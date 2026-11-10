@@ -1,13 +1,13 @@
 {
-  "total": 1143,
+  "total": 1158,
   "releases": [
     {
       "tag": "v2.0.13",
-      "downloads": 0
+      "downloads": 5
     },
     {
       "tag": "v2.0.12",
-      "downloads": 3
+      "downloads": 13
     },
     {
       "tag": "v2.0.11",
