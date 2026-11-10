@@ -448,6 +448,7 @@
     "test/voice-live-handoff-integration.test.mjs",
     "test/voice-main-trust.test.mjs",
     "test/voice-package-compatibility.test.mjs",
+    "test/voice-official-authority-compatibility.test.mjs",
     "test/voice-package-update-integration.test.mjs",
     "test/voice-package.test.mjs",
     "test/voice-page-switch-r15.test.mjs",

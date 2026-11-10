@@ -201,7 +201,7 @@ for (const legacy of [false, true]) test(`${legacy ? 'legacy' : 'source-aware'} 
   }
   const {authority, manager} = await f.restartHost('2.0.9');
   assert.equal(authority.status().find(row => row.id === breeze).state, 'incompatible');
-  await assert.rejects(authority.resolveVoicePackage(breeze), {code: legacy ? 'VOICE_PACKAGE_CHANGED' : 'PLUGIN_INCOMPATIBLE'});
+  await assert.rejects(authority.resolveVoicePackage(breeze), {code: 'PLUGIN_INCOMPATIBLE'});
   const {plan} = await updateRequest(authority);
   await authority.action({action: 'install-update', planId: plan.planId});
   const current = await authority.resolveVoicePackage(breeze);

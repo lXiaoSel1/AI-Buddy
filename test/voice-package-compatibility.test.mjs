@@ -28,6 +28,12 @@ test('both 1.0.1 voice engines are supported with their exact 1.0.1 shared depen
   for (const id of [breeze, gpt]) assert.equal(supportsVoiceManifest(manifest(id, '1.0.1')), true, id);
 });
 
+test('future stable 1.x voice engines use the same interface with an exact matching shared dependency', () => {
+  for (const version of ['1.0.4', '1.1.0', '1.9.9']) {
+    for (const id of [breeze, gpt]) assert.equal(supportsVoiceManifest(manifest(id, version)), true, `${id}@${version}`);
+  }
+});
+
 const origin = 'https://voice-generation.fixture.test';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const field = value => {
@@ -48,13 +54,13 @@ function archive(id, version, dependency, appRange) {
   return {bytes, item: {manifest: spec, archive: {url: `${origin}/${id}/${version}.zip`, bytes: bytes.length, sha256: hash(bytes)}, publishedAt: '2026-11-08T00:00:00Z'}};
 }
 
-async function setup(t, {dependency = (id, version) => version,appVersion='2.0.9',appRange,versions=['1.0.0', '1.0.1', '1.0.3']} = {}) {
+async function setup(t, {dependency = (id, version) => version,appVersion='2.0.9',appRange,versions=['1.0.0', '1.0.1', '1.0.2', '1.0.3', '1.0.4']} = {}) {
   const root = await mkdtemp(join(tmpdir(), 'buddy-voice-generation-')), dataRoot = join(root, 'profile');
   await mkdir(dataRoot);
   const {privateKey, publicKey} = generateKeyPairSync('ed25519');
   const ssh = 'ssh-ed25519 ' + Buffer.concat([field('ssh-ed25519'), field(publicKey.export({type: 'spki', format: 'der'}).subarray(-32))]).toString('base64');
   const voiceTestFingerprint = pluginSourceFingerprint(ssh);
-  const packages = versions.flatMap(version => [breeze, gpt, shared].map(id => archive(id, version, dependency(id, version),appRange)));
+  const packages = versions.flatMap(version => [breeze, gpt, shared].map(id => archive(id, version, dependency(id, version),typeof appRange==='function'?appRange(version):appRange)));
   const payload = {schemaVersion: 1, id: 'voice-generation-fixture', generatedAt: '2026-11-08T00:00:00Z', packages: packages.map(row => row.item)};
   const descriptor = {schemaVersion: 1, id: payload.id, name: 'Voice generation fixture', catalogUrl: `${origin}/catalog.json`, publicKey: ssh, keyId: 'voice-generation-test'};
   const envelope = {payload, signature: {keyId: descriptor.keyId, algorithm: 'ed25519', value: sign(null, Buffer.from(canonicalPluginJson(payload)), privateKey).toString('base64')}};
@@ -91,11 +97,27 @@ test('both 1.0.0 voice engines remain supported with their exact 1.0.0 shared de
   for (const id of [breeze, gpt]) assert.equal(supportsVoiceManifest(manifest(id, '1.0.0')), true, id);
 });
 
-test('voice engine support rejects other generations and inexact or mismatched shared dependencies', () => {
+test('voice engine support rejects unsupported interfaces, non-stable versions and inexact or mismatched shared dependencies', () => {
   for (const id of [breeze, gpt]) {
-    for (const [version, dependency] of [['1.0.0', '1.0.1'], ['1.0.1', '1.0.0'], ['1.0.0', '^1.0.0'], ['1.0.1', '^1.0.1'], ['1.0.2', '1.0.1'], ['1.0.2', '^1.0.2'], ['1.0.3', '1.0.2'], ['1.0.3', '^1.0.3'], ['1.0.4', '1.0.4']]) {
+    for (const [version, dependency] of [['1.0.0', '1.0.1'], ['1.0.1', '1.0.0'], ['1.0.0', '^1.0.0'], ['1.0.1', '^1.0.1'], ['1.0.2', '1.0.1'], ['1.0.2', '^1.0.2'], ['1.0.3', '1.0.2'], ['1.0.3', '^1.0.3'], ['1.0.4', '1.0.3'], ['1.0.4', '^1.0.4']]) {
       assert.equal(supportsVoiceManifest(manifest(id, version, dependency)), false, `${id}@${version} -> ${dependency}`);
     }
+    for (const version of ['2.0.0', '1.0.4-beta.1', '1.0.4+build.1', '01.0.4', '1.01.4', '1.0.04', '1.0', '1.0.4\n']) {
+      assert.equal(supportsVoiceManifest(manifest(id, version)), false, `${id}@${JSON.stringify(version)}`);
+    }
+  }
+});
+
+test('future 1.x voice support retains every engine manifest guard', () => {
+  for (const id of [breeze, gpt]) {
+    const valid = manifest(id, '1.0.4');
+    for (const patch of [
+      {id: 'example.voice'}, {kind: 'runtime'}, {entry: 'other.mjs'},
+      {activationEvents: []}, {activationEvents: [...valid.activationEvents, 'onStartup']},
+      {capabilities: []}, {capabilities: ['commands.register', 'storage']},
+      {dependencies: {}}, {dependencies: {...valid.dependencies, 'example.extra': '1.0.4'}},
+      ...valid.files.map(missing => ({files: valid.files.filter(file => file.path !== missing.path)})),
+    ]) assert.equal(supportsVoiceManifest({...valid, ...patch}), false, `${id}: ${JSON.stringify(patch)}`);
   }
 });
 
@@ -115,21 +137,52 @@ test('every app-compatible voice engine in the original signed official catalog 
   }
 });
 
-test('an app-compatible future voice contract is neither the default search release nor an update candidate', async t => {
-  const f = await setup(t, {versions: ['1.0.3', '1.0.4']});
+test('source manager offers stable 1.0.4 to both voice engines and their shared runtime on host 2.0.14', async t => {
+  const f = await setup(t, {versions: ['1.0.3', '1.0.4'], appVersion: '2.0.14', appRange: '>=2.0.14'});
+  const result = await f.manager.action({action: 'search', sourceId: f.sourceId});
+  assert.deepEqual(result.items.map(row => [row.manifest.id, row.manifest.version]).sort(), [[breeze, '1.0.4'], [gpt, '1.0.4']].sort());
+  await f.install([breeze, gpt], '1.0.3');
+  const {updates} = await f.manager.action({action: 'update-candidates'});
+  assert.deepEqual(updates.map(row => [row.id, row.to, row.state]).sort(), [breeze, gpt, shared].map(id => [id, '1.0.4', 'available']).sort());
+});
+
+test('an app-compatible 2.x voice interface is neither the default search release nor an update candidate', async t => {
+  const f = await setup(t, {versions: ['1.0.3', '2.0.0']});
   const result = await f.manager.action({action: 'search', sourceId: f.sourceId});
   assert.equal(result.items.find(row => row.manifest.id === breeze).manifest.version, '1.0.3');
-  const future = await f.manager.action({action: 'details', sourceId: f.sourceId, id: breeze, version: '1.0.4'});
+  const future = await f.manager.action({action: 'details', sourceId: f.sourceId, id: breeze, version: '2.0.0'});
   assert.equal(future.activation.reason, '需要更新 AI 酱');
   await f.install([breeze], '1.0.3');
   assert.deepEqual((await f.manager.action({action: 'update-candidates'})).updates, []);
 });
 
-test('discovery skips an app-compatible future contract and rejects an explicitly selected unsupported version', async t => {
-  const f = await setup(t, {versions: ['1.0.3', '1.0.4']}), service = await f.community();
+test('discovery skips an app-compatible 2.x interface and rejects an explicitly selected unsupported version', async t => {
+  const f = await setup(t, {versions: ['1.0.3', '2.0.0']}), service = await f.community();
+  const plan = await service.action({action: 'dsh-plan', sourceId: f.sourceId, id: breeze});
+  assert.equal(plan.packages.find(item => item.manifest.id === breeze).manifest.version, '1.0.3');
+  await assert.rejects(service.action({action: 'dsh-plan', sourceId: f.sourceId, id: breeze, version: '2.0.0'}), {code: 'PLUGIN_INCOMPATIBLE'});
+});
+
+test('discovery selects stable 1.0.4 with a lower-bound app declaration on host 2.0.14', async t => {
+  const f = await setup(t, {versions: ['1.0.3', '1.0.4'], appVersion: '2.0.14', appRange: '>=2.0.14'}), service = await f.community();
+  const plan = await service.action({action: 'dsh-plan', sourceId: f.sourceId, id: breeze});
+  assert.equal(plan.packages.find(item => item.manifest.id === breeze).manifest.version, '1.0.4');
+});
+
+test('host 2.0.14 excludes 1.0.4 requiring 2.0.15 and exposes its unchanged app requirement', async t => {
+  const f = await setup(t, {versions: ['1.0.3', '1.0.4'], appVersion: '2.0.14', appRange: version => version === '1.0.4' ? '>=2.0.15' : '>=2.0.14'});
+  const search = await f.manager.action({action: 'search', sourceId: f.sourceId});
+  assert.equal(search.items.find(row => row.manifest.id === breeze).manifest.version, '1.0.3');
+  const detail = await f.manager.action({action: 'details', sourceId: f.sourceId, id: breeze, version: '1.0.4'});
+  assert.equal(detail.compatible, false);
+  assert.deepEqual(detail.activation, {supported: true, usable: false, state: 'incompatible', requiredAppRange: '>=2.0.15', currentAppVersion: '2.0.14'});
+  const service = await f.community();
   const plan = await service.action({action: 'dsh-plan', sourceId: f.sourceId, id: breeze});
   assert.equal(plan.packages.find(item => item.manifest.id === breeze).manifest.version, '1.0.3');
   await assert.rejects(service.action({action: 'dsh-plan', sourceId: f.sourceId, id: breeze, version: '1.0.4'}), {code: 'PLUGIN_INCOMPATIBLE'});
+  await f.install([breeze, gpt], '1.0.3');
+  const {updates} = await f.manager.action({action: 'update-candidates'});
+  assert.deepEqual(updates.map(row => [row.id, row.to, row.state, row.error.code]).sort(), [breeze, gpt, shared].map(id => [id, '1.0.4', 'unavailable', 'PLUGIN_INCOMPATIBLE']).sort());
 });
 
 test('a discovery catalog containing only voice 1.0.3 explains incompatibility on host 2.0.12', async t => {
@@ -137,7 +190,7 @@ test('a discovery catalog containing only voice 1.0.3 explains incompatibility o
   await assert.rejects(service.action({action: 'dsh-plan', sourceId: f.sourceId, id: breeze}), {code: 'COMMUNITY_NO_COMPATIBLE_RELEASE', message: '这个插件的最新版需要更新的 AI 酱。先更新 AI 酱，或者在「版本」里选一个能用的旧版。'});
 });
 
-for (const version of ['1.0.0', '1.0.1', '1.0.3']) test(`the host can enable and lease both ${version} engines with their ${version} shared runtime`, async t => {
+for (const version of ['1.0.0', '1.0.1', '1.0.2', '1.0.3', '1.0.4']) test(`the host can enable and lease both ${version} engines with their ${version} shared runtime`, async t => {
   const {authority, sourceId, install} = await setup(t);
   await install([breeze, gpt], version);
   for (const id of [breeze, gpt]) await authority.action({action: 'enable', sourceId, id});

@@ -11,7 +11,7 @@ import {renamePluginPath as rename} from './plugin-files.mjs';
 import {quarantinePluginDirectories} from './plugin-quarantine.mjs';
 import {fetchDownloadResponse,downloadResponseInfo,createDownloadDeadline,waitForNetwork} from './network-download.mjs';
 import {retryPluginDownload,pluginMirrorIntegrity,verifyPluginMetadata} from './plugin-download-integrity.mjs';
-import {VOICE_PACKAGE_VERSIONS,VOICE_SHARED_PACKAGE,isVoiceEnginePackage,isVoicePackage,supportsVoiceManifest} from './voice/package-contract.mjs';
+import {VOICE_SHARED_PACKAGE,isVoiceEnginePackage,isVoicePackage,supportsVoiceManifest,supportsVoicePackageVersion} from './voice/package-contract.mjs';
 
 export const PLUGIN_SOURCE_BACKEND=Symbol('AI Buddy source storage boundary');
 const hash=value=>createHash('sha256').update(typeof value==='string'||Buffer.isBuffer(value)?value:canonicalPluginJson(value)).digest('hex');
@@ -172,7 +172,7 @@ export async function createPluginSourceManager({legacy,root,dataRoot,appVersion
    const items = ref.legacy ? base.packages ?? [] : catalog?.packages ?? [];
    const schema = ref.row.dataSchemaVersion ?? prior.manifest.dataSchemaVersion;
    const incompatibleSchema = manifest => manifest.dataSchemaVersion !== schema || !manifest.compatibleDataVersions.includes(schema);
-   const candidates = items.filter(({manifest}) => manifest.id === ref.id && (!isVoicePackage(manifest.id) || (manifest.id===VOICE_SHARED_PACKAGE?VOICE_PACKAGE_VERSIONS.includes(manifest.version):supportsVoiceManifest(manifest))) && (!automatic ||
+   const candidates = items.filter(({manifest}) => manifest.id === ref.id && (!isVoicePackage(manifest.id) || (manifest.id===VOICE_SHARED_PACKAGE?supportsVoicePackageVersion(manifest.version):supportsVoiceManifest(manifest))) && (!automatic ||
      stablePatchUpdate(ref.row.current, manifest.version) && !incompatibleSchema(manifest) &&
      manifest.capabilities.every(value => prior.manifest.capabilities.includes(value))));
    const selected = selectStableUpdate(candidates, ref.row.current,
