@@ -375,10 +375,10 @@ export function createDshBackend({ fetchImpl=fetch,network,networkBootstrapPath,
     const expectedArtifact = resolve(stateDir, 'verified-packages', `${plan.artifactSha256}.tgz`);
     if (resolve(plan.artifact ?? '') !== expectedArtifact || !/^[a-f0-9]{64}$/.test(plan.artifactSha256 ?? '')) throw failure('DSH_INSTALL_PLAN_CHANGED', 'Install artifact differs from the approved exact cache');
     const verified = await verifyTarball(expectedArtifact, { ...plan.packageRef, sourceDigest: plan.artifactSha256 }, options);
-    return verified.spec;
+    return {...verified,artifactPath:expectedArtifact};
   }
   async function install(plan, options = {}) {
-    const installSpec=await verifiedInstallSpec(plan,options);
+    const verified=await verifiedInstallSpec(plan,options),{spec:installSpec,artifactPath:expectedArtifact}=verified;
     // Dispose the old live plugin before the package manager replaces its
     // files. Otherwise its loader may reopen a social session while the host
     // still has the previous exact package identity, leaving the new UI bound
