@@ -173,7 +173,7 @@ test('overlapping shared package resolutions receive one coalesced recheck failu
   const entered=Promise.withResolvers(),release=Promise.withResolvers(),originalRead=fsPromises.readFile;
   let armed=true,first,second,results,timeout;
   const reader=t.mock.method(fsPromises,'readFile',async(path,...args)=>{
-    if(armed&&String(path)===metadata){armed=false;entered.resolve();await release.promise;}
+    if(armed&&String(path)===metadata&&args[0]==='utf8'){armed=false;entered.resolve();await release.promise;}
     return originalRead(path,...args);
   });
   syncBuiltinESMExports();
