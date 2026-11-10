@@ -12,6 +12,9 @@ export function voicePythonEnvironment(assets,environment=process.env,platform=p
   const pathKey=Object.keys(env).find(key=>key.toUpperCase()==='PATH')??'PATH';
   if(assets.ffmpegDirectory)env[pathKey]=[assets.ffmpegDirectory,env[pathKey]].filter(Boolean).join(paths.delimiter);
   const home=paths.dirname(assets.python),site=paths.join(home,'Lib','site-packages');
+  // Pinned Windows voice runtimes use CPython 3.12. Its automatic stdlib paths
+  // lose the extended prefix, so put explicit namespaced roots ahead of them.
+  const standard=platform==='win32'?[paths.join(home,'python312.zip'),paths.join(home,'DLLs'),paths.join(home,'Lib'),home]:[];
   return {...env,PYTHONUTF8:'1',PYTHONDONTWRITEBYTECODE:'1',PYTHONNOUSERSITE:'1',PYTHONHOME:pythonFilePath(home,platform),
-    PYTHONPATH:[site,assets.sharedDirectory].filter(Boolean).map(path=>pythonFilePath(path,platform)).join(paths.delimiter)};
+    PYTHONPATH:[site,assets.sharedDirectory,...standard].filter(Boolean).map(path=>pythonFilePath(path,platform)).join(paths.delimiter)};
 }
