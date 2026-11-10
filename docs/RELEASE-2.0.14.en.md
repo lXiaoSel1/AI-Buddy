@@ -20,6 +20,16 @@
 - Runtime component: when it is missing, the plugin page offers **Prepare runtime component** directly, and preparation shows how much has been downloaded.
 - Other: the Installed count in Extensions includes voice plugins; two strings were translated in the English interface.
 
+## Fixed before release
+
+These were found in real tests before 2.0.14 was released and fixed in the same version:
+
+- When AI Buddy was installed in a deeply nested folder and Windows long-path support was off, the voice engine could fail to start, and Bilibili Companion and QQ Connect could fail to open their databases. They now start normally.
+- After importing an old profile, installed plugins keep working: the runtime component is reused and each plugin is installed into the new profile at its existing version.
+- While a plugin package is being re-checked, voice is no longer briefly marked as missing a dependency or failing verification.
+- When the selected voice engine is not installed but the other one is, a single read error no longer makes the voice entry disappear, and an operation you cancel is no longer shown as a red error.
+- When saving a card-table voice record is blocked by the system for a moment, the app retries; if it still fails, the failure is reported instead of being dropped silently.
+
 ## Upgrading
 
 - From 2.0.12 or earlier: run the 2.0.14 installer and choose the existing installation folder, or update from General settings.
@@ -29,4 +39,5 @@
 ## What was verified
 
 - From this version on, a release must start the plugin runtime on the installed program, install and enable Bilibili Companion, QQ Connect and Card Games, and confirm that each plugin page reaches its own backend; a voice plugin must also install and enable from Extensions. "Extension service ready" alone does not pass. Updating an older plugin after an app upgrade is checked the same way.
+- In the checks before release, Group Auto once stopped while waiting for a line to finish showing and did not continue; later runs were fine and the cause is not known yet. If it happens, click **Stop** and start Auto again.
 - The network fixes were checked with a real Electron network partition and test servers on the development PC, including real 302 redirects and HTTPS through a proxy. Real platform accounts, paid models, MiniMax cloud voice and real corporate proxies were not tested. SOCKS proxies are still not supported.
