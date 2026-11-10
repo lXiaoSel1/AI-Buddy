@@ -164,6 +164,41 @@ for(const target of ['engine','shared'])test(`a failed ${target} file recheck re
   assert.throws(lease.assertCurrent,{code:'VOICE_PACKAGE_CHANGED'});
 });
 
+test('overlapping shared package resolutions receive one coalesced recheck failure before a fresh check can recover',async t=>{
+  const {authority,install,change}=await setup(t);
+  await install(breeze);await change('enable',breeze);
+  const lease=await authority.resolveVoicePackage(breeze),file=join(lease.shared.directory,'assets.json');
+  const originalBytes=await readFile(file),metadata=join(lease.shared.directory,'plugin.json');
+  await writeFile(file,'{"tampered":true}');
+  const entered=Promise.withResolvers(),release=Promise.withResolvers(),originalRead=fsPromises.readFile;
+  let armed=true,first,second,results,timeout;
+  const reader=t.mock.method(fsPromises,'readFile',async(path,...args)=>{
+    if(armed&&String(path)===metadata){armed=false;entered.resolve();await release.promise;}
+    return originalRead(path,...args);
+  });
+  syncBuiltinESMExports();
+  try{
+    // A has scanned bad shared bytes when it reaches the final metadata read.
+    first=authority.resolveVoicePackage(breeze);
+    const firstOutcome=Promise.allSettled([first]);
+    await Promise.race([entered.promise,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error('Shared metadata read did not reach the external FS gate')),3000);})]);
+    clearTimeout(timeout);await writeFile(file,originalBytes);
+    // Shared verification is the dependency loop's first async boundary, so B
+    // reaches the same pending verification synchronously before A is released.
+    second=authority.resolveVoicePackage(breeze);release.resolve();
+    results=await Promise.allSettled([first,second]);await firstOutcome;
+  }finally{
+    clearTimeout(timeout);release.resolve();
+    try{await Promise.allSettled([first,second].filter(Boolean));}finally{reader.mock.restore();syncBuiltinESMExports();}
+  }
+  t.diagnostic(JSON.stringify({outcomes:results.map(row=>({status:row.status,code:row.reason?.code})),diskRestored:hash(await readFile(file))===hash(originalBytes)}));
+  assert.deepEqual(results.map(row=>row.status),['rejected','rejected']);
+  for(const result of results)assert.equal(result.reason.code,'INVALID_PLUGIN_ARCHIVE');
+  assert.throws(lease.assertCurrent,{code:'VOICE_PACKAGE_CHANGED'});
+  const recovered=await authority.resolveVoicePackage(breeze);
+  assert.doesNotThrow(recovered.assertCurrent);
+});
+
 test('both actual package entries declare local and MiniMax without a third user plugin',async()=>{
   for(const [id,engine,activate] of [[breeze,'breeze',activateBreeze],[gpt,'gpt-sovits',activateGpt]]){
     let registration;

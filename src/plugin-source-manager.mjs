@@ -26,7 +26,7 @@ const summaryManifest=manifest=>Object.fromEntries(Object.entries(manifest).filt
 export async function createPluginSourceManager({legacy,root,dataRoot,appVersion,apiVersion,onUpdate=()=>{},now=Date.now,voiceTestFingerprint}={}){
  const backend=legacy[PLUGIN_SOURCE_BACKEND],control=join(root,'local/plugins'),sourceFile=join(control,'sources.json'),registryFile=join(control,'registry-v2.json'),migrationFile=join(control,'official-registration-migration.json');
  let sourcesRecord=await json(sourceFile,{schemaVersion:1,sources:{}}),registry=await json(registryFile,{schemaVersion:2,packages:{}}),closed=false,active=null;
- const catalogs=new Map(),previews=new Map(),plans=new Map(),updatePlans=new Map(),offlineSelections=new Map(),generations=new Map(),requests=new Set(),verified=new Set();
+ const catalogs=new Map(),previews=new Map(),plans=new Map(),updatePlans=new Map(),offlineSelections=new Map(),generations=new Map(),requests=new Set(),verified=new Set(),verificationTasks=new Map();
  let officialDefault=false;
  const verificationKey=(sid,saved)=>sid+':'+saved.manifest.id+'@'+saved.manifest.version+':'+saved.archive.sha256;
  function validate(){
@@ -281,9 +281,11 @@ export async function createPluginSourceManager({legacy,root,dataRoot,appVersion
  }
  async function verifySaved(saved,sid){
   const key=verificationKey(sid,saved);
+  const pending=verificationTasks.get(key);if(pending)return pending;
   // Keep a prior successful check visible while revalidating the same identity.
-  // Only an actual verification failure revokes that result and existing leases.
-  try{
+  // Same-identity callers share one outcome, so an older failure cannot revoke a
+  // newer success. Only an actual failure revokes the prior verified result.
+  const task=(async()=>{try{
    const origin=saved.sourceProof,pinned=source(sid);
    if(!origin||origin.sourceId!==sid||origin.keyFingerprint!==pluginSourceFingerprint(origin.publicKey)||origin.keyFingerprint!==pinned.keyFingerprint)fail('扩展安装来源证明无效','PLUGIN_SOURCE_PROOF_INVALID');
    if(!/^[a-f0-9]{64}$/.test(origin.catalogSha256??''))fail('扩展目录证明哈希无效','PLUGIN_SOURCE_PROOF_INVALID');
@@ -292,7 +294,9 @@ export async function createPluginSourceManager({legacy,root,dataRoot,appVersion
    if(catalog.verified.payloadSha256!==origin.catalogSha256||!catalog.packages.some(item=>canonicalPluginJson(item.manifest)===canonicalPluginJson(saved.manifest)&&canonicalPluginJson(item.archive)===canonicalPluginJson(saved.archive)))fail('扩展文件与原来源签名不一致','PLUGIN_SOURCE_PROOF_INVALID');
    if(!saved.directory.startsWith('packages/'+sid+'/'+saved.manifest.id+'/'))fail('扩展代码目录与来源不符','PLUGIN_SOURCE_PROOF_INVALID');
    await verifyInstalledPlugin(under(saved.directory),saved.manifest);verified.add(key);return saved;
-  }catch(error){verified.delete(key);throw error;}
+  }catch(error){verified.delete(key);throw error;}})();
+  verificationTasks.set(key,task);
+  try{return await task;}finally{if(verificationTasks.get(key)===task)verificationTasks.delete(key);}
  }
  async function officialProof(saved,id,version){
   if(saved?.manifest?.id!==id||saved.manifest.version!==version||!/^[a-f0-9]{64}$/.test(saved.catalogSha256??'')||saved.directory!=='packages/'+id+'/'+version+'-'+saved.archive?.sha256?.slice(0,16))fail('旧版登记缺少可验证的官方身份','PLUGIN_SOURCE_PROOF_INVALID');
