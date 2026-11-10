@@ -1,6 +1,6 @@
 import {randomBytes,createHash} from 'node:crypto';
 import {mkdir} from 'node:fs/promises';
-import {join} from 'node:path';
+import {join,toNamespacedPath} from 'node:path';
 import {modelNotSubmittedError} from './social-runtime-journal.mjs';
 
 const fail=(code,message=code)=>Object.assign(Error(message),{code});
@@ -34,7 +34,7 @@ export function createNativeSocialFacade({dataRoot,contract,handlers,authorizeUI
     const token=key(),directory=join(dataRoot,'plugin-data','social-v1',digest([identity.pluginId,identity.sourceId??identity.pluginId]));
     await mkdir(directory,{recursive:true});if(closed)throw fail('SOCIAL_HOST_CLOSED');
     const row={token,identity:clone(identity),origin:clone(origin),pending:new Set(),events:[],waiters:new Set(),closing:false};sessions.set(token,row);
-    return {sessionToken:token,dataDirectory:directory,description:{mode:'runtime',pluginId:identity.packageName,contractHash:contract.hash,capabilities:available,features:[...features],contractAcknowledgement:{owner:'B',hash:contract.hash},missingCapabilities:contract.methods.filter(name=>!available.includes(name))}};
+    return {sessionToken:token,dataDirectory:process.platform==='win32'?toNamespacedPath(directory):directory,description:{mode:'runtime',pluginId:identity.packageName,contractHash:contract.hash,capabilities:available,features:[...features],contractAcknowledgement:{owner:'B',hash:contract.hash},missingCapabilities:contract.methods.filter(name=>!available.includes(name))}};
   }
   async function dispatch({sessionToken,method,payload={}},origin,{signal}={}){
     const row=session(sessionToken,origin);if(row.closing&&method!=='close')throw fail('SOCIAL_HOST_CLOSED');
