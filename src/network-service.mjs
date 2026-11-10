@@ -5,11 +5,12 @@ import {createNodeNetworkFetch,windowsSystemCAs,invalidateSystemCAs} from './net
 import {networkFailure} from './network-errors.mjs';
 import {fetchDownloadResponse,waitForNetwork} from './network-download.mjs';
 const catalog='https://raw.githubusercontent.com/lXiaoSel1/AI-Buddy-Extensions/main/catalog.json';
-export async function createNetworkService({dataRoot,session,electronSession,resolveSystemProxy,onChange=()=>{}}={}){
+export async function createNetworkService({dataRoot,session,electronSession,resolveSystemProxy,userAgent='AI-Buddy',onChange=()=>{}}={}){
   invalidateSystemCAs();
   const store=dataRoot?createSnapshotStorage(join(dataRoot,'network-settings.json')):null;
   let settings=normalizeNetworkSettings(store?await readJson(store,{}):{}),revision=0,tail=Promise.resolve();
   const ses=electronSession??session?.fromPartition('ai-buddy-network',{cache:false});
+  ses?.setUserAgent?.(userAgent);
   const systemSes=session?.fromPartition('ai-buddy-network-system',{cache:false});if(systemSes)await systemSes.setProxy({mode:'system'});
   const apply=async config=>{if(ses)await ses.setProxy(config.mode==='manual'?{mode:'fixed_servers',proxyRules:config.proxyUrl,proxyBypassRules:'<-loopback>;localhost;127.0.0.1;[::1]'}:{mode:config.mode==='direct'?'direct':'system'});};
   await apply(settings);
@@ -22,14 +23,17 @@ export async function createNetworkService({dataRoot,session,electronSession,res
     if(!resolver)throw Object.assign(Error('系统代理解析不可用'),{code:'NETWORK_SYSTEM_PROXY_UNAVAILABLE'});
     return proxyRoutes(await resolver(value));
   }
-  const nodeFetch=createNodeNetworkFetch({resolveRoute:resolveRoutes});
+  const nodeFetch=createNodeNetworkFetch({resolveRoute:resolveRoutes,userAgent});
   async function fetchImpl(input,init={}){
     const value=typeof input==='string'||input instanceof URL?String(input):input.url;
-    try{return ses&&!isLoopback(value)?await ses.fetch(input,{credentials:'omit',...init}):await nodeFetch(input,init);}
+    const redirect=init.redirect??(input instanceof Request?input.redirect:'follow');
+    // Chromium rejects manual redirects instead of exposing the 3xx response.
+    // Select the transport before sending so a submitted request is never retried.
+    try{return ses&&!isLoopback(value)&&redirect!=='manual'?await ses.fetch(input,{credentials:'omit',...init}):await nodeFetch(input,init);}
     catch(cause){if(init.signal?.aborted)throw init.signal.reason;throw networkFailure(cause,value);}
   }
   function save(value){const task=tail.then(async()=>{const next=normalizeNetworkSettings(value),previous=settings;await apply(next);try{if(store)await store.writeText(JSON.stringify(next));}catch(cause){await apply(previous);throw cause;}settings=next;invalidateSystemCAs();revision++;onChange(snapshot());return snapshot();});tail=task.catch(()=>{});return task;}
-  const capture=({official=false}={})=>{if(typeof official!=='boolean')throw Error('Invalid official download mode');const captured={...snapshot(),...(official?{githubMirror:'',huggingFaceMirror:''}:{})},downloadConfig=Object.fromEntries(Object.keys(NETWORK_DEFAULTS).map(key=>[key,captured[key]]));return {snapshot:()=>({...captured}),resolveRoutes:url=>resolveRoutes(url,captured),fetch:createNodeNetworkFetch({resolveRoute:url=>resolveRoutes(url,captured)}),planDownload:(url,options)=>downloadRequestPlan(url,downloadConfig,{...options,official:official||options?.official===true}),childNetworkConfig:async url=>({destinationOrigin:new URL(url).origin,settings:{...downloadConfig},routes:await resolveRoutes(url,captured),ca:windowsSystemCAs().join('\n')})};};
+  const capture=({official=false}={})=>{if(typeof official!=='boolean')throw Error('Invalid official download mode');const captured={...snapshot(),...(official?{githubMirror:'',huggingFaceMirror:''}:{})},downloadConfig=Object.fromEntries(Object.keys(NETWORK_DEFAULTS).map(key=>[key,captured[key]]));return {snapshot:()=>({...captured}),resolveRoutes:url=>resolveRoutes(url,captured),fetch:createNodeNetworkFetch({resolveRoute:url=>resolveRoutes(url,captured),userAgent}),planDownload:(url,options)=>downloadRequestPlan(url,downloadConfig,{...options,official:official||options?.official===true}),childNetworkConfig:async url=>({destinationOrigin:new URL(url).origin,settings:{...downloadConfig},routes:await resolveRoutes(url,captured),ca:windowsSystemCAs().join('\n')})};};
   async function testCatalog(){
     const signal=AbortSignal.timeout(30000),config={...settings};
     const response=await fetchDownloadResponse(catalog,{fetchImpl,planDownload:url=>downloadRequestPlan(url,config),signal,validateUrl:value=>{const url=new URL(value);if(url.protocol!=='https:'||url.username||url.password)throw Error('Invalid catalog URL');return url;}});

@@ -68,7 +68,7 @@ class ReleaseSourceCliTests(unittest.TestCase):
             git('commit', '--quiet', '-m', 'Fixture launcher baseline')
             head = git('rev-parse', 'HEAD')
             script = Path(__file__).resolve().parents[1] / 'scripts/preflight-installer-release.py'
-            command = [sys.executable, '-B', str(script), '--source-root', str(repo), '--source', head, '--manifest', str(root / 'release/install-manifest-2.0.7.json'), '--installer', str(root / 'release/AI-Buddy-Setup-2.0.7-win-x64.exe'), '--checksums', str(root / 'release/SHA256SUMS-2.0.7.txt'), '--output', str(root / 'preflight')]
+            command = [sys.executable, '-B', str(script), '--source-root', str(repo), '--source', head, '--manifest', str(root / 'release/install-manifest-2.0.7.json'), '--installer', str(root / 'release/AI-Buddy-Setup-2.0.7-win-x64.exe'), '--checksums', str(root / 'release/SHA256SUMS-2.0.7.txt'), '--output', str(root / 'preflight'), '--runtime-proof', str(root / 'synthetic-runtime-proof.json'), '--plugin-update-proof', str(root / 'synthetic-plugin-update-proof.json')]
             clean = subprocess.run(command, capture_output=True, text=True)
             self.assertNotIn('uncommitted changes', clean.stderr)
             self.assertIn('package.json', clean.stderr)  # Clean source reaches artifact validation.

@@ -14,9 +14,9 @@
     <PublishTrimmed>false</PublishTrimmed>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2.0.13</Version>
+    <Version>2.0.14</Version>
     <Product>AI Buddy</Product>
-    <AssemblyName>AI-Buddy-Setup-2.0.13-win-x64</AssemblyName>
+    <AssemblyName>AI-Buddy-Setup-2.0.14-win-x64</AssemblyName>
     <ApplicationIcon>../assets/branding/app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>

@@ -728,7 +728,7 @@ app.whenReady().then(async()=>{
    app.exit(1);return;
   }
   deferredSaves.start();
-  network=await createNetworkService({dataRoot,session});
+  network=await createNetworkService({dataRoot,session,userAgent:'AI-Buddy/'+appVersion});
   onboarding=arg('data')===undefined&&!await hasBusinessData(dataRoot);
   dataImport=createDataImportService({root,dataRoot,build,pipe,manager:resources.manager(),onboarding,
    chooseSource:async()=>{if(arg('validation')==='1'&&arg('validation-import-source'))return arg('validation-import-source');const result=await dialog.showOpenDialog(panel??undefined,{title:'选择旧程序或实际存档目录',properties:['openDirectory']});return result.canceled?null:result.filePaths[0];},

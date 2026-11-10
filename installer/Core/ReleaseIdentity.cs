@@ -3,7 +3,7 @@ namespace AiBuddy.Install;
 // Resource downloads remain pinned. UpdateDiscovery delegates newer versions to
 // their own verified installer instead of feeding future manifests to this engine.
 public static class ReleaseIdentity {
-    public const string Version="2.0.13";
+    public const string Version="2.0.14";
     public const string InstallerRevision="r1";
     public static string InstallerVersion=>Version+"-"+InstallerRevision;
     // Public key that signs release tags (GitHub: "AI Buddy release signing").

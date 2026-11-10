@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, posix, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import { prepareDshGitPackage } from './native-bridge-source.mjs';
 import { verifyDshComponent } from './component-manager.mjs';
@@ -204,7 +204,7 @@ export function createDshBackend({ fetchImpl=fetch,network,networkBootstrapPath,
         const bootstrap=networkBootstrapPath??(hostBridgeSourcePath?resolve(dirname(hostBridgeSourcePath),'..','dsh-network-bootstrap.mjs'):fileURLToPath(new URL('../network-process-bootstrap.mjs',import.meta.url)));
         if(!(await stat(bootstrap)).isFile())throw failure('DSH_NETWORK_BOOTSTRAP_REQUIRED','Host network bootstrap is missing');
         env.AI_BUDDY_NETWORK_SETTINGS=JSON.stringify(taskNetwork.snapshot());env.NODE_USE_SYSTEM_CA='1';
-        args.unshift('--import',bootstrap);
+        args.unshift('--import',pathToFileURL(bootstrap).href);
       }
       child = spawn(paths.node, args, { cwd: resolve(stateDir), env, windowsHide: true, stdio: [taskOnly?'pipe':'ignore', 'pipe', 'pipe', 'ipc'] });
       if(network){const networkChild=child;networkChild.on('message',row=>{if(row?.type==='network-route')void replyNetworkRoute({postMessage:value=>{if(networkChild.connected)networkChild.send(value);}},row,runtimeNetwork);});}

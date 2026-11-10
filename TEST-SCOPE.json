@@ -2,6 +2,10 @@
   "schemaVersion": 1,
   "kind": "ai-buddy-public-host-tests",
   "retainedTestFiles": [
+    "test/audit214-dsh-network-bootstrap.test.mjs",
+    "test/audit214-network-node.test.mjs",
+    "test/audit214-network-service.test.mjs",
+    "test/validate-installed-plugin-runtime.test.mjs",
     "test/acr1-behavior-consistency.test.mjs",
     "test/acr2-provider-submission.test.mjs",
     "test/acr2-summary-progress.test.mjs",
@@ -491,6 +495,8 @@
     "test/working-rig.test.mjs"
   ],
   "retainedSupportFiles": [
+    "test/support/audit214-network-electron.cjs",
+    "test/support/audit214-network-electron.mjs",
     "test/fixtures/public-community/catalog.json",
     "test/fixtures/public-community/source.json",
     "test/fixtures/r95-legacy-reader/INVENTORY.json",

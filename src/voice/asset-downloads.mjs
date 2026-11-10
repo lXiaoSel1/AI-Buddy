@@ -63,7 +63,7 @@ export async function voiceAssetDownloadStream(file,{signal,fetchImpl}){
   try{
     for(let attempt=0;attempt<=4;attempt++){
       combined.throwIfAborted();reset();
-      const response=await waitVoiceOperation(()=>fetchImpl(url,{signal:combined,redirect:'manual',credentials:'omit'}),combined);
+      const response=await waitVoiceOperation(()=>fetchImpl(url,{signal:combined,redirect:'manual',credentials:'omit',headers:{'accept-encoding':'identity'}}),combined);
       if(response.ok&&response.body){
         const declared=response.headers.get('content-length');
         if(declared!==null&&(!/^\d+$/.test(declared)||Number(declared)!==file.bytes)){await response.body.cancel().catch(()=>{});throw fault('VOICE_ASSET_HASH','语音资源下载长度与清单不符');}
