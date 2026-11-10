@@ -2,7 +2,32 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile, writeFile, stat} from 'node:fs/promises';
 import {join} from 'node:path';
+import {createHash} from 'node:crypto';
 import {catalog, setupCommunity, signed, publisher, githubIssue, simulatedBackend} from './support/community-fixtures.mjs';
+
+test('simulation: opening an approved plugin in a new native profile materializes its exact cache disabled before enabling',async t=>{
+ const f=await setupCommunity(t);await f.load();const artifact=join(f.root,'approved.tgz'),bytes=Buffer.from('system-boundary simulated tarball'),sha=createHash('sha256').update(bytes).digest('hex'),plan=f.backend.planInstall;await writeFile(artifact,bytes);
+ f.backend.planInstall=async request=>({...await plan(request),artifact,artifactSha256:sha,sourceVerification:{sha256:sha},profileId:'buddy-community-v1',spec:request.packageRef.spec.value});
+ await f.install();const key=f.service.snapshot().dsh.installed[0].packageKey;await f.service.action({action:'dsh-enable',packageKey:key});await f.service.drainMaintenance();await f.restart();
+ const original=await f.service.resolveDshInstalled(key),events=[];let installed=false,identity;
+ f.backend.currentInventory=async()=>({bundles:installed?[{name:original.packageName,version:original.exactVersion,installed:true,enabled:false}]:[],identity});
+ f.backend.planInstall=async request=>{events.push('plan');assert.equal(request.packageRef.spec.value,artifact);assert.equal(request.packageRef.sourceDigest,sha);return {...await plan(request),artifact,artifactSha256:sha,sourceVerification:{sha256:sha},profileId:'buddy-community-v1',spec:request.packageRef.spec.value};};
+ f.backend.install=async(next,options)=>{events.push('install');assert.equal(options.enabled,false);assert.deepEqual(options.grantedCapabilities,original.grantedCapabilities);assert.equal(next.packageRef.sourceDigest,original.sourceDigest,'Git/source identity must survive archive verification');installed=true;identity={packageName:original.packageName,exactVersion:original.exactVersion,sourceDigest:original.sourceDigest,pluginId:original.pluginId};return {application:'applied',installed:true,enabled:false};};
+ f.backend.enable=async()=>{if(!installed)throw Object.assign(Error('cannot resolve profile bundle; install it first'),{code:'DSH_ACTIVATION_FAILED'});events.push('enable');return {enabled:true,activation:{observed:true}};};
+ await Promise.all([f.service.action({action:'dsh-open-client',packageKey:key}),f.service.action({action:'dsh-open-client',packageKey:key})]);
+ assert.deepEqual(events,['plan','install','enable']);const current=await f.service.resolveDshInstalled(key);assert.equal(current.exactVersion,original.exactVersion);assert.deepEqual(current.grantedCapabilities,original.grantedCapabilities);assert.deepEqual(current.backendPlan,original.backendPlan);
+ await f.service.invalidateRuntime({phase:'new-host-session'});events.length=0;await f.service.action({action:'dsh-open-client',packageKey:key});assert.deepEqual(events,['enable'],'An already matching native inventory must not be reinstalled');
+});
+
+test('simulation: current-profile recovery rejects conflicting inventory, changed cache and revoked source without an enable',async t=>{
+ for(const boundary of ['version','hash','source-revoked'])await t.test(boundary,async t=>{
+  const f=await setupCommunity(t);await f.load();const artifact=join(f.root,'approved.tgz'),bytes=Buffer.from('simulated native archive'),sha=createHash('sha256').update(bytes).digest('hex'),plan=f.backend.planInstall;await writeFile(artifact,bytes);
+  f.backend.planInstall=async request=>({...await plan(request),artifact,artifactSha256:sha,sourceVerification:{sha256:sha}});await f.install();const key=f.service.snapshot().dsh.installed[0].packageKey;await f.service.action({action:'dsh-enable',packageKey:key});await f.service.drainMaintenance();await f.restart();const record=await f.service.resolveDshInstalled(key);
+  f.backend.currentInventory=async()=>{if(boundary==='source-revoked')f.pub.source.enabled=false;return {bundles:boundary==='version'?[{name:record.packageName,version:'9.0.0',installed:true}]:[],identity:{packageName:record.packageName,exactVersion:record.exactVersion,sourceDigest:record.sourceDigest,pluginId:record.pluginId}};};
+  if(boundary==='hash')await writeFile(artifact,'changed cache');f.backend.planInstall=async()=>assert.fail('Rejected recovery must not inspect another package');f.backend.install=async()=>assert.fail('Rejected recovery must not install');f.backend.enable=async()=>assert.fail('Rejected recovery must not enable');
+  await assert.rejects(f.service.action({action:'dsh-open-client',packageKey:key}),{code:{version:'DSH_INSTALLED_IDENTITY_MISMATCH',hash:'DSH_PACKAGE_DIGEST_MISMATCH','source-revoked':'PLUGIN_SOURCE_CHANGED'}[boundary]});assert.equal(f.service.snapshot().dsh.installed[0].runtimeVerified,false);assert.equal(f.grants.at(-1).enabled,false);
+ });
+});
 
 test('simulation: actual native event phases remain observable while a plan inspection is pending',async t=>{
   let emit,release,started;const observed=new Promise(resolve=>started=resolve),waiting=new Promise(resolve=>release=resolve),backend=simulatedBackend([]),original=backend.planInstall;

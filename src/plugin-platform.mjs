@@ -24,7 +24,8 @@ import {createDshBackend} from './dsh-platform/backend.mjs';
 import {createDshClientHost} from './dsh-platform/client-host.mjs';
 import {assertPublicDshComponentDescriptor} from './dsh-platform/component-download.mjs';
 import {invalidateDshComponentVerification} from './dsh-platform/component-manager.mjs';
-import {createManagedDshComponentManager,planHostDshComponent} from './dsh-platform/component-task-manager.mjs';
+import {planHostDshComponent} from './dsh-platform/component-task-manager.mjs';
+import {createInstallDshComponentManager} from './dsh-platform/component-location.mjs';
 import {createDshMcpExport} from './dsh-platform/mcp-export.mjs';
 import {createBuddyPluginServices} from './buddy-plugin-services/index.mjs';
 import {SOCIAL_METHODS} from './buddy-plugin-services/social-contract.mjs';
@@ -83,7 +84,7 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
     try { return await run(); } finally { admittedMutations--; }
   }
   let dshComponentState={state:'missing'};
-  const componentManager=createManagedDshComponentManager({network,destinationRoot:join(dataRoot,'plugin-runtimes','dsh-components'),workerPath:join(build,'dsh-component-worker.mjs'),workerFactory:componentWorkerFactory,busy:()=>inflight>0||taskToolBackends.size>0||localCard?.busy()||bridge.busy()||busy(),onUpdate:value=>{dshComponentState=value;onUpdate(platform?.snapshot());}});
+  const componentManager=createInstallDshComponentManager({root,dataRoot,network,workerPath:join(build,'dsh-component-worker.mjs'),workerFactory:componentWorkerFactory,busy:()=>inflight>0||taskToolBackends.size>0||localCard?.busy()||bridge.busy()||busy(),onUpdate:value=>{dshComponentState=value;onUpdate(platform?.snapshot());}});
   const ffmpegManager=ffmpegManagerFactory({network,directory:join(dataRoot,'media-components','ffmpeg'),bundledTools:join(build,'bili-media'),bundledNotices:ffmpegBundledNotices,workerPath:join(build,'ffmpeg-component-worker.mjs'),workerFactory:ffmpegWorkerFactory,onUpdate:()=>onUpdate(platform?.snapshot())});
   let dependencyCoordinator;
   // Pages report open/closed/failed; plugin-embed.mjs listens so a closed separate window can come back to the main window.
@@ -153,7 +154,7 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
     return currentBackend;
   }
   const dshBackend={};
-  for(const name of ['probe','planInstall','install','enable','disable','rollback','uninstall','openClient','listTools','callTool'])dshBackend[name]=async(...args)=>{const generation=componentGeneration,live=await backend();assertComponentSelection(generation);inflight++;communityCalls++;try{return await live[name](...args);}finally{communityCalls--;inflight--;}};
+  for(const name of ['currentInventory','probe','planInstall','install','enable','disable','rollback','uninstall','openClient','listTools','callTool'])dshBackend[name]=async(...args)=>{const generation=componentGeneration,live=await backend();assertComponentSelection(generation);inflight++;communityCalls++;try{return await live[name](...args);}finally{communityCalls--;inflight--;}};
   dshBackend.snapshot=async(...args)=>currentBackend?currentBackend.snapshot(...args):{phase:'not-started',installed:[],ready:false,code:'DSH_NOT_REQUESTED'};
   dshBackend.status=dshBackend.snapshot;
   dshBackend.on=(name,listener)=>{nativeEvents.on(name,listener);return()=>nativeEvents.off(name,listener);};

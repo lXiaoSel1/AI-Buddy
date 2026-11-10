@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm} from 'node:fs/promises';
+import fsPromises,{mkdtemp,rm,readFile,readdir,writeFile,mkdir} from 'node:fs/promises';
+import {syncBuiltinESMExports} from 'node:module';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createCardSpeech} from '../src/voice/card-speech.mjs';
@@ -13,6 +14,28 @@ function fixture(options={}){
   const bridge=createCardSpeech({emit:event=>events.push(event),isScopeValid:()=>true,resolveVoice:async value=>{resolutions.push(value);return {runtime,engine:'breeze',packageId:'voice-breeze',profileId:'profile-'+value.characterId,profileVersion:3,speechProvider:'local'};},...options});
   return {bridge,events,spoken,resolutions,runtime};
 }
+
+test('card close retries one transient Windows publication refusal without replaying speech',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'card-atomic-')),original=fsPromises.rename,calls=[];let bridge;
+ fsPromises.rename=async(source,target)=>{if(target===join(root,'voice','card-speech.json')){calls.push([source,target]);if(calls.length===1)throw Object.assign(Error('controlled sharing refusal'),{code:'EPERM'});}return original(source,target);};syncBuiltinESMExports();
+ try{bridge=createCardSpeech({dataRoot:root,isScopeValid:()=>true,resolveVoice:()=>assert.fail('Closing idle receipts must not resolve or replay speech')});await bridge.close();assert.ok(calls.length>=2);assert.deepEqual(calls[0],calls[1]);assert.deepEqual(JSON.parse(await readFile(join(root,'voice','card-speech.json'),'utf8')),{schemaVersion:1,events:[]});}
+ finally{fsPromises.rename=original;syncBuiltinESMExports();await bridge?.recoverStop();await bridge?.close();await rm(root,{recursive:true,force:true});}
+});
+
+test('card close retains a durable target on bounded permanent refusal and recoverStop must save before exit',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'card-permanent-')),target=join(root,'voice','card-speech.json'),bridge=createCardSpeech({dataRoot:root,isScopeValid:()=>true,resolveVoice:()=>assert.fail('No speech')});await bridge.invalidate('idle');const before=await readFile(target),original=fsPromises.rename,sources=[];
+ fsPromises.rename=async(source,to)=>{if(to===target){sources.push(source);throw Object.assign(Error('controlled permanent refusal'),{code:'EPERM'});}return original(source,to);};syncBuiltinESMExports();
+ try{await assert.rejects(bridge.close(),{code:'VOICE_CARD_RECEIPTS_WRITE_FAILED'});assert.equal(sources.length,7);assert.equal(new Set(sources).size,1);assert.deepEqual(await readFile(target),before);assert.equal(bridge.busy(),true);assert.ok((await readdir(join(root,'voice'))).some(name=>name.endsWith('.partial')));}
+ finally{fsPromises.rename=original;syncBuiltinESMExports();}
+ try{assert.equal((await bridge.recoverStop()).recovered,true);await bridge.close();assert.equal(bridge.busy(),false);}finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('card close cannot overwrite a destination replaced during its publication retry',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'card-replaced-')),target=join(root,'voice','card-speech.json'),bridge=createCardSpeech({dataRoot:root,isScopeValid:()=>true,resolveVoice:()=>assert.fail('No speech')});await bridge.invalidate('idle');const original=fsPromises.rename;let calls=0;
+ fsPromises.rename=async(source,to)=>{if(to===target){calls++;await writeFile(target,'external current');throw Object.assign(Error('controlled refusal with target change'),{code:'EPERM'});}return original(source,to);};syncBuiltinESMExports();
+ try{await assert.rejects(bridge.close(),{code:'VOICE_CARD_RECEIPTS_WRITE_FAILED'});assert.equal(calls,1);assert.equal(await readFile(target,'utf8'),'external current');}
+ finally{fsPromises.rename=original;syncBuiltinESMExports();await bridge.recoverStop();await bridge.close();await rm(root,{recursive:true,force:true});}
+});
 
 test('committed fixed card calls use the speaker voice and literal words without another model request',async t=>{
   const {bridge,events,spoken}=fixture();t.after(()=>bridge.close());

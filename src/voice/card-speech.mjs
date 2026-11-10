@@ -1,7 +1,8 @@
 import {voiceSpeechText,voiceSpeechChunks} from './speech-text.mjs';
-import {mkdir,readFile,writeFile,rename} from 'node:fs/promises';
+import {mkdir,readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
+import {writeAtomicAsync} from '../atomic-write.mjs';
 
 const fixedWords={allin:'All in!',trips:'三条',triple:'三条'};
 const terminal=new Set(['audioCompleted','explicitlySkipped','interrupted','failed']);
@@ -26,7 +27,7 @@ export function createCardSpeech({dataRoot,resolveVoice,isScopeValid,emit=()=>{}
     if(!file)return Promise.resolve();
     const value=JSON.stringify({schemaVersion:1,events:[...seen.values()].map(row=>({eventId:row.eventId,kind:row.kind,scope:row.scope,status:row.status,reason:row.reason,acceptedAt:row.acceptedAt,updatedAt:row.updatedAt,
       textHash:row.textHash,deadlineAt:row.deadlineAt,envelope:row.envelope,receipts:row.receiptEvidence??[]}))});
-    const operation=writes.then(async()=>{const temporary=file+'.'+randomUUID()+'.tmp';await mkdir(directory,{recursive:true});await writeFile(temporary,value,{flag:'wx'});await rename(temporary,file);});
+    const operation=writes.then(async()=>{await mkdir(directory,{recursive:true});await writeAtomicAsync(file,value);});
     writes=operation.catch(()=>{});return operation;
   }
   const ready=(async()=>{

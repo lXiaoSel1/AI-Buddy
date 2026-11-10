@@ -1,4 +1,5 @@
 import React,{useEffect,useRef,useState} from 'react';
+import {pluginClientResult} from '../plugin-client-result.mjs';
 import {createChatPlayer,createSpeechOutputManager} from './browser.mjs';
 import {createCardVoiceMix} from './card-volume.mjs';
 import {createHostVoiceCapture} from './capture.mjs';
@@ -51,7 +52,7 @@ export function ensureVoiceOutput(api=globalThis.whale?.voice,{createContext}={}
   const snapshot=expected=>{const matches=matchesChat(expected,scope);return {subtitle:matches?subtitle:null,speaking:matches&&speaking,error:matchesChat(expected,errorScope)?error:null,
     requests:[...requests.values()].filter(row=>matchesChat(expected,row.envelope)).map(row=>({requestId:row.id,envelope:row.envelope,phase:row.phase,hasSegments:row.segments.size>0,subtitle:active===row&&subtitle?.envelope?.requestId===row.id?subtitle:null}))};};
   const notify=()=>{for(const row of subscribers)row.listener(snapshot(row.scope));};
-  const action=(...args)=>api.action(...args);
+  const action=(...args)=>Promise.resolve(api.action(...args)).then(pluginClientResult);
   const onError=(value,envelope=active?.envelope)=>{error=String(value?.message??value);errorScope=envelope;notify();for(const listener of errors)listener({message:error,envelope,...(value?.code?{code:value.code}:{})});};
   const retire=id=>{retired.add(id);if(retired.size>32)retired.delete(retired.values().next().value);};
   const playback=createVoicePlayback({createContext,action:async(op,value)=>{
@@ -210,16 +211,18 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
   const publish=patch=>{if(patch.state&&cloudSelection(patch.state)!==cloudSelection(value.state))patch={...patch,cloudSelectionRevision:value.cloudSelectionRevision+1};value={...value,...patch};for(const listener of subscribers)listener(value);};
   const onError=error=>{if(['VOICE_ASSET_CANCELLED','VOICE_PREPARATION_CANCELLED','VOICE_ACTION_REVOKED','ABORT_ERR'].includes(error?.code)||error?.name==='AbortError')return;publish({error:error?.code==='VOICE_ASSET_VERIFY_FAILED'?L('校验没通过，请重新下载','Verification failed, please download again'):error?.code==='VOICE_ASSET_VERIFY_REQUIRED'?L('这台电脑上已经有这些文件，请先校验','These files are already on this PC. Verify them first.'):typeof error?.code==='string'&&error.code.startsWith('CLOUD_')?cloudVoiceError(error):t(String(error?.message??error))});};
   const offOutputError=output.onError(onError);
-  const action=(...args)=>api.action(...args);
+  const action=(...args)=>Promise.resolve(api.action(...args)).then(pluginClientResult);
   const capture=createHostVoiceCapture({...captureOptions,action:(op,payload)=>action(op,op==='stop'?{...payload,channel:'app-chat'}:payload),onState:captureState=>publish({captureState,...(captureState==='idle'?{captureMode:null,partial:''}:{})}),onError});
   let refreshing;
   async function readProfiles(state){
-    if(!state?.scope)return {};
-    const targets=[...new Set([state.selectedPackageId,...(state.packages??[]).filter(row=>row.installed).map(row=>row.id)])].filter(id=>VOICE_PLUGINS.some(row=>row.id===id)&&state.settings?.packages?.[id]?.ttsProvider!=='minimax');
-    return Object.fromEntries(await Promise.all(targets.map(async packageId=>{
+    if(!state?.scope)return {profilesByPackage:{},profileErrorsByPackage:{}};
+    const targets=(state.packages??[]).filter(row=>row.installed).map(row=>row.id).filter(id=>VOICE_PLUGINS.some(row=>row.id===id)&&state.settings?.packages?.[id]?.ttsProvider!=='minimax');
+    const errors={};
+    const profiles=await Promise.all(targets.map(async packageId=>{
       try{const listed=await action('profiles',packageId===state.selectedPackageId?undefined:{packageId});return [packageId,Array.isArray(listed)?listed:[]];}
-      catch(error){if(!['VOICE_DISABLED','VOICE_PACKAGE_UNAVAILABLE','VOICE_PROFILE_SCOPE','VOICE_STOPPING'].includes(error?.code))throw error;return [packageId,[]];}
-    })));
+      catch(error){errors[packageId]={state:'failed',code:error?.code??'VOICE_PROFILE_INVALID',message:String(error?.message??error)};return [packageId,[]];}
+    }));
+    return {profilesByPackage:Object.fromEntries(profiles),profileErrorsByPackage:errors};
   }
   async function readProfileSelections(state){
     const targets=(state?.packages??[]).filter(row=>row.installed&&VOICE_PLUGINS.some(plugin=>plugin.id===row.id)&&state.settings?.packages?.[row.id]?.ttsProvider!=='minimax');
@@ -239,7 +242,15 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
   function refresh(){
     if(refreshing&&refreshing.revision===revision)return refreshing.task;
     const row=refreshing={revision};
-    row.task=(async()=>{try{const state=await action('state'),[profilesByPackage,componentStatuses,profileSelectionsByPackage]=await Promise.all([readProfiles(state),readComponentStatuses(state),readProfileSelections(state)]);if(row.revision===revision){output.setCardMix(state?.cardVoiceMix);publish({state,profiles:profilesByPackage[state?.selectedPackageId]??[],profilesByPackage,componentStatuses,profileSelectionsByPackage,...(state?.cloudBatch?{cloudBatch:state.cloudBatch}:{})});if(drafts.length)deliverDrafts();}return state;}catch(error){if(error?.code==='VOICE_STATE_CANCELLED')return value.state;throw error;}})().finally(()=>{if(refreshing===row)refreshing=undefined;});return row.task;
+    row.task=(async()=>{try{
+      const state=await action('state');if(row.revision!==revision)return value.state;
+      // Package existence is authoritative even if an optional profile/asset
+      // read fails. Clear old scope-derived lists before publishing the scope.
+      output.setCardMix(state?.cardVoiceMix);publish({state,profiles:[],profilesByPackage:{},profileErrorsByPackage:{},componentStatuses:{},profileSelectionsByPackage:{},...(Object.keys(value.profileErrorsByPackage??{}).length?{error:''}:{}),...(state?.cloudBatch?{cloudBatch:state.cloudBatch}:{})});if(drafts.length)deliverDrafts();
+      const [{profilesByPackage,profileErrorsByPackage},componentStatuses,profileSelectionsByPackage]=await Promise.all([readProfiles(state),readComponentStatuses(state),readProfileSelections(state)]);
+      if(row.revision===revision){publish({profiles:profilesByPackage[state?.selectedPackageId]??[],profilesByPackage,profileErrorsByPackage,componentStatuses,profileSelectionsByPackage});const failure=Object.values(profileErrorsByPackage).find(error=>!['VOICE_DISABLED','VOICE_PACKAGE_UNAVAILABLE','VOICE_PROFILE_SCOPE','VOICE_STOPPING'].includes(error.code));if(failure)onError(failure);}
+      return state;
+    }catch(error){if(error?.code==='VOICE_STATE_CANCELLED')return value.state;throw error;}})().finally(()=>{if(refreshing===row)refreshing=undefined;});return row.task;
   }
   function deliverDrafts(){const trusted=value.state?.scope;for(let i=0;i<drafts.length;){const event=drafts[i],listener=trusted&&[...draftListeners].find(row=>matchesChat(row.scope,event.scope)&&matchesChat(row.scope,trusted)&&['lifeId','operationId'].every(key=>!trusted[key]||trusted[key]===event.scope?.[key]));if(!listener){i++;continue;}listener.callback(event);drafts.splice(i,1);}publish({pendingDraft:drafts.at(-1)??null});}
   const off=output.onEvent(event=>{
@@ -250,7 +261,7 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
       publish({phase:{requestId:event.requestId,stage:event.stage}});
       if(event.stage==='error')onError({message:event.code==='VOICE_PREFLIGHT_TIMEOUT'?'配音准备超时，已停止；回复文字已保留':phaseText.error});
     }
-    if(event.type==='state'){revision++;output.setCardMix(event.state?.cardVoiceMix);publish({state:event.state,...(event.state?.cloudBatch?{cloudBatch:event.state.cloudBatch}:{})});if(drafts.length)deliverDrafts();}
+    if(event.type==='state'){revision++;output.setCardMix(event.state?.cardVoiceMix);const changed=cloudSelection(event.state)!==cloudSelection(value.state);publish({state:event.state,...(changed?{profiles:[],profilesByPackage:{},profileErrorsByPackage:{},componentStatuses:{},profileSelectionsByPackage:{}}:{}),...(event.state?.cloudBatch?{cloudBatch:event.state.cloudBatch}:{})});if(drafts.length)deliverDrafts();}
     if(event.type==='cloud-batch'){
       const batch=event.cloudBatch??event.batch??event.snapshot??(typeof event.state==='object'?event.state:event);
       revision++;publish({cloudBatch:batch,...(value.state?{state:{...value.state,cloudBatch:batch}}:{})});

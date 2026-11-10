@@ -334,6 +334,7 @@ export function createDshBackend({ fetchImpl=fetch,network,networkBootstrapPath,
     const raw = await rpc('management.snapshot');
     return { runtimeId, profileId, purpose, pid:child.pid, phase, bundles: ref ? raw.bundles.filter(row => row.name === ref.packageName) : raw.bundles, plugins: raw.plugins, webOrigin, lastError };
   }
+  async function currentInventory(ref){await start();return {...await snapshot(ref),identity:identities[ref.packageName]?structuredClone(identities[ref.packageName]):null};}
   /** Fresh private IPC identity. Core also checks its registered OS birth. */
   async function identity(){
     await start();const current=child;
@@ -550,7 +551,7 @@ export function createDshBackend({ fetchImpl=fetch,network,networkBootstrapPath,
     if(!jobStopPromise)jobStopPromise=Promise.resolve().then(()=>onProcessStop({runtimeId,pid:child.pid,jobId:taskMode.jobId,runId:taskMode.runId,...result})).then(proof=>{if(proof?.stopped!==true||proof.osActiveProcesses!==0)throw failure('DSH_TASK_STOP_UNCONFIRMED','The OS guard did not confirm zero owned task descendants');return {...result,osStopProof:proof};});
     try{return await jobStopPromise;}catch(error){jobStopPromise=null;throw error;}
   }
-  return Object.freeze({ probe, snapshot, identity, configureNetwork, status: snapshot, planInstall, install, enable, disable: ref => rpc('management.disable', { packageName: ref.packageName }), uninstall: ref => rpc('management.uninstall', { packageName: ref.packageName }), async rollback(ref, options = {}) { if (!options.plan) throw failure('DSH_ROLLBACK_PLAN_REQUIRED', 'Rollback requires an exact verified prior install plan'); await rpc('management.uninstall', { packageName: ref.packageName }); return install(options.plan, options); }, openClient, listTools, callTool, verifySocialUI, close, on: (name, listener) => { events.on(name, listener); return () => events.off(name, listener); } });
+  return Object.freeze({ probe, snapshot, currentInventory, identity, configureNetwork, status: snapshot, planInstall, install, enable, disable: ref => rpc('management.disable', { packageName: ref.packageName }), uninstall: ref => rpc('management.uninstall', { packageName: ref.packageName }), async rollback(ref, options = {}) { if (!options.plan) throw failure('DSH_ROLLBACK_PLAN_REQUIRED', 'Rollback requires an exact verified prior install plan'); await rpc('management.uninstall', { packageName: ref.packageName }); return install(options.plan, options); }, openClient, listTools, callTool, verifySocialUI, close, on: (name, listener) => { events.on(name, listener); return () => events.off(name, listener); } });
 }
 
 export function socialUIRequestAdmissible(request,webOrigin,expectedPath){

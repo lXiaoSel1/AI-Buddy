@@ -7,6 +7,7 @@ import {pluginResult,pluginErrorText,pluginSourceId,pluginRowKey,filterLegacyPlu
 import {legacyText,formatBytes} from './community-capabilities.mjs';
 import {communityCount} from './community/messages.mjs';
 import {isVoiceEnginePackage,VOICE_SHARED_PACKAGE} from './voice/package-contract.mjs';
+import {pluginClientResult} from './plugin-client-result.mjs';
 import {invokeWithOfficialRetry,officialRetryPin,officialRetryRequest,OfficialRetryButton} from './plugin-official-retry.mjs';
 const tn=(key,n)=>communityCount(key,n,t);
 const h=React.createElement;
@@ -81,7 +82,7 @@ export function PluginCenter({api=globalThis.window?.whale?.plugins,voiceApi=glo
   let cancelled=false;
   const rows=result.items.filter(row=>row.current&&isVoiceEnginePackage(row.manifest.id));
   if(!voiceApi?.action||!rows.length)return;
-  const refresh=async()=>{const values=await Promise.all(rows.map(async row=>{try{return [pluginRowKey(row),pluginResult(await voiceApi.action('component-status',{packageId:row.manifest.id}))];}catch{return [pluginRowKey(row),{}];}}));if(!cancelled&&mounted.current)setComponents(Object.fromEntries(values));};
+  const refresh=async()=>{const values=await Promise.all(rows.map(async row=>{try{return [pluginRowKey(row),pluginClientResult(await voiceApi.action('component-status',{packageId:row.manifest.id}))];}catch{return [pluginRowKey(row),{}];}}));if(!cancelled&&mounted.current)setComponents(Object.fromEntries(values));};
   void refresh();
   const off=voiceApi.onEvent?.(event=>{if(event.type==='asset-progress'&&['ready','failed','cancelled'].includes(event.state))void refresh();});
   return()=>{cancelled=true;off?.();};

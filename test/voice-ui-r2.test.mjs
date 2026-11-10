@@ -11,7 +11,8 @@ import React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {setLocale} from '../src/i18n.mjs';
 import {VoiceCharacters,VoiceParts} from '../src/voice/design-ui.mjs';
-import {ensureVoiceSession} from '../src/voice/client.mjs';
+import {ensureVoiceSession,ensureVoiceOutput} from '../src/voice/client.mjs';
+import {VoiceGeneralSettingsPanel} from '../src/voice/shell-design.mjs';
 
 test('one read-only engine request returns all 11 own selections with one profile-index read and preserves current scope and choices',async t=>{
  const root=await mkdtemp(join(tmpdir(),'voice-ui-r2-')),breeze='ai-buddy.voice-breeze',gpt='ai-buddy.voice-gpt-sovits',settings=createVoiceSettings({dataRoot:root});await settings.update({enabled:true});
@@ -63,4 +64,32 @@ test('renderer batches character selections once per installed local engine duri
  const api={onEvent:()=>()=>{},async action(op,payload){calls.push({op,payload});if(op==='state')return state;if(op==='profile-selections'){if(payload.packageId===gpt)throw Object.assign(Error('Profile read failed'),{code:'EACCES'});return {packageId:id,engine:'breeze',selections:PET_CHARACTERS.map(({id:characterId})=>({characterId,profile:null}))};}return {accepted:true};}};
  const session=ensureVoiceSession(api,{createContext:()=>{throw Error('No audio needed');},captureOptions:{workletURL:'fixture'}}),release=session.retain();
  try{await session.refresh();assert.deepEqual(calls.filter(row=>row.op==='profile-selections').map(row=>row.payload),[{packageId:id},{packageId:gpt}]);assert.equal(session.snapshot().profileSelectionsByPackage[id].selections.length,11);assert.equal(session.snapshot().profileSelectionsByPackage[gpt].state,'failed');assert.equal(session.snapshot().profileSelectionsByPackage[gpt].code,'EACCES');assert.equal(session.snapshot().state.selectedPackageId,id);}finally{await release();}
+});
+
+test('installed voice navigation survives a plain ancillary failure while an uninstalled engine remains selected',async()=>{
+ const id='ai-buddy.voice-breeze',missing='ai-buddy.voice-gpt-sovits',calls=[],state={selectedPackageId:missing,scope:{characterId:'deepseek',conversationId:'imported',personaId:'default'},settings:{enabled:false,packages:{[id]:{ttsProvider:'local'},[missing]:{ttsProvider:'local'}}},packages:[{id,installed:true,enabled:true},{id:missing,installed:false,enabled:false}]};
+ let entered,release;const reading=new Promise(resolve=>entered=resolve),held=new Promise(resolve=>release=resolve);
+ const api={onEvent:()=>()=>{},async action(op,payload){calls.push({op,payload});if(op==='state')return structuredClone(state);if(op==='profiles'){if(payload?.packageId!==id)throw Error('The uninstalled selected engine must not be queried');entered();await held;return JSON.parse(JSON.stringify({__buddyError:true,code:'EACCES',message:'Profile list cannot be read'}));}if(op==='component-status')return {ready:false,state:'unavailable',code:'VOICE_ASSET_MISSING'};if(op==='profile-selections')return {packageId:id,selections:[]};throw Error('Browsing must not mutate voice state: '+op);}};
+ const session=ensureVoiceSession(api,{createContext:()=>{throw Error('Browsing must not acquire audio');},captureOptions:{workletURL:'unused'}}),dispose=session.retain();let refresh;
+ try{
+  refresh=session.refresh();await reading;
+  assert.equal(session.snapshot().state?.packages.find(row=>row.id===id)?.installed,true,'Authoritative installation state must publish before optional queries settle');
+  release();await refresh;
+  const snapshot=session.snapshot();assert.equal(snapshot.state.selectedPackageId,missing);assert.equal(snapshot.profileErrorsByPackage[id].code,'EACCES');assert.match(snapshot.error,/Profile list cannot be read/);
+  let opens=0,installs=0;nodes(VoiceGeneralSettingsPanel({snapshot,session,onOpen:()=>opens++,onPlugins:()=>installs++})).find(row=>row.props?.['data-voice-settings-open']).props.onClick();assert.equal(opens,1);assert.equal(installs,0);
+ }finally{release();await refresh?.catch(()=>{});await dispose();}
+});
+
+test('voice state events clear old scope profiles and a late ancillary reply cannot replace the new selection',async()=>{
+ const id='ai-buddy.voice-breeze',listeners=new Set();let character='deepseek',hold=false,entered,release;const reading=new Promise(r=>entered=r),held=new Promise(r=>release=r),state=()=>({selectedPackageId:id,scope:{characterId:character,conversationId:character,personaId:'default'},settings:{packages:{[id]:{ttsProvider:'local'}}},packages:[{id,installed:true,enabled:true}]});
+ const api={onEvent:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},async action(op){if(op==='state')return state();if(op==='profiles'){const own=character;if(hold){entered();await held;}return [{id:own,characterId:own}];}if(op==='profile-selections')return {selections:[]};return {ready:false,state:'missing'};}};
+ const session=ensureVoiceSession(api,{captureOptions:{workletURL:'unused'}}),dispose=session.retain();let old;
+ try{await session.refresh();assert.equal(session.snapshot().profiles[0].characterId,'deepseek');character='claude';for(const listener of listeners)await listener({type:'state',state:state()});assert.deepEqual(session.snapshot().profiles,[],'A new scope cannot display the prior character profile list');hold=true;old=session.refresh();await reading;character='grok';for(const listener of listeners)await listener({type:'state',state:state()});hold=false;await session.refresh();release();await old;assert.equal(session.snapshot().state.scope.characterId,'grok');assert.equal(session.snapshot().profiles[0].characterId,'grok');}
+ finally{release();await old?.catch(()=>{});await dispose();}
+});
+
+test('playback receipt errors are unwrapped after the plain voice bridge instead of accepted as successful receipts',async()=>{
+ const listeners=new Set(),errors=[],api={onEvent:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},action:async()=>({__buddyError:true,code:'VOICE_RECEIPT_REJECTED',message:'Receipt persistence failed'})},output=ensureVoiceOutput(api),dispose=output.retain(),off=output.onError(error=>errors.push(error));
+ try{for(let i=0;i<7;i++)for(const listener of listeners)await listener({type:'segment',state:'queued',envelope:{channel:'app-private',characterId:'deepseek',personaId:'p',conversationId:'c',requestId:'receipt-'+i,segmentId:'receipt-'+i+':0',index:0},text:'unchanged',speech_text:'unchanged'});assert.equal(errors.at(-1)?.code,'VOICE_RECEIPT_REJECTED');}
+ finally{off();await dispose();}
 });

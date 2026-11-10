@@ -24,12 +24,17 @@ async function fixture(t,{cold=false,componentWorkerFactory,qq=false,qqLoginFact
   // These existing B4 tests model already-ready media dependencies; the focused
   // host dependency suite covers real coordinator preparation/admission.
   if(cold&&!qq&&!realHostDependencies){platform.dependencyCoordinator.plan=async()=>({token:'already-ready-fixture',components:[]});platform.dependencyCoordinator.run=async({materialize,enqueue})=>enqueue(await materialize());}
-  Object.assign(platform.dshBackend,simulatedBackend(calls));t.after(async()=>{for(const release of cleanup)release();await platform.close();await rm(root,{recursive:true,force:true});});
+  Object.assign(platform.dshBackend,simulatedBackend(calls));delete platform.dshBackend.currentInventory; // This data-only backend does not implement native materialization.t.after(async()=>{for(const release of cleanup)release();await platform.close();await rm(root,{recursive:true,force:true});});
   if(!cold)await platform.action({action:'community-load-catalog',sourceId:source.sourceId,envelope:signed(catalog(pub),pub)});
   return {root,platform,calls,source,key,cleanup,legacy};
 }
 function prepare(f){const waiting=gate(),entered=gate();let done=false;const finish=(error)=>{if(done)return;done=true;if(error)waiting.reject(error);else waiting.resolve({state:'ready',runtimeLockPath:join(f.root,'new/runtime-lock.json')});};f.platform.componentManager.install=async()=>{entered.resolve();return waiting.promise;};f.platform.componentManager.cancel=()=>{finish(abort());return {cancelled:true};};const installing=f.platform.action({action:'dsh-component-install',planId:'host-fixture'});return {entered:entered.promise,installing,finish};}
 async function queueInstall(f){const plan=await f.platform.action({action:'dsh-plan',sourceId:f.source.sourceId,id:'test.tools'});return f.platform.action({action:'dsh-install',planId:plan.planId,grantedCapabilities:plan.declaredCapabilities});}
+
+test('a fresh installation keeps its DSH component destination independent of the active data profile',async t=>{
+ const roots=[];const f=await fixture(t,{componentWorkerFactory:(_path,{workerData})=>{roots.push(workerData.destinationRoot);const worker=new EventEmitter();queueMicrotask(()=>{worker.emit('message',{type:'result',value:{state:'missing'}});worker.emit('exit',0);});return worker;}});
+ assert.equal((await f.platform.action({action:'dsh-component-status'})).state,'missing');assert.deepEqual([...new Set(roots)],[join(f.root,'local','runtime-components','dsh')]);
+});
 
 test('queued install waits throughout component preparation and executes once after success or cancellation',async t=>{
   for(const cancel of [false,true])await t.test(cancel?'cancel':'success',async t=>{
@@ -59,7 +64,7 @@ test('held runtime selection rechecks component transition and close before usin
 });
 
 test('component manager busy probe excludes its own platform transition flag',async t=>{
-  const probes=[],componentWorkerFactory=(_path,{workerData})=>{assert.equal(workerData.kind,'install');const worker=new EventEmitter();worker.postMessage=row=>{if(row.type!=='busy-result')return;probes.push(row.busy);queueMicrotask(()=>{worker.emit('message',row.busy?{type:'error',error:{code:'DSH_COMPONENT_BUSY',message:'unexpected self lock'}}:{type:'result',value:{state:'ready',runtimeLockPath:'/fixture/new-runtime-lock.json'}});worker.emit('exit',0);});};queueMicrotask(()=>worker.emit('message',{type:'busy',id:1}));return worker;};
+  const probes=[],componentWorkerFactory=(_path,{workerData})=>{assert.equal(workerData.kind,'install');const worker=new EventEmitter();worker.postMessage=row=>{if(row.type!=='busy-result')return;probes.push(row.busy);queueMicrotask(()=>{worker.emit('message',row.busy?{type:'error',error:{code:'DSH_COMPONENT_BUSY',message:'unexpected self lock'}}:{type:'result',value:{state:'ready',runtimeLockPath:'/fixture/new-runtime-lock.json',sourceCommit:DSH_PUBLIC_COMPONENT.sourceCommit,nodeVersion:DSH_PUBLIC_COMPONENT.nodeVersion,pnpmVersion:DSH_PUBLIC_COMPONENT.pnpmVersion,archiveSha256:DSH_PUBLIC_COMPONENT.sha256}});worker.emit('exit',0);});};queueMicrotask(()=>worker.emit('message',{type:'busy',id:1}));return worker;};
   const f=await fixture(t,{componentWorkerFactory});await mkdir(join(f.root,'build'),{recursive:true});await writeFile(join(f.root,'build/dsh-component.json'),JSON.stringify(DSH_PUBLIC_COMPONENT));const plan=await f.platform.action({action:'dsh-component-plan'});assert.equal(plan.mode,'online');assert.equal((await f.platform.action({action:'dsh-component-install',planId:plan.planId})).state,'ready');assert.deepEqual(probes,[false]);assert.equal(f.platform.busy(),false);
 });
 

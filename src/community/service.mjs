@@ -9,6 +9,7 @@ import {fetchPluginJson, isVoiceSourceAuthorized} from '../plugin-sources.mjs';
 import {verifyPluginMetadata} from '../plugin-download-integrity.mjs';
 import {isVoiceCommunityWork, supportsVoiceManifest} from '../voice/package-contract.mjs';
 import {createPluginBackendRegistry} from '../plugin-backends.mjs';
+import {prepareCurrentDshPackage} from '../dsh-platform/profile-package.mjs';
 import {BUDDY_PLUGIN_CAPABILITIES} from '../buddy-plugin-services/capability-grants.mjs';
 import {BUDDY_BRIDGE_COMPATIBILITY_VERSION} from '../buddy-plugin-services/version.mjs';
 import {communityDigest, communityHttps, communityPackageKey, parseDshPackageRef, rankCommunityWorks, verifyCommunityCatalog} from './catalog.mjs';
@@ -310,7 +311,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
   async function checkIntent(job) {
     const intent = job.intent, source = await trustedSource(intent.packageRef.sourceId);
     if (intent.updateMode === 'auto' && (preferences.updatePolicies[job.packageKey] !== 'auto' || !stablePatchUpdate(intent.updateFrom, intent.packageRef.exactVersion))) return {allowed: false, code: 'PLUGIN_AUTO_UPDATE_DISABLED', message: 'Automatic updates were turned off; review this update manually'};
-    if (!['disable', 'uninstall'].includes(job.operation) && ((job.operation === 'install' || coldBiliActivation(job)) && (!source.enabled || source.removed) || source.keyFingerprint !== intent.sourceFingerprint || source.generation !== intent.sourceGeneration)) return {allowed: false, code: 'PLUGIN_SOURCE_CHANGED', message: 'Pinned source changed; review a new maintenance plan'};
+    if (!['disable', 'uninstall'].includes(job.operation) && (['install','enable'].includes(job.operation) && (!source.enabled || source.removed) || source.keyFingerprint !== intent.sourceFingerprint || source.generation !== intent.sourceGeneration)) return {allowed: false, code: 'PLUGIN_SOURCE_CHANGED', message: 'Pinned source changed; review a new maintenance plan'};
     const current = catalogs.get(source.sourceId);
     if (job.operation === 'install' && current?.verified.payloadSha256 !== intent.catalogDigest) return {allowed: false, code: 'COMMUNITY_PLAN_CHANGED', message: 'Catalog changed; review a new installation plan'};
     if (intent.grantedCapabilities?.some(capability => !intent.packageRef.capabilities.includes(capability))) return {allowed: false, code: 'COMMUNITY_CAPABILITY_INVALID', message: 'Requested grant exceeds declaration'};
@@ -359,6 +360,10 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
   async function executeOperation(job) {
     const intent = job.intent, key = job.packageKey, old = registry.packages[key];
     let result;
+    if(job.operation==='enable'&&old&&backends.supports('dsh','currentInventory')){
+      const check=async()=>{if(closed)fail('Community is closed','COMMUNITY_CLOSED');const decision=await checkIntent(job);if(decision!==true)fail(decision?.message??'Activation changed',decision?.code??'COMMUNITY_INSTALLATION_CHANGED');};
+      await prepareCurrentDshPackage({record:copy(old),check,backend:Object.fromEntries(['currentInventory','planInstall','install'].map(method=>[method,(...args)=>backends.invoke('dsh',method,...args)]))});
+    }
     const coordinated = job.operation === 'install' && !!old && !!intent.updateMode;
     const keepEnabled = coordinated && old.enabled && intent.priorDataSchemaVersion === intent.packageRef.dataSchemaVersion &&
       (intent.updateMode === 'review' || intent.grantedCapabilities.every(capability => intent.priorGrantedCapabilities.includes(capability)));
@@ -452,10 +457,14 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     // authURL, management origin and tokens deliberately never cross renderer IPC.
     return {runtimeId: descriptor.runtimeId ?? null, profileId: descriptor.profileId ?? installed.profileId, state: descriptor.clientState ?? descriptor.state ?? 'opened'};
   }
-  async function activateInstalled(packageKey) {
-    const record = registry.packages[packageKey]; if (!record?.enabled) fail('Plugin is absent or disabled', 'PLUGIN_DISABLED');
-    if (!runtimeVerified.has(packageKey)) { const pending = await queueInstalled({packageKey}, 'enable'); await queue.drain(); const job = queue.snapshot().jobs.find(value => value.id === pending.job.id); if (job?.state !== 'completed' || !runtimeVerified.has(packageKey)) fail(job?.error?.message ?? 'Plugin activation is queued behind active work', job?.error?.code ?? 'PLUGIN_BUSY'); }
-    return publicInstallation(registry.packages[packageKey], true);
+  const activationFlights=new Map();
+  function activateInstalled(packageKey) {
+    if(activationFlights.has(packageKey))return activationFlights.get(packageKey);
+    const task=(async()=>{
+      const record = registry.packages[packageKey]; if (!record?.enabled) fail('Plugin is absent or disabled', 'PLUGIN_DISABLED');
+      if (!runtimeVerified.has(packageKey)) { const pending = await queueInstalled({packageKey}, 'enable'); await queue.drain(); const job = queue.snapshot().jobs.find(value => value.id === pending.job.id); if (job?.state !== 'completed' || !runtimeVerified.has(packageKey)) fail(job?.error?.message ?? 'Plugin activation is queued behind active work', job?.error?.code ?? 'PLUGIN_BUSY'); }
+      return publicInstallation(registry.packages[packageKey], true);
+    })().finally(()=>{if(activationFlights.get(packageKey)===task)activationFlights.delete(packageKey);});activationFlights.set(packageKey,task);return task;
   }
   async function resolveDshInstalled(packageKey) {
     const record = registry.packages[packageKey]; if (!record) fail('DSH package is not installed', 'PLUGIN_NOT_INSTALLED');
