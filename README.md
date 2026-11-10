@@ -16,14 +16,14 @@
 
 **AI 酱本体**（本仓库） · [B站陪伴插件](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ连接插件](https://github.com/lXiaoSel1/AI-Buddy-QQ) · [一起玩牌插件](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) · [语音插件](https://github.com/lXiaoSel1/AI-Buddy-Voice)
 
-<!-- ai-buddy-source-version: 2.0.13 -->
-**当前版本：[v2.0.12](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.12)** · 2.0 加入了扩展中心和官方插件，还有积分、商店与背包、投喂，以及社交与心情；群聊可以开 Auto，让角色们自己轮流接话。2.0.4 加入了牌桌服务，可以从扩展中心安装「一起玩牌」，和角色打斗地主、德州。2.0.5 修好了它和 B站、QQ 页面切换时卡在「启动中」的问题。2.0.6 修复安装器校验旧存档时卡住的问题。2.0.7 修复 B站陪伴在部分线路无法采集原视频分镜的问题。2.0.8 可以直接在通用设置里更新本体和插件。2.0.9 加入[语音](#语音)：从扩展中心装 Breeze 或 GPT-SoVITS 语音插件，她的回复会读出来；Galgame 里可以开 Live 和她轮流说话，也能录音转成文字；还能改用 MiniMax 云配音。2.0.10 修好了没装语音插件时，聊天页仍显示语音警告的问题。2.0.11 起，两个语音插件都自带 11 位角色的预制声线，装好就能说话。2.0.12 可以在「她的声音」里换回预制声线；插件更新后组件没变时，已经下载过的语音组件点一下「校验」就能继续用，不用重新下载；扩展中心每个插件只显示一张卡；B站陪伴、QQ连接、一起玩牌改成只写最低支持的本体版本，本体升级后照常能用。2.0.13 修了一批安装、联网和插件的问题：用安装器升级时，没变的资源不再重新下载；应用内的联网默认跟随系统代理，通用设置新增[「网络」](#网络设置)，可以填代理和下载镜像；大文件下载可以断点续传；免安装版里多了本地安装入口，不联网也能安装和升级；牌局、群聊 Auto、B站陪伴、QQ连接和云配音各修了几处会卡住的情况。30fps 和 60fps 两版功能相同。见 [2.0.13 更新说明](docs/RELEASE-2.0.13.md)。
+<!-- ai-buddy-source-version: 2.0.14 -->
+**当前版本：[v2.0.12](https://github.com/lXiaoSel1/ai-buddy/releases/tag/v2.0.12)** · 2.0 加入了扩展中心和官方插件，还有积分、商店与背包、投喂，以及社交与心情；群聊可以开 Auto，让角色们自己轮流接话。2.0.4 加入了牌桌服务，可以从扩展中心安装「一起玩牌」，和角色打斗地主、德州。2.0.5 修好了它和 B站、QQ 页面切换时卡在「启动中」的问题。2.0.6 修复安装器校验旧存档时卡住的问题。2.0.7 修复 B站陪伴在部分线路无法采集原视频分镜的问题。2.0.8 可以直接在通用设置里更新本体和插件。2.0.9 加入[语音](#语音)：从扩展中心装 Breeze 或 GPT-SoVITS 语音插件，她的回复会读出来；Galgame 里可以开 Live 和她轮流说话，也能录音转成文字；还能改用 MiniMax 云配音。2.0.10 修好了没装语音插件时，聊天页仍显示语音警告的问题。2.0.11 起，两个语音插件都自带 11 位角色的预制声线，装好就能说话。2.0.12 可以在「她的声音」里换回预制声线；插件更新后组件没变时，已经下载过的语音组件点一下「校验」就能继续用，不用重新下载；扩展中心每个插件只显示一张卡；B站陪伴、QQ连接、一起玩牌改成只写最低支持的本体版本，本体升级后照常能用。2.0.13 修了一批安装、联网和插件的问题：用安装器升级时，没变的资源不再重新下载；应用内的联网默认跟随系统代理，通用设置新增[「网络」](#网络设置)，可以填代理和下载镜像；大文件下载可以断点续传；免安装版里多了本地安装入口，不联网也能安装和升级；牌局、群聊 Auto、B站陪伴、QQ连接和云配音各修了几处会卡住的情况。2.0.14 修好了 2.0.13 的三个问题：插件无法启动；语音插件 1.0.3 装好后无法启用；语音组件和 QQ 连接组件下载失败。30fps 和 60fps 两版功能相同。见 [2.0.13](docs/RELEASE-2.0.13.md) 和 [2.0.14](docs/RELEASE-2.0.14.md) 的更新说明。
 
 > **2.0.13 已撤回**：B站陪伴、QQ连接、一起玩牌等插件在 2.0.13 上无法启动。请先用 2.0.12；已经升到 2.0.13 的，在安装器里点 **回退上一版**。修复版发布后会更新这里。
 
 ## 在线安装（推荐）
 
-**本体 2.0.13。** 扩展中心目前提供 B站陪伴 2.0.16、QQ连接 2.0.10、一起玩牌 1.1.5，以及 Breeze 语音和 GPT-SoVITS 语音 1.0.3。
+**本体 2.0.14。** 扩展中心目前提供 B站陪伴 2.0.16、QQ连接 2.0.10、一起玩牌 1.1.5，以及 Breeze 语音和 GPT-SoVITS 语音 1.0.3。
 
 [下载 Windows x64 安装器 2.0.12](https://github.com/lXiaoSel1/AI-Buddy/releases/download/v2.0.12/AI-Buddy-Setup-2.0.12-win-x64.exe) → 选择 30fps / 60fps 和角色 → 自动下载、校验、安装。补装角色、修复和升级也用这个安装器。
 
@@ -482,8 +482,8 @@ AI 酱能找到桌面端运行缓存、Microsoft Store 安装、常见独立安�
 | B站陪伴 2.0.16 | 和角色一起看 B站视频：先看完整的阅读计划，确认后她按抽帧画面和平台字幕读完，写下观看笔记；也能预约观看。新的观看用这位角色自己的聊天连接。发评论要另外授权 | [AI-Buddy-Bilibili](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) |
 | QQ连接 2.0.10 | 选一位角色接管你的 QQ，只回复你允许的好友和群；群里默认只在被 @ 或被引用时说话 | [AI-Buddy-QQ](https://github.com/lXiaoSel1/AI-Buddy-QQ) |
 | 一起玩牌 1.1.5 | 和角色打斗地主和德州（2 到 10 人）。她们用各自绑定的模型出牌，积分走本体钱包，每打完 3 局好感 +1。有背景音乐、牌桌音效，开了语音还会喊出来。需要本体 2.0.4 或更新 | [AI-Buddy-Card-Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) |
-| Breeze 语音 1.0.3 | 本机配音，能跟着情绪变语气，自带 11 位角色的预制声线；需要 NVIDIA 显卡，启动时至少 9.5 GiB 空闲显存。也能改用 MiniMax 云配音。需要本体 2.0.13 | [AI-Buddy-Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice) |
-| GPT-SoVITS 语音 1.0.3 | 本机配音，只有平静的语气，自带 11 位角色的预制声线；需要 NVIDIA 显卡，启动时至少 4 GiB 空闲显存。也能改用 MiniMax 云配音。需要本体 2.0.13 | [AI-Buddy-Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice) |
+| Breeze 语音 1.0.3 | 本机配音，能跟着情绪变语气，自带 11 位角色的预制声线；需要 NVIDIA 显卡，启动时至少 9.5 GiB 空闲显存。也能改用 MiniMax 云配音。需要本体 2.0.14（2.0.13 已撤回） | [AI-Buddy-Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice) |
+| GPT-SoVITS 语音 1.0.3 | 本机配音，只有平静的语气，自带 11 位角色的预制声线；需要 NVIDIA 显卡，启动时至少 4 GiB 空闲显存。也能改用 MiniMax 云配音。需要本体 2.0.14（2.0.13 已撤回） | [AI-Buddy-Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice) |
 
 - B站陪伴需要的视频组件（FFmpeg）在安装插件时由 AI 酱从固定的上游发布版准备，会显示来源、大小和进度；已经核对过的副本不会重复下载。
 - B站陪伴的完整精读建议用本体 2.0.7：更早的版本在部分线路上采集不到原视频分镜。之前失败的观看记录会保留，更新后重新点「现在看」，再预览分镜、确认计划。视频地址、连接和分段响应的故障代码显示在「技术详情」里。
@@ -628,7 +628,7 @@ npm start
 
 标题下的「安装器下载」徽章由 [`.github/workflows/installer-download-badge.yml`](.github/workflows/installer-download-badge.yml) 每 6 小时统计一次，只计各版本 `AI-Buddy-Setup-*-win-x64.exe` 的下载次数，累计所有版本；结果写在 `badges` 分支，不会往 `main` 提交。GitHub 不区分下载者，开发测试的下载也算在内。
 
-不要提交 `local/`、生成的 `builds/`、密钥、个人 CG 或日志。更新说明：[2.0.13](docs/RELEASE-2.0.13.md)、[2.0.12](docs/RELEASE-2.0.12.md)、[2.0.11](docs/RELEASE-2.0.11.md)、[2.0.10](docs/RELEASE-2.0.10.md)、[2.0.9](docs/RELEASE-2.0.9.md)、[2.0.8](docs/RELEASE-2.0.8.md)、[2.0.7](docs/RELEASE-2.0.7.md)、[2.0.6](docs/RELEASE-2.0.6.md)、[2.0.5](docs/RELEASE-2.0.5.md)、[2.0.4](docs/RELEASE-2.0.4.md)、[2.0.3](docs/RELEASE-2.0.3.md)、[2.0.2](docs/RELEASE-2.0.2.md)、[1.9.2](docs/RELEASE-1.9.2.md)、[1.9.0](docs/RELEASE-1.9.0.md)。旧版的验收记录也在 [`docs/`](docs/) 里。
+不要提交 `local/`、生成的 `builds/`、密钥、个人 CG 或日志。更新说明：[2.0.14](docs/RELEASE-2.0.14.md)、[2.0.13](docs/RELEASE-2.0.13.md)、[2.0.12](docs/RELEASE-2.0.12.md)、[2.0.11](docs/RELEASE-2.0.11.md)、[2.0.10](docs/RELEASE-2.0.10.md)、[2.0.9](docs/RELEASE-2.0.9.md)、[2.0.8](docs/RELEASE-2.0.8.md)、[2.0.7](docs/RELEASE-2.0.7.md)、[2.0.6](docs/RELEASE-2.0.6.md)、[2.0.5](docs/RELEASE-2.0.5.md)、[2.0.4](docs/RELEASE-2.0.4.md)、[2.0.3](docs/RELEASE-2.0.3.md)、[2.0.2](docs/RELEASE-2.0.2.md)、[1.9.2](docs/RELEASE-1.9.2.md)、[1.9.0](docs/RELEASE-1.9.0.md)。旧版的验收记录也在 [`docs/`](docs/) 里。
 
 ## 许可与致谢
 
