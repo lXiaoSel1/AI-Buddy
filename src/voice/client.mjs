@@ -209,7 +209,7 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
   let value={state:null,captureState:'idle',captureMode:null,partial:'',error:'',working:false,cloudBatchWorking:false,cloudBatchCancelling:false,cloudBatch:null,cloudSelectionRevision:0,pendingDraft:null},revision=0,generation=0,operations=0,owners=0;
   const cloudSelection=state=>JSON.stringify([state?.scope,state?.selectedPackageId,state?.engine,state?.profile?.id,state?.profile?.version,state?.cloudConnections]);
   const publish=patch=>{if(patch.state&&cloudSelection(patch.state)!==cloudSelection(value.state))patch={...patch,cloudSelectionRevision:value.cloudSelectionRevision+1};value={...value,...patch};for(const listener of subscribers)listener(value);};
-  const onError=error=>{if(['VOICE_ASSET_CANCELLED','VOICE_PREPARATION_CANCELLED','VOICE_ACTION_REVOKED','ABORT_ERR'].includes(error?.code)||error?.name==='AbortError')return;publish({error:error?.code==='VOICE_ASSET_VERIFY_FAILED'?L('校验没通过，请重新下载','Verification failed, please download again'):error?.code==='VOICE_ASSET_VERIFY_REQUIRED'?L('这台电脑上已经有这些文件，请先校验','These files are already on this PC. Verify them first.'):typeof error?.code==='string'&&error.code.startsWith('CLOUD_')?cloudVoiceError(error):t(String(error?.message??error))});};
+  const onError=error=>{if(['VOICE_STATE_CANCELLED','VOICE_ASSET_CANCELLED','VOICE_PREPARATION_CANCELLED','VOICE_ACTION_REVOKED','ABORT_ERR'].includes(error?.code)||error?.name==='AbortError')return;publish({error:error?.code==='VOICE_ASSET_VERIFY_FAILED'?L('校验没通过，请重新下载','Verification failed, please download again'):error?.code==='VOICE_ASSET_VERIFY_REQUIRED'?L('这台电脑上已经有这些文件，请先校验','These files are already on this PC. Verify them first.'):typeof error?.code==='string'&&error.code.startsWith('CLOUD_')?cloudVoiceError(error):t(String(error?.message??error))});};
   const offOutputError=output.onError(onError);
   const action=(...args)=>Promise.resolve(api.action(...args)).then(pluginClientResult);
   const capture=createHostVoiceCapture({...captureOptions,action:(op,payload)=>action(op,op==='stop'?{...payload,channel:'app-chat'}:payload),onState:captureState=>publish({captureState,...(captureState==='idle'?{captureMode:null,partial:''}:{})}),onError});
@@ -242,7 +242,7 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
   function refresh(){
     if(refreshing&&refreshing.revision===revision)return refreshing.task;
     const row=refreshing={revision};
-    row.task=(async()=>{try{
+    row.task=(async()=>{
       const state=await action('state');if(row.revision!==revision)return value.state;
       // Package existence is authoritative even if an optional profile/asset
       // read fails. Clear old scope-derived lists before publishing the scope.
@@ -250,7 +250,7 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
       const [{profilesByPackage,profileErrorsByPackage},componentStatuses,profileSelectionsByPackage]=await Promise.all([readProfiles(state),readComponentStatuses(state),readProfileSelections(state)]);
       if(row.revision===revision){publish({profiles:profilesByPackage[state?.selectedPackageId]??[],profilesByPackage,profileErrorsByPackage,componentStatuses,profileSelectionsByPackage});const failure=Object.values(profileErrorsByPackage).find(error=>!['VOICE_DISABLED','VOICE_PACKAGE_UNAVAILABLE','VOICE_PROFILE_SCOPE','VOICE_STOPPING'].includes(error.code));if(failure)onError(failure);}
       return state;
-    }catch(error){if(error?.code==='VOICE_STATE_CANCELLED')return value.state;throw error;}})().finally(()=>{if(refreshing===row)refreshing=undefined;});return row.task;
+    })().finally(()=>{if(refreshing===row)refreshing=undefined;});return row.task;
   }
   function deliverDrafts(){const trusted=value.state?.scope;for(let i=0;i<drafts.length;){const event=drafts[i],listener=trusted&&[...draftListeners].find(row=>matchesChat(row.scope,event.scope)&&matchesChat(row.scope,trusted)&&['lifeId','operationId'].every(key=>!trusted[key]||trusted[key]===event.scope?.[key]));if(!listener){i++;continue;}listener.callback(event);drafts.splice(i,1);}publish({pendingDraft:drafts.at(-1)??null});}
   const off=output.onEvent(event=>{

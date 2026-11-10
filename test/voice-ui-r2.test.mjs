@@ -93,3 +93,8 @@ test('playback receipt errors are unwrapped after the plain voice bridge instead
  try{for(let i=0;i<7;i++)for(const listener of listeners)await listener({type:'segment',state:'queued',envelope:{channel:'app-private',characterId:'deepseek',personaId:'p',conversationId:'c',requestId:'receipt-'+i,segmentId:'receipt-'+i+':0',index:0},text:'unchanged',speech_text:'unchanged'});assert.equal(errors.at(-1)?.code,'VOICE_RECEIPT_REJECTED');}
  finally{off();await dispose();}
 });
+
+test('review: cancelled voice refresh rejects without turning cancellation into a visible UI error',async()=>{
+ let cancelled=false;const state={packages:[],settings:{},scope:null},api={onEvent:()=>()=>{},async action(){return cancelled?{__buddyError:true,code:'VOICE_STATE_CANCELLED',message:'State read cancelled'}:state;}},session=ensureVoiceSession(api,{captureOptions:{workletURL:'unused'}}),dispose=session.retain();
+ try{await session.refresh();cancelled=true;await assert.rejects(session.refresh(),{code:'VOICE_STATE_CANCELLED'});assert.equal(session.snapshot().state,state);await session.runAction('state');assert.equal(session.snapshot().error,'');}finally{await dispose();}
+});

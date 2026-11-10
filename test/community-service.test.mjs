@@ -3,7 +3,24 @@ import assert from 'node:assert/strict';
 import {readFile, writeFile, stat} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
+import {mkdir} from 'node:fs/promises';
 import {catalog, setupCommunity, signed, publisher, githubIssue, simulatedBackend} from './support/community-fixtures.mjs';
+
+test('review: recovery can restore its exact prior version after a failed update in the current profile',async t=>{
+ for(const revoke of [false,true])await t.test(revoke?'disabled materialization followed by revocation and retry':'first recovered update',async t=>{
+  const f=await setupCommunity(t);await f.load();const bytes=Buffer.from('simulated approved native archive'),sha=createHash('sha256').update(bytes).digest('hex'),oldArtifact=join(f.root,'old-profile',sha+'.tgz'),currentArtifact=join(f.dataRoot,'native-state','verified-packages',sha+'.tgz'),initialPlan=f.backend.planInstall;await mkdir(join(f.root,'old-profile'));await mkdir(join(f.dataRoot,'native-state','verified-packages'),{recursive:true});await writeFile(oldArtifact,bytes);
+  f.backend.planInstall=async request=>({...await initialPlan(request),artifact:oldArtifact,artifactSha256:sha,profileId:'buddy-community-v1',spec:request.packageRef.spec.value,sourceVerification:{sha256:sha}});await f.install();const key=f.service.snapshot().dsh.installed[0].packageKey;await f.service.action({action:'dsh-enable',packageKey:key});await f.service.drainMaintenance();await f.restart();const approval=await f.service.resolveDshInstalled(key);let native=false,identity,revoked=false,uninstalls=0;
+  f.backend.currentInventory=async()=>({bundles:native?[{name:approval.packageName,version:'1.0.0',installed:true,enabled:false}]:[],identity});
+  f.backend.planInstall=async request=>{await writeFile(currentArtifact,bytes);return {...await initialPlan(request),artifact:currentArtifact,artifactSha256:sha,profileId:'buddy-community-v1',spec:request.packageRef.spec.value,sourceVerification:{sha256:sha}};};
+  f.backend.install=async(plan,options)=>{if(plan.packageRef.exactVersion!=='1.0.0')throw Object.assign(Error('Controlled update failure'),{code:'UPDATE_TEST_FAILURE'});assert.equal(options.enabled,false);native=true;identity={packageName:approval.packageName,exactVersion:'1.0.0',sourceDigest:approval.sourceDigest,pluginId:approval.pluginId};if(revoke&&!revoked){revoked=true;f.pub.source.enabled=false;}return {application:'applied',enabled:false,installed:true};};
+  f.backend.enable=async()=>({enabled:true,activation:{observed:true}});
+  f.backend.rollback=async(_ref,{plan})=>{assert.equal(plan.artifact,currentArtifact,'Rollback must be bound to the current native artifact cache before uninstall');assert.equal((await readFile(plan.artifact)).toString(),bytes.toString());uninstalls++;return {installed:true,enabled:false};};
+  if(revoke){await assert.rejects(f.service.action({action:'dsh-open-client',packageKey:key}),{code:'PLUGIN_SOURCE_CHANGED'});assert.equal(f.service.snapshot().dsh.installed[0].runtimeVerified,false);assert.equal(f.grants.at(-1).enabled,false);f.pub.source.enabled=true;await f.restart();}
+  await f.service.action({action:'dsh-open-client',packageKey:key});await f.service.action({action:'community-set-update-policy',packageKey:key,policy:'auto'});
+  const updated=catalog(f.pub,{generatedAt:'2026-10-24T23:00:00Z'}),next=structuredClone(updated.works[0].releases[0]);next.version=next.package.exactVersion='1.0.1';updated.works[0].releases.push(next);await f.load(updated);await f.service.runAutomaticUpdates({refresh:false});await f.service.drainMaintenance();
+  assert.equal(uninstalls,1,'The valid current plan must restore the previous release');const current=await f.service.resolveDshInstalled(key);assert.equal(current.exactVersion,'1.0.0');assert.equal(current.enabled,true);assert.deepEqual(current.grantedCapabilities,approval.grantedCapabilities);assert.deepEqual(current.backendPlan,approval.backendPlan);assert.deepEqual(current.sourceProof,approval.sourceProof);assert.equal(f.service.snapshot().dsh.installed[0].runtimeVerified,true);
+ });
+});
 
 test('simulation: opening an approved plugin in a new native profile materializes its exact cache disabled before enabling',async t=>{
  const f=await setupCommunity(t);await f.load();const artifact=join(f.root,'approved.tgz'),bytes=Buffer.from('system-boundary simulated tarball'),sha=createHash('sha256').update(bytes).digest('hex'),plan=f.backend.planInstall;await writeFile(artifact,bytes);
@@ -16,7 +33,7 @@ test('simulation: opening an approved plugin in a new native profile materialize
  f.backend.enable=async()=>{if(!installed)throw Object.assign(Error('cannot resolve profile bundle; install it first'),{code:'DSH_ACTIVATION_FAILED'});events.push('enable');return {enabled:true,activation:{observed:true}};};
  await Promise.all([f.service.action({action:'dsh-open-client',packageKey:key}),f.service.action({action:'dsh-open-client',packageKey:key})]);
  assert.deepEqual(events,['plan','install','enable']);const current=await f.service.resolveDshInstalled(key);assert.equal(current.exactVersion,original.exactVersion);assert.deepEqual(current.grantedCapabilities,original.grantedCapabilities);assert.deepEqual(current.backendPlan,original.backendPlan);
- await f.service.invalidateRuntime({phase:'new-host-session'});events.length=0;await f.service.action({action:'dsh-open-client',packageKey:key});assert.deepEqual(events,['enable'],'An already matching native inventory must not be reinstalled');
+ await f.service.invalidateRuntime({phase:'new-host-session'});events.length=0;await f.service.action({action:'dsh-open-client',packageKey:key});assert.deepEqual(events,['plan','enable'],'An existing native inventory needs a current plan without reinstalling');
 });
 
 test('simulation: current-profile recovery rejects conflicting inventory, changed cache and revoked source without an enable',async t=>{

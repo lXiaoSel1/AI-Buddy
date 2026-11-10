@@ -9,7 +9,7 @@ import {fetchPluginJson, isVoiceSourceAuthorized} from '../plugin-sources.mjs';
 import {verifyPluginMetadata} from '../plugin-download-integrity.mjs';
 import {isVoiceCommunityWork, supportsVoiceManifest} from '../voice/package-contract.mjs';
 import {createPluginBackendRegistry} from '../plugin-backends.mjs';
-import {prepareCurrentDshPackage} from '../dsh-platform/profile-package.mjs';
+import {prepareCurrentDshPackage,rebindApprovedDshPackagePlan} from '../dsh-platform/profile-package.mjs';
 import {BUDDY_PLUGIN_CAPABILITIES} from '../buddy-plugin-services/capability-grants.mjs';
 import {BUDDY_BRIDGE_COMPATIBILITY_VERSION} from '../buddy-plugin-services/version.mjs';
 import {communityDigest, communityHttps, communityPackageKey, parseDshPackageRef, rankCommunityWorks, verifyCommunityCatalog} from './catalog.mjs';
@@ -335,13 +335,13 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     return job.operation==='enable'&&installed?.enabled===true&&!runtimeVerified.has(job.packageKey)&&installed.packageName==='@ai-buddy/bilibili-companion'&&installed.sourceId==='official'&&officialFingerprints.has(job.intent.sourceFingerprint)&&installed.generation===job.intent.expectedGeneration&&installed.sourceDigest===ref.sourceDigest&&installed.exactVersion===ref.exactVersion&&installed.sourceProof?.sourceFingerprint===job.intent.sourceFingerprint;
   }
   async function restoreUpdate(job, old) {
-    const source = await trustedSource(old.sourceId);
-    if (source.removed || !source.enabled || source.keyFingerprint !== old.sourceProof?.sourceFingerprint || source.generation !== job.intent.sourceGeneration)
-      fail('Cannot restore a changed publisher automatically', 'PLUGIN_SOURCE_CHANGED');
-    const value = await backends.invoke('dsh', 'rollback', {...job.intent.packageRef, profileId: old.profileId}, {plan: old.backendPlan, enabled: false});
+    const check=async()=>{if(closed)fail('Community is closed','COMMUNITY_CLOSED');const source=await trustedSource(old.sourceId);if(source.removed||!source.enabled||source.keyFingerprint!==old.sourceProof?.sourceFingerprint||source.generation!==job.intent.sourceGeneration)fail('Cannot restore a changed publisher automatically','PLUGIN_SOURCE_CHANGED');if(registry.packages[job.packageKey]?.generation!==old.generation)fail('Installation changed before restoration','COMMUNITY_INSTALLATION_CHANGED');};
+    await check();const plan=await currentRollbackPlan(old,check);
+    const value = await backends.invoke('dsh', 'rollback', {...old, profileId: old.profileId}, {plan, enabled: false,check});await check();
     requireNativeOutcome(value);
     if (old.enabled) {
       const enabled = await backends.invoke('dsh', 'enable', old);
+      await check();
       requireNativeOutcome(enabled);
       if (enabled?.enabled !== true) fail('Previous plugin could not be enabled', 'DSH_ENABLE_UNCONFIRMED');
     }
@@ -353,6 +353,10 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     persistRegistry(); await publishPackage(restored);
     if (restored.enabled) runtimeVerified.add(job.packageKey); else runtimeVerified.delete(job.packageKey);
     update();
+  }
+  async function currentRollbackPlan(record,check){
+    if(!backends.supports('dsh','currentInventory'))return record.backendPlan;
+    return rebindApprovedDshPackagePlan({record,check,backend:{planInstall:(...args)=>backends.invoke('dsh','planInstall',...args)}});
   }
   function requireNativeOutcome(result) {
     if (result?.ok === false || result?.success === false || ['failed', 'error'].includes(result?.state)) fail('DSH operation did not succeed: ' + (result?.error?.message ?? result?.state), 'DSH_OPERATION_FAILED');
@@ -369,7 +373,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
       (intent.updateMode === 'review' || intent.grantedCapabilities.every(capability => intent.priorGrantedCapabilities.includes(capability)));
     if (coordinated && (!old.backendPlan || !backends.supports('dsh', 'rollback'))) fail('An exact verified previous version is needed for a safe update', 'DSH_ROLLBACK_PLAN_REQUIRED');
     if (job.operation === 'install') result = await backends.invoke('dsh', 'install', intent.backendPlan, {enabled:false,grantedCapabilities:intent.grantedCapabilities,official:job.official===true});
-    else if (job.operation === 'rollback') { if (!old?.previous?.backendPlan) fail('No exact prior installation plan is available', 'DSH_ROLLBACK_PLAN_REQUIRED'); result = await backends.invoke('dsh', 'rollback', {...intent.packageRef, profileId: old.profileId}, {plan: old.previous.backendPlan, enabled: false}); }
+    else if (job.operation === 'rollback') { if (!old?.previous?.backendPlan) fail('No exact prior installation plan is available', 'DSH_ROLLBACK_PLAN_REQUIRED');const check=async()=>{if(closed)fail('Community is closed','COMMUNITY_CLOSED');const decision=await checkIntent(job);if(decision!==true)fail(decision?.message??'Rollback changed',decision?.code??'COMMUNITY_INSTALLATION_CHANGED');};const plan=await currentRollbackPlan({...old.previous.packageRef,backendPlan:old.previous.backendPlan},check);result = await backends.invoke('dsh', 'rollback', {...intent.packageRef, profileId: old.profileId}, {plan, enabled: false,check}); }
     else result = await backends.invoke('dsh', job.operation, {...intent.packageRef, profileId: old?.profileId, generation: old?.generation});
     requireNativeOutcome(result);
     let finalCheck = await checkIntent(job);

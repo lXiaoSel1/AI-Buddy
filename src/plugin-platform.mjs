@@ -142,7 +142,7 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
   }
   async function selectedRuntimeLock(){
     const generation=componentGeneration;assertComponentSelection(generation);let selected=runtimeLockPath;
-    if(!selected){if(!componentChecked){const status=await componentManager.status();assertComponentSelection(generation);selectedComponentLock=status.state==='ready'?status.runtimeLockPath:null;componentChecked=true;}selected=selectedComponentLock??join(root,'runtime','dsh','runtime-lock.json');}
+    if(!selected){if(!componentChecked){const status=await componentManager.status();assertComponentSelection(generation);if(status.state==='failed')throw error(status.error?.message??'DSH component verification failed',status.error?.code??'DSH_COMPONENT_INVALID');selectedComponentLock=status.state==='ready'?status.runtimeLockPath:null;componentChecked=true;}selected=selectedComponentLock??join(root,'runtime','dsh','runtime-lock.json');}
     assertComponentSelection(generation);return resolve(selected);
   }
   async function backend(){
@@ -187,7 +187,8 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
   }
   async function installDshComponent({planId,signal,official=false}={}){if(componentChanging||localCard?.busy())throw error('运行组件忙碌，不能切换','DSH_COMPONENT_BUSY');componentChanging=true;componentGeneration++;try{const result=await componentManager.install({planId,signal,official});if(closed)return result;await localCard?.invalidate();const revokeRuntime=!!currentBackend||workBackends.size>0||community.snapshot().dsh.installed.some(row=>row.runtimeVerified||bridge.grants.get(row.pluginId)?.enabled);if(currentBackend){await currentBackend.close();currentBackend=null;currentLock=null;}for(const value of workBackends.values()){await workClientHost?.closePackage(value.record.packageKey);await value.backend.close();}workBackends.clear();runtimeDescriptors.clear();invalidateDshComponentVerification();selectedComponentLock=result.runtimeLockPath;componentChecked=true;if(revokeRuntime)await community.invalidateRuntime?.({phase:'component-changed'});for(const row of clientHost.snapshot())await clientHost.closeRuntime(row.runtimeId);return result;}finally{componentChanging=false;}}
   async function readyDsh(){
-    const status=await componentManager.status();dshComponentState=status;if(status.state==='ready')return status;
+    if(runtimeLockPath){await trustedRuntimeDescriptor(runtimeLockPath);return {state:'ready',runtimeLockPath};}
+    const status=await componentManager.status();dshComponentState=status;if(status.state==='ready'||status.state==='failed')return status;
     try{const path=runtimeLockPath??join(root,'runtime','dsh','runtime-lock.json');await trustedRuntimeDescriptor(path);return {state:'ready',runtimeLockPath:path};}catch{return status;}
   }
   dependencyCoordinator=createHostDependencyCoordinator({busy:()=>inflight>0||taskToolBackends.size>0||bridge.busy()||busy(),onUpdate:()=>onUpdate(platform?.snapshot()),describe:async()=>{

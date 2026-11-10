@@ -5,12 +5,28 @@ import {join,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {gzipSync} from 'node:zlib';
+import {EventEmitter} from 'node:events';
 import {createInstallDshComponentManager} from '../src/dsh-platform/component-location.mjs';
 import {verifyDshComponent,packDshComponent,createDshComponentManager,extractDshComponentArchive,DSH_SOURCE_COMMIT,DSH_NODE_VERSION} from '../src/dsh-platform/component-manager.mjs';
 const sha=b=>createHash('sha256').update(b).digest('hex');
 // Unit/simulated executable fixtures: none of these tests run DSH or a model.
 async function fixture(t){const root=await mkdtemp(join(tmpdir(),'buddy-component-'));t.after(()=>rm(root,{recursive:true,force:true}));const source=join(root,'source');await mkdir(source);const paths={node:'node/node.exe',pnpm:'pnpm/bin/pnpm.cjs',cli:'installation/cli.js',sdk:'installation/sdk.js',bridge:'bridge/native-bridge-host.mjs'},files=[];for(const [key,path]of Object.entries(paths)){const data=Buffer.from('TEST FIXTURE ONLY '+key);await mkdir(dirname(join(source,path)),{recursive:true});await writeFile(join(source,path),data);files.push({path,bytes:data.length,sha256:sha(data)});}await writeFile(join(source,'runtime-lock.json'),JSON.stringify({schemaVersion:1,stage:'ready',sourceCommit:DSH_SOURCE_COMMIT,nodeVersion:DSH_NODE_VERSION,pnpmVersion:'11.28.5',paths,files}));return {root,source};}
 test('component package imports and verifies pinned inventory without starting any engine',async t=>{const {root,source}=await fixture(t),archive=join(root,'component.tgz'),descriptor=await packDshComponent(source,archive),manager=createDshComponentManager({destinationRoot:join(root,'installed')});assert.equal((await manager.status()).state,'missing');const plan=await manager.plan({...descriptor,archivePath:archive});const result=await manager.install(plan);assert.equal(result.state,'ready');assert.equal((await verifyDshComponent(dirname(result.runtimeLockPath))).files,5);assert.equal((await manager.status()).state,'ready');await assert.rejects(manager.install(plan),{code:'DSH_COMPONENT_PLAN_STALE'});});
+
+test('review: close cancels initial component verification before waiting for its scan',async t=>{
+ const {root,source}=await fixture(t),archive=join(root,'component.tgz'),descriptor=await packDshComponent(source,archive),destinationRoot=join(root,'local','runtime-components','dsh'),base=createDshComponentManager({destinationRoot});await base.install(await base.plan({...descriptor,archivePath:archive}));
+ let entered,worker,cancelled=false;const started=new Promise(r=>entered=r),manager=createInstallDshComponentManager({root,dataRoot:join(root,'local','data-v003'),descriptor,workerFactory:(_path,{workerData})=>{worker=new EventEmitter();worker.postMessage=message=>{if(message.type==='cancel'){cancelled=Atomics.load(new Int32Array(workerData.abortBuffer),0)===1;worker.emit('message',{type:'error',error:{code:'ABORT_ERR',message:'Scan cancelled'}});worker.emit('exit',0);}};entered();return worker;}});
+ const status=manager.status(),settled=status.catch(()=>{});await started;const closing=manager.close();
+ try{await new Promise(r=>setTimeout(r,30));assert.equal(cancelled,true,'Shutdown must reach the active verification worker before the scan completes');await closing;await assert.rejects(status,{code:'PLUGIN_CLOSED'});}
+ finally{if(!cancelled){worker.emit('message',{type:'error',error:{code:'ABORT_ERR',message:'Test cleanup'}});worker.emit('exit',0);}await settled;await closing;}
+});
+
+test('review: explicit custom data roots keep their own verified component despite an installation locator',async t=>{
+ const {root,source}=await fixture(t),archive=join(root,'component.tgz'),descriptor=await packDshComponent(source,archive),canonical=join(root,'local','runtime-components','dsh'),base=createDshComponentManager({destinationRoot:canonical});await base.install(await base.plan({...descriptor,archivePath:archive}));
+ const factory=({destinationRoot})=>({...createDshComponentManager({destinationRoot}),close:async()=>{}}),managed=createInstallDshComponentManager({root,dataRoot:join(root,'local','data-v003'),descriptor,managerFactory:factory});await managed.status();await managed.close();const locator=join(root,'local','runtime-components','dsh-location-v1.json'),before=await readFile(locator);
+ const outside=await mkdtemp(join(tmpdir(),'buddy-component-custom-'));t.after(()=>rm(outside,{recursive:true,force:true}));
+ for(const dataRoot of [join(root,'local','custom'),outside]){const destinationRoot=join(dataRoot,'plugin-runtimes','dsh-components'),own=createDshComponentManager({destinationRoot}),ready=await own.install(await own.plan({...descriptor,archivePath:archive})),manager=createInstallDshComponentManager({root,dataRoot,descriptor,managerFactory:factory});assert.equal((await manager.status()).runtimeLockPath,ready.runtimeLockPath,'Custom ownership must not switch to canonical');await manager.close();assert.deepEqual(await readFile(locator),before);}
+});
 
 test('unit/sim: an installation locator reuses an independently verified legacy component across profiles without copying bytes',async t=>{
  const {root,source}=await fixture(t),archive=join(root,'component.tgz'),descriptor=await packDshComponent(source,archive),a=join(root,'local','data-v003'),b=join(root,'local','data-profiles','import-b'),destinationRoot=join(a,'plugin-runtimes','dsh-components'),legacy=createDshComponentManager({destinationRoot});

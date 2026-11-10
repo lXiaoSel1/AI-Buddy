@@ -8,6 +8,7 @@ import {join} from 'node:path';
 import {gzipSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import {createDshBackend} from '../src/dsh-platform/backend.mjs';
+import {canonicalPluginJson} from '../src/plugin-manifest.mjs';
 
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 function tarEntry(name, data) {
@@ -17,6 +18,16 @@ function tarEntry(name, data) {
   return Buffer.concat([header, data, Buffer.alloc((512 - data.length % 512) % 512)]);
 }
 const pack = (name, version, body = 'export default 1;\n') => gzipSync(Buffer.concat([tarEntry('package/package.json', Buffer.from(JSON.stringify({name, version}))), tarEntry('package/index.js', Buffer.from(body)), Buffer.alloc(1024)]));
+
+test('review: real backend rejects an invalid rollback plan before any native uninstall can start',async t=>{
+ const root=await mkdtemp(join(tmpdir(),'buddy-rollback-preflight-'));t.after(()=>rm(root,{recursive:true,force:true}));const backend=createDshBackend({runtimeLockPath:join(root,'missing-lock.json'),dshHome:join(root,'home'),stateDir:join(root,'current-state')});t.after(()=>backend.close());
+ await assert.rejects(backend.rollback({packageName:'@community-test/test-tools'},{plan:{profileId:'old-profile',artifact:join(root,'old-state','old.tgz'),artifactSha256:'a'.repeat(64)}}),{code:'DSH_INSTALL_PLAN_CHANGED'});
+ const bytes=pack('@community-test/test-tools','1.0.0'),artifact=join(root,'old-state',sha(bytes)+'.tgz');await mkdir(join(root,'old-state'));await writeFile(artifact,bytes);const packageRef={backend:'dsh',sourceId:'s',packageName:'@community-test/test-tools',exactVersion:'1.0.0',sourceDigest:sha(bytes),spec:{kind:'tarball',value:artifact}},plan={packageRef,profileId:'buddy-community-v1',spec:artifact,artifact,artifactSha256:sha(bytes),sourceVerification:{sha256:sha(bytes)}};plan.planDigest=sha(canonicalPluginJson({packageRef,profileId:plan.profileId,spec:plan.spec,artifactSha256:plan.artifactSha256,sourceVerification:plan.sourceVerification}));
+ await assert.rejects(backend.rollback(packageRef,{plan}),{code:'DSH_INSTALL_PLAN_CHANGED'});
+ const current=join(root,'current-state','verified-packages',sha(bytes)+'.tgz');await mkdir(join(root,'current-state','verified-packages'),{recursive:true});const local={...plan,artifact:current};await writeFile(current,Buffer.from('changed cache'));
+ await assert.rejects(backend.rollback(packageRef,{plan:local}),{code:'DSH_PACKAGE_DIGEST_MISMATCH'});await writeFile(current,bytes);
+ await assert.rejects(backend.rollback(packageRef,{plan:local}),{code:'DSH_RUNTIME_NOT_READY'},'Only a path/digest/hash-valid target may proceed toward the native operation');
+});
 
 test('real DSH backend re-checks the staged offline file: tampered bytes and a wrong identity are refused, the right file is copied into its own cache', async t => {
   const root = await mkdtemp(join(process.env.AI_BUDDY_TEST_TEMP_BASE || tmpdir(), 'buddy-dsh-offline-')); t.after(() => rm(root, {recursive: true, force: true}));

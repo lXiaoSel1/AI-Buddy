@@ -367,7 +367,7 @@ export function createDshBackend({ fetchImpl=fetch,network,networkBootstrapPath,
     const artifactSha256 = verified.artifactSha256 ?? verified.receipt.sha256, artifact = verified.spec, sourceVerification = verified.receipt;
     return { schemaVersion: 1, backend: 'dsh', packageRef, profileId, spec, artifact, artifactSha256, sourceVerification, grantedCapabilities: request.grantedCapabilities ?? [], inspection, planDigest: digest(canonicalPluginJson({ packageRef, profileId, spec, artifactSha256, sourceVerification })) };
   }
-  async function install(plan, options = {}) {
+  async function verifiedInstallSpec(plan, options = {}) {
     let expectedPlanDigest;
     try { expectedPlanDigest = digest(canonicalPluginJson({ packageRef: plan.packageRef, profileId, spec: plan.spec, artifactSha256: plan.artifactSha256, sourceVerification: plan.sourceVerification })); }
     catch (cause) { throw failure('DSH_INSTALL_PLAN_CHANGED', 'Install plan is incomplete or contains non-JSON data', { cause }); }
@@ -375,7 +375,10 @@ export function createDshBackend({ fetchImpl=fetch,network,networkBootstrapPath,
     const expectedArtifact = resolve(stateDir, 'verified-packages', `${plan.artifactSha256}.tgz`);
     if (resolve(plan.artifact ?? '') !== expectedArtifact || !/^[a-f0-9]{64}$/.test(plan.artifactSha256 ?? '')) throw failure('DSH_INSTALL_PLAN_CHANGED', 'Install artifact differs from the approved exact cache');
     const verified = await verifyTarball(expectedArtifact, { ...plan.packageRef, sourceDigest: plan.artifactSha256 }, options);
-    const installSpec = verified.spec;
+    return verified.spec;
+  }
+  async function install(plan, options = {}) {
+    const installSpec=await verifiedInstallSpec(plan,options);
     // Dispose the old live plugin before the package manager replaces its
     // files. Otherwise its loader may reopen a social session while the host
     // still has the previous exact package identity, leaving the new UI bound
@@ -551,7 +554,7 @@ export function createDshBackend({ fetchImpl=fetch,network,networkBootstrapPath,
     if(!jobStopPromise)jobStopPromise=Promise.resolve().then(()=>onProcessStop({runtimeId,pid:child.pid,jobId:taskMode.jobId,runId:taskMode.runId,...result})).then(proof=>{if(proof?.stopped!==true||proof.osActiveProcesses!==0)throw failure('DSH_TASK_STOP_UNCONFIRMED','The OS guard did not confirm zero owned task descendants');return {...result,osStopProof:proof};});
     try{return await jobStopPromise;}catch(error){jobStopPromise=null;throw error;}
   }
-  return Object.freeze({ probe, snapshot, currentInventory, identity, configureNetwork, status: snapshot, planInstall, install, enable, disable: ref => rpc('management.disable', { packageName: ref.packageName }), uninstall: ref => rpc('management.uninstall', { packageName: ref.packageName }), async rollback(ref, options = {}) { if (!options.plan) throw failure('DSH_ROLLBACK_PLAN_REQUIRED', 'Rollback requires an exact verified prior install plan'); await rpc('management.uninstall', { packageName: ref.packageName }); return install(options.plan, options); }, openClient, listTools, callTool, verifySocialUI, close, on: (name, listener) => { events.on(name, listener); return () => events.off(name, listener); } });
+  return Object.freeze({ probe, snapshot, currentInventory, identity, configureNetwork, status: snapshot, planInstall, install, enable, disable: ref => rpc('management.disable', { packageName: ref.packageName }), uninstall: ref => rpc('management.uninstall', { packageName: ref.packageName }), async rollback(ref, options = {}) { if (!options.plan) throw failure('DSH_ROLLBACK_PLAN_REQUIRED', 'Rollback requires an exact verified prior install plan'); await options.check?.(); await verifiedInstallSpec(options.plan,options); await options.check?.(); await rpc('management.uninstall', { packageName: ref.packageName }); await options.check?.(); return install(options.plan, options); }, openClient, listTools, callTool, verifySocialUI, close, on: (name, listener) => { events.on(name, listener); return () => events.off(name, listener); } });
 }
 
 export function socialUIRequestAdmissible(request,webOrigin,expectedPath){

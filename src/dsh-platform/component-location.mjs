@@ -16,19 +16,25 @@ export function createInstallDshComponentManager({root,dataRoot,descriptor=DSH_P
  const canonical=join(root,'local','runtime-components','dsh'),locator=join(root,'local','runtime-components','dsh-location-v1.json');
  const portable=path=>relative(root,path).split(sep).join('/');
  const allowed=path=>path==='local/runtime-components/dsh'||path.endsWith('/plugin-runtimes/dsh-components')&&managedProfile(path.slice(0,-'/plugin-runtimes/dsh-components'.length));
- let selected,selecting,closed=false,failure,invalidBytes;
+ const scopedRoot=!inside(root,dataRoot)||!managedProfile(portable(dataRoot))?join(dataRoot,'plugin-runtimes','dsh-components'):null;
+ let selected,selecting,pendingManager,closed=false,closePromise,failure,invalidBytes;
+ const closedError=()=>Object.assign(Error('Component manager is closed'),{code:'PLUGIN_CLOSED'});
  async function optional(path){await assertPluginTreeNoLinks(path);try{return await readFile(path,'utf8');}catch(error){if(error.code==='ENOENT')return null;throw error;}}
  function pin(state){if(state.state==='ready'&&(state.archiveSha256!==descriptor.sha256||state.sourceCommit!==descriptor.sourceCommit||state.nodeVersion!==descriptor.nodeVersion||state.pnpmVersion!==descriptor.pnpmVersion))throw fail('Installed DSH component differs from the release pin');return state;}
  async function publish(destination,state){
-  if(closed)throw Object.assign(Error('Component manager is closed'),{code:'PLUGIN_CLOSED'});
+  if(closed)throw closedError();
+  if(scopedRoot)return;
   if(!inside(root,destination))return;const path=portable(destination);if(!allowed(path))throw fail('DSH component is not in an installation-managed directory');
   await assertPluginTreeNoLinks(destination);await assertPluginTreeNoLinks(locator);await mkdir(dirname(locator),{recursive:true});
   const value={schemaVersion:1,relativeRoot:path,sourceCommit:state.sourceCommit,nodeVersion:state.nodeVersion,pnpmVersion:state.pnpmVersion,archiveSha256:state.archiveSha256};
   const existing=await optional(locator);if(existing===JSON.stringify(value))return;
   if(invalidBytes!==undefined){if(existing!==invalidBytes)throw fail('Invalid component locator changed before repair');if(existing!==null)await writeFile(locator+'.invalid-'+randomUUID()+'.json',existing,{flag:'wx'});}
+  if(closed)throw closedError();
   await writeAtomicAsync(locator,JSON.stringify(value));invalidBytes=undefined;
  }
  async function choose(){
+  if(closed)throw closedError();
+  if(scopedRoot)return {manager:managerFactory({...options,destinationRoot:scopedRoot}),destination:scopedRoot};
   let located;const raw=await optional(locator);
   if(raw!==null){try{located=JSON.parse(raw);if(located.schemaVersion!==1||typeof located.relativeRoot!=='string'||!allowed(located.relativeRoot)||located.sourceCommit!==descriptor.sourceCommit||located.nodeVersion!==descriptor.nodeVersion||located.pnpmVersion!==descriptor.pnpmVersion||located.archiveSha256!==descriptor.sha256)throw fail('DSH component locator identity is invalid');}catch(error){invalidBytes=raw;throw error.code==='DSH_COMPONENT_LOCATION_INVALID'?error:fail('DSH component locator is damaged');}}
   const current=portable(dataRoot),candidates=[canonical];
@@ -47,17 +53,18 @@ export function createInstallDshComponentManager({root,dataRoot,descriptor=DSH_P
    await assertPluginTreeNoLinks(destination);
    // No scan of absent roots and no arbitrary fallback after a damaged pointer.
    if(await optional(join(destination,'current.json'))===null){if(located&&destination===resolve(root,located.relativeRoot))throw fail('The installation component locator no longer has its current pointer');continue;}
-   const manager=managerFactory({...options,destinationRoot:destination});let state;
-   try{state=pin(await manager.status());if(state.state!=='ready')throw fail('The installed component pointer cannot be verified');await publish(destination,state);return {manager,destination};}catch(error){await manager.close();throw error;}
+   if(closed)throw closedError();const manager=pendingManager=managerFactory({...options,destinationRoot:destination});let state;
+   try{state=pin(await manager.status());if(closed)throw closedError();if(state.state!=='ready')throw fail('The installed component pointer cannot be verified');await publish(destination,state);return {manager,destination};}catch(error){await manager.close();throw error;}finally{if(pendingManager===manager)pendingManager=null;}
   }
   // Explicit external data directories retain their prior scope; they are never
   // promoted to an installation-wide locator by inference.
   const destination=!inside(root,dataRoot)?join(dataRoot,'plugin-runtimes','dsh-components'):canonical;
+  if(closed)throw closedError();
   return {manager:managerFactory({...options,destinationRoot:destination}),destination};
  }
  async function selection(){
   if(closed)throw Object.assign(Error('Component manager is closed'),{code:'PLUGIN_CLOSED'});
-  if(!selecting)selecting=choose().catch(error=>{failure=error;return {manager:managerFactory({...options,destinationRoot:canonical}),destination:canonical};}).then(value=>{selected=value;return value;});
+  if(!selecting)selecting=choose().catch(error=>{if(closed)throw closedError();failure=error;return {manager:managerFactory({...options,destinationRoot:scopedRoot??canonical}),destination:scopedRoot??canonical};}).then(async value=>{if(closed){await value.manager.close();throw closedError();}selected=value;return value;});
   const value=await selecting;if(closed)throw Object.assign(Error('Component manager is closed'),{code:'PLUGIN_CLOSED'});return value;
  }
  return {
@@ -66,6 +73,6 @@ export function createInstallDshComponentManager({root,dataRoot,descriptor=DSH_P
   async install(request){const {manager,destination}=await selection(),state=pin(await manager.install(request));if(state.state==='ready'){await publish(destination,state);failure=undefined;}return state;},
   cancel(){return selected?.manager.cancel()??{cancelled:false};},
   installing(){return selected?.manager.installing()??false;},
-  async close(){closed=true;if(selecting){await selecting;await selected?.manager.close();}return {closed:true};},
+  close(){if(closePromise)return closePromise;closed=true;const pending=pendingManager?.close(),current=selected?.manager.close();closePromise=(async()=>{await Promise.allSettled([pending,current,selecting].filter(Boolean));return {closed:true};})();return closePromise;},
  };
 }

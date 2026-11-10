@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,rm,stat} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {EventEmitter} from 'node:events';
@@ -14,17 +15,18 @@ const gate=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=
 const abort=()=>Object.assign(Error('Component installation cancelled'),{code:'ABORT_ERR'});
 // Actual platform + maintenance queue composition. Native backend methods are
 // data-only stubs; no component worker, engine, browser, network or model starts.
-async function fixture(t,{cold=false,componentWorkerFactory,qq=false,qqLoginFactory,getSocialHost,realHostDependencies=false,ffmpegManagerFactory}={}){
-  const root=await mkdtemp(join(tmpdir(),'dsh-platform-admission-')),dataRoot=join(root,'data'),pub=publisher(),source=cold?defaultPluginSource():pub.source,calls=[],cleanup=[],legacy={snapshot:()=>({appVersion:'1.9.2',service:{state:'ready',usable:true},installed:{},packages:[]}),action:async()=>({}),resolveTrustedSource:async id=>{assert.equal(id,source.sourceId);return {...source};},close:async()=>{}};let key;
+async function fixture(t,{cold=false,componentWorkerFactory,qq=false,qqLoginFactory,getSocialHost,realHostDependencies=false,ffmpegManagerFactory,runtimeLockPath}={}){
+  const root=await mkdtemp(join(tmpdir(),'dsh-platform-admission-')),dataRoot=join(root,'local','data-v003'),pub=publisher(),source=cold?defaultPluginSource():pub.source,calls=[],cleanup=[],legacy={snapshot:()=>({appVersion:'1.9.2',service:{state:'ready',usable:true},installed:{},packages:[]}),action:async()=>({}),resolveTrustedSource:async id=>{assert.equal(id,source.sourceId);return {...source};},close:async()=>{}};let key;
   if(cold){
     const ref={backend:'dsh',sourceId:'official',packageName:qq?'@ai-buddy/qq-connect':'@ai-buddy/bilibili-companion',exactVersion:qq?'2.0.6':'2.0.11',sourceDigest:sha('cold native fixture'),spec:{kind:'tarball',value:'https://github.com/test/native/releases/download/v2.0.11/native.tgz'},compatibility:{app:'^1.9.2',dsh:'^1.0.0',bridge:'^1.0.0'},capabilities:[],dataSchemaVersion:1};key=communityPackageKey(ref);const record={...ref,packageKey:key,pluginId:'dsh.cold-fixture',declaredCapabilities:[],grantedCapabilities:[],generation:1,profileId:'buddy-community-v1',backendPlan:{schemaVersion:1,packageRef:ref,profileId:'buddy-community-v1',planDigest:sha('cold plan fixture')},enabled:true,sourceProof:{sourceFingerprint:source.keyFingerprint,catalogDigest:sha('cold catalog fixture')}};await mkdir(join(root,'local/community'),{recursive:true});await writeFile(join(root,'local/community/dsh-registry-v1.json'),JSON.stringify({schemaVersion:1,packages:{[key]:record},generations:{[key]:1},releaseDigests:{}}));
   }
   if(realHostDependencies){await mkdir(join(root,'build'),{recursive:true});await writeFile(join(root,'build','dsh-component.json'),JSON.stringify(DSH_PUBLIC_COMPONENT));}
-  const platform=await createPluginPlatform({root,build:join(root,'build'),ffmpegManagerFactory,dataRoot,legacyManager:legacy,componentWorkerFactory,qqLoginFactory,getSocialHost,BrowserWindow:class{constructor(){throw Error('Native window must not start in this fixture');}},session:{fromPartition(){throw Error('Native browser session must not start in this fixture');}},getGame:()=>null,getProvider:()=>null});
+  const platform=await createPluginPlatform({root,build:join(root,'build'),ffmpegManagerFactory,dataRoot,runtimeLockPath,legacyManager:legacy,componentWorkerFactory,qqLoginFactory,getSocialHost,BrowserWindow:class{constructor(){throw Error('Native window must not start in this fixture');}},session:{fromPartition(){throw Error('Native browser session must not start in this fixture');}},getGame:()=>null,getProvider:()=>null});
   // These existing B4 tests model already-ready media dependencies; the focused
   // host dependency suite covers real coordinator preparation/admission.
   if(cold&&!qq&&!realHostDependencies){platform.dependencyCoordinator.plan=async()=>({token:'already-ready-fixture',components:[]});platform.dependencyCoordinator.run=async({materialize,enqueue})=>enqueue(await materialize());}
-  Object.assign(platform.dshBackend,simulatedBackend(calls));delete platform.dshBackend.currentInventory; // This data-only backend does not implement native materialization.t.after(async()=>{for(const release of cleanup)release();await platform.close();await rm(root,{recursive:true,force:true});});
+  Object.assign(platform.dshBackend,simulatedBackend(calls));delete platform.dshBackend.currentInventory; // This data-only backend does not implement native materialization.
+  t.after(async()=>{for(const release of cleanup)release();await platform.close();await rm(root,{recursive:true,force:true});});
   if(!cold)await platform.action({action:'community-load-catalog',sourceId:source.sourceId,envelope:signed(catalog(pub),pub)});
   return {root,platform,calls,source,key,cleanup,legacy};
 }
@@ -34,6 +36,20 @@ async function queueInstall(f){const plan=await f.platform.action({action:'dsh-p
 test('a fresh installation keeps its DSH component destination independent of the active data profile',async t=>{
  const roots=[];const f=await fixture(t,{componentWorkerFactory:(_path,{workerData})=>{roots.push(workerData.destinationRoot);const worker=new EventEmitter();queueMicrotask(()=>{worker.emit('message',{type:'result',value:{state:'missing'}});worker.emit('exit',0);});return worker;}});
  assert.equal((await f.platform.action({action:'dsh-component-status'})).state,'missing');assert.deepEqual([...new Set(roots)],[join(f.root,'local','runtime-components','dsh')]);
+});
+
+test('review: platform fixture registers and executes its owned teardown',async()=>{
+ const hooks=[],f=await fixture({after:hook=>hooks.push(hook)});let released=false;f.cleanup.push(()=>released=true);
+ try{assert.equal(hooks.length,1,'The fixture teardown must not be swallowed by a comment');await hooks[0]();assert.equal(released,true);await assert.rejects(stat(f.root),{code:'ENOENT'});}finally{await f.platform.close();await rm(f.root,{recursive:true,force:true});}
+});
+
+test('review: invalid component location cannot be bypassed by a valid ordinary bundled runtime',async t=>{
+ const f=await fixture(t),directory=join(f.root,'runtime','dsh'),paths={node:'node.exe',pnpm:'pnpm.cjs',cli:'cli.js',sdk:'sdk.js',bridge:'bridge.mjs'},files=[];await mkdir(directory,{recursive:true});
+ for(const [key,path]of Object.entries(paths)){const bytes=Buffer.from('SIMULATED '+key);await writeFile(join(directory,path),bytes);files.push({path,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')});}
+ await writeFile(join(directory,'runtime-lock.json'),JSON.stringify({schemaVersion:1,stage:'ready',sourceCommit:DSH_PUBLIC_COMPONENT.sourceCommit,nodeVersion:DSH_PUBLIC_COMPONENT.nodeVersion,pnpmVersion:DSH_PUBLIC_COMPONENT.pnpmVersion,paths,files}));
+ f.platform.componentManager.status=async()=>({state:'failed',error:{code:'DSH_COMPONENT_LOCATION_INVALID',message:'Locator is invalid'}});
+ await assert.rejects(f.platform.runtimeDescriptor(),{code:'DSH_COMPONENT_LOCATION_INVALID'});
+ const override=await fixture(t,{runtimeLockPath:join(directory,'runtime-lock.json')});override.platform.componentManager.status=f.platform.componentManager.status;assert.equal((await override.platform.runtimeDescriptor()).lockPath,join(directory,'runtime-lock.json'),'An explicit host override preserves its existing priority');
 });
 
 test('queued install waits throughout component preparation and executes once after success or cancellation',async t=>{
