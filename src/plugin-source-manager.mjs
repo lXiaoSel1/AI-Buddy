@@ -279,7 +279,21 @@ export async function createPluginSourceManager({legacy,root,dataRoot,appVersion
   await check();
   return pin.expected.sourceId === LEGACY_SOURCE_ID ? legacyResult(legacy.install({planId: pin.selected.planId, updateCheck: check,official:request.official===true})) : install(pin.selected.planId, check,{},request.official===true);
  }
- async function verifySaved(saved,sid){const key=verificationKey(sid,saved);verified.delete(key);const origin=saved.sourceProof,pinned=source(sid);if(!origin||origin.sourceId!==sid||origin.keyFingerprint!==pluginSourceFingerprint(origin.publicKey)||origin.keyFingerprint!==pinned.keyFingerprint)fail('扩展安装来源证明无效','PLUGIN_SOURCE_PROOF_INVALID');if(!/^[a-f0-9]{64}$/.test(origin.catalogSha256??''))fail('扩展目录证明哈希无效','PLUGIN_SOURCE_PROOF_INVALID');const proof=join(sourceDirectory(sid),'proofs',origin.catalogSha256+'.json');await assertPluginTreeNoLinks(proof);const envelope=await json(proof,null),catalog=verifyPluginCatalog(envelope,{trustedKeys:{[origin.keyId]:origin.publicKey}});if(catalog.verified.payloadSha256!==origin.catalogSha256||!catalog.packages.some(item=>canonicalPluginJson(item.manifest)===canonicalPluginJson(saved.manifest)&&canonicalPluginJson(item.archive)===canonicalPluginJson(saved.archive)))fail('扩展文件与原来源签名不一致','PLUGIN_SOURCE_PROOF_INVALID');if(!saved.directory.startsWith('packages/'+sid+'/'+saved.manifest.id+'/'))fail('扩展代码目录与来源不符','PLUGIN_SOURCE_PROOF_INVALID');await verifyInstalledPlugin(under(saved.directory),saved.manifest);verified.add(key);return saved;}
+ async function verifySaved(saved,sid){
+  const key=verificationKey(sid,saved);
+  // Keep a prior successful check visible while revalidating the same identity.
+  // Only an actual verification failure revokes that result and existing leases.
+  try{
+   const origin=saved.sourceProof,pinned=source(sid);
+   if(!origin||origin.sourceId!==sid||origin.keyFingerprint!==pluginSourceFingerprint(origin.publicKey)||origin.keyFingerprint!==pinned.keyFingerprint)fail('扩展安装来源证明无效','PLUGIN_SOURCE_PROOF_INVALID');
+   if(!/^[a-f0-9]{64}$/.test(origin.catalogSha256??''))fail('扩展目录证明哈希无效','PLUGIN_SOURCE_PROOF_INVALID');
+   const proof=join(sourceDirectory(sid),'proofs',origin.catalogSha256+'.json');await assertPluginTreeNoLinks(proof);
+   const envelope=await json(proof,null),catalog=verifyPluginCatalog(envelope,{trustedKeys:{[origin.keyId]:origin.publicKey}});
+   if(catalog.verified.payloadSha256!==origin.catalogSha256||!catalog.packages.some(item=>canonicalPluginJson(item.manifest)===canonicalPluginJson(saved.manifest)&&canonicalPluginJson(item.archive)===canonicalPluginJson(saved.archive)))fail('扩展文件与原来源签名不一致','PLUGIN_SOURCE_PROOF_INVALID');
+   if(!saved.directory.startsWith('packages/'+sid+'/'+saved.manifest.id+'/'))fail('扩展代码目录与来源不符','PLUGIN_SOURCE_PROOF_INVALID');
+   await verifyInstalledPlugin(under(saved.directory),saved.manifest);verified.add(key);return saved;
+  }catch(error){verified.delete(key);throw error;}
+ }
  async function officialProof(saved,id,version){
   if(saved?.manifest?.id!==id||saved.manifest.version!==version||!/^[a-f0-9]{64}$/.test(saved.catalogSha256??'')||saved.directory!=='packages/'+id+'/'+version+'-'+saved.archive?.sha256?.slice(0,16))fail('旧版登记缺少可验证的官方身份','PLUGIN_SOURCE_PROOF_INVALID');
   const file=under('catalogs/'+saved.catalogSha256+'.json');await assertPluginTreeNoLinks(file);

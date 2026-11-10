@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash, generateKeyPairSync, sign} from 'node:crypto';
 import {mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
+import fsPromises from 'node:fs/promises';
+import {syncBuiltinESMExports} from 'node:module';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {buildPluginArchive} from '../src/plugin-archive.mjs';
@@ -79,6 +81,87 @@ test('signed engines use one shared package and require explicit enablement', as
   assert.equal(second.shared.directory,first.shared.directory);
   assert.deepEqual(Object.keys(manager.snapshot().installed).sort(),[breeze,gpt,shared].sort());
   await assert.rejects(change('uninstall',shared),{code:'PLUGIN_DEPENDENCY_ERROR'});
+});
+
+test('rechecking unchanged signed voice packages preserves an existing authority lease', async t=>{
+  const {authority,manager,install,change}=await setup(t);
+  await install(breeze);
+  await change('enable',breeze);
+  const first=await authority.resolveVoicePackage(breeze);
+  first.assertCurrent();
+  const sourceBefore=manager.snapshot().sources;
+  const files=async lease=>Object.fromEntries(await Promise.all([lease,lease.shared].flatMap(record=>record.manifest.files.map(async file=>[
+    record.manifest.id+'/'+file.path,hash(await readFile(join(record.directory,file.path))),
+  ]))));
+  const before=await files(first);
+
+  // No timer, FS mutation, source refresh, fake manager or fake authority: a second
+  // public resolution enters real async verification before yielding back here.
+  const resolving=authority.resolveVoicePackage(breeze);
+  const during=authority.status().find(row=>row.id===breeze);
+  let interruption=null;
+  try{first.assertCurrent();}catch(error){interruption=error;}
+  const second=await resolving;
+  const after=authority.status().find(row=>row.id===breeze);
+  assert.deepEqual(await files(second),before,'all signed engine/shared file bytes are unchanged');
+  assert.deepEqual(manager.snapshot().sources,sourceBefore,'source identity and refresh state are unchanged');
+  assert.equal(after.state,'ready');
+  assert.doesNotThrow(first.assertCurrent,'the original lease is still current after rechecking completes');
+  t.diagnostic(JSON.stringify({during,after,interruption:interruption&&{code:interruption.code,message:interruption.message},unchangedFiles:before,sourceStateUnchanged:true}));
+  assert.ifError(interruption);
+});
+
+test('an unchanged engine file recheck does not expose a false verification failure to an existing lease', async t=>{
+  const {authority,manager,install,change}=await setup(t);
+  await install(breeze);
+  await change('enable',breeze);
+  const first=await authority.resolveVoicePackage(breeze);
+  first.assertCurrent();
+  const sourceBefore=manager.snapshot().sources;
+  const files=async lease=>Object.fromEntries(await Promise.all([lease,lease.shared].flatMap(record=>record.manifest.files.map(async file=>[
+    record.manifest.id+'/'+file.path,hash(await readFile(join(record.directory,file.path))),
+  ]))));
+  const before=await files(first),target=join(first.directory,'assets.json');
+  const entered=Promise.withResolvers(),release=Promise.withResolvers(),originalRead=fsPromises.readFile;
+  let armed=true,resolving,during,interruption=null,second;
+  // Control only the external filesystem scheduling boundary. Both product
+  // modules stay real, and the unmodified on-disk bytes are read after release.
+  const reader=t.mock.method(fsPromises,'readFile',async(path,...args)=>{
+    if(armed&&String(path)===target){armed=false;entered.resolve();await release.promise;}
+    return originalRead(path,...args);
+  });
+  syncBuiltinESMExports();
+  let timeout;
+  try{
+    resolving=authority.resolveVoicePackage(breeze);
+    await Promise.race([entered.promise,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error('Engine file recheck did not reach the external FS gate')),3000);})]);
+    clearTimeout(timeout);
+    during=authority.status().find(row=>row.id===breeze);
+    try{first.assertCurrent();}catch(error){interruption=error;}
+  }finally{
+    clearTimeout(timeout);release.resolve();
+    try{if(resolving)second=await resolving;}finally{reader.mock.restore();syncBuiltinESMExports();}
+  }
+  const after=authority.status().find(row=>row.id===breeze);
+  assert.deepEqual(await files(second),before,'all signed bytes stayed unchanged across the controlled read');
+  assert.deepEqual(manager.snapshot().sources,sourceBefore,'no source refresh or identity mutation occurred');
+  assert.equal(after.state,'ready');
+  assert.doesNotThrow(first.assertCurrent);
+  t.diagnostic(JSON.stringify({during,after,interruption:interruption&&{code:interruption.code,message:interruption.message},unchangedFiles:before,sourceStateUnchanged:true,fsBoundary:'readFile of unchanged engine assets.json held until lease assertion'}));
+  assert.ifError(interruption);
+});
+
+for(const target of ['engine','shared'])test(`a failed ${target} file recheck revokes the prior voice lease`,async t=>{
+  const {authority,install,change}=await setup(t);
+  await install(breeze);
+  await change('enable',breeze);
+  const lease=await authority.resolveVoicePackage(breeze);
+  lease.assertCurrent();
+  const record=target==='engine'?lease:lease.shared;
+  await writeFile(join(record.directory,'assets.json'),'{"tampered":true}');
+  await assert.rejects(authority.resolveVoicePackage(breeze),{code:'INVALID_PLUGIN_ARCHIVE'});
+  assert.equal(authority.status().find(row=>row.id===breeze).usable,false);
+  assert.throws(lease.assertCurrent,{code:'VOICE_PACKAGE_CHANGED'});
 });
 
 test('both actual package entries declare local and MiniMax without a third user plugin',async()=>{
