@@ -150,10 +150,9 @@ function makeWorker({ kind, assets, supervisor, drainTimeoutMs }) {
     await supervisor.registerRoot({ runtimeId, pid: process.pid });
     admitted = true;
     const response = await result('initialize', {
-      // Pinned engines build some relative import paths with '/' and chdir().
-      // Keep their cwd conventional; long imported libraries and model/cache
-      // files retain extended paths through the private environment/fields.
-      root: assets.root,
+      // Keep the spawn cwd conventional for upstream relative paths and chdir().
+      // Workers add this root to sys.path, so engine imports need its extended form.
+      root: pythonFilePath(assets.root),
       assetRoot: pythonFilePath(assets.assetRoot),
       cacheRoot: pythonFilePath(assets.cacheRoot),
     }, signal, 240000);

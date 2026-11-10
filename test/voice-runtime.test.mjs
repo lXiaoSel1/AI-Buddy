@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createVoiceRuntime} from '../src/voice/runtime.mjs';
 
-async function fixture(t, {initializeDelay=0} = {}) {
+async function fixture(t, {initializeDelay=0,checkInitializePaths=false} = {}) {
   const {join} = await import('node:path');
   const {tmpdir} = await import('node:os');
   const {mkdtemp, rm, writeFile} = await import('node:fs/promises');
@@ -10,9 +10,16 @@ async function fixture(t, {initializeDelay=0} = {}) {
   const script = join(dir, 'fixture.mjs');
   await writeFile(script, `
 import {createInterface} from 'node:readline';
+import {win32} from 'node:path';
 const send = row => process.stdout.write(JSON.stringify(row) + '\\n');
 for await (const line of createInterface({input:process.stdin})) {
   const request = JSON.parse(line);
+  if(request.op==='initialize'&&${checkInitializePaths}){
+    const cwd=process.cwd(),expected=process.platform==='win32'?win32.toNamespacedPath(cwd):cwd;
+    if(request.root!==expected||request.assetRoot!==expected||request.cacheRoot!==expected||cwd.startsWith(String.fromCharCode(92,92,63,92))){
+      send({id:request.id,type:'error',code:'VOICE_FIXTURE_PATHS',message:JSON.stringify({cwd,request,expected})});continue;
+    }
+  }
   if (request.op === 'speak') {
     if (request.text === 'pending') continue;
     send({id:request.id, type:'pcm', sample_rate:48000, pcm:'AQACAA=='});
@@ -81,6 +88,11 @@ test('prepare reports selected TTS ready only after its real initialize response
   assert.equal((await runtime.ready({engine:'breeze'})).ready,false);
   assert.deepEqual(admitted,['gpt']);
   assert.ok(stages.some(row=>row.state==='loading'&&row.component==='gpt'));
+});
+
+test('the launched worker receives extended import root and asset paths while retaining an ordinary cwd',async t=>{
+  const {runtime}=await fixture(t,{checkInitializePaths:true});
+  assert.equal((await runtime.prepare({engine:'breeze'})).ready,true);
 });
 
 
