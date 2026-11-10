@@ -166,6 +166,7 @@ internal static class AppUpdate {
             return state.Result;
         }
 
+        Directory.CreateDirectory(Path.GetDirectoryName(operationLock)!);
         await using var held=new FileStream(operationLock,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
         if(action=="check") {
             var prepared=ReadOptional<AppUpdateState>(statePath);

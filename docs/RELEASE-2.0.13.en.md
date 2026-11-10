@@ -7,6 +7,7 @@
 - The installer reuses unchanged packages only after checking their recorded hashes and actual files. An upgrade no longer downloads every character, motion and runtime package again. Packages with missing records, missing files or mismatched contents still need downloading. Download estimates exclude reusable files and verified cache entries.
 - Complete packages include 安装或更新 AI 酱.cmd (install or update AI Buddy). After extraction, run AI Buddy.exe directly or use this entry to install elsewhere or upgrade an existing installation offline. It copies program files from the manifest, without importing personal data from the source folder. Required local files that are missing or damaged stop installation instead of triggering an online download. Local sources hide download-mirror inputs.
 - Fixes stale extension catalogs after service recovery and update preferences left behind during official-source migration. Incompatible installed versions show a reason, with an update action when a compatible release exists.
+- Fixes `APP_UPDATE_FAILED` when a complete package checks for updates before its transaction directory exists. Moving the folder continues to use the real installation identity checks.
 - A successful rollback consumes its rollback record. Before rolling back to 2.0.11 or earlier, the installer explains that voice plugins need reinstalling while character voices and settings are retained.
 
 ## Network settings

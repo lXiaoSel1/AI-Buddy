@@ -1,6 +1,7 @@
 using AiBuddy.Install;
 using AiBuddy.Setup;
 using System.Diagnostics;
+using System.Net;
 using System.Reflection;
 using System.Text.Json;
 using static BootstrapFixtures;
@@ -9,6 +10,8 @@ internal static class BootstrapTests {
     static readonly string Home=Path.Combine(Environment.GetEnvironmentVariable("AI_BUDDY_INSTALLER_TEST_ROOT")??Path.GetTempPath(),"bootstrap-"+Guid.NewGuid().ToString("N"));
     static readonly List<object> Results=[];
     [STAThread] static int Main(string[] args) {
+        if(args is ["--portable-app-update-only"])return RunPortableUpdateOnly().GetAwaiter().GetResult();
+        if(args.Length>1&&args[0]=="--fixture-portable-update-check")return PortableUpdateCheck(args[1..]).GetAwaiter().GetResult();
         if(args is ["--fixture-source-host",var sourceRoot])return SourceHost(sourceRoot).GetAwaiter().GetResult();
         if(args.Length>1&&args[0]=="--fixture-bootstrap")return Worker(args[1],args[2..]).GetAwaiter().GetResult();
         if(args.Any(a=>a.StartsWith("--app-",StringComparison.Ordinal))||args.Contains("--headless"))
@@ -22,8 +25,61 @@ internal static class BootstrapTests {
     static string[] Args(string root,string action="prepare",int? pid=null)=>["--app-bootstrap-worker="+action,"--app-root="+root,"--nonce="+Nonce,"--pid="+(pid??Environment.ProcessId)];
     static async Task<JsonElement[]> Finish(Process process){using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(30));var output=await process.StandardOutput.ReadToEndAsync(timeout.Token);var error=await process.StandardError.ReadToEndAsync(timeout.Token);await process.WaitForExitAsync(timeout.Token);if(error.Length>0)throw new Exception(error);return output.Split('\n',StringSplitOptions.RemoveEmptyEntries).Select(line=>JsonSerializer.Deserialize<JsonElement>(line)).ToArray();}
     static async Task Validate(BootstrapSource source)=>await AppBootstrap.RequireBootstrapSource(source.Root,source,Nonce,new string('b',64),new string('c',64),default);
+    static async Task<int> PortableUpdateCheck(string[] args) {
+        var root=args.Single(value=>value.StartsWith("--app-root=",StringComparison.Ordinal))[11..];
+        using var manifest=typeof(AiBuddy.Setup.Program).Assembly.GetManifestResourceStream("InstallManifest")!;
+        using var buffer=new MemoryStream();await manifest.CopyToAsync(buffer);var bytes=buffer.ToArray();var digest=Hashing.Bytes(bytes);
+        using var http=new HttpClient(new CurrentRelease(root));
+        // Exercise the real manager entry and its live-instance identity checks.
+        // Only the external HTTP boundary is substituted. Signature validation
+        // retains UpdateDiscovery's production pinned-key implementation.
+        return await AppUpdate.Run(args,http,new UpdateDiscovery(http),Manifests.Parse(bytes,digest),bytes,digest,Environment.ProcessPath!);
+    }
+    sealed class CurrentRelease(string root):HttpMessageHandler {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancel) {
+            const string latest="https://api.github.com/repos/lXiaoSel1/AI-Buddy/releases/latest";
+            Assert(request.RequestUri?.AbsoluteUri==latest&&request.Headers.Authorization is null,"only anonymous release discovery is allowed");
+            Json.Save(Path.Combine(root,"discovery-request.json"),new{url=latest});
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(new{
+                draft=false,prerelease=false,tag_name="v"+ReleaseIdentity.Version,
+                html_url="https://github.com/lXiaoSel1/AI-Buddy/releases/tag/v"+ReleaseIdentity.Version,target_commitish=new string('b',40)}))});
+        }
+    }
+    static async Task PortableUpdateChecks() {
+        await Check("moved fresh portable checks for updates without an existing installer directory",async()=>{
+            var original=Path.Combine(Home,"portable-before-move");await RegisteredSource(original);
+            Directory.Delete(SafePaths.Under(original,"local/installer"));
+            var moved=Path.Combine(Home,"移动后的 完整包");Directory.Move(original,moved);var source=await Snapshot(moved);
+            var control=SafePaths.Under(moved,"local/installer");Assert(!Directory.Exists(control),"fresh portable fixture must have no installer control directory");
+            await Serve(source,async()=>{
+                var installed=Json.Read<Installation>(InstallEngine.RecordPath(moved));var manager=SafePaths.Under(moved,installed.Manager);
+                using(var status=Child(["--app-update=status","--app-root="+moved,"--app-nonce="+Nonce,"--app-pid="+Environment.ProcessId],manager)) {
+                    var lines=await Finish(status);Assert(status.ExitCode==0&&lines[^1].GetProperty("stage").GetString()=="idle"&&!Directory.Exists(control),"status must remain read-only for a fresh portable root");
+                }
+                using var check=Child(["--fixture-portable-update-check","--app-update=check","--app-root="+moved,"--app-nonce="+Nonce,"--app-pid="+Environment.ProcessId],manager);
+                var result=await Finish(check);
+                Assert(check.ExitCode==0&&result.Length==2&&result[0].GetProperty("type").GetString()=="ready"&&result[^1].GetProperty("stage").GetString()=="current",
+                    "check must reach release discovery instead of failing on a missing control directory: "+string.Join(";",result));
+                Assert(Directory.Exists(control)&&File.Exists(Path.Combine(moved,"discovery-request.json")),"check creates its control directory and actually queries discovery");
+            });
+        });
+        await Check("fresh portable manager identity mismatch is rejected before discovery or directory creation",async()=>{
+            var source=await RegisteredSource(Path.Combine(Home,"portable-identity-mismatch"));Directory.Delete(SafePaths.Under(source.Root,"local/installer"));
+            var installed=Json.Read<Installation>(InstallEngine.RecordPath(source.Root));Json.Save(InstallEngine.RecordPath(source.Root),installed with{ManagerSha256=new string('e',64)});
+            using var check=Child(["--fixture-portable-update-check","--app-update=check","--app-root="+source.Root,"--app-nonce="+Nonce,"--app-pid="+Environment.ProcessId],SafePaths.Under(source.Root,installed.Manager));
+            var result=await Finish(check);Assert(check.ExitCode==1&&result.Length==1&&result[0].GetProperty("code").GetString()=="APP_UPDATE_VERIFICATION_FAILED"&&
+                !Directory.Exists(SafePaths.Under(source.Root,"local/installer"))&&!File.Exists(Path.Combine(source.Root,"discovery-request.json")),"identity checks must still precede filesystem mutation and release discovery");
+        });
+    }
+    static async Task<int> RunPortableUpdateOnly() {
+        Directory.CreateDirectory(Home);await PortableUpdateChecks();
+        var failed=Results.Count(v=>!JsonSerializer.SerializeToElement(v).GetProperty("ok").GetBoolean());
+        Json.Save(Path.Combine(Home,"results.json"),new{passed=Results.Count-failed,failed,home=Home,results=Results});
+        Console.WriteLine(JsonSerializer.Serialize(new{passed=Results.Count-failed,failed,home=Home}));return failed==0?0:1;
+    }
     static async Task<int> Run() {
         Directory.CreateDirectory(Home);
+        await PortableUpdateChecks();
         await Check("real installer bootstrap entry rejects malformed first line with JSONL result",async()=>{
             using var child=Child(Args(Home));await child.StandardInput.WriteLineAsync("{}");child.StandardInput.Close();var lines=await Finish(child);
             Assert(child.ExitCode==1&&lines.Length==1&&lines[0].GetProperty("type").GetString()=="result"&&!lines[0].GetProperty("ok").GetBoolean(),"real entry must produce structured rejection");
