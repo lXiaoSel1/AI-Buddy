@@ -67,7 +67,7 @@ function normalize(raw,{nativeApi=false}={}){
  */
 export function createPluginUsageRecorder({dataRoot,onRecorded=()=>{}}={}){
   if(!isAbsolute(dataRoot??''))throw TypeError('Plugin usage dataRoot must be absolute');if(typeof onRecorded!=='function')throw TypeError('onRecorded must be a callback');
-  const directory=join(dataRoot,'plugin-usage-index-v1'),logPath=join(dataRoot,'plugin-usage.jsonl');let db,log,initializing,closed=false,tail=Promise.resolve();
+  const directory=join(dataRoot,'plugin-usage-index-v1'),logPath=join(dataRoot,'plugin-usage.jsonl');let db,log,initializing,closePromise,closed=false,tail=Promise.resolve();
   async function exportRow(row){
     const bytes=Buffer.from(row.value+'\n');let offset=row.log_offset;
     if(offset!=null){const found=Buffer.alloc(bytes.length),read=await log.read(found,0,found.length,offset);if(read.bytesRead===bytes.length&&found.equals(bytes)){db.prepare('UPDATE receipts SET exported=1 WHERE key=?').run(row.key);return;}}
@@ -94,5 +94,5 @@ export function createPluginUsageRecorder({dataRoot,onRecorded=()=>{}}={}){
   function record(value){return enqueue(value);}
   // Core-only: never wire this method to plugin usage.record or renderer IPC.
   function recordNativeApi(receipt){try{return enqueue(nativeApiRecord(receipt),{nativeApi:true});}catch(error){return Promise.reject(error);}}
-  return {record,recordNativeApi,async close(){if(closed)return;closed=true;await tail;await initializing?.catch(()=>{});await log?.close();if(db){try{db.exec('PRAGMA wal_checkpoint(TRUNCATE)');}finally{db.close();}}}};
+  return {record,recordNativeApi,close(){if(closePromise)return closePromise;closed=true;closePromise=(async()=>{await tail;await initializing?.catch(()=>{});await log?.close();if(db){try{db.exec('PRAGMA wal_checkpoint(TRUNCATE)');}finally{db.close();}}})();return closePromise;}};
 }

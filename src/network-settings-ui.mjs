@@ -11,7 +11,7 @@ export function NetworkSettingsPanel({value,onSaved=()=>{}}){
  const input=(key,label,placeholder)=>h('label',{className:'ws-fld'},h('span',null,L(label)),h('input',{'data-network-field':key,type:'url',value:draft[key],placeholder,disabled:busy,autoComplete:'off',spellCheck:false,onChange:event=>setDraft(current=>({...current,[key]:event.target.value})),onBlur:()=>void save()}));
  return h('section',{className:'ws-card ws-set network-settings','data-network-settings':true},h('h2',{className:'ws-sec'},L('网络')),
   h('div',{className:'ws-srow'},h('div',null,h('b',null,L('代理')),h('small',null,L('扩展中心、组件下载和模型聊天都按这里的设置联网。'))),h('select',{'data-network-mode':true,'aria-label':L('代理'),value:draft.mode,disabled:busy,onChange:event=>{const next={...draft,mode:event.target.value};setDraft(next);void save(next);}},...['system','manual','direct'].map((mode,index)=>h('option',{key:mode,value:mode},L(['跟随系统','手动','不使用'][index]))))),
-  draft.mode==='manual'&&input('proxyUrl','代理','http://127.0.0.1:7890'),
+  draft.mode==='manual'&&input('proxyUrl','代理地址','http://127.0.0.1:7890'),
   h('div',{className:'ws-srow'},h('div',null,h('b',null,L('下载镜像')),h('small',null,L('留空就从官方地址下载。用镜像下载的文件同样会核对大小和 SHA-256，对不上会拒绝。')))),
   h('div',{className:'ws-fgrid'},input('githubMirror','GitHub 镜像','https://…'),input('huggingFaceMirror','HuggingFace 镜像','https://…')),
   h('div',{className:'ws-srow'},h('span',{role:'status','aria-live':'polite'},status),h('button',{type:'button',className:'ui-btn sm',disabled:busy,'data-network-test':true,onClick:()=>void save(draft,{test:true})},L('测试'))),

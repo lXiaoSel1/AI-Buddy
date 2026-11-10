@@ -10,7 +10,7 @@ export const MAX_MEAL_AFFECTION=5;
 
 export function createFeedingService({dataRoot,now=Date.now,monotonicNow=()=>performance.now(),assertScope=()=>{},evaluateMeal=null,settleAffection=null,chooseFood=null,canEatFood=()=>true,mealConversation=()=>null,onAttention=null,onExperience=null,onState=null,onSleepIntent=async()=>{},requestTimeoutMs=60000,store=createEconomyStore(dataRoot,{now})}={}){
  if(!Number.isFinite(requestTimeoutMs)||requestTimeoutMs<1||requestTimeoutMs>600000)throw Error('进食请求超时设置无效');
- let current=null,anchor=null,sleeping=false,paused=true,closed=false,epoch=0,autoPromise=null;
+ let current=null,anchor=null,sleeping=false,paused=true,closed=false,epoch=0,autoPromise=null,closePromise;
  const controllers=new Set(),mealPromises=new Map(),diagnostics=[];
  const report=error=>{diagnostics.push({at:now(),message:String(error?.message??error).slice(0,1000)});if(diagnostics.length>10)diagnostics.shift();};
  function checkScope(scope){feedingScope(scope);const result=assertScope(copy(scope));if(result&&typeof result.then==='function')throw Error('assertScope 必须同步核验人生令牌');if(result===false)throw fail('角色人生上下文已经失效','FEEDING_STALE_SCOPE');}
@@ -138,5 +138,5 @@ export function createFeedingService({dataRoot,now=Date.now,monotonicNow=()=>per
  };
  // Life projection leaves runtime paused until the coordinator rebinds the
  // committed scope. No prepared cross-store transaction permits feeding.
- return {view,action,activeScope,pause,resume,tick,lifeBridge,gameEconomy:store.games,ingestUsageFact(raw,options){const result=store.ingestUsageFact(raw,options);changed();return result;},ingestUsageFacts(facts,options){const results=store.ingestUsageFacts(facts,options);if(results.length)changed();return results;},initializeRewards(value){const result=store.initializeRewards(value);changed();return result;},async close(){if(closed)return;pause('close');closed=true;invalidate();await Promise.allSettled([...mealPromises.values(),...(autoPromise?[autoPromise]:[])]);store.close();}};
+ return {view,action,activeScope,pause,resume,tick,lifeBridge,gameEconomy:store.games,ingestUsageFact(raw,options){const result=store.ingestUsageFact(raw,options);changed();return result;},ingestUsageFacts(facts,options){const results=store.ingestUsageFacts(facts,options);if(results.length)changed();return results;},initializeRewards(value){const result=store.initializeRewards(value);changed();return result;},close(){if(closePromise)return closePromise;closePromise=(async()=>{pause('close');closed=true;invalidate();await Promise.allSettled([...mealPromises.values(),...(autoPromise?[autoPromise]:[])]);store.close();})();return closePromise;}};
 }

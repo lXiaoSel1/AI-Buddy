@@ -8,7 +8,7 @@ import {createMainProfileDiagnostic} from './main-profile-diagnostic.mjs';
 import {createPluginMaintenanceClient} from './plugin-maintenance-client.mjs';
 import {pluginActionResult} from './plugin-ipc.mjs';
 import {createPluginPlatform} from './plugin-platform.mjs';
-import {closePluginServices,closeAppServices} from './plugin-shutdown.mjs';
+import {closePluginServices,closeAppServices,recoverAppShutdown,shutdownFailureDetail} from './plugin-shutdown.mjs';
 import {createVoiceHost,trustedVoiceSender} from './voice/host.mjs';
 import {createBiliSheetRenderer,createBiliFrameAnalyzer} from './bili-sheet-renderer.mjs';
 import {createPluginEmbed,embedCapable,EMBED_CHANNEL,EMBED_EVENT,EMBED_TARGETS} from './plugin-embed.mjs';
@@ -157,6 +157,7 @@ const updateCommands=new Set(['status','check','download','apply','cancel','auto
 const gameReads=new Set(['view','settings-get','companion-state','companion-memory-view','companion-life-list','cg-gallery','cg-data','cg-thumbnail','sprite-data','bg-data']);
 const gameStops=new Set(['companion-chat-cancel','companion-group-stop','companion-group-auto-pause','companion-group-auto-stop','cg-cancel']);
 function updateGuard(capability,run){if(shutdownRecoveryFailed||shuttingDown)return Promise.reject(Object.assign(Error('退出尚未完成，请重试退出后重新打开。'),{code:'SHUTDOWN_RECOVERY_REQUIRED'}));return updateReservation.run(capability,run);}
+function quotaAction(action,args){return action==='get'?quotas.action(action,args):updateGuard('storage',()=>quotas.action(action,args));}
 const stateBefore=new Map();const rendererErrors=[];
 // Set when startup could not bring up the companion features (or the app);
 // the app keeps running in safe mode instead of exiting on every launch.
@@ -399,7 +400,7 @@ ipcMain.handle('tokens:action',(_,action,args)=>tokenAction(action,args));
 ipcMain.handle('tokens:choose',async(_,kind)=>{const result=await dialog.showOpenDialog(panel,{properties:kind==='directory'?['openDirectory']:['openFile']});return result.canceled?null:result.filePaths[0];});
 ipcMain.handle('tokens:export',async()=>{const value=await tokenAction('export');const result=await dialog.showSaveDialog(panel,{defaultPath:'token-sources-template.json',filters:[{name:'JSON',extensions:['json']}]});if(result.canceled)return false;writeFileSync(result.filePath,JSON.stringify(value,null,2));return true;});
 ipcMain.handle('tokens:import',async()=>{const result=await dialog.showOpenDialog(panel,{properties:['openFile'],filters:[{name:'JSON',extensions:['json']}]});if(result.canceled)return null;const file=result.filePaths[0];if(readFileSync(file).length>1048576)throw Error('模板过大');return JSON.parse(readFileSync(file,'utf8').replace(/^\uFEFF/,''));});
-ipcMain.handle('quotas:action',(_,action,args)=>quotas.action(action,args));
+ipcMain.handle('quotas:action',(_,action,args)=>quotaAction(action,args));
 ipcMain.handle('statistics:export',async(_,args)=>{const format=args?.format==='csv'?'csv':'json';const text=await tokenAction('statistics-export',{...args,format});const result=await dialog.showSaveDialog(panel,{defaultPath:'AI 酱-统计.'+format,filters:[{name:format.toUpperCase(),extensions:[format]}]});if(result.canceled)return false;writeFileSync(result.filePath,text,'utf8');return true;});
 ipcMain.handle('settings:get',()=>settingsView());
 ipcMain.handle('settings:set',(_,patch)=>updateGuard('storage',()=>setPreferences(patch)));
@@ -644,7 +645,7 @@ const control=createLocalControlServer({
       else if(request.command==='pet-play')result=playPet(request.action);
       else if(request.command==='pet-auto')result=petAuto();
       else if(request.command==='settings-get')result=settingsView();
-      else if(request.command==='quota-action')result=await quotas.action(request.action,request.args);
+      else if(request.command==='quota-action')result=await quotaAction(request.action,request.args);
       else if(request.command==='token-action')result=await tokenAction(request.action,request.args);
       else if(request.command==='settings-set')result=await updateGuard('storage',()=>setPreferences(request.patch));
       else if(request.command==='settings-action')result=await updateGuard('storage',()=>settingsAction(request.action));
@@ -681,20 +682,36 @@ async function shutdown(forUpdate=false) {
   if(quitting||shuttingDown)return;
   forUpdate ||= updateReservation.committed();
   shuttingDown=true;let phase='preparing';
-  try{
-  await deferredSaves.flushAll({scope:dataRoot});
-  if(agents?.busy()){const choice=await dialog.showMessageBox(panel??pet,{type:'question',title:'工作与协作',message:'仍有工作任务正在运行。',buttons:['完成后退出','停止并保存后退出','返回'],defaultId:2,cancelId:2});if(choice.response===2)return;await agents.prepareExit(choice.response===0?'finish':'stop-save');}
-  quitting=true;monitorProfile.cancel();mainProfile.cancel();closePetFullscreen();applyPetVisibility(false);
-  phase='plugins';await closePluginServices({voice:voiceHost,platform:plugins,attach:replacement=>attachPluginRuntime(replacement)});
-  phase='closing';await closeAppServices([
+  const steps=[
     ['daily-cg',()=>dailyCgScheduler?.stopAndDrain()],['rewards',()=>rewardTail],['agents',()=>agents?.close()],
-    ['plugin-pages',()=>{pluginClientStateOff?.();pluginClientStateOff=null;pluginEmbed?.close();}],['voice',()=>voiceHost?.close()],['plugin-usage',()=>pluginUsage?.close()],
-    ['pet-diagnostics',()=>petDiagnostics?.dispose()],['data-import',()=>dataImport?.close()],['buttons',()=>buttonObserver?.close()],['trajectory',()=>{trajectoryWindow?.destroy();trajectoryWindow=null;}],['quotas',()=>quotas?.close()],
-    ['settings',()=>settingsTail],['settings-write',()=>settingsWriteTail],['provider',()=>provider?.close()],['cg',()=>cg?.close()],['work-ledger',()=>game?.flushWorkLedger?.()],['game',()=>game?.close()],['work-sources',()=>workSourceRegistry?.flush()],
+    ['plugin-pages',()=>{pluginClientStateOff?.();pluginClientStateOff=null;pluginEmbed?.close();},false],['voice',()=>voiceHost?.close()],['plugin-usage',()=>pluginUsage?.close()],
+    ['pet-diagnostics',()=>petDiagnostics?.dispose(),false],['data-import',()=>dataImport?.close()],['buttons',()=>buttonObserver?.close(),false],['trajectory',()=>{trajectoryWindow?.destroy();trajectoryWindow=null;},false],['quotas',()=>quotas?.close()],
+    ['settings',()=>settingsTail],['settings-write',()=>settingsWriteTail],['provider',()=>provider?.close(),false],['cg',()=>cg?.close()],['work-ledger',()=>game?.flushWorkLedger?.()],['game',()=>game?.close()],['work-sources',()=>workSourceRegistry?.flush()],
     ['monitor',()=>worker&&closeMonitorWorker(worker,{onDiagnostic:value=>audit({type:'monitor-worker-close',...value})})],
-  ],closedServiceSteps);
-  appUpdates?.close({keepApply:forUpdate});await network?.close();control.close();deferredSaves.stop();app.exit(0);
-  }catch(error){shutdownRecoveryFailed=phase==='closing'||error.shutdownRecovery==='failed';quitting=false;syncPetFullscreenObserver();applyPetVisibility(false);if(forUpdate&&!shutdownRecoveryFailed)updateReservation.reopenAfterFailedShutdown();audit({type:'shutdown-blocked',code:error.code,message:error.message,phase,recovery:error.shutdownRecovery??null});await dialog.showMessageBox(panel??pet,{type:'error',title:t('退出未完成'),message:t(shutdownRecoveryFailed?'部分服务已停止，请重试退出后重新打开。':error.shutdownRecovery==='restored'?'扩展服务已恢复，已停止的活动不会自动重新开始。':'当前活动尚未停止，请稍后重试退出。'),detail:String(error.message),buttons:[t('返回')]});}
+    ['app-updates',()=>appUpdates?.close({keepApply:forUpdate}),false],['network',()=>network?.close()],
+  ];
+  const close=async()=>{
+    if(!closedServiceSteps.has('prepare')){
+      phase='preparing';await deferredSaves.flushAll({scope:dataRoot});
+      if(agents?.busy()){const choice=await dialog.showMessageBox(panel??pet,{type:'question',title:'工作与协作',message:'仍有工作任务正在运行。',buttons:['完成后退出','停止并保存后退出','返回'],defaultId:2,cancelId:2});if(choice.response===2)return false;await agents.prepareExit(choice.response===0?'finish':'stop-save');}
+      quitting=true;monitorProfile.cancel();mainProfile.cancel();closePetFullscreen();applyPetVisibility(false);closedServiceSteps.add('prepare');
+    }
+    quitting=true;phase='plugins';if(!closedServiceSteps.has('plugins')){await closePluginServices({voice:voiceHost,platform:plugins,attach:replacement=>attachPluginRuntime(replacement)});closedServiceSteps.add('plugins');}
+    phase='closing';await closeAppServices(steps,closedServiceSteps);return true;
+  };
+  const finish=async(reopen=false)=>{
+    quitting=true;await closeAppServices([['control',()=>control.close()],['deferred-stop',()=>deferredSaves.stop()]],closedServiceSteps);
+    // app.relaunch preserves the current executable, cwd and complete arguments.
+    // Schedule it only after shutdown; app.exit avoids the before-quit guard.
+    if(reopen&&!forUpdate)app.relaunch();app.exit(0);
+  };
+  const blocked=error=>{shutdownRecoveryFailed=phase==='closing'||error.shutdownRecovery==='failed';quitting=false;syncPetFullscreenObserver();applyPetVisibility(false);if(forUpdate&&!shutdownRecoveryFailed)updateReservation.reopenAfterFailedShutdown();audit({type:'shutdown-blocked',code:error.code,message:shutdownFailureDetail(error,t,phase==='preparing'?'prepare':'plugins'),failedSteps:error.failedSteps??[],phase,recovery:error.shutdownRecovery??null});};
+  try{if(await close())await finish();}
+  catch(error){
+    blocked(error);
+    if(shutdownRecoveryFailed&&!forUpdate)await recoverAppShutdown({error,retry:close,finish:()=>finish(true),completed:closedServiceSteps,steps,showMessageBox:options=>dialog.showMessageBox(panel??pet,options),onFailure:blocked,t});
+    else{if(!shutdownRecoveryFailed)closedServiceSteps.clear();await dialog.showMessageBox(panel??pet,{type:'error',title:t('退出未完成'),message:t(shutdownRecoveryFailed?'部分服务已经停止。重新打开后就能继续用。':error.shutdownRecovery==='restored'?'扩展服务已恢复，已停止的活动不会自动重新开始。':'当前活动尚未停止，请稍后重试退出。'),detail:shutdownFailureDetail(error,t,phase==='preparing'?'prepare':'plugins'),buttons:[t('返回')]});}
+  }
   finally{shuttingDown=false;}
 }
 app.on('before-quit',event=>{event.preventDefault();if(!quitting)void shutdown();});

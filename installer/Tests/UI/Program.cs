@@ -28,8 +28,12 @@ internal static partial class Program {
   Check("A1 rapid native UI changes cancel and coalesce scans",()=>Assert(maximum==1&&calls==2&&cancelled==1,"Expected one active scan, one latest retry and cancelled prior scan; actual max="+maximum+", calls="+calls+", cancelled="+cancelled));
   Invoke(form,"UpdateEstimate");Pump(()=>calls==3,"second scan entered");Invoke(form,"Busy",true);Pump(()=>active==0,"busy cancels scan");Check("A1 busy operation cancels pending estimates",()=>Assert(tokens.Last().IsCancellationRequested,"Busy left estimate running"));form.Close();
  }
- static void Settled(SetupForm f)=>Pump(()=>Field<CancellationTokenSource?>(f,"cancellation") is null&&Field<Button>(f,"install").Enabled,"asynchronous estimate and install ready");
+ static void Settled(SetupForm f)=>Pump(()=>Field<CancellationTokenSource?>(f,"cancellation") is null&&Field<Label>(f,"estimate").Text.Length>0&&Field<Button>(f,"install").Enabled,"asynchronous estimate and install ready");
  static void Shot(SetupForm f,string file){using var bitmap=new Bitmap(f.Width,f.Height);f.DrawToBitmap(bitmap,new Rectangle(Point.Empty,f.Size));bitmap.Save(file);}
+ static void CheckMirrorSection(SetupForm form,bool expected,string locale){
+  var controls=Controls(form).ToArray();var labels=locale=="en"?new[]{"Download mirrors","GitHub mirror","HuggingFace mirror","Leave empty to download from official addresses. Mirror downloads are checked against the same size and SHA-256; mismatches are rejected."}:new[]{"下载镜像","GitHub 镜像","HuggingFace 镜像","留空就从官方地址下载。用镜像下载的文件同样会核对大小和 SHA-256，对不上会拒绝。"};
+  Check((expected?"online source shows":"local source hides")+" the entire mirror section "+locale,()=>{foreach(var label in labels)Assert(controls.Any(c=>c.Text==label)==expected,"Mirror label visibility: "+label);foreach(var field in new[]{"githubMirror","huggingFaceMirror"})Assert(controls.Contains(Field<TextBox>(form,field))==expected,"Mirror input visibility: "+field);});
+ }
  static void Reject(Action action){try{action();}catch(InvalidDataException){return;}throw new Exception("Expected argument rejection");}
  static HttpClient Mock(string version,List<string> calls,bool failed=false){
   const string api="https://api.github.com/repos/lXiaoSel1/AI-Buddy",web="https://github.com/lXiaoSel1/AI-Buddy";
@@ -49,7 +53,7 @@ internal static partial class Program {
   try{
    ManifestBytes=File.ReadAllBytes(args[0]);Manifest=Manifests.Parse(ManifestBytes,Hashing.Bytes(ManifestBytes));var calls=new List<string>();using var http=Mock(ReleaseIdentity.Version,calls);Updates=new(http,verifySignature:FixtureSigned);Engine=new(Manifest,ManifestBytes,Hashing.Bytes(ManifestBytes),new Downloader(http),host,Environment.ProcessPath!);
    if(args.Contains("--estimate-only")){CheckEstimateCoalescing(output);Json.Save(Path.Combine(output,"estimate-ui.json"),new{ok=true,total=results.Count,tests=results});return 0;}
-   if(!args.Contains("--local-only")){
+   if(!args.Contains("--local-only")&&!args.Contains("--mirrors-only")){
    using(var form=new SetupForm(["--skip-update-check"])){
     form.Show();Settled(form);var language=Field<ComboBox>(form,"language");var edition=Field<ComboBox>(form,"edition");var initial=Field<ComboBox>(form,"initial");var roles=Field<CheckedListBox>(form,"characters");
     Check("defaults 11 roles 30fps DeepSeek",()=>Assert(roles.CheckedItems.Count==11&&edition.SelectedItem?.ToString()=="30fps"&&initial.SelectedItem?.ToString()=="DeepSeek","Wrong defaults"));
@@ -97,15 +101,18 @@ internal static partial class Program {
     Check("install preflight safely rejects "+malformed,()=>{var task=(Task)Invoke(form,"Run","install")!;Pump(()=>task.IsCompleted,"invalid pointer preflight");task.GetAwaiter().GetResult();Assert(Field<Label>(form,"status").Text.StartsWith("Cannot confirm the installed version;")&&!form.IsDisposed&&host.Calls==0&&!Directory.Exists(Path.Combine(badRoot,"local","installer")),"Malformed version must not crash or start installation");});Shot(form,Path.Combine(output,"installer-ui-"+malformed+".png"));form.Close();
    }
    }
+   if(args.Contains("--mirrors-only"))foreach(var locale in new[]{"zh-CN","en"})using(var form=new SetupForm(["--skip-update-check","--language="+locale])){
+    form.Show();Settled(form);CheckMirrorSection(form,true,locale);Field<TableLayoutPanel>(form,"layout").ScrollControlIntoView(Field<TextBox>(form,"githubMirror"));Application.DoEvents();Shot(form,Path.Combine(output,"installer-online-source-download-"+locale+".png"));form.Close();
+   }
    var localSource=Path.Combine(output,"expanded-local-source-ui");var localHash=Hashing.Bytes(ManifestBytes);
    Directory.CreateDirectory(Path.Combine(localSource,"builds/source"));Directory.CreateDirectory(Path.Combine(localSource,"runtime/source"));
    var localRecord=new Installation(1,ReleaseIdentity.Version,localHash,"30fps",Manifest.Characters.Select(c=>c.Id).ToArray(),"deepseek","builds/source","runtime/source","maintenance/"+ReleaseIdentity.Version+"/AI Buddy Setup.exe",null,"ui-local-source",DateTimeOffset.UtcNow,Manifest.Packages.ToDictionary(p=>p.Id,p=>p.Sha256));
    Json.Save(InstallEngine.RecordPath(localSource),localRecord);Directory.CreateDirectory(Path.Combine(localSource,"local/install-manifests"));File.WriteAllBytes(SafePaths.Under(localSource,"local/install-manifests/"+localHash+".json"),ManifestBytes);
    foreach(var locale in new[]{"zh-CN","en"})using(var form=new SetupForm(["--skip-update-check","--language="+locale,"--local-tree="+localSource,"--root="+Path.Combine(output,"local-source-target-"+locale)])){
     form.Show();Settled(form);Check("local source read-only notice and zero download "+locale,()=>Assert(Field<TextBox>(form,"offline").ReadOnly&&Controls(form).Any(c=>c.Text==(locale=="zh-CN"?"从这个文件夹安装，不需要联网":"Install from this folder without an internet connection"))&&Field<Label>(form,"estimate").Text.Contains("0.0 MiB"),"local source UI mismatch"));
-    Check("download mirror inputs default empty "+locale,()=>Assert(Field<TextBox>(form,"githubMirror").Text==""&&Field<TextBox>(form,"huggingFaceMirror").Text=="","mirror should be opt-in"));Shot(form,Path.Combine(output,"installer-local-source-"+locale+".png"));Field<TableLayoutPanel>(form,"layout").ScrollControlIntoView(Field<Label>(form,"estimate"));Application.DoEvents();Shot(form,Path.Combine(output,"installer-local-source-download-"+locale+".png"));form.Close();
+    CheckMirrorSection(form,false,locale);Shot(form,Path.Combine(output,"installer-local-source-"+locale+".png"));Field<TableLayoutPanel>(form,"layout").ScrollControlIntoView(Field<Label>(form,"estimate"));Application.DoEvents();Shot(form,Path.Combine(output,"installer-local-source-download-"+locale+".png"));form.Close();
    }
-   if(!args.Contains("--local-only"))CheckSnapshotUpgrades(output);
+   if(!args.Contains("--local-only")&&!args.Contains("--mirrors-only"))CheckSnapshotUpgrades(output);
    Json.Save(Path.Combine(output,"installer-ui.json"),new{ok=true,total=results.Count,tests=results,locales=2,roles=11,defaultEdition="30fps",defaultInitial="DeepSeek",httpMode="in-memory mock only",realNetworkRequests=0,appHostCalls=host.Calls,actualApplicationOrInstallerLaunched=false,at=DateTimeOffset.UtcNow});Console.WriteLine($"PASS {results.Count}/{results.Count}; mock HTTP only; no app or installer launched");return 0;
   }catch(Exception ex){Json.Save(Path.Combine(output,"installer-ui.json"),new{ok=false,total=results.Count,tests=results,error=ex.ToString(),appHostCalls=host.Calls,at=DateTimeOffset.UtcNow});Console.Error.WriteLine(ex);return 1;}
  }

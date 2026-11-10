@@ -42,9 +42,12 @@ test('AUDIT QQ fetched events retain evidence until an explicit processed acknow
  await assert.rejects(f.transport.events({...f.payload,cursor:0},f.scope),{code:'QQ_EVENT_CURSOR_EXPIRED'});
 });
 
-test('AUDIT QQ actual outstanding overflow remains a failure',async t=>{
+test('AUDIT QQ durable outstanding backlog signals backpressure and remains drainable',async t=>{
  const f=await fixture(t);for(let n=1;n<=1001;n++)f.sockets[0].message(n);
- assert.equal(f.sockets[0].closed,true);await assert.rejects(f.transport.events(f.payload,f.scope),{code:'SOCIAL_CONNECTION_CLOSED'});
+ assert.notEqual(f.sockets[0].closed,true);let cursor=0,received=0;
+ while(received<1001){const next=await f.transport.events({...f.payload,cursor,ackCursor:cursor},f.scope);assert.ok(next.events.length>0);if(received===0)assert.equal(next.transportStatus?.code,'QQ_EVENT_BACKPRESSURE');for(const event of next.events)assert.equal(event.message_id,++received);cursor=next.cursor;}
+ assert.equal(f.transport.inbound(f.opened.connectionId,'1001',f.scope).raw.message_id,1001);
+ const done=await f.transport.events({...f.payload,cursor,ackCursor:cursor},f.scope);assert.equal(done.events.length,0);assert.equal(done.transportStatus,null);assert.notEqual(f.sockets[0].closed,true);
 });
 
 for(const prefix of ['','/','/api','/api/'])test('AUDIT QQ formal transport retains configured endpoint prefix '+JSON.stringify(prefix),async t=>{

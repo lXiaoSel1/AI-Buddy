@@ -1,7 +1,7 @@
 import {locale} from './i18n.mjs';
 export const networkMessages=Object.freeze({
  '请填写有效的网络地址':'Enter a valid network address.','暂时只支持 http 代理':'Only HTTP and HTTPS proxies are supported for now.','镜像地址需要使用 HTTPS':'Mirror addresses must use HTTPS.','请填写不含账号、路径或查询参数的网络地址':'Enter an address without credentials, paths or query parameters.','网络设置格式无效':'Invalid network settings.','代理模式无效':'Invalid proxy mode.','网络地址必须是文字':'Network addresses must be text.',
- '网络':'Network','代理':'Proxy','跟随系统':'Follow system','手动':'Manual','不使用':'Do not use','测试':'Test',
+ '网络':'Network','代理':'Proxy','代理地址':'Proxy address','跟随系统':'Follow system','手动':'Manual','不使用':'Do not use','测试':'Test',
  '扩展中心、组件下载和模型聊天都按这里的设置联网。':'Extensions, component downloads and model chat use these network settings.',
  '可以访问扩展目录':'The extension catalog is accessible','下载镜像':'Download mirrors','GitHub 镜像':'GitHub mirror','HuggingFace 镜像':'HuggingFace mirror',
  '留空就从官方地址下载。用镜像下载的文件同样会核对大小和 SHA-256，对不上会拒绝。':'Leave blank to download from official sources. Mirror downloads are checked against the same size and SHA-256; mismatches are rejected.',

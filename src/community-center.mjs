@@ -121,7 +121,7 @@ export function UpdateCard({ update, record, busy, onReview }) {
       update.requiresCompatibilityUpdate&&update.to && h("p", {className:"ext-cap",role:"status","data-compatibility-update":true}, fill(t("要更新到 {v} 才能继续用"),{v:update.to})),
       changes.length > 0 && h("details", { className: "ext-tech ext-changes", open: true }, h("summary", null, t("更新内容")), h("ul", { className: "ext-bul" }, ...changes.map((row) => h("li", { key: row.version }, Icon("check", { size: 14 }), h("span", null, (changes.length > 1 ? row.version + " · " : "") + releaseNotes(row)))))),
       update.addedCapabilities?.length > 0 && h("small", { className: "ext-cap" }, t("新增能力需要重新确认")), update.incompatibleData && h("small", { className: "ext-cap" }, t("资料版本变化，暂不自动更新。")), update.error && h("small", { className: "ext-cap", role: "status" }, communityErrorText(update.error.code) ?? update.error.message)),
-    h("button", { type: "button", className: "ui-btn primary", disabled: busy || !available, onClick: () => {if(available)onReview(update);} }, incompatible&&update.to?t('更新到 {v}').replace('{v}',update.to):!update.to?t('等插件更新后才能继续用'):update.state === "failed" ? L("重试…", "Retry…") : t("查看并更新…")));
+    !(incompatible&&!update.to)&&h("button", { type: "button", className: "ui-btn primary", disabled: busy || !available, onClick: () => {if(available)onReview(update);} }, incompatible&&update.to?t('更新到 {v}').replace('{v}',update.to):!update.to?t('等插件更新后才能继续用'):update.state === "failed" ? L("重试…", "Retry…") : t("查看并更新…")));
 }
 function Stars({ value }) {
   return h("span", { className: "ext-stars", "aria-label": t("{n} 星").replace("{n}", value.toFixed(1)) }, Icon("star", { size: 13 }), value.toFixed(1));

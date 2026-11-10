@@ -24,7 +24,7 @@ export function createSocialAccounts({dataRoot,crypto}={}){
   db.exec(`CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT); INSERT OR IGNORE INTO meta VALUES('schemaVersion','1'); INSERT OR IGNORE INTO meta VALUES('minimumWriter','"r95-social-accounts-v1"');`);
   db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL); INSERT OR IGNORE INTO metadata VALUES('schemaVersion','1'); CREATE TABLE IF NOT EXISTS accounts(ref TEXT PRIMARY KEY,body TEXT NOT NULL,secret BLOB);");
   if(db.prepare("SELECT value FROM metadata WHERE key='schemaVersion'").get().value!=='1'){db.close();throw error('SOCIAL_ACCOUNT_SCHEMA_UNSUPPORTED');}
-  const listeners=new Set();let closed=false;
+  const listeners=new Set();let closed=false,closeError;
   const check=()=>{if(closed)throw error('SOCIAL_ACCOUNTS_CLOSED');};
   function list(){check();return db.prepare('SELECT body FROM accounts ORDER BY ref').all().map(row=>JSON.parse(row.body));}
   function get(ref){check();const row=db.prepare('SELECT body FROM accounts WHERE ref=?').get(ref);return row?JSON.parse(row.body):null;}
@@ -70,5 +70,5 @@ export function createSocialAccounts({dataRoot,crypto}={}){
   function remove(ref){check();const row=get(ref);if(!row)throw error('SOCIAL_ACCOUNT_UNKNOWN');db.prepare('DELETE FROM accounts WHERE ref=?').run(ref);for(const listener of listeners)listener({ref,generation:row.generation+1});return {removed:true};}
   function approveActivities(ref){check();const row=get(ref);if(!row?.enabled)throw error('SOCIAL_ACCOUNT_UNKNOWN');db.prepare('UPDATE accounts SET body=? WHERE ref=?').run(JSON.stringify({...row,activityApprovalRequired:false}),ref);return {approved:true};}
   function subscribe(listener){listeners.add(listener);return()=>listeners.delete(listener);}
-  return {list,get,forPlugin,secret,save,commitLogin,remove,approveActivities,subscribe,close(){if(closed)return;closed=true;listeners.clear();db.close();}};
+  return {list,get,forPlugin,secret,save,commitLogin,remove,approveActivities,subscribe,close(){if(closeError)throw closeError;if(closed)return;closed=true;listeners.clear();try{db.close();}catch(error){closeError=error;throw error;}}};
 }

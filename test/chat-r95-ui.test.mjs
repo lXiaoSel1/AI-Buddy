@@ -164,6 +164,6 @@ test('pet menu: Feed names her fullness; Recent plugin messages shows how many (
 test('restart unknown Auto exposes explicit next-member recovery in both languages',()=>{
  for(const language of ['zh-CN','en']){setLocale(language);const value=r95({auto:auto({status:'paused',pending:{requestId:'unknown-request',characterId:'claude',status:'unknown'}})});const label=language==='en'?'Continue with the next member':'从下一位继续';
  const panel=render(GroupAutoPanel,{view:value,onAction:noop,nameOf}),strip=render(AutoRoundStrip,{view:value,onAction:noop,nameOf});assert(panel.includes(label));assert(strip.includes(label));assert.doesNotMatch(panel,/<button[^>]*disabled[^>]*>[^<]*Continue with the next member/);
- assert.match(panel,language==='en'?/The previous turn did not finish/:/上一轮没有完成/);}
+ const reason=language==='en'?'The previous turn did not finish.':'上一轮没有完成。',confirmed=language==='en'?'Members confirmed':'本次成员已确认';assert.ok(panel.indexOf(confirmed)<panel.indexOf(reason),'confirmed members precede the reason');assert.ok(panel.indexOf(reason)<panel.indexOf('<button'),'the recovery reason precedes the action buttons');}
  setLocale('zh-CN');
 });

@@ -70,10 +70,12 @@ public sealed class SetupForm:Form {
         Add(Heading(L("角色资源 · 可在以后补装","Character resources · add more later")));Add(characters,170);
         Add(Heading(localResources?L("离线资源目录","Offline resource folder"):L("离线资源目录（留空则从 GitHub 下载）","Offline resource folder (leave empty for GitHub)")));
         if(localResources)Add(new Label{Text=L("从这个文件夹安装，不需要联网","Install from this folder without an internet connection"),AutoSize=true});else Add(Row(offline,Browse(offline)));
-        Add(Heading(L("下载镜像","Download mirrors")));
-        Add(new Label{Text=L("GitHub 镜像","GitHub mirror"),AutoSize=true});Add(githubMirror);
-        Add(new Label{Text=L("HuggingFace 镜像","HuggingFace mirror"),AutoSize=true});Add(huggingFaceMirror);
-        Add(new Label{Text=L("留空就从官方地址下载。用镜像下载的文件同样会核对大小和 SHA-256，对不上会拒绝。","Leave empty to download from official addresses. Mirror downloads are checked against the same size and SHA-256; mismatches are rejected."),AutoSize=true,MaximumSize=new Size(720,0),ForeColor=Color.DimGray});
+        if(!localResources){
+            Add(Heading(L("下载镜像","Download mirrors")));
+            Add(new Label{Text=L("GitHub 镜像","GitHub mirror"),AutoSize=true});Add(githubMirror);
+            Add(new Label{Text=L("HuggingFace 镜像","HuggingFace mirror"),AutoSize=true});Add(huggingFaceMirror);
+            Add(new Label{Text=L("留空就从官方地址下载。用镜像下载的文件同样会核对大小和 SHA-256，对不上会拒绝。","Leave empty to download from official addresses. Mirror downloads are checked against the same size and SHA-256; mismatches are rejected."),AutoSize=true,MaximumSize=new Size(720,0),ForeColor=Color.DimGray});
+        }
         shortcuts.Text=L("创建桌面和开始菜单入口","Create desktop and Start menu shortcuts");launch.Text=L("验证后保持 AI Buddy 运行","Keep AI Buddy running after verification");Add(Row(shortcuts,launch));
         Add(estimate);Add(bar,28);Add(status);retryOfficial.Text=L("改用官方地址重试","Retry using official addresses");Add(retryOfficial);Add(rollbackNote);
         install.Text=L("安装 / 补装 / 修复","Install / Add / Repair");cancel.Text=L("取消","Cancel");rollback.Text=L("回退上一版","Roll back");uninstall.Text=L("卸载…","Uninstall…");footer.Controls.Clear();footer.Controls.AddRange([install,cancel,rollback,uninstall]);

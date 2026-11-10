@@ -28,7 +28,7 @@ const socialEvidenceForMemory=(actual,scope)=>({...actual,id:actual.eventRef,sco
 export async function createCompanionR95({store,dataRoot,provider,memory,getContext,delta,work,getReplyStyle=()=> 'natural',
  getRuntimeState=()=>({sleepPhase:'awake',canPresent:false}),dispatchAuto=async()=>{throw Error('Auto dispatcher unavailable');},flushGroupInput=async()=>{},
  cancelAuto=async()=>{},appendSocial,withMemoryContext=(_metadata,fn)=>fn(),getLanguage=()=> 'zh-CN',getTimeZone=()=>'local',now=Date.now,onActivity=()=>{},onSpeech=()=>{},onMealCommitted=()=>{},onSleepIntent=()=>{},audit=()=>{}}){
- let closed=false,ticking=false;const originContext=new AsyncLocalStorage(),modelFlights=new Set(),backgroundFlights=new Set(),temporaryOrigins=new Map(),searchReceipts=new Map(),reviewAttempts=new Map(),deliveryAdapters=new Map();
+ let closed=false,ticking=false,closePromise;const originContext=new AsyncLocalStorage(),modelFlights=new Set(),backgroundFlights=new Set(),temporaryOrigins=new Map(),searchReceipts=new Map(),reviewAttempts=new Map(),deliveryAdapters=new Map();
  let invalidSearchReported=false;
  function searchEnabled(){
   const settings=store.state.r95;
@@ -229,6 +229,9 @@ export async function createCompanionR95({store,dataRoot,provider,memory,getCont
   // Only chat purposes may search (nativeSearchPurpose): the emotion tag, reply choices and memory work of the
   // same chat origin, and every background request, never receive the grant.
   searchPolicy:({activityOriginId,purpose})=>{const permitted=()=>{const origin=origins.resolve(activityOriginId);return !!origin&&!Number.isFinite(origin.finishedAt)&&nativeSearchPurpose(purpose)&&searchEnabled();};if(!permitted())return false;return {allowed:true,check:()=>{if(!permitted())throw Error('联网搜索授权已失效');}};},
-  async close(){if(closed)return;closed=true;feeding.pause('close');socialHost.close();await Promise.allSettled([mood.close(),proactive.close(),feeding.close()]);owner.close();deliveryAdapters.clear();origins.close();presentation.clear();renderedAcks.clear();},
+  close(){if(closePromise)return closePromise;closed=true;closePromise=(async()=>{
+   const results=await Promise.allSettled([(async()=>{feeding.pause('close');socialHost.close();})(),mood.close(),proactive.close(),feeding.close()]);try{owner.close();}catch(reason){results.push({status:'rejected',reason});}deliveryAdapters.clear();origins.close();presentation.clear();renderedAcks.clear();
+   const failures=results.filter(row=>row.status==='rejected').map(row=>row.reason);for(const row of results)if(row.status==='fulfilled'&&row.value?.settled===false)failures.push(Object.assign(Error('Companion work has not settled'),{code:'COMPANION_COMPONENT_CLOSE_PENDING'}));if(failures.length)throw Object.assign(new AggregateError(failures,'Companion components did not close'),{code:'COMPANION_COMPONENT_CLOSE_FAILED'});
+  })();return closePromise;},
  };
 }

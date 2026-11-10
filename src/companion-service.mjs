@@ -675,13 +675,13 @@ export async function createCompanionService({store,engine,provider,dataRoot=nul
    // receipts from catch/finally, so their actual promises precede the flush.
    await within((async()=>{while(serviceTasks.size)await Promise.allSettled([...serviceTasks]);})(),'producers');
    resourceClosePromise??=Promise.allSettled([memory?.close(),r95?.close()]);
-   await within(resourceClosePromise,'components');
+   const components=await within(resourceClosePromise,'components');
    await within(Promise.all([requestJournal?.flush(),drafts?.flush(),relationTail]),'journals');
-   await within(store.flush(),'store');closed=true;
+   await within(store.flush(),'store');const failures=components.filter(row=>row.status==='rejected').map(row=>row.reason);if(failures.length)throw Object.assign(new AggregateError(failures,'Companion components did not close'),{code:'COMPANION_COMPONENT_CLOSE_FAILED',stage:'components'});closed=true;
   })();
   // A timeout keeps the service in closing state. A later explicit close can
   // drain again; it must never report success while an old producer can write.
-  closePromise.catch(error=>{closePromise=null;audit({type:'companion-close-error',code:error.code,stage:error.stage,message:error.message});});
+  closePromise.catch(error=>{if(error.code!=='COMPANION_COMPONENT_CLOSE_FAILED')closePromise=null;audit({type:'companion-close-error',code:error.code,stage:error.stage,message:error.message});});
   return closePromise;
  }
  return {r95,action,chat,touch,voiceScope,voiceScopeChanged,voiceSubmit,voiceReceipt:voiceConversation.receipt,voiceCancel:()=>voiceConversation.cancel(()=>true),finishPrivateVoice,decorate,assertDailyCgScope,captureDailyCg,context,followCharacter,viewState,maintenance,workScope,pluginScope,workContext,workConnection,

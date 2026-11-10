@@ -72,12 +72,12 @@ export function GroupAutoPanel({view={},onAction,nameOf=id=>id,onOpenSocial}){
   h('p',{className:'r95-cap'},t('每轮每位成员各有一次机会，可以不说；AI 也可以提前结束。')),
   mode!=='rounds'&&!running&&h('p',{role:'status',className:'r95-warn'},Icon('alert',{size:12}),t('此模式可能产生更多模型用量。')),
   h('div',{className:'r95-auto-who'},...members.map((id,i)=>face(id,names[i])),h('span',{className:'r95-cap'},running?t('本次成员已确认'):t('本次成员：')+listJoin(names))),
+  auto?.pending&&h('p',{role:'status',className:'r95-cap'},t(auto.pending.status==='unknown'?'上一轮没有完成。':'有待完成或核对的请求，不能重复提交。')),
   !enabled&&!running&&h('div',{className:'r95-auto-off',role:'status'},h('span',{className:'r95-cap'},t('社交与心情里还没有允许群聊 Auto。')),onOpenSocial&&h('button',{type:'button',className:'ui-btn ghost sm','data-open-social':'auto',onClick:onOpenSocial},t('去开启'))),
   h('div',{className:'r95-row'},!running&&h('button',{type:'button',className:'ui-btn sm primary',disabled:pending||!enabled||!groupId||mode==='rounds'&&!validRounds,onClick:()=>void run('auto-start',{groupId,mode,rounds})},t('确认成员并开始')),
    running&&progress.status==='active'&&h('button',{type:'button',className:'ui-btn sm',disabled:pending,onClick:act('auto-pause')},Icon('pause',{size:14}),t('暂停')),
    running&&progress.status==='paused'&&h('button',{type:'button',className:'ui-btn sm',disabled:pending||!!auto.pending&&auto.pending.status!=='unknown',onClick:()=>void run('auto-continue',{groupId,...auto.pending?.status==='unknown'&&{resumeFromNext:true,requestId:auto.pending.requestId}})},Icon('play',{size:14}),t(auto.pending?.status==='unknown'?'从下一位继续':'继续 Auto')),
    running&&h('button',{type:'button',className:'ui-btn sm danger',disabled:pending,onClick:act('auto-stop')},Icon('stop',{size:14}),t('停止 Auto'))),
-  auto?.pending&&h('p',{role:'status',className:'r95-cap'},t(auto.pending.status==='unknown'?'上一轮没有完成。':'有待完成或核对的请求，不能重复提交。')),
   error&&h('p',{role:'alert',className:'r95-err'},error));
 }
 export function AutoChip({view,onAction,nameOf,onOpenSocial,initialOpen}){
