@@ -2,6 +2,8 @@ import {locale,t} from './i18n.mjs';
 import {networkErrorMessage} from './network-errors.mjs';
 import {isVoiceEnginePackage,VOICE_SHARED_PACKAGE} from './voice/package-contract.mjs';
 const errorMessages = {
+  PLUGIN_DEPENDENCY_ERROR: ['这个版本和当前的 AI 酱不兼容，或者缺少它依赖的组件。', 'This version is not compatible with this AI Buddy, or a required component is missing.'],
+  COMMUNITY_NO_COMPATIBLE_RELEASE: ['这个插件的最新版需要更新的 AI 酱。先更新 AI 酱，或者在「版本」里选一个能用的旧版。', 'The latest version of this plugin needs a newer AI Buddy. Update AI Buddy first, or pick an older version under Versions.'],
   COMMUNITY_QUEUE_CAPACITY: ['维护记录已达到容量上限，暂不能新增任务；现有记录会保留。', 'The maintenance history is full. New tasks cannot be added; existing records are retained.'],
   COMMUNITY_SOURCE_UNAVAILABLE: ['此来源已停用、移除或暂不可用，请检查来源设置。', 'This source is disabled, removed or unavailable. Check the source settings.'],
   COMMUNITY_SOURCE_CHANGED: ['来源在读取期间发生变化，请重新检查来源后重试。', 'The source changed while loading. Check the source and try again.'],
@@ -11,7 +13,7 @@ export function pluginResult(value) {
   const error = value.error;
   throw Object.assign(Error(typeof error === 'string' ? error : error.message ?? error.code ?? 'Extension request failed'), typeof error === 'object' ? {code: error.code, details: error.details,host:error.host??error.details?.host,retryOfficial:error.retryOfficial??error.details?.retryOfficial} : {});
 }
-export function pluginErrorText(error, language = locale()) { const code=error?.code??error?.error?.code;if(code?.startsWith('NETWORK_')||/^(PLUGIN_SOURCE_FETCH_FAILED|PLUGIN_DOWNLOAD_FAILED|DSH_COMPONENT_DOWNLOAD_|FFMPEG_COMPONENT_DOWNLOAD)/.test(code??''))return networkErrorMessage(code?.includes('TIMEOUT')?'NETWORK_TIMEOUT':code,{host:error?.host??error?.details?.host??error?.error?.host??error?.error?.details?.host??'',language,offline:true});const messages = errorMessages[code]; return messages ? messages[language === 'en' ? 1 : 0] : typeof error === 'string' ? error : error?.message ?? error?.error?.message ?? error?.code ?? 'Extension request failed'; }
+export function pluginErrorText(error, language = locale()) { const code=error?.code??error?.error?.code;if(code?.startsWith('NETWORK_')||/^(PLUGIN_SOURCE_FETCH_FAILED|PLUGIN_DOWNLOAD_FAILED|DSH_COMPONENT_DOWNLOAD_|FFMPEG_COMPONENT_DOWNLOAD)/.test(code??''))return networkErrorMessage(!code?.startsWith('NETWORK_')&&code?.includes('TIMEOUT')?'NETWORK_TIMEOUT':code,{host:error?.host??error?.details?.host??error?.error?.host??error?.error?.details?.host??'',language,offline:true});const messages = errorMessages[code]; return messages ? messages[language === 'en' ? 1 : 0] : typeof error === 'string' ? error : error?.message ?? error?.error?.message ?? error?.code ?? 'Extension request failed'; }
 // Catalog checks are metadata-only; never prepare components on page entry.
 export function pluginSourcesNeedRefresh(state, now = Date.now()) {
   if (!Array.isArray(state?.sources)) return !state?.catalogAvailable;

@@ -1,0 +1,707 @@
+{
+  "payload": {
+    "authors": [
+      {
+        "githubLogin": "lXiaoSel1",
+        "id": "author.lxiaosel1",
+        "name": "lXiaoSel1",
+        "url": "https://github.com/lXiaoSel1"
+      }
+    ],
+    "generatedAt": "2026-11-10T02:20:57.991Z",
+    "id": "ai-buddy.public-community",
+    "schemaVersion": 1,
+    "source": {
+      "descriptorId": "ai-buddy.extensions",
+      "keyFingerprint": "SHA256:ovVyMUaJlXZUkPRLjf4QBOlZUQ6Dm4Op83kvQAFvT7g"
+    },
+    "type": "ai-buddy-community-catalog",
+    "works": [
+      {
+        "authorId": "author.lxiaosel1",
+        "backend": "dsh",
+        "category": "function",
+        "description": "连接B站账号后，按确认的完整计划阅读原视频采样画面和平台字幕，保存角色感想及可核对的进度；发表评论另行授权。",
+        "id": "ai-buddy.bilibili-companion",
+        "locales": {
+          "en": {
+            "description": "Independently built source and pinned package for AI Buddy2.0.2. Account connection and activity authorization are separate; installation alone starts no model or platform action.",
+            "name": "Bilibili Companion"
+          }
+        },
+        "name": "B站陪伴",
+        "packageName": "@ai-buddy/bilibili-companion",
+        "readme": "# B站陪伴 · AI Buddy Bilibili Companion\r\n\r\n<p align=\"center\">\r\n  <a href=\"https://github.com/lXiaoSel1/AI-Buddy-Bilibili/releases\"><img src=\"https://img.shields.io/github/v/release/lXiaoSel1/AI-Buddy-Bilibili?label=%E7%89%88%E6%9C%AC\" alt=\"版本\"></a>\r\n  <img src=\"https://img.shields.io/badge/%E9%9C%80%E8%A6%81-AI%20%E9%85%B1%202.0.2%2B-ff8fab\" alt=\"需要 AI 酱 2.0.2 或更新\">\r\n  <img src=\"https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%2F11%20x64-8a2be2\" alt=\"平台：Windows 10/11 x64\">\r\n  <a href=\"LICENSE.md\"><img src=\"https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF-Apache--2.0%20%2B%20Commons%20Clause-e05d44\" alt=\"许可：Apache-2.0 + Commons Clause\"></a>\r\n</p>\r\n\r\n**简体中文** · [English](#english)\r\n\r\n[AI 酱本体](https://github.com/lXiaoSel1/AI-Buddy) · **B站陪伴**（本仓库） · [QQ连接](https://github.com/lXiaoSel1/AI-Buddy-QQ) · [一起玩牌](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) · [语音](https://github.com/lXiaoSel1/AI-Buddy-Voice)\r\n\r\n**当前版本：2.0.16** · 需要 [AI 酱](https://github.com/lXiaoSel1/AI-Buddy) 2.0.2 或更新版本，建议用 2.0.7：更早的版本在部分线路上采集不到原视频分镜。这是 AI 酱的官方插件，在 AI 酱的 **扩展中心** 里安装，不用单独下载。\r\n\r\n让 AI 酱里的角色陪你看 B站视频。你给一个视频（或者让她按兴趣挑），她先列出完整的阅读计划，你确认后，她按固定间隔抽取的原视频画面和平台字幕把视频读完，写下自己的观察和观看笔记，之后聊天时也会记得。还可以预约每天的观看时间。发评论默认关闭，要另外授权。\r\n\r\n![B站陪伴的分镜总览：12 格抽帧拼图、阅读进度 38/38 和角色的观察（演示数据，画面来自 AI 酱自己的宣传片）](docs/images/bili-hero-storyboard-reading.webp)\r\n\r\n## 能做什么\r\n\r\n- **现在看**：输入视频编号（BV 号），或留空让她按兴趣挑一个；可以选一位或几位角色一起看。\r\n- **先看计划，再开始**：开始前列出要读的分 P、抽帧间隔、每段时长、帧数、拼图数、字幕条数和预计调用次数。你点确认后才开始，计划中途不会被改掉。\r\n- **按画面和字幕读完**：默认每 0.5 秒抽一帧、每 6 秒一段、每张拼图最多 12 帧，配上平台提供的字幕。读完的部分在分镜总览里能看到。\r\n- **写下观察**：每位角色写自己的感想和观看笔记，存进她的经历；看完后要不要主动跟你聊，可以选。\r\n- **预约**：每天的观看时间段和次数可以提前排好，她睡着时会等她醒来。\r\n- **观看记录**：每次看过的视频、她的总结和笔记都能回看，也能重新查看分镜。\r\n- **评论（默认关闭）**：单独授权后，她可以在每日额度内用你的账号发评论。\r\n\r\n## 快速上手\r\n\r\n需要：已经装好的 AI 酱 2.0.2 或更新版本、一个 B站账号，以及 AI 酱里配好的聊天模型。看画面需要模型支持读图。\r\n\r\n**1. 在扩展中心安装。** AI 酱左侧栏打开 **扩展中心 → 发现**，在「B站陪伴」右边点 **安装…**。安装页会列出插件要的每一项权限：① 核对要授予的权限（不想给的可以取消勾选）→ ② 点 **安装，只授予勾选的 N 项**。AI 酱会在同一流程里准备插件需要的组件（DSH 运行组件和 B站视频组件 FFmpeg），显示来源、大小和进度。装好后不会自动启用：在安装页点 **启用并连接 B站账号**（会接着进入下一步），或在 **已安装** 页打开它的开关。\r\n\r\n<img src=\"docs/images/bili-step-1-install-permissions.webp\" width=\"640\" alt=\"B站陪伴的安装页：① 要授予的权限清单 ② 「安装，只授予勾选的 11 项」按钮\">\r\n\r\n**2. 连接 B站账号。** 左侧栏点 **B站陪伴**，第一次打开会提示「先连接一个B站账号才能看」。点 ① **扫码连接**，AI 酱会打开 B站官方登录窗口：用手机 B站扫码，在手机上确认。也可以在 **扩展中心 → 账号连接** 里连接。账号凭据由 AI 酱加密保管，插件页面看不到；扫码本身不会发评论或调用模型。\r\n\r\n![B站陪伴首次打开：「先连接一个B站账号才能看」和 ① 扫码连接](docs/images/bili-step-2-connect-account.webp)\r\n\r\n**3. 选角色和视频，点「现在看」。** 在 **观看安排** 页的「现在看」里：① 选一起看的角色 → ② 输入视频编号（留空则按兴趣挑选）→ ③ 点 **现在看**。\r\n\r\n![观看安排：① 选择角色 ② 视频编号 ③ 现在看；下方是今天的额度和预约（演示数据）](docs/images/bili-watch-schedule.webp)\r\n\r\n**4. 核对阅读计划，确认开始。** 她不会马上开读，而是先给出「完整精读计划预览」：① 选 **当前P** 或 **全部P**，也可以单独勾选分 P → ② 需要的话改抽帧间隔和每段阅读时长 → 看一眼采样帧、拼图、阅读段、字幕条数和预计调用 → ③ 点 **确认整份计划并开始**。\r\n\r\n![完整精读计划预览：① 当前P / 全部P ② 抽帧间隔与每段阅读时长 ③ 确认整份计划并开始（演示数据）](docs/images/bili-step-3-plan-preview.webp)\r\n\r\n**5. 看她的观察。** 阅读进度走完后，右侧「角色的观察」里是她的感想；分镜总览可以按时间段翻看每张拼图和对应的字幕。（见本页顶部的图）\r\n\r\n## 设置\r\n\r\n<img src=\"docs/images/bili-settings.webp\" width=\"800\" alt=\"B站陪伴的设置页：观看、画面阅读、完整精读参数、评论四栏（截图里是插件默认值）\">\r\n\r\n设置页分为 观看、画面阅读、完整精读参数、评论，以及最下面的账号和模型。截图里显示的就是默认值：\r\n\r\n| 选项 | 默认 |\r\n|---|---|\r\n| 允许按安排自己去看 | 关。关着时预约不会自动开始，「现在看」和手动继续照常可用 |\r\n| 每天最多看 | 5 个，几位角色共用这个额度 |\r\n| 同时一起看的角色 | 1 位，最多 4 位 |\r\n| 被打断后 | 空闲时自动继续（另一个选项是「等我继续」） |\r\n| 看完后 | 她挑值得说的（另有「只记录」「聊天结束后说」） |\r\n| 预约自动阅读画面 | 关。新视频先生成完整计划等你确认 |\r\n| 抽帧间隔 / 每段阅读时长 | 0.5 秒 / 6 秒，每张拼图最多 12 帧；改了只影响新任务 |\r\n| 评论 | 不发表；每天最多发 3 条（按账号算） |\r\n| 阅读和感想用的模型 | 新的观看用参与角色自己的聊天连接，没有专属绑定时用默认聊天连接；不再单独选感想模型。已开始的阅读沿用原来的连接，没开始的预约在开始时才确定 |\r\n\r\n额度按账号算，几位角色共用，不会因为多加角色而变多。时间按应用时区，当天有效，过期不补；她睡着时会等她醒来。\r\n\r\n## 预约与观看记录\r\n\r\n在 **观看安排** 页点 **新增预约**，可以定好时间段、谁来看、看指定视频还是按兴趣挑。今天不想看，点 **今天不看**，或者关掉 **今天允许观看**。2.0.16 起，已经确认计划的阅读可以跨过午夜读完，也可以第二天接着读，额度记在开始那天；日期和时间段只限制自动开始。\r\n\r\n<img src=\"docs/images/bili-history.webp\" width=\"800\" alt=\"观看记录：一条看完的视频，有角色的总结和 4 条观看笔记（演示数据）\">\r\n\r\n**观看记录** 页列出看过的视频、谁看的、她的总结和观看笔记，可以点 **查看分镜** 回看，或点 **看视频** 打开原视频。\r\n\r\n## 评论（默认关闭）\r\n\r\n发评论和看视频是分开授权的。在设置的「评论」一栏选 **在每日额度内发表** 并保存，才会开始发。\r\n\r\n<img src=\"docs/images/bili-comment-settings.webp\" width=\"800\" alt=\"评论设置：选了「在每日额度内发表」后，发表方式默认「生成后直接发」，并提示评论会直接以你的账号公开发表（截图未保存）\">\r\n\r\n请注意：打开评论后，**发表方式默认是「生成后直接发」**，界面会提示「她写好的评论会直接以你的账号公开发表，不再逐条确认。」想每条先看一眼，改成 **先预览再发**。每天最多发 3 条，按账号算。只有拿到 B站返回的评论编号才算发出；结果不明的评论不会自动重发。她的私人观看笔记、和你的私聊内容不会写进公开评论。\r\n\r\n## 她读了什么、没读什么\r\n\r\n- **画面**：按计划里的间隔从原视频抽帧，拼成带编号的分镜图交给模型；拿不到原视频时会暂停，不会拿平台的预览图冒充。\r\n- **字幕**：读 B站提供的字幕（优先中文，其次 AI 中文字幕和其他中文字幕）。**不读弹幕，也不听声音**：插件没有语音识别，视频没有字幕时，台词部分记为未知。\r\n- **读完的标准**：计划里的每张拼图和每段字幕都要有成功的回执，才算读完；容量不够时会把一批拆小，不会丢掉画面或截掉结尾。\r\n- **出问题时**：缺少原视频、权限或模型能力（例如模型不能读图）时会暂停并说明原因，不会悄悄换模型。暂停、取消、换账号或换角色后，旧的执行作废；结果不明的请求不会自动重发。2.0.16 起，B站登录过期时阅读会暂停，提示「B站登录已过期，重新扫码后继续。」，不再悄悄改成只读标题和简介，暂停期间不调用模型；B站临时限制请求时另有说明，不当成登录过期。本体 2.0.13 起，处理视频或字幕超时的时候，已经做好的分镜和字幕会保留。从本体 2.0.7 起，视频地址、连接和分段响应的故障代码显示在「技术详情」。之前失败的观看记录会保留，更新后重新点「现在看」发起新的尝试。\r\n- 读完只说明这些材料都交给了模型并拿到了结果，**不保证她完全看懂**，也不保证她说的每件事都对。\r\n\r\n## 数据与权限\r\n\r\n- 必须连接 B站账号才能看。AI 酱不会替你注册账号，也不带任何账号或 Cookie。\r\n- 账号凭据由 AI 酱加密保存在本机，插件只拿到引用；凭据不会出现在插件页面、模型提示或日志里。\r\n- 观看记录、额度和兴趣按账号、角色和她的「人生」分开保存在本机。\r\n- 停用或退出时，插件会关掉连接和计时器。卸载默认保留观看历史和已经写进角色经历的内容。\r\n- 安装、升级或扫码都不会自动开始观看、发评论或调用模型。\r\n- 每次阅读都会调用你选的模型，模型服务可能收费；第三方服务的读图能力、上下文和计费信息可能不完整，插件不会去猜费用。\r\n\r\n## 已知限制\r\n\r\n- 用的是 B站的非官方接口，接口可能变化，不保证长期稳定。\r\n- 没有用真实 B站账号和真实模型做过“完整读完一个视频、再发评论”的验收；已有的检查用的是合成数据和测试服务，详见 [docs/VALIDATION.md](docs/VALIDATION.md)。\r\n- 没有语音识别：没字幕的视频，她只能看画面、标题和简介。\r\n\r\n## 技术说明\r\n\r\n插件包名 `@ai-buddy/bilibili-companion`，版本 2.0.16，需要 AI Buddy >= 2.0.2 和 DSH >= 0.2.1-rc.3，都只写下限。2.0.16 修了跨天阅读和登录过期的处理，桥接版本（^1.3.0）、合同、权限和数据格式都和 2.0.15 相同；数据 schema 为 1，minimumWriter 为 `0.1.0-dev.2`，旧版本不能写入新数据，恢复数据库也不会撤回已经发出的评论或已经记下的经历。默认值见 [`DEFAULTS.json`](plugins/bilibili-companion/DEFAULTS.json)，更新记录见 [CHANGELOG.md](CHANGELOG.md)。2.0.14 的变化另见 [2.0.14 发行说明](RELEASE-NOTES-2.0.14.md)。\r\n\r\n开发需要固定的 Node 24.21.0、npm 11.19.0 和 esbuild 0.28.2，在新的 checkout 里运行：\r\n\r\n~~~sh\r\nnpm ci\r\nnpm test\r\nnpm run build\r\nnpm run verify:artifacts\r\nnpm run repro\r\n~~~\r\n\r\n不需要宿主或另一个插件的源码。测试范围、复现方式和证据边界见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) 与 [docs/VALIDATION.md](docs/VALIDATION.md)。已经发布的包不会替换字节。\r\n\r\n## 许可与第三方\r\n\r\n源码公开，采用 Apache License 2.0 + Commons Clause（见 [LICENSE.md](LICENSE.md)）：可以免费使用、修改和转发，未经 lXiaoSel1 书面授权不得售卖。按 OSI 的定义，这是“源码公开”许可，不是“开源”许可。\r\n\r\n插件不打包第三方美术、视频内容、账号或运行组件。B站视频组件 FFmpeg 由 AI 酱在安装时从 Gyan 的固定发布版下载（GPLv3），本仓库不镜像它。第三方说明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。README 的截图来自独立的演示存档：账号、视频信息和观察文字都是演示数据，分镜画面取自 AI 酱自己的宣传片，没有登录真实账号，也没有调用真实模型。\r\n\r\n本插件与哔哩哔哩没有隶属或合作关系。\r\n\r\n---\r\n\r\n## English\r\n\r\n[AI Buddy app](https://github.com/lXiaoSel1/AI-Buddy) · **Bilibili Companion** (this repository) · [QQ Connect](https://github.com/lXiaoSel1/AI-Buddy-QQ) · [Card Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) · [Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice)\r\n\r\n**Version 2.0.16** · requires [AI Buddy](https://github.com/lXiaoSel1/AI-Buddy) 2.0.2 or later. Use 2.0.7 if you can: earlier versions can fail to get the storyboard from the original video on some CDN routes. It is an official AI Buddy plugin, installed from AI Buddy's **Extensions** center; there is nothing to download separately.\r\n\r\nA character in AI Buddy watches Bilibili videos with you. Give her a video (or let her pick one by interest). She first lays out the full reading plan, and after you confirm, she reads the video from frames sampled at a fixed interval from the original video plus the platform subtitles, then writes her own observations and viewing notes, which she remembers in later chats. Daily viewing times can be scheduled. Comments are off by default and need separate permission. The pictures above show the Chinese interface with demo data.\r\n\r\n### What it does\r\n\r\n- **Watch now**: enter a video ID (BV number) or leave it empty so she picks by interest; one or several characters can watch together.\r\n- **Plan first**: before starting she lists the parts, sampling interval, window length, frame, sheet and subtitle counts and the estimated number of model calls. Nothing starts until you confirm, and the plan does not change midway.\r\n- **Frames and subtitles**: by default one frame every 0.5 seconds, one window every 6 seconds and at most 12 frames per sheet, plus the platform subtitles. The storyboard shows what has been read.\r\n- **Observations**: each character writes her own impressions and notes into her experiences; you choose whether she brings it up afterwards.\r\n- **Schedules** set daily viewing windows and counts; she waits if she is asleep.\r\n- **History** keeps every video watched, with her summary and notes and the storyboard.\r\n- **Comments (off by default)**: with separate permission she can comment from your account within a daily limit.\r\n\r\n### Quick start\r\n\r\nYou need AI Buddy 2.0.2 or later, a Bilibili account and a chat model configured in AI Buddy. Reading frames needs a model that accepts images.\r\n\r\n1. **Install from Extensions**: in AI Buddy open **Extensions → Discover** and click **Install…** next to Bilibili Companion. The install page lists every permission: ① review them (untick any you do not want) → ② click **Install and grant N**. AI Buddy prepares the components the plugin needs in the same flow (the DSH runtime and the FFmpeg video component) and shows their source, size and progress. The plugin is not enabled automatically: click **Enable and connect** on the install page, or turn on its switch on the **Installed** tab.\r\n2. **Connect your Bilibili account**: click **Bilibili Companion** in the sidebar. The first visit asks you to connect an account. Click ① **Connect**; AI Buddy opens Bilibili's official login window. Scan it with the Bilibili mobile app and confirm on your phone. **Extensions → Accounts** works too. AI Buddy keeps the credentials encrypted and the plugin page never sees them; scanning alone never comments or calls a model.\r\n3. **Choose characters and a video**: under **Watch now**, ① pick who watches → ② enter a video ID (empty means pick by interest) → ③ click **Watch now**.\r\n4. **Check the plan and confirm**: she shows a complete-reading plan preview first. ① Choose the current part or all parts (or tick parts individually) → ② adjust the sampling interval and window length if you like → review the counts and estimated calls → ③ click the confirm button to start.\r\n5. **Read her observations**: when the progress bar completes, her impressions appear under the character's observations; the storyboard lets you page through every sheet and its subtitles by time range.\r\n\r\n### Settings and defaults\r\n\r\nWatching on schedule by herself: off (Watch now and manual resume still work). Daily watch limit: 5, shared by all characters. From 2.0.16 a reading whose plan you confirmed can finish after midnight or continue the next day, counted against the day it started; the date and time window only limit automatic starts. Characters watching together: 1 (up to 4). After an interruption: resume automatically when idle. After watching: she picks what is worth telling you. Automatic frame reading for scheduled videos: off. Sampling: 0.5 s / 6 s, at most 12 frames per sheet; changes only affect new tasks. Comments: off; at most 3 per day per account. New viewings use each watching character's own chat connection (the default chat connection when she has none), so there is no separate reflection model; readings already started keep their connection, and a scheduled viewing picks its connection when it starts. Characters are chosen under the account and model section. Limits count per account and reset daily in the app's time zone.\r\n\r\n### Comments\r\n\r\nComments are authorized separately from watching. They start only after you choose to post within the daily limit and save. **Once comments are on, the posting mode defaults to posting right after writing**, and the page warns that her comments will be published from your account without asking each time; switch to preview-first if you want to check every one. Only a comment ID returned by Bilibili counts as sent; comments with an unknown result are never resent automatically. Her private notes and your private chats never go into public comments.\r\n\r\n### What she reads and what she does not\r\n\r\n- **Frames** are sampled from the original video at the planned interval and assembled into numbered sheets. If the original video cannot be fetched, reading pauses; platform preview images are never passed off as samples.\r\n- **Subtitles** come from Bilibili (Chinese first, then AI Chinese and other Chinese tracks). **She does not read danmaku or listen to audio**: there is no speech recognition, so without subtitles the dialogue stays unknown.\r\n- **Finished** means every planned sheet and every subtitle segment has a successful receipt. Batches are split when capacity runs short; frames are never dropped and the ending is never cut.\r\n- **When something is missing** (the original video, a permission, or a model that can read images), reading pauses with a reason and never switches models quietly. Pausing, cancelling or changing account or character invalidates the old run; requests with an unknown result are not replayed. From 2.0.16, an expired Bilibili login pauses the reading and asks you to sign in again instead of quietly falling back to the title and description, and no model is called while it is paused; temporary request limits from Bilibili are reported separately and are not treated as an expired login. From AI Buddy 2.0.13, when video or subtitle processing times out, the sheets and subtitles already prepared are kept. From AI Buddy 2.0.7, media-address, connection and range errors appear under Technical details. Failed viewing records stay; after updating, choose **Watch now** for a new attempt.\r\n- Finishing means the material reached the model and came back with results; **it does not guarantee she understood everything** or that every statement is right.\r\n\r\n### Data and permissions\r\n\r\nA Bilibili account is required to watch. AI Buddy creates no account for you and ships no account or cookie. Credentials are encrypted by AI Buddy on this computer; the plugin only receives a reference, and credentials never appear in the plugin page, model prompts or logs. History, limits and interests are kept locally per account, character and life. Disabling or quitting closes connections and timers; uninstalling keeps history and the experiences already recorded by default. Installing, updating or scanning never starts watching, commenting or model calls. Every reading calls the model you chose, which may cost money; third-party image, context and billing metadata can be incomplete, and the plugin does not guess costs.\r\n\r\n### Known limitations\r\n\r\nIt uses unofficial Bilibili interfaces, which may change. A full real-account, real-model reading and commenting run has not been accepted; existing checks use synthetic data and test services (see [docs/VALIDATION.md](docs/VALIDATION.md)). There is no speech recognition.\r\n\r\n### Technical notes\r\n\r\nPackage `@ai-buddy/bilibili-companion` 2.0.16, requires AI Buddy >= 2.0.2 and DSH >= 0.2.1-rc.3, both lower bounds only. 2.0.16 fixes readings across midnight and expired logins; bridge version (^1.3.0), contract, permissions and data format are the same as 2.0.15; schema 1, minimumWriter `0.1.0-dev.2`. Development uses Node 24.21.0, npm 11.19.0 and esbuild 0.28.2: `npm ci`, `npm test`, `npm run build`, `npm run verify:artifacts`, `npm run repro`. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) and [docs/VALIDATION.md](docs/VALIDATION.md). See [CHANGELOG.md](CHANGELOG.md) for each version, and the [2.0.14 release notes](RELEASE-NOTES-2.0.14.md) for 2.0.14.\r\n\r\n### License and third parties\r\n\r\nSource-available under the Apache License 2.0 with the Commons Clause ([LICENSE.md](LICENSE.md)): free to use, modify and share, but not to sell without written permission from lXiaoSel1. Under the OSI definition this is source-available, not open source. The plugin bundles no third-party artwork, video content, accounts or runtime components; FFmpeg is downloaded by AI Buddy from a pinned Gyan release (GPLv3) and is not mirrored here. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). The README screenshots come from an independent demo profile: account, video details and observations are demo data, the storyboard frames come from AI Buddy's own promo video, and no real account or model was used. This plugin is not affiliated with Bilibili.\r\n",
+        "releases": [
+          {
+            "notes": "独立源码和固定版本安装包；需AI酱2.0.2。安装后单独连接账号并授权范围，不自动开始社交活动。",
+            "package": {
+              "backend": "dsh",
+              "capabilities": [
+                "social.context.read",
+                "activity.lease",
+                "activity.check",
+                "activity.finish",
+                "models.request",
+                "experience.append",
+                "proactive.offer",
+                "connections.request",
+                "ui.bubble",
+                "ui.registerPage",
+                "lifecycle.register"
+              ],
+              "compatibility": {
+                "app": "^2.0.2",
+                "bridge": "^1.3.0",
+                "dsh": "0.2.1-rc.3"
+              },
+              "dataSchemaVersion": 1,
+              "digestType": "tarball-sha256",
+              "exactVersion": "2.0.11",
+              "packageName": "@ai-buddy/bilibili-companion",
+              "sourceDigest": "aead41395474eb592e21e251d5d7a686d8a5a62371bf848038127c1baf2dba2a",
+              "spec": {
+                "kind": "tarball",
+                "value": "https://github.com/lXiaoSel1/AI-Buddy-Bilibili/releases/download/v2.0.11/ai-buddy-bilibili-companion-2.0.11.tgz"
+              }
+            },
+            "publishedAt": "2026-11-02T02:58:31.841Z",
+            "version": "2.0.11"
+          },
+          {
+            "locales": {
+              "en": {
+                "notes": "Publishes the accepted local 2.0.13 behavior: new viewings pin the character chat connection for reading, consolidation and reflection, including the batch lifecycle, response-wrapper and navigation fixes. Existing plans, unknown receipts, capabilities, contract and schema are preserved. This preparation changes only release identifiers and documentation."
+              }
+            },
+            "notes": "沿用已验收的本机 2.0.13：新观看按角色聊天连接固定阅读、汇总和感想，集中修复的执行失效、模型包装和页面导航处理一并公开。旧计划、未知回执、权限、合同与数据格式保留。本轮仅使用新版本及正式下载身份，不增加业务行为。",
+            "package": {
+              "backend": "dsh",
+              "capabilities": [
+                "social.context.read",
+                "activity.lease",
+                "activity.check",
+                "activity.finish",
+                "models.request",
+                "experience.append",
+                "proactive.offer",
+                "connections.request",
+                "ui.bubble",
+                "ui.registerPage",
+                "lifecycle.register"
+              ],
+              "compatibility": {
+                "app": "^2.0.2",
+                "bridge": "^1.3.0",
+                "dsh": "0.2.1-rc.3"
+              },
+              "dataSchemaVersion": 1,
+              "digestType": "tarball-sha256",
+              "exactVersion": "2.0.14",
+              "packageName": "@ai-buddy/bilibili-companion",
+              "sourceDigest": "e848b9802ecd88980328ea71ff47626d2cfd64cbfffd8af5b92944b110a791be",
+              "spec": {
+                "kind": "tarball",
+                "value": "https://github.com/lXiaoSel1/AI-Buddy-Bilibili/releases/download/v2.0.14/ai-buddy-bilibili-companion-2.0.14.tgz"
+              }
+            },
+            "publishedAt": "2026-11-09T00:29:05.950Z",
+            "version": "2.0.14"
+          },
+          {
+            "locales": {
+              "en": {
+                "notes": "Compatibility-only patch: AI Buddy >=2.0.2, DSH >=0.2.1-rc.3, Buddy bridge ^1.3.0. Runtime code, capabilities, contracts and data schemas are unchanged."
+              }
+            },
+            "notes": "兼容声明补丁：本体 >=2.0.2，DSH >=0.2.1-rc.3；Buddy bridge 保持 ^1.3.0。业务代码、权限、合同和数据格式沿用上一版。",
+            "package": {
+              "backend": "dsh",
+              "capabilities": [
+                "social.context.read",
+                "activity.lease",
+                "activity.check",
+                "activity.finish",
+                "models.request",
+                "experience.append",
+                "proactive.offer",
+                "connections.request",
+                "ui.bubble",
+                "ui.registerPage",
+                "lifecycle.register"
+              ],
+              "compatibility": {
+                "app": ">=2.0.2",
+                "bridge": "^1.3.0",
+                "dsh": ">=0.2.1-rc.3"
+              },
+              "dataSchemaVersion": 1,
+              "digestType": "tarball-sha256",
+              "exactVersion": "2.0.15",
+              "packageName": "@ai-buddy/bilibili-companion",
+              "sourceDigest": "2ae6372b0243a02b52c9b98fff41ad0e647483541cf66c10a645bc0a38a6c9b8",
+              "spec": {
+                "kind": "tarball",
+                "value": "https://github.com/lXiaoSel1/AI-Buddy-Bilibili/releases/download/v2.0.15/ai-buddy-bilibili-companion-2.0.15.tgz"
+              }
+            },
+            "publishedAt": "2026-11-09T20:10:20.960Z",
+            "version": "2.0.15"
+          },
+          {
+            "locales": {
+              "en": {
+                "notes": "Confirmed reading plans can continue across days. Expired logins pause reading and request sign-in; temporary request limits are reported separately. Capabilities, contract and data format are unchanged. Retaining prepared sheets and subtitles after a timeout requires AI Buddy 2.0.13."
+              }
+            },
+            "notes": "已确认的阅读计划可跨日继续；登录过期暂停并提示重新登录，临时请求限制单独提示。权限、合同和数据格式不变。超时保留分镜和字幕需本体2.0.13。",
+            "package": {
+              "backend": "dsh",
+              "capabilities": [
+                "social.context.read",
+                "activity.lease",
+                "activity.check",
+                "activity.finish",
+                "models.request",
+                "experience.append",
+                "proactive.offer",
+                "connections.request",
+                "ui.bubble",
+                "ui.registerPage",
+                "lifecycle.register"
+              ],
+              "compatibility": {
+                "app": ">=2.0.2",
+                "bridge": "^1.3.0",
+                "dsh": ">=0.2.1-rc.3"
+              },
+              "dataSchemaVersion": 1,
+              "digestType": "tarball-sha256",
+              "exactVersion": "2.0.16",
+              "packageName": "@ai-buddy/bilibili-companion",
+              "sourceDigest": "9d585ffc887f9a274cb7f321b514fb0b60b400a38665d5563d216f67fdc73336",
+              "spec": {
+                "kind": "tarball",
+                "value": "https://github.com/lXiaoSel1/AI-Buddy-Bilibili/releases/download/v2.0.16/ai-buddy-bilibili-companion-2.0.16.tgz"
+              }
+            },
+            "publishedAt": "2026-11-10T02:20:57.991Z",
+            "version": "2.0.16"
+          }
+        ],
+        "repositoryUrl": "https://github.com/lXiaoSel1/AI-Buddy-Bilibili",
+        "reviewsRepository": "lXiaoSel1/AI-Buddy-Bilibili",
+        "status": "published",
+        "tags": [
+          "official",
+          "social"
+        ]
+      },
+      {
+        "authorId": "author.lxiaosel1",
+        "backend": "dsh",
+        "category": "function",
+        "description": "按需准备固定官方NapCat组件并扫码连接，选择接管角色和联系人／群范围；默认不主动发言，主人工作权限独立验证。",
+        "id": "ai-buddy.qq-connect",
+        "locales": {
+          "en": {
+            "description": "Independently built source and pinned package for AI Buddy2.0.2. Account connection and activity authorization are separate; installation alone starts no model or platform action.",
+            "name": "QQ Connect"
+          }
+        },
+        "name": "QQ连接",
+        "packageName": "@ai-buddy/qq-connect",
+        "readme": "# QQ连接 · AI Buddy QQ Connect\r\n\r\n<p align=\"center\">\r\n  <a href=\"https://github.com/lXiaoSel1/AI-Buddy-QQ/releases\"><img src=\"https://img.shields.io/github/v/release/lXiaoSel1/AI-Buddy-QQ?label=%E7%89%88%E6%9C%AC\" alt=\"版本\"></a>\r\n  <img src=\"https://img.shields.io/badge/%E9%9C%80%E8%A6%81-AI%20%E9%85%B1%202.0.2%2B-ff8fab\" alt=\"需要 AI 酱 2.0.2 或更新\">\r\n  <img src=\"https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%2F11%20x64-8a2be2\" alt=\"平台：Windows 10/11 x64\">\r\n  <a href=\"LICENSE.md\"><img src=\"https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF-Apache--2.0%20%2B%20Commons%20Clause-e05d44\" alt=\"许可：Apache-2.0 + Commons Clause\"></a>\r\n</p>\r\n\r\n**简体中文** · [English](#english)\r\n\r\n[AI 酱本体](https://github.com/lXiaoSel1/AI-Buddy) · [B站陪伴](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · **QQ连接**（本仓库） · [一起玩牌](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) · [语音](https://github.com/lXiaoSel1/AI-Buddy-Voice)\r\n\r\n**当前版本：2.0.10** · 需要 [AI 酱](https://github.com/lXiaoSel1/AI-Buddy) 2.0.2 或更新版本。这是 AI 酱的官方插件，在 AI 酱的 **扩展中心** 里安装，不用单独下载。\r\n\r\n选一位 AI 酱里的角色接管你的 QQ，让她用自己的口吻回复你允许的好友和群。群里默认只在被 @ 或被引用回复时才说话。每条回复是否发出、是否已经记进她的记忆，都在 AI 酱里看得到。不需要打开终端，也不用填端口或 Token。\r\n\r\n![QQ连接的「聊天与工作」页：示例好友的会话，回复旁边标着已发送、已记忆、待补记和结果未知（演示数据，右侧一栏已裁掉）](docs/images/qq-hero-chats.webp)\r\n\r\n## 能做什么\r\n\r\n- **扫码连接**：点一下「扫码连接」，AI 酱自动准备连接组件并显示二维码，用手机 QQ 扫码确认。\r\n- **选接管角色**：QQ 里的接管者和 AI 酱当前陪你的角色是分开的，人生和身份也分开记；换人后，她会在每个会话的下一次回复里自我介绍。\r\n- **只回复你允许的人**：联系人和群分别勾选，默认谁都不选。群里可以设成「被 @ 或引用才回复」或「自然参与已有话题」；「安静时主动开话题」要另外打开。\r\n- **回复风格**：继承 / 简短 / 自然 / 详细，可以给整个 QQ 设一个默认，也可以给单个会话单独设。\r\n- **看得见每条回复的状态**：已发送、正在发送、结果未知、发送失败、已取消；记忆另外标着已记忆、待补记或需要核对。\r\n- **随时暂停或断开**：暂停自动回复、换一位角色、断开连接都在「账号与接管者」页。\r\n\r\n## 快速上手\r\n\r\n需要：已经装好的 AI 酱 2.0.2 或更新版本、一个 QQ 账号（手机上能扫码），以及 AI 酱里配好的聊天模型。\r\n\r\n**1. 在扩展中心安装。** AI 酱左侧栏打开 ① **扩展中心** → ② **发现**，在「QQ连接」右边点 ③ **安装…**，核对要授予的权限，点 **安装，只授予勾选的 N 项**。装好后不会自动启用：在安装页点 **启用并扫码登录**（会接着进入设置），或在 **已安装** 页打开它的开关。\r\n\r\n<img src=\"docs/images/qq-step-1-extension-center.webp\" width=\"620\" alt=\"扩展中心的「发现」页：① 扩展中心 ② 发现 ③ QQ连接的「安装…」按钮\">\r\n\r\n**2. 扫码连接 QQ 账号。** 左侧栏点 **QQ连接**，会进入 4 步设置（账号 → 接管角色 → 允许范围 → 启用），全部设好之前不会回复任何消息。第 1 步「用哪个 QQ 账号？」里点 ① **扫码连接**。\r\n\r\n![设置第 1 步「用哪个 QQ 账号？」：还没有已登录的 QQ 账号，① 扫码连接](docs/images/qq-step-2-connect-qq.webp)\r\n\r\n弹出的「连接 QQ 账号」窗口会依次显示：准备连接组件 → 手机扫码 → 手机上确认 → 完成。第一次连接时，AI 酱会从上游下载固定版本的连接组件（NapCat），之后显示二维码，用手机 QQ 扫码并确认即可。扫码本身不会自动发消息或调用模型，也不会读取你日常 QQ 的资料。\r\n\r\n<img src=\"docs/images/qq-step-3-qr-steps.webp\" width=\"560\" alt=\"「连接 QQ 账号」窗口顶部的四个步骤：准备连接组件、手机扫码、手机上确认、完成\">\r\n\r\n**3. 选谁来接管。** 第 2 步「谁来接管这个 QQ？」：① 点一位角色 → ② 点 **下一步：允许范围**。需要的话，打开「AI 酱启动时自动恢复这个账号和角色」，下次启动 AI 酱时就不用重新启用。\r\n\r\n![设置第 2 步：① 选择接管角色 ② 下一步：允许范围（演示数据）](docs/images/qq-step-4-choose-character.webp)\r\n\r\n**4. 选允许的联系人和群。** 第 3 步：① 勾选允许的联系人（可以搜索名字或 QQ 号，也可以按 QQ 号添加）→ 添加允许的群，② 给每个群选「什么时候说话」。默认谁都不选；群里默认只在被 @ 或被引用回复时说话。设好后，这些都能在 **允许的联系人与群** 页随时改。\r\n\r\n![允许的联系人与群：① 勾选联系人 ② 群里什么时候说话（演示的示例好友和示例群）](docs/images/qq-step-5-allow-list.webp)\r\n\r\n**5. 确认并启用。** 第 4 步「确认后启用」会列出账号、接管角色和允许范围，点 **确认并启用**。从这时起，她只回复启用之后收到的新消息。\r\n\r\n## 回复风格\r\n\r\n在 **账号与接管者** 或 **允许的联系人与群** 页点 **回复风格…**；单个会话在 **聊天与工作** 页点 **会话回复风格…**。\r\n\r\n<img src=\"docs/images/qq-reply-style.webp\" width=\"800\" alt=\"QQ 回复风格窗口：回复风格范围选「QQ 默认」，回复风格选「继承全局默认」，当前有效风格为自然\">\r\n\r\n- 可选 **继承 / 简短 / 自然 / 详细**；「继承」在 QQ 默认里写作「继承全局默认」，在单个会话里写作「继承 QQ 默认」。会话设置优先于 QQ 默认；QQ 默认可以继承 AI 酱通用设置里的「回复风格」（默认自然）。\r\n- 风格只管回复的篇幅，保留角色的口吻，不改变允许范围，也不会强行截断回复。\r\n\r\n## 会话与状态\r\n\r\n**聊天与工作** 页按会话列出收到的消息和她的回复，只能看、不能在这里发。每条回复旁边有两种状态：\r\n\r\n| 发送 | 含义 |\r\n|---|---|\r\n| 已发送 | QQ 已经接收这条回复。私聊里写着「发送成功不代表对方已读」，群聊里是「发送成功不代表有人看到」 |\r\n| 正在发送 | 还在发 |\r\n| 结果未知，等待核对 | 超时或断线，不确定是否发出；不会盲目补发 |\r\n| 发送失败 / 已取消 | 没有发出 |\r\n\r\n| 记忆 | 含义 |\r\n|---|---|\r\n| 已记忆 | 这次对话已经记进她的经历 |\r\n| 待补记 | 消息发出了，但记忆还没写好；点 **仅重试补记** 只补记忆，不会重发 QQ 消息，也不会再调用模型 |\r\n| 需要核对 | 需要你看一下 |\r\n\r\n**账号与接管者** 页显示谁在接管、允许了几位联系人和几个群、上次检查的时间，以及 **换一位角色…**、**暂停自动回复**、**断开连接…**。断开后不再收发消息；重新连接后也只处理新消息。2.0.10 起，打开了「AI 酱启动时自动恢复这个账号和角色」的话，连接意外断开时会自动重连：间隔逐次加长，状态显示「正在重新连接（第 n 次）」；连续 5 次没连上就停下，显示「连接断开了」，点 **重新连接** 再试。你自己点了断开、关掉了授权，或者换了账号和角色，都不会自动重连。\r\n\r\n<img src=\"docs/images/qq-account-status.webp\" width=\"800\" alt=\"账号与接管者：DeepSeek 正在接管演示 QQ 账号，运行中；下方是启动时自动恢复开关和账号信息（演示数据）\">\r\n\r\n## 使用规则与限制\r\n\r\n- **只处理新消息**：第一次连接和每次重连之后，只处理新收到的消息，不会补回或回复离线期间的消息，也不会读取 QQ 历史记录。\r\n- **群里**默认只在被 @ 或被引用回复时说话；「自然参与已有话题」和「安静时主动开话题」都要你自己打开。打开「安静时主动开话题」时会提醒你：判断要不要发言、构思话题和回复都可能消耗 tokens，即使最后没发言也可能有用量。\r\n- **主动私聊**默认关闭，可以在允许名单里打开「允许主动给这些联系人发私聊」。\r\n- **身份**：发消息的人、@ 的对象和引用内容都按 AI 酱核实过的 QQ 号认人，昵称只用来称呼。\r\n- **图片、链接、表情和卡片**能不能看懂，取决于你接的模型实际支持什么；不支持时会说明不知道，不会假装看懂了。**语音消息暂不支持**。\r\n- **模型**：她优先用接管角色在 AI 酱里绑定的聊天连接，没有绑定就按 AI 酱的默认连接；不会悄悄换模型。每条回复都会调用模型，模型服务可能收费。\r\n- **工作任务**：「聊天与工作」页右侧有一栏「可信主人的工作指令」，它需要另一个还没公开的工作插件，本版用不了；普通 QQ 聊天不受影响。扫码、选接管角色和允许名单都不等于授权她替你办工作任务。\r\n- 换账号或取消时，旧的草稿和迟到的回复会作废；同一条回复只发一次，不会拆句群发。\r\n- 2.0.10 起，改回复风格不会取消正在生成的回复；改允许名单、换连接或关掉授权，仍然会让旧回复作废。\r\n- 2.0.10 起，消息很多、模型又慢的时候，名单以外的消息先被过滤掉，不同会话互不等待，同一个会话仍按顺序回复；已经收下的消息先存在本机再处理。\r\n- 电脑时间和实际时间差 30 秒以上时可能收不到消息。电脑时间偏慢时，状态里会提示「电脑时间不准，可能收不到消息。」；偏快时不一定有提示。发现收不到消息，先同步 Windows 的时间。\r\n- 本体 2.0.13 起，AI 酱退出时会确认它自己启动的 NapCat 已经结束，不会去动别的 NapCat。\r\n- 没有用真实 QQ 账号做过“收到消息 → 模型回复 → 发回 QQ”的完整验收；已有的检查用的是合成数据和测试服务，详见 [docs/VALIDATION.md](docs/VALIDATION.md)。\r\n\r\n## 数据与隐私\r\n\r\n- AI 酱不会替你注册账号，也不带任何账号；登录状态、Cookie 和 Token 由 AI 酱加密保管，不会进入模型提示、插件页面、日志或插件包。\r\n- 消息、发送记录和她的经历都保存在本机，按账号、会话、角色和「人生」分开。\r\n- 回复会把对话内容发给接管角色使用的聊天连接。\r\n- 停用或正常退出时会关闭连接和监听。卸载默认保留消息历史和已经记下的经历。\r\n- 安装、更新或扫码都不会自动开始聊天、调用模型或接收工作任务。\r\n\r\n## 技术说明\r\n\r\n插件包名 `@ai-buddy/qq-connect`，版本 2.0.10，需要 AI Buddy >= 2.0.2 和 DSH >= 0.2.1-rc.3，都只写下限。2.0.10 加了断线重连，修了消息积压和设置变更的处理，桥接（^1.3.0）、合同和权限都和 2.0.9 相同；数据 schema 为 1，minimumWriter 为 `0.1.0-dev.2`，旧版本不能写入新数据，恢复数据库也不会撤回已经发出的消息。连接组件 NapCat 只在你点「扫码连接」时由 AI 酱从官方上游准备固定版本，本仓库不镜像、修改或捆绑 NapCat 或 QQ 客户端；已有手动 OneBot 配置的，可以在 **扩展中心 → 账号连接** 的「高级连接」里使用。默认值见 [`DEFAULTS.json`](plugins/qq-connect/DEFAULTS.json)，更新记录见 [CHANGELOG.md](CHANGELOG.md)。 2.0.8 修复了设置撤销和迟到回复之间的竞态，没有新增设置项或回复功能，见 [2.0.8 发行说明](RELEASE-NOTES-2.0.8.md)。\r\n\r\n开发需要固定的 Node 24.21.0、npm 11.19.0 和 esbuild 0.28.2，在新的 checkout 里运行：\r\n\r\n~~~sh\r\nnpm ci\r\nnpm test\r\nnpm run build\r\nnpm run verify:artifacts\r\nnpm run repro\r\n~~~\r\n\r\n不需要宿主或另一个插件的源码。测试范围、复现方式和证据边界见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) 与 [docs/VALIDATION.md](docs/VALIDATION.md)。已经发布的包不会替换字节。\r\n\r\n## 许可与第三方\r\n\r\n源码公开，采用 Apache License 2.0 + Commons Clause（见 [LICENSE.md](LICENSE.md)）：可以免费使用、修改和转发，未经 lXiaoSel1 书面授权不得售卖。按 OSI 的定义，这是“源码公开”许可，不是“开源”许可。\r\n\r\nNapCat 是第三方项目，适用它自己的许可，由 AI 酱在连接时从上游准备，不随本插件分发。第三方说明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。README 的截图来自独立的演示存档：QQ 账号、联系人、群和聊天内容都是演示数据（号码是示例值），没有登录真实账号，也没有调用真实模型；扫码窗口是在断网的隔离环境里拍的，只截了顶部的步骤，没有二维码。\r\n\r\n本插件与腾讯 QQ 没有隶属或合作关系。\r\n\r\n---\r\n\r\n## English\r\n\r\n[AI Buddy app](https://github.com/lXiaoSel1/AI-Buddy) · [Bilibili Companion](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · **QQ Connect** (this repository) · [Card Games](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) · [Voice](https://github.com/lXiaoSel1/AI-Buddy-Voice)\r\n\r\n**Version 2.0.10** · requires [AI Buddy](https://github.com/lXiaoSel1/AI-Buddy) 2.0.2 or later. It is an official AI Buddy plugin, installed from AI Buddy's **Extensions** center; there is nothing to download separately.\r\n\r\nChoose a character from AI Buddy to take over your QQ account and answer, in her own voice, the friends and groups you allow. In groups she speaks only when @-mentioned or replied to, by default. AI Buddy shows whether each reply was sent and whether it has been saved to her memory. No terminal, ports or tokens are needed. The pictures above show the Chinese interface with demo data.\r\n\r\n### What it does\r\n\r\n- **Connect by QR code**: click Connect; AI Buddy prepares the connection component and shows a QR code to scan with the QQ mobile app.\r\n- **Choose who takes over**: the QQ character is separate from the character currently with you in AI Buddy, with separate lives and personas; after a change she introduces herself in each conversation's next reply.\r\n- **Only the people you allow**: contacts and groups are allowed separately, and none are selected by default. A group can be set to reply only when @-mentioned or replied to, or to join ongoing topics naturally; starting topics when the group is quiet is a separate switch.\r\n- **Reply style**: Inherit, Brief, Natural or Detailed, as a QQ default or per conversation.\r\n- **Every reply's status is visible**: sent, sending, result unknown, failed or cancelled; memory is marked separately as remembered, pending or needs review.\r\n- **Pause or disconnect any time** from the account page.\r\n\r\n### Quick start\r\n\r\nYou need AI Buddy 2.0.2 or later, a QQ account you can scan with on your phone, and a chat model configured in AI Buddy.\r\n\r\n1. **Install from Extensions**: open ① **Extensions** → ② **Discover** and click ③ **Install…** next to QQ Connect, review the permissions and click **Install and grant N**. It is not enabled automatically: click **Enable and sign in** on the install page, or turn on its switch on the **Installed** tab.\r\n2. **Connect your QQ account**: click **QQ Connect** in the sidebar. A four-step setup follows (account → character → allow-list → enable), and nothing is answered until it is done. In step 1 click ① **Connect**. The connection window goes through preparing the component → scanning on the phone → confirming on the phone → done. On the first connection AI Buddy downloads a pinned version of the connection component (NapCat) from upstream, then shows the QR code. Scanning alone never sends messages or calls a model, and does not read your everyday QQ data.\r\n3. **Choose who takes over**: in step 2, ① click a character → ② click **Next: allow-list**. Turn on \"Resume this account and character when AI Buddy starts\" if you do not want to enable it again after each start.\r\n4. **Choose allowed contacts and groups**: in step 3, ① tick the contacts you allow (search by name or QQ number, or add by number) → add groups and ② choose when she speaks in each. Nobody is selected by default, and in groups she only speaks when @-mentioned or replied to. You can change all of this later on the allow-list tab.\r\n5. **Confirm and enable**: step 4 lists the account, character and allow-list; click **Confirm and enable**. From then on she only answers new messages received after enabling.\r\n\r\n### Reply style\r\n\r\nClick **Reply style…** on the account or allow-list tab, or the conversation reply style button on a conversation. Choose Inherit, Brief, Natural or Detailed. A conversation's setting overrides the QQ default, which can inherit the **Reply style** in AI Buddy's general settings (Natural by default). Style only controls length; she keeps her voice, the allow-list does not change and replies are never cut off.\r\n\r\n### Conversations and status\r\n\r\nThe conversations tab lists messages and her replies per conversation; it is read-only. Each reply has a send status: **sent** (QQ accepted it; in private chats this does not mean it was read, and in groups it does not mean anyone saw it), sending, **result unknown** (timed out or disconnected; never resent blindly), failed or cancelled. Memory is marked **remembered**, **pending** (the message went out but the memory is not written yet; **Retry memory only** writes the memory without resending to QQ or calling the model again) or needs review. The account tab shows who is in charge, how many contacts and groups are allowed and the last check, plus **Change character…**, **Pause replies** and **Disconnect…**. Nothing is sent or received while disconnected, and after reconnecting only new messages are handled.\r\n\r\n### Rules and limitations\r\n\r\n- **New messages only**: after the first connection and every reconnect she handles only newly received messages; nothing from offline periods is answered and QQ history is not read.\r\n- **Groups**: by default she speaks only when @-mentioned or replied to. Joining topics naturally and starting topics when quiet are your choice; the latter warns that deciding whether to speak, planning a topic and replying can all use tokens, even if she ends up silent.\r\n- **Proactive private messages** are off by default and can be allowed on the allow-list.\r\n- **Identity**: senders, mentions and quoted content are identified by QQ numbers verified by AI Buddy; nicknames are only used to address people.\r\n- **Images, links, stickers and cards** are understood only as far as your model actually supports them; otherwise she says she does not know. **Voice messages are not supported yet.**\r\n- **Model**: she uses the chat connection bound to the character in AI Buddy, or AI Buddy's default; models are never switched quietly. Every reply calls the model, which may cost money.\r\n- **Work tasks**: the conversations tab has a side panel for trusted-owner work instructions. It needs another plugin that has not been released, so it is unavailable in this version; ordinary QQ chat is unaffected. Scanning, choosing a character and the allow-list do not authorize work tasks.\r\n- Changing accounts or cancelling discards old drafts and late replies; each reply is sent once and never split into a broadcast.\r\n- **Reconnecting** (from 2.0.10): with \"restore this account and character when AI Buddy starts\" turned on, an unexpected disconnect is retried automatically with growing intervals and the status shows \"Reconnecting (attempt n)\". After 5 failed attempts it stops and you can reconnect by hand. A disconnect you asked for, a revoked authorization or a changed account or character is never reconnected automatically.\r\n- From 2.0.10, changing the reply style no longer cancels replies in progress; changing the allow-list, the connection or the authorization still invalidates old replies.\r\n- From 2.0.10, when many messages arrive and the model is slow, messages from outside the allow-list are filtered first, conversations do not wait for each other while each conversation still answers in order, and accepted messages are stored locally before they are processed.\r\n- When the computer clock is more than 30 seconds off, messages may not arrive. A slow clock shows a clock warning in the status; a fast clock may show nothing. If messages stop arriving, sync the Windows clock first.\r\n- From AI Buddy 2.0.13, quitting AI Buddy makes sure the NapCat instance it started has ended, and never touches any other NapCat.\r\n- A real QQ inbound → model → outbound run has not been accepted; existing checks use synthetic data and test services (see [docs/VALIDATION.md](docs/VALIDATION.md)).\r\n\r\n### Data and privacy\r\n\r\nAI Buddy creates no account for you and ships none. Login state, cookies and tokens are encrypted by AI Buddy and never enter model prompts, plugin pages, logs or the package. Messages, send records and her experiences stay on this computer, kept per account, conversation, character and life. Replies send the conversation to the character's chat connection. Disabling or quitting closes the connection and listeners; uninstalling keeps history and recorded experiences by default. Installing, updating or scanning never starts chatting, model calls or work tasks.\r\n\r\n### Technical notes\r\n\r\nPackage `@ai-buddy/qq-connect` 2.0.10, requires AI Buddy >= 2.0.2 and DSH >= 0.2.1-rc.3, both lower bounds only. 2.0.10 adds automatic reconnection and fixes backlog and settings-change handling; bridge (^1.3.0), contract and permissions are the same as 2.0.9; schema 1, minimumWriter `0.1.0-dev.2`. NapCat is prepared by AI Buddy from its official upstream, pinned, only when you click Connect; this repository does not mirror, modify or bundle NapCat or the QQ client. An existing manual OneBot setup can be used under the advanced connection in **Extensions → Accounts**. Development uses Node 24.21.0, npm 11.19.0 and esbuild 0.28.2: `npm ci`, `npm test`, `npm run build`, `npm run verify:artifacts`, `npm run repro`. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) and [docs/VALIDATION.md](docs/VALIDATION.md). 2.0.8 fixes a race between revoking settings and late replies and adds no new settings or reply features; see the [2.0.8 release notes](RELEASE-NOTES-2.0.8.md).\r\n\r\n### License and third parties\r\n\r\nSource-available under the Apache License 2.0 with the Commons Clause ([LICENSE.md](LICENSE.md)): free to use, modify and share, but not to sell without written permission from lXiaoSel1. Under the OSI definition this is source-available, not open source. NapCat is a third-party project under its own license, prepared by AI Buddy at connection time and not distributed with this plugin; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). The README screenshots come from an independent demo profile: the QQ account, contacts, groups and chats are demo data (the numbers are examples), and no real account or model was used. The connection window was captured offline in an isolated environment and only its step header is shown, with no QR code. This plugin is not affiliated with Tencent QQ.\r\n",
+        "releases": [
+          {
+            "notes": "独立源码和固定版本安装包；需AI酱2.0.2。安装后单独连接账号并授权范围，不自动开始社交活动。",
+            "package": {
+              "backend": "dsh",
+              "capabilities": [
+                "social.context.read",
+                "activity.lease",
+                "activity.check",
+                "activity.finish",
+                "models.request",
+                "experience.append",
+                "connections.open",
+                "connections.events",
+                "connections.request",
+                "connections.close",
+                "ui.registerPage",
+                "lifecycle.register",
+                "proactive.offer",
+                "proactive.claim",
+                "search.native",
+                "owner.work.propose",
+                "owner.work.read",
+                "owner.work.approve",
+                "owner.work.cancel"
+              ],
+              "compatibility": {
+                "app": "^2.0.2",
+                "bridge": "^1.3.0",
+                "dsh": "0.2.1-rc.3"
+              },
+              "dataSchemaVersion": 1,
+              "digestType": "tarball-sha256",
+              "exactVersion": "2.0.6",
+              "packageName": "@ai-buddy/qq-connect",
+              "sourceDigest": "03b01fb809b8153bdc62a9c51a6316d3b48ab848e49374d8376c56e1679c75b5",
+              "spec": {
+                "kind": "tarball",
+                "value": "https://github.com/lXiaoSel1/AI-Buddy-QQ/releases/download/v2.0.6/ai-buddy-qq-connect-2.0.6.tgz"
+              }
+            },
+            "publishedAt": "2026-11-02T02:58:31.841Z",
+            "version": "2.0.6"
+          },
+          {
+            "locales": {
+              "en": {
+                "notes": "Publishes the accepted local 2.0.7 settings-revocation and asynchronous-reply race fix. Existing records, delivery receipts, authorization boundaries, capabilities, contract and schema are preserved. This preparation changes only release identifiers and documentation."
+              }
+            },
+            "notes": "沿用已验收的本机 2.0.7，公开设置撤销与异步回复竞态修复。旧记录、发送回执、授权边界、权限、合同与数据格式保持原值。本轮仅使用新版本及正式下载身份，不增加业务行为。",
+            "package": {
+              "backend": "dsh",
+              "capabilities": [
+                "social.context.read",
+                "activity.lease",
+                "activity.check",
+                "activity.finish",
+                "models.request",
+                "experience.append",
+                "connections.open",
+                "connections.events",
+                "connections.request",
+                "connections.close",
+                "ui.registerPage",
+                "lifecycle.register",
+                "proactive.offer",
+                "proactive.claim",
+                "search.native",
+                "owner.work.propose",
+                "owner.work.read",
+                "owner.work.approve",
+                "owner.work.cancel"
+              ],
+              "compatibility": {
+                "app": "^2.0.2",
+                "bridge": "^1.3.0",
+                "dsh": "0.2.1-rc.3"
+              },
+              "dataSchemaVersion": 1,
+              "digestType": "tarball-sha256",
+              "exactVersion": "2.0.8",
+              "packageName": "@ai-buddy/qq-connect",
+              "sourceDigest": "a443f8d1fc5a0d044835b7b1f30b2ee186f06eb80b5082708c43a0628cf5e866",
+              "spec": {
+                "kind": "tarball",
+                "value": "https://github.com/lXiaoSel1/AI-Buddy-QQ/releases/download/v2.0.8/ai-buddy-qq-connect-2.0.8.tgz"
+              }
+            },
+            "publishedAt": "2026-11-09T00:29:05.950Z",
+            "version": "2.0.8"
+          },
+          {
+            "locales": {
+              "en": {
+                "notes": "Compatibility-only patch: AI Buddy >=2.0.2, DSH >=0.2.1-rc.3, Buddy bridge ^1.3.0. Runtime code, capabilities, contracts and data schemas are unchanged."
+              }
+            },
+            "notes": "兼容声明补丁：本体 >=2.0.2，DSH >=0.2.1-rc.3；Buddy bridge 保持 ^1.3.0。业务代码、权限、合同和数据格式沿用上一版。",
+            "package": {
+              "backend": "dsh",
+              "capabilities": [
+                "social.context.read",
+                "activity.lease",
+                "activity.check",
+                "activity.finish",
+                "models.request",
+                "experience.append",
+                "connections.open",
+                "connections.events",
+                "connections.request",
+                "connections.close",
+                "ui.registerPage",
+                "lifecycle.register",
+                "proactive.offer",
+                "proactive.claim",
+                "search.native",
+                "owner.work.propose",
+                "owner.work.read",
+                "owner.work.approve",
+                "owner.work.cancel"
+              ],
+              "compatibility": {
+                "app": ">=2.0.2",
+                "bridge": "^1.3.0",
+                "dsh": ">=0.2.1-rc.3"
+              },
+              "dataSchemaVersion": 1,
+              "digestType": "tarball-sha256",
+              "exactVersion": "2.0.9",
+              "packageName": "@ai-buddy/qq-connect",
+              "sourceDigest": "807800abcdf3465dc6f354f92adb180ef639bed6706b5c804e34c39fef986219",
+              "spec": {
+                "kind": "tarball",
+                "value": "https://github.com/lXiaoSel1/AI-Buddy-QQ/releases/download/v2.0.9/ai-buddy-qq-connect-2.0.9.tgz"
+              }
+            },
+            "publishedAt": "2026-11-09T20:10:20.960Z",
+            "version": "2.0.9"
+          },
+          {
+            "locales": {
+              "en": {
+                "notes": "Authorized restore-on-start connections retry unexpected disconnects with a limit. Accepted messages are saved before processing and conversations have separate queues. Reply-style edits preserve replies in progress; allow-list, connection and authorization changes still invalidate them. Capabilities, contract and data format are unchanged."
+              }
+            },
+            "notes": "获准自动恢复的连接断线后有限重连；积压消息按会话隔离并先保存。修改回复风格保留在途回复；名单、连接和授权变更仍使旧回复失效。权限、合同和数据格式不变。",
+            "package": {
+              "backend": "dsh",
+              "capabilities": [
+                "social.context.read",
+                "activity.lease",
+                "activity.check",
+                "activity.finish",
+                "models.request",
+                "experience.append",
+                "connections.open",
+                "connections.events",
+                "connections.request",
+                "connections.close",
+                "ui.registerPage",
+                "lifecycle.register",
+                "proactive.offer",
+                "proactive.claim",
+                "search.native",
+                "owner.work.propose",
+                "owner.work.read",
+                "owner.work.approve",
+                "owner.work.cancel"
+              ],
+              "compatibility": {
+                "app": ">=2.0.2",
+                "bridge": "^1.3.0",
+                "dsh": ">=0.2.1-rc.3"
+              },
+              "dataSchemaVersion": 1,
+              "digestType": "tarball-sha256",
+              "exactVersion": "2.0.10",
+              "packageName": "@ai-buddy/qq-connect",
+              "sourceDigest": "c58110307866f15a309bbb9ad2839e521ea61caf897bc7666e0353f582545a6d",
+              "spec": {
+                "kind": "tarball",
+                "value": "https://github.com/lXiaoSel1/AI-Buddy-QQ/releases/download/v2.0.10/ai-buddy-qq-connect-2.0.10.tgz"
+              }
+            },
+            "publishedAt": "2026-11-10T02:20:57.991Z",
+            "version": "2.0.10"
+          }
+        ],
+        "repositoryUrl": "https://github.com/lXiaoSel1/AI-Buddy-QQ",
+        "reviewsRepository": "lXiaoSel1/AI-Buddy-QQ",
+        "status": "published",
+        "tags": [
+          "official",
+          "social"
+        ]
+      },
+      {
+        "authorId": "author.lxiaosel1",
+        "backend": "dsh",
+        "category": "function",
+        "description": "和 AI 酱一起玩斗地主和德州扑克，支持暂停、续玩及回放。需要 AI 酱 2.0.4 或更新的兼容版本。",
+        "id": "ai-buddy.card-games",
+        "locales": {
+          "en": {
+            "description": "Play Dou Dizhu and Texas Hold'em with AI Buddy. Pause, resume, or review saved games. Requires AI Buddy 2.0.4 or a later compatible version.",
+            "name": "Card Games"
+          }
+        },
+        "name": "一起玩牌",
+        "packageName": "@ai-buddy/card-games",
+        "readme": "# 一起玩牌 · AI Buddy Card Games\n\n<p align=\"center\">\n  <a href=\"https://github.com/lXiaoSel1/AI-Buddy-Card-Games/releases\"><img src=\"https://img.shields.io/github/v/release/lXiaoSel1/AI-Buddy-Card-Games?label=%E7%89%88%E6%9C%AC\" alt=\"版本\"></a>\n  <img src=\"https://img.shields.io/badge/%E9%9C%80%E8%A6%81-AI%20%E9%85%B1%202.0.4%2B-ff8fab\" alt=\"需要 AI 酱 2.0.4 或更新\">\n  <img src=\"https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%2F11%20x64-8a2be2\" alt=\"平台：Windows 10/11 x64\">\n  <a href=\"LICENSE.md\"><img src=\"https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF-Apache--2.0%20%2B%20Commons%20Clause-e05d44\" alt=\"许可：Apache-2.0 + Commons Clause\"></a>\n</p>\n\n**简体中文** · [English](#english)\n\n[AI 酱本体](https://github.com/lXiaoSel1/AI-Buddy) · [B站陪伴](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ连接](https://github.com/lXiaoSel1/AI-Buddy-QQ) · **一起玩牌**（本仓库） · [语音](https://github.com/lXiaoSel1/AI-Buddy-Voice)\n\n**当前版本：1.1.5** · 需要 [AI 酱](https://github.com/lXiaoSel1/AI-Buddy) 2.0.4 或更新版本，建议用 2.0.5 或更新版本：在 2.0.4 里，这个页面和 B站、QQ 页面切换时可能卡在「启动中」。这是 AI 酱的官方插件，在 AI 酱的 **扩展中心** 里安装，不用单独下载。\n\n和 AI 酱里的角色打斗地主和德州扑克。她们坐在牌桌后面，用各自绑定的模型决定每一步，会换表情，也可能说一句。规则和结算由 AI 酱本体负责，模型只提出行动，不合法的行动不会执行。\n\n![十人德州牌桌：顶排角色立绘、两端圆形头像、公共牌，轮到端位的角色时她在右下角现身（演示数据）](docs/images/texas-ten-seats.webp)\n\n## 能玩什么\n\n- **斗地主**：三人一桌，你和两位角色。叫地主、抢地主、普通加倍、出牌，炸弹和王炸都有。底分 1，倍率来自抢地主、炸弹、王炸、春天和加倍，每位农民封顶 16。\n- **德州扑克**：2 到 10 人，盲注 1/2 或 2/5，无限注，支持边池。你的带入至少 20，AI 默认带 200。两手之间可以补筹，也可以调整下一手的座位。\n- **音乐和语音**：大厅、斗地主和德州各有背景音乐，牌桌上有音效（1.1.0 起）。装了 AI 酱的[语音插件](https://github.com/lXiaoSel1/AI-Buddy-Voice)后，她们会在牌桌上把台词说出来（需要 AI 酱 2.0.9）。\n\n## 快速上手\n\n1. 装好 AI 酱 2.0.5 或更新版本，并给要上桌的角色配好聊天模型。\n2. 左侧栏打开 **扩展中心 → 发现**，在「一起玩牌」右边点 **安装…**，确认四项权限后启用。\n3. 打开侧栏 **插件** 里的「一起玩牌」，大厅里选斗地主或德州。\n4. 选牌友，点 **开始发牌**。斗地主每人至少要有 32 可用积分。\n5. 轮到角色时点 **让 X 出牌**，或打开顶栏的 **AI 自动行动**。这个开关只在本次页面有效，刷新后关闭。\n6. （可选）想听她们说话：在 AI 酱 2.0.9 里装好语音插件并打开语音，见[语音插件的快速上手](https://github.com/lXiaoSel1/AI-Buddy-Voice#快速上手)。\n\n![大厅：左边是当前陪伴角色，右边是斗地主和德州两个入口（真实窗口，演示存档）](docs/images/lobby.webp)\n\n## 牌桌上有什么\n\n**斗地主**：发牌时牌从桌中央发给三家，你的手牌按大王、小王、2、A 到 3 自动排好。打完后先亮牌：两位角色的剩余手牌翻开摊在桌上，你点 **继续** 才看结算。\n\n| 发牌 | 出牌 | 亮牌 |\n|---|---|---|\n| ![发牌：手牌依次落到排好序的位置](docs/images/ddz-deal.webp) | ![出牌：倍率在顶部，底牌下方是两位角色](docs/images/ddz-playing.webp) | ![亮牌：两位角色的剩余手牌摊在桌上，中间是继续按钮](docs/images/ddz-reveal.webp) |\n\n**德州**：公共牌一张张翻开，翻牌 3 张，转牌和河牌各 1 张。全下时依次跑完五张，再出牌型和结算。人多时顶排角色在轮到她时站起来，两端的角色从右下角现身。\n\n| 行动条 | 摊牌结果 |\n|---|---|\n| ![行动条：加注滑杆、最小、半池、一池和 ALL IN 快捷项，下面是弃牌、跟注和加注](docs/images/texas-actions.webp) | ![摊牌：公共牌下方写着赢家和牌型，赢家亮起](docs/images/texas-showdown.webp) |\n\n**其他**：\n\n- **大场面演出**：斗地主的地主、飞机、炸弹、王炸、春天、反春天，德州的 ALL IN 和牌型都有演出，放的是打出这手的人。\n- **表情和台词**：每步换表情。说不说话由模型决定，一句最多 40 字，不会说出手牌。\n- **桌聊**：可以和在座的角色聊天。桌聊是公开的，不包含任何人的隐藏手牌，也不算出牌指令。\n- **德州回放和复盘**：结算后可以看这手牌的全部底牌，也可以请某位角色复盘。斗地主没有单独的回放。\n- **暂停和续玩**：牌局自动保存，随时暂停，下次从大厅继续。牌局中途改了某位角色的模型连接（比如重新填了 Key），牌桌会暂停并说明「这位角色的模型连接改过了。」：点 **用现在的连接继续** 接着打这一手，或者点 **作废这一手**，这一手不算输赢，押上的积分全部退回（需要 1.1.5 和本体 2.0.13）。\n- **声音**：大厅、斗地主和德州各有一首循环的背景音乐。德州有人全下、斗地主有人只剩 1–2 张牌时，换成紧张的曲子，结算后牌桌音乐从原来的位置接着放。发牌、翻牌、筹码和轮到你时有提示音；地主、飞机、炸弹、王炸和春天有各自的音效（反春天用春天的音效），斗地主结算按你自己的胜负播放对应音效。德州你赢下底池时是筹码声，没有专门的胜负音效。\n- **语音**：开着 AI 酱的语音、准备好引擎并配好角色声音时，她们会用合成语音把这一步的台词说出来。牌桌上的文字等声音开始再显示，最多等 15 秒；声音没来或出错时文字照常显示，免得牌局一直等。\n- **声音菜单**：顶栏的喇叭按钮可以全部静音，或分别调音乐和音效的音量；用 AI 酱 2.0.9 时还会多一条语音音量。设置保存在本机的插件资料里。\n\n<img src=\"docs/images/card-games-sound-menu.webp\" width=\"349\" alt=\"牌桌的声音菜单：全部静音，音乐 40、音效 60、语音 80 三条音量，语音下面写着「她们喊 All in、三条」（演示数据）\">\n\n- **主题和窗口**：牌背和牌桌跟随 11 套主题。页面嵌在主窗口里，随窗口缩放，也可以单独开窗口。系统开了「减少动态效果」时，动画会简化。\n\n## 积分和好感\n\n- 两款游戏共用 AI 酱的钱包。积分只用于游戏内，没有现金价值。\n- 角色有自己的积分。余额低于 100 时，开桌或开始下一局会补到 200，每位角色每天最多 3 次。\n- 斗地主开桌时先预留 32 积分，这不是入场费，结算后按实际输赢计算。德州的带入在离桌时收回。\n- 和同一位角色在同一种玩法里每打完 3 局，好感 +1。\n- 结算后点 **离开** 回到大厅。也可以预约本局后离开，打完再走。\n\n## AI 怎么出牌\n\n- 每位角色用自己绑定的模型，每一步是一次模型请求，会消耗你配置的模型额度。换绑定从下一局或下一手开始生效。\n- 模型以赢牌为目标，性格只影响打法和台词。它能看到自己的手牌和公开信息，看不到别人的手牌。\n- 不合法的行动会退回让模型重答，最多 2 次；还不行就暂停牌局，不会替她随便出牌。\n- 等待时能看到是在排队、思考，还是在重答。超过 30 秒会提示，你可以继续等，也可以取消。\n- 连续 120 秒收不到模型的数据算超时，牌局会暂停，恢复后可以重新请求。取消不算失败，牌局继续。\n\n## 数据与权限\n\n安装时要确认四项权限：\n\n| 权限 | 用途 |\n|---|---|\n| 牌桌 | 开桌、行动、暂停、补筹、离桌 |\n| 模型 | 用角色绑定的模型决定她的行动 |\n| 桌聊 | 公开桌聊和回复 |\n| 复盘 | 查看已结算的德州手牌，请角色复盘 |\n\n牌局、积分和好感都存在你本机的 AI 酱里。插件页面不能直接读数据库，也不能改积分，只能发出牌桌操作，由本体校验后执行。隐藏手牌只在结算后公开：德州是摊牌和回放，斗地主是亮牌。\n\n## 已知限制\n\n- 需要 AI 酱 2.0.4 或更新版本。旧版本会提示需要升级。\n- 流程用合成模型在真实窗口里走通过，包括官方安装和完整牌局。真实模型打得好不好、台词是否合适、要等多久，取决于你接的模型，没有做过完整验收。\n- 斗地主没有单独的回放，也没有练习桌。\n- 牌桌语音需要 AI 酱 2.0.9 和语音插件；语音音量条只在 AI 酱 2.0.9 及以上显示。声音迟迟不来时文字照常显示的 15 秒等待上限，还要按实际电脑校准。\n- 只支持 Windows 10/11 x64。\n\n## 技术说明\n\n插件包名 `@ai-buddy/card-games`，版本 1.1.5，需要 AI 酱 2.0.4 或更新版本、DSH 0.2.1-rc.3 或更新版本（都只写下限），以及本体的 `voice-games-v1` 能力。这个仓库包含插件源码，页面入口 `plugins/card-games/src/client`，规则在 `plugins/card-games/src/rules`。积分、结算、牌局存档和模型调用在 [AI 酱本体](https://github.com/lXiaoSel1/AI-Buddy)里。插件包里没有私人声线或账号；语音由 AI 酱和你装的语音插件提供。各版本的变化见 [1.1.3 发行说明](RELEASE-NOTES-1.1.3.md)。\n\n## 许可与第三方\n\n源码公开，采用 Apache-2.0 + Commons Clause，见 [LICENSE.md](LICENSE.md)。可以免费使用、修改和分享，不能出售。素材和字体的来源与条件见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)：人物牌以 AI 酱现有角色作参考，适用这些角色美术的条件。\n\n---\n\n## English\n\n**Version 1.1.5** · requires [AI Buddy](https://github.com/lXiaoSel1/AI-Buddy) 2.0.4 or later. Use 2.0.5 or later if you can: in 2.0.4 this page can stick on \"Starting\" when you switch from the Bilibili or QQ page. It is an official AI Buddy plugin, installed from the **Extensions** center, so there is nothing to download separately.\n\nPlay Dou Dizhu and Texas Hold'em with your AI Buddy characters. They sit behind the table, use their own bound models to decide each move, change expressions and sometimes say a line. The app handles rules and settlement. A model can only propose a move, and an illegal move is never played.\n\n### What you can play\n\n- **Dou Dizhu**: three players, you and two characters. Calling, robbing, ordinary doubling and playing, with bombs and the rocket. Base score 1. The multiplier comes from robbing, bombs, the rocket, spring and doubling, capped at 16 per farmer.\n- **Texas Hold'em**: 2 to 10 players, blinds 1/2 or 2/5, no limit, with side pots. Your buy-in is at least 20, and AI players bring 200 by default. You can top up and change next-hand seats between hands.\n- **Music and voice**: the lobby, Dou Dizhu and Hold'em each have music, and the table has sound effects (from 1.1.0). With AI Buddy's [voice plugins](https://github.com/lXiaoSel1/AI-Buddy-Voice) installed, the characters speak their lines at the table (needs AI Buddy 2.0.9).\n\n### Quick start\n\n1. Install AI Buddy 2.0.5 or later and give the characters you want at the table a chat model.\n2. Open **Extensions → Discover**, click **Install…** next to Card Games, confirm the four permissions and enable it.\n3. Open Card Games under **Plugins** in the sidebar and pick a game in the lobby.\n4. Pick your opponents and click **Deal**. Dou Dizhu needs at least 32 available points per player.\n5. On a character's turn, click **Ask X to play**, or turn on **AI auto** in the top bar. That switch lasts until the page is refreshed.\n6. (Optional) To hear them talk, install a voice plugin in AI Buddy 2.0.9 and turn voice on; see the [voice plugin guide](https://github.com/lXiaoSel1/AI-Buddy-Voice#english).\n\n### At the table\n\n**Dou Dizhu**: cards are dealt from the middle of the table, and your hand sorts itself from the jokers and 2 down to 3. After the last play the characters' remaining cards are turned face up, and the results appear only after you click **Continue**.\n\n**Texas Hold'em**: board cards turn over in order, three on the flop and one each on the turn and river. An all-in runs out street by street before the hand ranking and results. At a full table, a top-row character stands up on her turn, and an end-seat character appears at the lower right.\n\n**Also**:\n\n- **Big moments**: landlord, plane, bomb, rocket, spring and counter-spring in Dou Dizhu, ALL IN and hand rankings in Hold'em, showing whoever played it.\n- **Expressions and lines**: expressions change on every move. The model decides whether to speak, in 40 characters at most, and never names hidden cards.\n- **Table chat**: public chat with the seated characters. It contains nobody's hidden cards and never counts as a move.\n- **Hold'em replay and review**: after settlement you can see every hole card of that hand and ask a character to review it. Dou Dizhu has no separate replay.\n- **Pause and resume**: games save automatically, and you can resume from the lobby. If a character's model connection changes during a hand (for example the key was entered again), the table pauses and says \"This character’s model connection has changed.\": choose **Continue with the current connection** to finish the hand, or **Void this hand**, which counts as neither a win nor a loss and returns all the points put in (needs 1.1.5 and AI Buddy 2.0.13).\n- **Sound**: the lobby, Dou Dizhu and Hold'em each loop their own music. When someone goes all in at Hold'em, or a Dou Dizhu player is down to 1–2 cards, the music switches to a tense track and the table music resumes where it left off after settlement. Dealing, turning cards, chips and your turn have cues; landlord, plane, bomb, rocket and spring have their own effects (counter-spring reuses spring), and Dou Dizhu settlement plays a cue for your own win or loss. When you win a Hold'em pot it plays the chip sound; there is no separate win or loss cue.\n- **Voice**: with AI Buddy voice on, an engine prepared and character voices set, the characters speak their move lines in synthesized speech. Table text waits up to 15 seconds for the audio; if it does not come or fails, the text is shown anyway so the game is not left waiting.\n- **Sound menu**: the speaker button in the top bar mutes everything or sets music and effects volumes separately, plus a voice volume with AI Buddy 2.0.9 or later. Settings are saved in the plugin's local data.\n- **Themes and windows**: card backs and tables follow the 11 themes. The page sits in the main window and scales with it, or opens in its own window. Animations simplify when the system's reduced motion setting is on.\n\n### Points and affection\n\n- Both games share the AI Buddy wallet. Points are for use in the games and have no cash value.\n- Characters have their own points. When a character is below 100, she is topped up to 200 when a table opens or a new game starts, up to 3 times a day.\n- Dou Dizhu reserves 32 points when the table opens. This is not an entry fee: settlement follows the real result. Hold'em chips return when you leave.\n- Every 3 games with the same character in the same game type add 1 affection.\n- Click **Leave** after settlement to return to the lobby, or choose to leave after the current game.\n\n### How the AI plays\n\n- Each character uses her own bound model, one model request per move, which uses the model quota you configured. A new binding takes effect from the next game or hand.\n- Models aim to win, and personality only shapes style and lines. A model sees its own cards and public information, never other players' cards.\n- An illegal move goes back to the model up to 2 times. After that the table pauses. Nothing plays for her at random.\n- While waiting you can see whether the request is queued, thinking or retrying. After 30 seconds a note says you can keep waiting or cancel.\n- If no data arrives for 120 seconds the request times out and the table pauses. You can resume and ask again. Cancelling is not a failure, and the game carries on.\n\n### Data and permissions\n\nInstallation asks for four permissions: tables (open, act, pause, top up, leave), models (use a character's bound model for her moves), chat (public table chat) and replay (view settled Hold'em hands and ask for a review).\n\nGames, points and affection stay in AI Buddy on your computer. The plugin page cannot read the database or change points. It can only send table commands, which the app validates. Hidden cards become public only after settlement: at showdown or in replay for Hold'em, and in the reveal step for Dou Dizhu.\n\n### Known limitations\n\n- Requires AI Buddy 2.0.4 or later. Older versions show an upgrade notice.\n- The flow has been run in a real window with a synthetic model, including official installation and full games. Playing strength, lines and waiting times depend on your model and have not had a full review.\n- Dou Dizhu has no separate replay and no practice table.\n- Table voice needs AI Buddy 2.0.9 and a voice plugin; the voice volume appears only with AI Buddy 2.0.9 or later. The 15-second wait after which text is shown without audio still needs calibrating on real computers.\n- Windows 10/11 x64 only.\n\n### Technical notes\n\nPackage `@ai-buddy/card-games` 1.1.5, requires AI Buddy 2.0.4 or later and DSH 0.2.1-rc.3 or later (lower bounds only), plus the app's `voice-games-v1` feature. This repository holds the plugin source: the page in `plugins/card-games/src/client` and the rules in `plugins/card-games/src/rules`. Points, settlement, saved games and model calls live in the [AI Buddy app](https://github.com/lXiaoSel1/AI-Buddy). The package contains no private voices or accounts; voice comes from AI Buddy and the voice plugin you install. See the [1.1.3 release notes](RELEASE-NOTES-1.1.3.md).\n\n### License and third parties\n\nSource available under Apache-2.0 + Commons Clause, see [LICENSE.md](LICENSE.md). You may use, modify and share it for free, but not sell it. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for artwork and font sources: character cards use existing AI Buddy characters as references, and the terms for that artwork apply.\n",
+        "releases": [
+          {
+            "locales": {
+              "en": {
+                "notes": "First release. The four permissions cover tables, model turns, table chat, and replays. Installation starts no model request."
+              }
+            },
+            "notes": "首个正式版本。四项权限用于牌桌、模型出牌、桌聊及回放。安装不会发起模型请求。",
+            "package": {
+              "backend": "dsh",
+              "capabilities": [
+                "games.table",
+                "games.models",
+                "games.chat",
+                "games.replay"
+              ],
+              "compatibility": {
+                "app": "^2.0.4",
+                "bridge": "^1.3.0",
+                "dsh": "0.2.1-rc.3"
+              },
+              "dataSchemaVersion": 1,
+              "digestType": "tarball-sha256",
+              "exactVersion": "1.0.0",
+              "packageName": "@ai-buddy/card-games",
+              "sourceDigest": "8eaa34d7b01ba681e0ceec365f88a740db500c95d656a92d1f4ad5efe87b5a06",
+              "spec": {
+                "kind": "tarball",
+                "value": "https://github.com/lXiaoSel1/AI-Buddy-Card-Games/releases/download/v1.0.0/ai-buddy-card-games-1.0.0.tgz"
+              }
+            },
+            "publishedAt": "2026-11-05T00:12:08.951Z",
+            "version": "1.0.0"
+          },
+          {
+            "locales": {
+              "en": {
+                "notes": "Adds lobby, Dou Dizhu, Texas Hold’em and tension music, plus table sound effects. Music and effects have separate volume controls. Dou Dizhu plays outcome cues, and Texas Hold’em keeps the pot-win chip sound."
+              }
+            },
+            "notes": "新增大厅、斗地主、德州和紧张段音乐，以及牌桌音效。可单独调节音乐和音效音量。斗地主播放胜负音，德州赢池保留筹码声。",
+            "package": {
+              "backend": "dsh",
+              "capabilities": [
+                "games.table",
+                "games.models",
+                "games.chat",
+                "games.replay"
+              ],
+              "compatibility": {
+                "app": "^2.0.4",
+                "bridge": "^1.3.0",
+                "dsh": "0.2.1-rc.3"
+              },
+              "dataSchemaVersion": 1,
+              "digestType": "tarball-sha256",
+              "exactVersion": "1.1.0",
+              "packageName": "@ai-buddy/card-games",
+              "sourceDigest": "1cf953f1da13070c9af456dcd6eaf945c95223ad0f02fc1131e0a6c506337c07",
+              "spec": {
+                "kind": "tarball",
+                "value": "https://github.com/lXiaoSel1/AI-Buddy-Card-Games/releases/download/v1.1.0/ai-buddy-card-games-1.1.0.tgz"
+              }
+            },
+            "publishedAt": "2026-11-06T20:49:00.843Z",
+            "version": "1.1.0"
+          },
+          {
+            "locales": {
+              "en": {
+                "notes": "Publishes local 1.1.2 table-recovery, speech/subtitle synchronization and audio-setting fixes, preserving lobby/table music, effects and separate volume controls. Rules, assets, the four permissions and the voice-games-v1 contract are unchanged. Voice requires the host and user configuration; no private voice references or accounts are included. This preparation adds no new runtime behavior."
+              }
+            },
+            "notes": "沿用本机 1.1.2 的牌桌恢复、语音与字幕同步和音频设置修复，保留大厅与牌桌 BGM、音效及独立音量。斗地主和德州规则、素材、四项权限与 voice-games-v1 合同保持原值。语音需要本体及用户配置；本包不含私人声线或账号。本轮不增加业务行为。",
+            "package": {
+              "backend": "dsh",
+              "capabilities": [
+                "games.table",
+                "games.models",
+                "games.chat",
+                "games.replay"
+              ],
+              "compatibility": {
+                "app": "^2.0.4",
+                "bridge": "^1.3.0",
+                "dsh": "0.2.1-rc.3"
+              },
+              "dataSchemaVersion": 1,
+              "digestType": "tarball-sha256",
+              "exactVersion": "1.1.3",
+              "packageName": "@ai-buddy/card-games",
+              "sourceDigest": "4e7180b235905c0033758aeace9b866ee83352a6998c483914eeae4e7227f990",
+              "spec": {
+                "kind": "tarball",
+                "value": "https://github.com/lXiaoSel1/AI-Buddy-Card-Games/releases/download/v1.1.3/ai-buddy-card-games-1.1.3.tgz"
+              }
+            },
+            "publishedAt": "2026-11-09T00:29:05.950Z",
+            "version": "1.1.3"
+          },
+          {
+            "locales": {
+              "en": {
+                "notes": "Compatibility-only patch: AI Buddy >=2.0.4, DSH >=0.2.1-rc.3, Buddy bridge ^1.3.0. Runtime code, capabilities, contracts and data schemas are unchanged."
+              }
+            },
+            "notes": "兼容声明补丁：本体 >=2.0.4，DSH >=0.2.1-rc.3；Buddy bridge 保持 ^1.3.0。业务代码、权限、合同和数据格式沿用上一版。",
+            "package": {
+              "backend": "dsh",
+              "capabilities": [
+                "games.table",
+                "games.models",
+                "games.chat",
+                "games.replay"
+              ],
+              "compatibility": {
+                "app": ">=2.0.4",
+                "bridge": "^1.3.0",
+                "dsh": ">=0.2.1-rc.3"
+              },
+              "dataSchemaVersion": 1,
+              "digestType": "tarball-sha256",
+              "exactVersion": "1.1.4",
+              "packageName": "@ai-buddy/card-games",
+              "sourceDigest": "8e228dd68e1c0dc8938bb5a38145d2ac5dc94ffd9c17506a3953bf1b00805146",
+              "spec": {
+                "kind": "tarball",
+                "value": "https://github.com/lXiaoSel1/AI-Buddy-Card-Games/releases/download/v1.1.4/ai-buddy-card-games-1.1.4.tgz"
+              }
+            },
+            "publishedAt": "2026-11-09T20:10:20.960Z",
+            "version": "1.1.4"
+          },
+          {
+            "locales": {
+              "en": {
+                "notes": "Updates handling of changed or revoked table connections. Continuing with the current connection or voiding the hand requires AI Buddy 2.0.13. Preserves games.table, games.models, games.chat and games.replay capabilities and the existing data format."
+              }
+            },
+            "notes": "修复牌局连接变更与撤销处理；使用当前连接继续或作废本手需本体2.0.13。保留games.table、games.models、games.chat、games.replay四项权限及原数据格式。",
+            "package": {
+              "backend": "dsh",
+              "capabilities": [
+                "games.table",
+                "games.models",
+                "games.chat",
+                "games.replay"
+              ],
+              "compatibility": {
+                "app": ">=2.0.4",
+                "bridge": "^1.3.0",
+                "dsh": ">=0.2.1-rc.3"
+              },
+              "dataSchemaVersion": 1,
+              "digestType": "tarball-sha256",
+              "exactVersion": "1.1.5",
+              "packageName": "@ai-buddy/card-games",
+              "sourceDigest": "7f2c6dcfff0bd3a2e0ad602fea03c1361490914e4764821b374bdd59f7eb086d",
+              "spec": {
+                "kind": "tarball",
+                "value": "https://github.com/lXiaoSel1/AI-Buddy-Card-Games/releases/download/v1.1.5/ai-buddy-card-games-1.1.5.tgz"
+              }
+            },
+            "publishedAt": "2026-11-10T02:20:57.991Z",
+            "version": "1.1.5"
+          }
+        ],
+        "repositoryUrl": "https://github.com/lXiaoSel1/AI-Buddy-Card-Games",
+        "reviewsRepository": "lXiaoSel1/AI-Buddy-Card-Games",
+        "status": "published",
+        "tags": [
+          "official",
+          "games"
+        ]
+      },
+      {
+        "authorId": "author.lxiaosel1",
+        "backend": "buddy-v1",
+        "category": "voice",
+        "description": "选择本地 Breeze 或 MiniMax 云配音。共用本地流式识别、录音、轮流 Live 和播放。",
+        "id": "ai-buddy.voice-breeze",
+        "name": "Breeze 语音",
+        "packageName": "ai-buddy.voice-breeze",
+        "readme": "# AI 酱语音 · AI Buddy Voice\n\n<p align=\"center\">\n  <a href=\"https://github.com/lXiaoSel1/AI-Buddy-Voice/releases\"><img src=\"https://img.shields.io/github/v/release/lXiaoSel1/AI-Buddy-Voice?label=%E7%89%88%E6%9C%AC\" alt=\"版本\"></a>\n  <img src=\"https://img.shields.io/badge/%E9%9C%80%E8%A6%81-AI%20%E9%85%B1%202.0.13-ff8fab\" alt=\"需要 AI 酱 2.0.13\">\n  <img src=\"https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%2F11%20x64-8a2be2\" alt=\"平台：Windows 10/11 x64\">\n  <img src=\"https://img.shields.io/badge/%E6%9C%AC%E6%9C%BA%E9%85%8D%E9%9F%B3-NVIDIA%20%E6%98%BE%E5%8D%A1-76b900\" alt=\"本机配音：NVIDIA 显卡\">\n  <a href=\"LICENSE.md\"><img src=\"https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF-Apache--2.0%20%2B%20Commons%20Clause-e05d44\" alt=\"许可：Apache-2.0 + Commons Clause\"></a>\n</p>\n\n**简体中文** · [English](#english)\n\n[AI 酱本体](https://github.com/lXiaoSel1/AI-Buddy) · [B站陪伴](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ连接](https://github.com/lXiaoSel1/AI-Buddy-QQ) · [一起玩牌](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) · **语音**（本仓库）\n\n**当前版本：1.0.3** · 需要 [AI 酱](https://github.com/lXiaoSel1/AI-Buddy) 2.0.13。这是 AI 酱的官方插件，在 AI 酱的 **扩展中心** 里安装，不用单独下载。之前装过旧版的话，升级到 AI 酱 2.0.13 后，在 **扩展中心 → 更新与维护** 里把它更新到 1.0.3。\n\n让 AI 酱里的角色开口说话。她的回复会用她自己的声音读出来，文字跟着播放进度出现；你也可以开 Live 和她轮流说话，或者录一段话转成文字、改好再发。本仓库是两个语音插件 **Breeze 语音** 和 **GPT-SoVITS 语音** 的源码，它们共用一个内部组件。\n\n<img src=\"docs/images/voice-chat-speaking.webp\" width=\"760\" alt=\"Galgame 私聊：DeepSeek 正在说话，已读完的半句变暗；① 顶栏的语音 ② 录音输入 ③ Live ④ 停止朗读（演示数据）\">\n\n## 能做什么\n\n- **读出她的回复**：私聊、群聊和一起玩牌里都能用。配音的回复按实际播放进度显示，已经读完的部分会变暗；配音失败或超时后，文字照常显示（牌桌上最多等 15 秒）。\n- **Live 轮流说话**：你说一句，她回一句；进度条显示你说、识别、她想、她说四个阶段。\n- **录音输入**：说完以后，识别出的文字放进输入框，可以先改再发，不会自动发送。\n- **11 位角色的预制声音**：两个插件各带 11 档，安装后自动导入，保留已有的声音选择和自定义录音。也可以换成你自己准备的录音。录音默认只存在这台电脑上，只给这位角色用；只有你明确同意云端克隆时才会上传。\n- **本机或云端**：默认在这台电脑上配音，不上传、不花钱；不想占显卡时可以改用 MiniMax 云配音，按字数计费。\n- **牌桌喊话**：在一起玩牌里，她们会用合成语音喊出「All in」「三条」这类话，牌桌的声音菜单里有单独的语音音量。\n\n## 选哪个插件\n\n两个插件装一个就够，也可以都装。它们共用同一套语音识别，同一时间只运行一个本机配音引擎：换成另一个时，会先停掉当前这个，再启动新的。显存门槛只是启动检查，不保证每台电脑都能加载成功。\n\n| | Breeze 语音 | GPT-SoVITS 语音 |\n|---|---|---|\n| 语气 | 能跟着情绪变语气 | 只有平静的语气 |\n| 显卡 | NVIDIA（CUDA），启动时至少 9.5 GiB 空闲显存 | NVIDIA（CUDA），启动时至少 4 GiB 空闲显存 |\n| 第一次准备时下载（含共用的语音识别，十进制 GB） | 约 11.18 GB | 约 6.92 GB |\n| 参考录音 | 一段平静语气、只有一个人说话的录音 | 同左，长度 3–10 秒 |\n| 用途限制 | 模型和生成的声音只限研究和非商业用途，商业用途要另外取得书面许可，见[来源和许可](#来源和许可) | 见各组件的许可说明 |\n\n两个插件都可以改用 **MiniMax 云配音**。云端模式只准备共用组件，不需要本机的声音模型和显卡。\n\n## 快速上手\n\n**1. 安装。** 在 AI 酱左侧栏打开 **扩展中心 → 发现**，在「Breeze 语音」或「GPT-SoVITS 语音」右边点 **安装…**。插件包（含预制参考）Breeze 约 8 MB、GPT-SoVITS 约 11 MB，安装后会自动导入对应的 11 档预制声线，已有设置保持不变。声音模型要等第一次启动时才准备。\n\n**2. 打开语音插件页。** 左侧栏 **插件 → 语音**。也可以在 **扩展中心 → 已安装** 里点「启动」或「打开」，或者直接在 Galgame 顶栏打开语音，插件会自动启动。\n\n下图是本机配音、组件都已就绪时的样子；组件没准备好时会先显示准备页，改用 MiniMax 云端时会显示云音色管理。\n\n<img src=\"docs/images/voice-plugin-page.webp\" width=\"760\" alt=\"语音插件页：① 两个插件的页签 ② 换成我的录音 ③ 在哪里配音 ④ 本机组件（演示数据）\">\n\n1. 顶部切换 Breeze 和 GPT-SoVITS 的页面。只是看，不会切换正在用的引擎。\n2. **角色声音**：每位角色的声音和状态。点 **换成我的录音…** 给当前角色换声音，见第 4 步。\n3. **在哪里配音**：「这台电脑」或「MiniMax 云端」。\n4. **本机组件**：语音识别和声音模型是否就绪。\n\n**3. 准备组件。** 第一次用时，本机组件会显示「需要准备」。点 **下载** 开始下载，会显示进度，离开这一页也会接着下。只下载你选的那个引擎和共用的语音识别，不会顺带下载另一个引擎。\n\n从 AI 酱 2.0.12 起，如果插件更新后用的还是同一套组件、文件也都在这台电脑上，这一行会显示「需要校验」。点 **下载** 旁边的 **校验** 就行，不会重新下载；校验发现文件缺了或内容不对，再点 **下载**；提示校验被中断，或者校验时文件有变动，点 **重新校验**。AI 酱 2.0.13 修好了文件没问题却校验失败的情况；校验中途取消或失败时，已经核对过的文件下次不用重来。\n\n<img src=\"docs/images/voice-prepare.webp\" width=\"620\" alt=\"本机组件：语音识别已就绪，Breeze 声音模型需要准备（演示数据）\">\n\n<img src=\"docs/images/voice-prepare-progress.webp\" width=\"620\" alt=\"准备中：Breeze 声音模型的下载进度条（演示数据）\">\n\n**4. （可选）换成你的录音。** 先在 Galgame 里切到想换声音的角色，再回到插件页点 **换成我的录音…**：填上录音里说了什么，点 **换成这段录音**，选一段语气平静、只有一个人说话的 WAV 录音。GPT-SoVITS 的录音要 3–10 秒，这是模型本身的要求，导入时 AI 酱不会替你检查长度。请只用你有权使用的录音。\n\n从 AI 酱 2.0.12 起，角色有两份以上的声音时，**换成我的录音…** 左边会出现 **她的声音** 下拉，随时可以换回「预制声线」或别的录音。如果她正在说话，这一句会停下，下一句开始用新声音。\n\n<img src=\"docs/images/voice-my-recording.webp\" width=\"620\" alt=\"给 DeepSeek 换成你的录音：录音里说了什么、选择录音文件，以及录音只保存在这台电脑上的说明（演示数据）\">\n\n**5. 在聊天里用。** Galgame 顶栏右侧的 **语音** 显示现在的状态；点开可以开关语音、切换配音插件和配音位置。\n\n<img src=\"docs/images/voice-popover.webp\" width=\"620\" alt=\"Galgame 顶栏的语音弹层：语音开关、配音插件、在哪里配音和她的声音（演示数据）\">\n\n## Live 和录音输入\n\n点输入框右边的 **Live**，你说一句、她回一句，她说完会自动轮到你。点 **结束 Live** 只结束 Live，不会再发一条消息。\n\n<img src=\"docs/images/voice-live-listening.webp\" width=\"620\" alt=\"Live：正在听你说话，识别中的文字显示在条里（演示数据）\">\n\n<img src=\"docs/images/voice-live.webp\" width=\"620\" alt=\"Live：DeepSeek 在说，① 四个阶段停在「她说」② 结束 Live（演示数据）\">\n\n- Live 和录音输入都要 Windows 允许 AI 酱使用麦克风。被拒绝时会提示你去系统设置里允许。\n- 点 Live 后会先准备好需要的组件再打开麦克风，这期间可以先打字；声音模型还在加载时，Live 按钮不能点。\n- 配音失败或回复没能开始时，Live 可能会退出，需要再点一次；已经保存的回复不会丢。\n- 私聊和群聊之间切换，或者离开 Galgame 页面，不会自动替你重新打开麦克风。\n\n输入框左边的话筒是 **录音输入**：说完以后，识别出的文字放进输入框，标着「来自录音」，可以先改再发。取消会保留你原来输入的内容。\n\n<img src=\"docs/images/voice-record-draft.webp\" width=\"620\" alt=\"录音输入：识别出的文字已放进输入框，标着「来自录音 · 可以先改再发」（演示数据）\">\n\n## 群聊和牌桌\n\n群聊用同一个语音入口，正在说话的角色用她自己的声音；群聊 Auto 会等当前这句的文字和声音呈现完，再轮到下一位，停止或出错时也会放行。私聊和群聊之间切换时，会停掉正在读的那一句，语音开关保持不变。\n\n<img src=\"docs/images/voice-group.webp\" width=\"620\" alt=\"群聊：Claude 正在说话，顶栏显示语音正在说，Auto 在等这一句读完（演示数据）\">\n\n从 AI 酱 2.0.9 起，[一起玩牌](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) 的声音菜单会多一条 **语音** 音量；牌桌上的文字等声音开始再显示，最多等 15 秒。\n\n## MiniMax 云配音\n\n在插件页把「在哪里配音」改成 **MiniMax 云端**，按提示新增一条云配音配置：名字、模型和你自己的 MiniMax API Key。Key 加密保存在这台电脑上，保存后不再显示；保存配置不会上传任何声音。AI 酱 2.0.13 起，新增配置时可以选 **地区**（中国大陆 / 国际），两个地区的 Key 不通用，换地区要重新填 Key；云配音的联网跟随 AI 酱 **通用设置 → 网络** 里的代理（需要语音插件 1.0.3）。\n\n<img src=\"docs/images/voice-cloud.webp\" width=\"760\" alt=\"云配音：各角色的云端声音状态、在哪里配音选了 MiniMax 云端、云配音账号和克隆费用说明（演示数据）\">\n\n- **给角色换云端音色**：在这个 MiniMax 账号已有的系统音色、克隆音色和设计音色里搜索挑选，只改当前这位角色。\n\n<img src=\"docs/images/voice-cloud-voices.webp\" width=\"620\" alt=\"给 DeepSeek 换云端音色：全部、系统音色、克隆音色、设计音色分类和搜索（演示数据）\">\n\n- **批量准备云端声音**：把几位角色的参考录音一次克隆成云端音色。开始之前会弹出确认窗口，列出要上传哪些角色、新克隆几个、大概多少钱。克隆的角色一开始都不勾选，只上传你明确选中并确认的那几位。\n- **过期的云端音色**（AI 酱 2.0.13 起）：克隆的音色过期后，这位角色那一行会写「这个云端音色已经过期。」，点 **重新克隆…** 重新克隆一个，照样先弹出费用确认窗口。\n\n<img src=\"docs/images/voice-cloud-cost.webp\" width=\"420\" alt=\"确认窗口：上传 3 个角色的声音到 MiniMax，新克隆 3 个，克隆音色费约 ¥29.70，激活用的文字合成另按字数计费（演示数据）\">\n\n按 MiniMax 国内版官方定价，标准按量的克隆音色参考价为每个 ¥9.90，第一次用它合成时收取；文字合成另按 MiniMax 的字符计费规则算。一切以 MiniMax 账户的实际扣费和服务条款为准。取消只会停止后面的任务，已经提交的克隆或合成仍可能完成并收费。本机的参考录音不会自动变成同样的云端音色，要经过上面的确认上传。\n\n## 下载与磁盘空间\n\n插件包包含源码、固定的组件清单和已批准的 11 角色预制参考，来源与摘要见 [PRESET-SOURCES.md](PRESET-SOURCES.md)。声音模型、Python 环境和其他运行组件由 AI 酱按 `assets.json`、`downloads.json` 单独准备，本仓库不含这些大文件、用户个人参考录音或账户资料。下表是另行准备的运行组件，不含插件包本身。\n\n| 组件 | 第一次下载 | 清单展开后 |\n|---|---:|---:|\n| 共用的语音识别和云配音组件 | 288,922,906 字节 | 432,623,440 字节 |\n| Breeze 引擎 | 10,892,445,259 字节 | 12,882,035,341 字节 |\n| GPT-SoVITS 引擎 | 6,628,886,611 字节 | 9,571,167,222 字节 |\n\n第一次选 Breeze 加共用组件合计约 **11.18 GB**，GPT-SoVITS 加共用组件约 **6.92 GB**（十进制 GB）。已经核对过的组件会复用；下载和解压时还需要额外的临时空间。表中的下载量包含固定的上游模型权重和 FFmpeg，不只是我们镜像的运行组件分包。组件放在 AI 酱存档目录的 `voice/components/` 下。\n\n## 数据与隐私\n\n- 本机配音和语音识别都在这台电脑上完成，录音输入的声音不会发给语音云服务；发出识别出的文字时，和普通消息一样走这位角色的聊天连接。\n- 你导入的参考录音保存在 AI 酱存档目录的 `voice/profiles/` 下，只给对应的角色用。\n- 改用 MiniMax 云配音时，要读出来的文字会发给 MiniMax。参考录音只有在你明确同意云端克隆时才会上传（单个角色或批量都要确认），接口要求时还会附上用于校验的文字，可能产生费用。\n- 语音组件按固定清单下载，并核对大小和 SHA-256。\n- 插件包只带已批准的角色预制参考，不含用户个人录音或账号。全长云参考也只保存在本机，安装不会上传录音或创建 MiniMax 音色。\n\n## 已知限制\n\n- 本机配音需要 NVIDIA 显卡（CUDA）；显存不够时声音模型无法启动，可以改用 MiniMax 云配音（要用你自己的 Key，可能收费）。\n- 发布后已在全新的隔离资料里验证过从目录发现插件、安装共用组件和 Breeze 插件、完整准备共用的语音识别组件；还没在全新的实体电脑上完整试用。\n- 两套真实声音模型的加载和合成、MiniMax 计费、麦克风和长时间听感还没验收；牌桌上文字等声音的 15 秒上限，也还要按实际电脑校准。\n- README 里的截图是用 AI 酱 2.0.9 的界面代码和演示数据拍的：语音状态由测试数据提供，没有加载声音模型，也没有连接 MiniMax。\n\n## 技术说明\n\n三个插件包：`ai-buddy.voice-breeze`、`ai-buddy.voice-gpt-sovits` 和内部共用的 `ai-buddy.voice-shared-runtime`，面向 Windows x64 和 AI Buddy >= 2.0.13。三个包版本均为 1.0.3，两个引擎都精确依赖共用组件 1.0.3。两个引擎都装了时，升级计划会明确列出并一起更新它们和共用组件，保留原来的启停状态和各自的用户资料。\n\n### 独立构建\n\n安装 Node **24.21.0** 后，在源码目录执行，不需要 AI 酱本体、`npm install` 或 `node_modules`：\n\n```console\nnode scripts/build.mjs --out=../voice-artifacts\n```\n\n输出目录必须是全新的，并且在源码仓库之外。构建生成三个插件 ZIP、对应的 `release-entry.json`，以及记录摘要、大小和源码信息的 `packages.json`。`release.json` 固定版本和 `publishedAt`，ZIP 内容按确定的顺序写入；相同的源码字节加上固定的 Node 版本，可以重复构建出相同的包。Git checkout 会记录提交和 tree；从不含 `.git` 的源码归档构建时，这两个字段为 null。\n\n构建工具 `scripts/package-plugin.mjs` 和两个纯 Node SDK 文件 `src/plugin-archive.mjs`、`src/plugin-manifest.mjs` 直接复用自 AI Buddy 集成基线，来源和摘要见 [PROVENANCE.json](PROVENANCE.json)。构建会检查下载覆盖、清单绑定、包内容哈希和私密绝对路径；不会下载模型、启动 worker、调用云 API、签名或发布。正式的签名目录、公开资源可达性和安装后的模型、音频验收由发行流程另行记录。\n\n## 来源和许可\n\n包装代码采用 [LICENSE.md](LICENSE.md) 的 Apache-2.0 加 Commons Clause 条件。模型和第三方组件保留各自的条款，详见组件里的 `ASSET-NOTICES.md` 和资产清单。\n\n- **Breeze**：模型、派生材料和自行部署生成的声音受 BreezeBlue Research and Non-Commercial License v1.1 约束，只限研究和非商业用途；商业用途需要另外取得 BreezeBlue 的书面商业许可。\n- **GPT-SoVITS**：源码、预训练模型和依赖分别保留各自的条款。\n- **FFmpeg**：使用固定的 [Gyan 8.1.2 full build 上游归档](https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-full_build.zip)，归档 SHA-256 为 `b8cdefab5f50590a076c27c2b56b0294a0e6154faded28ba1ba05ebc4f801f57`。AI 酱只提取并逐文件校验清单里的 `ffmpeg.exe`、`LICENSE` 和 `README.txt`，保留供应方的说明；AI 酱的资源分包不镜像 FFmpeg。这个技术准备方式不代表额外的法律授权结论。\n\n## English\n\n**Current version: 1.0.3** · requires [AI Buddy](https://github.com/lXiaoSel1/AI-Buddy) 2.0.13. This is an official AI Buddy plugin; install it from **Extensions** inside AI Buddy, no separate download needed. After upgrading AI Buddy to 2.0.13, update an older plugin under **Extensions → Updates and maintenance**.\n\nLet your AI Buddy characters talk. Her replies are read aloud in her own voice, with the text following the playback; you can also take turns talking with her in Live, or record a few sentences into text and edit them before sending. This repository holds the source of the two voice plugins, **Breeze Voice** and **GPT-SoVITS Voice**, which share one internal runtime.\n\n<img src=\"docs/images/en-voice-plugin-page.webp\" width=\"760\" alt=\"Voice plugin page: Breeze Voice ready, with character voices, where voices are made and parts on this PC (demo data)\">\n\n### What it does\n\n- **Reads her replies aloud** in private chat, group chat and Card Games. A voiced reply appears in step with the actual playback and the part already read is dimmed; if voicing fails or times out, the text is shown anyway (the card table waits at most 15 seconds).\n- **Live**: take turns talking. The strip shows four stages: you, recognizing, thinking, speaking.\n- **Voice input**: the recognized text goes into the input box so you can edit it; nothing is sent automatically.\n- **11 preset character voices**: each plugin imports its 11 presets on installation, preserving existing selections and custom recordings. You can also use a recording you prepared. It stays on this computer by default and is used only for that character; it is uploaded only if you explicitly agree to cloud cloning.\n- **Local or cloud**: local voice uploads nothing and costs nothing; MiniMax cloud voice needs no GPU and is billed by characters.\n- **Table calls**: in Card Games the characters call out things like \"All in\", and the sound menu has a separate voice volume.\n\n### Which plugin\n\nInstall one, or both. They share the same speech recognizer, and only one local voice engine runs at a time; switching stops the current engine before starting the other. The GPU memory figures are start-up checks, not a promise that every computer can load the model.\n\n| | Breeze Voice | GPT-SoVITS Voice |\n|---|---|---|\n| Tone | Follows her mood | Calm only |\n| GPU | NVIDIA (CUDA), at least 9.5 GiB free memory at start | NVIDIA (CUDA), at least 4 GiB free memory at start |\n| First download (including shared recognition, decimal GB) | about 11.18 GB | about 6.92 GB |\n| Reference recording | A calm recording with only one person speaking | Same, 3–10 seconds |\n| Use restriction | Model and generated voices for research and non-commercial use only; commercial use needs separate written permission; see [Sources and licenses](#sources-and-licenses) | See each component's notices |\n\nBoth can switch to **MiniMax cloud voice**, which prepares only the shared runtime and needs no local voice model or GPU.\n\n### Quick start\n\n1. **Install**: in AI Buddy open **Extensions → Discover** and click **Install…** next to Breeze Voice or GPT-SoVITS Voice. Including presets, the Breeze plugin is about 8 MB and GPT-SoVITS about 11 MB. Installation imports the corresponding 11 presets and preserves existing settings; the voice model is prepared the first time it starts.\n2. **Open the voice page**: **Plugins → Voice** in the sidebar, or **Start** / **Open** on the **Installed** tab. Turning voice on in Galgame starts it too.\n3. **Prepare parts**: the first time, parts on this PC show \"Needs setup\". Click **Download** to start; it shows progress and continues if you leave the page. Only the chosen engine and the shared recognizer are downloaded. From AI Buddy 2.0.12, if a plugin update keeps the same parts and their files are already on this PC, the row shows \"Needs verification\": click **Verify** next to **Download** instead and nothing is downloaded again. If verification finds a file missing or its content wrong, use **Download**; if it says verification was interrupted or files changed while verifying, click **Verify again**. AI Buddy 2.0.13 fixes verification failing although the files were fine; when a verification is cancelled or fails, files already checked are not checked again next time.\n4. **(Optional) Use your recording**: switch to the character in Galgame, then choose **Use my recording…**, type exactly what is said, click **Use this recording** and pick a calm WAV with only one person speaking. GPT-SoVITS needs 3–10 seconds, a requirement of the model that AI Buddy does not check on import. Use only recordings you have the right to use. From AI Buddy 2.0.12, once a character has two or more voices, a **Her voice** menu appears to the left of **Use my recording…**, so you can switch back to the preset voice or to another recording at any time. If she is speaking, that sentence stops and the next one uses the new voice.\n5. **Use it in chat**: **Voice** at the right of the Galgame top bar shows the state; click it to turn voice on or off and choose the plugin and where voices are made.\n\n### Live and voice input\n\nClick **Live** right of the input box: you say a line, she answers, and it is your turn again when she finishes. **End Live** ends Live without sending another message. Live and voice input need Windows to allow microphone access. After you click Live, the needed parts are prepared before the microphone opens and you can type meanwhile; while the voice model is loading, the Live button is disabled. If voicing fails or a reply cannot start, Live may end and you need to start it again; saved replies are kept. Switching between private and group chat, or leaving Galgame, never reopens the microphone for you. The microphone left of the input box records into an editable draft; cancelling keeps what you had typed.\n\n### MiniMax cloud voice\n\nSet \"Where voices are made\" to **MiniMax cloud** and add a configuration: name, model and your own MiniMax API key. The key is encrypted on this computer and never shown again; saving a configuration uploads no voices. From AI Buddy 2.0.13 a new configuration has a **Region** choice (Mainland China / International); keys are not shared between regions, so changing the region means entering that region's key, and cloud voice requests follow the proxy under **General settings → Network** (needs voice plugins 1.0.3). When a cloned voice has expired, its row says \"This cloud voice has expired.\" and **Clone again…** makes a new clone after the same cost confirmation. You can change a character's cloud voice (searching the system, cloned or designed voices already in that MiniMax account), or prepare several characters at once. Bulk preparation shows a confirmation listing the characters to upload, the number of new clones and the estimated cost; no character is selected for paid cloning at first. Under MiniMax's official mainland pricing, the standard pay-as-you-go reference price is ¥9.90 per cloned voice, charged the first time it is used, and text synthesis is billed separately under MiniMax's character rules. Your MiniMax account's actual charges and terms are what count. Cancelling stops later steps only; work already submitted may still finish and be charged. A local reference does not automatically become the same cloud voice.\n\n### Downloads and disk space\n\nThe plugin packages contain wrapper source, pinned inventories and the approved 11-character references documented in [PRESET-SOURCES.md](PRESET-SOURCES.md). AI Buddy prepares models, Python and other runtime components separately from `assets.json` and `downloads.json`; this repository contains no runtime archives, model weights, users' personal references or account data. The runtime totals below exclude the plugin packages themselves. Fresh Breeze plus shared components total about **11.18 GB**, GPT-SoVITS plus shared about **6.92 GB** (decimal GB; byte counts in the Chinese table above). Verified components are reused; downloading and extraction need extra temporary space. The totals include fixed upstream weights and FFmpeg. Components live under `voice/components/` in the AI Buddy data folder.\n\n### Data and privacy\n\nLocal voice and speech recognition run on this computer, and voice input audio is not sent to a voice cloud service; text you send from it goes through the character's chat connection like any message. Imported references are stored under `voice/profiles/` and used only for their character. With MiniMax cloud voice, the text to be read is sent to MiniMax; references are uploaded only when you explicitly agree to cloud cloning (for one character or in bulk), with verification text when the API requires it, which may cost money. Components are downloaded from a pinned inventory and checked against their sizes and SHA-256. Only the approved character presets are bundled, with no users' personal recordings or accounts. Full cloud references also stay local; installing the plugin neither uploads audio nor creates a MiniMax voice.\n\n### Known limitations\n\nLocal voice needs an NVIDIA GPU (CUDA). After release, catalog discovery, installing the shared parts and the Breeze plugin, and fully preparing the shared speech recognition were checked in a fresh isolated profile; a full trial on a fresh physical computer is still pending. Real loading and synthesis with both voice models, MiniMax billing, microphones and long listening sessions have not been accepted, and the card table's 15-second wait for audio still needs calibrating. The screenshots were taken with the AI Buddy 2.0.9 interface code and demo data: voice states come from test data, no voice model was loaded and MiniMax was not contacted.\n\n### Technical notes\n\nThree packages: `ai-buddy.voice-breeze`, `ai-buddy.voice-gpt-sovits` and the internal `ai-buddy.voice-shared-runtime`, for Windows x64 and AI Buddy >= 2.0.13. All three packages are version 1.0.3; each engine requires shared runtime 1.0.3 exactly. When both engines are installed, the reviewed upgrade plan updates the installed group together and preserves enablement and independent user data.\n\nWith Node **24.21.0**, build from this checkout (no host checkout, npm installation or dependencies):\n\n```console\nnode scripts/build.mjs --out=../voice-artifacts\n```\n\nUse a fresh output directory outside the repository. The build produces three plugin ZIPs, their `release-entry.json` files and `packages.json` with hashes, sizes and source information. `release.json` fixes the version and `publishedAt`, and ZIP entries are deterministic, so identical source bytes with the pinned Node version reproduce the archives. Git checkouts record the commit and tree; source archives without `.git` record null. The package tool and its two pure-Node SDK files come from the AI Buddy integration baseline; [PROVENANCE.json](PROVENANCE.json) records their source and hashes. Building checks download coverage, inventory binding, archive hashes and private absolute paths; it does not download models, start workers, call cloud APIs, sign or publish.\n\n### Sources and licenses\n\nWrapper code is under the Apache-2.0 plus Commons Clause terms in [LICENSE.md](LICENSE.md). Models and third-party components keep their own terms in the component `ASSET-NOTICES.md` files and inventories. **Breeze** model materials, derivatives and self-hosted outputs carry the BreezeBlue Research and Non-Commercial License v1.1: research and non-commercial use only; commercial use needs a separate written commercial license from BreezeBlue. **GPT-SoVITS** source, pretrained materials and dependencies keep their respective notices. **FFmpeg** comes from the fixed [Gyan 8.1.2 full-build upstream archive](https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-full_build.zip) (SHA-256 above); AI Buddy extracts and verifies only the inventoried `ffmpeg.exe`, `LICENSE` and `README.txt`, and its runtime parts do not mirror FFmpeg. This preparation path makes no separate legal authorization claim.\n",
+        "releases": [
+          {
+            "locales": {
+              "en": {
+                "notes": "Downloads the selected engine and shared component as needed. Import voice references yourself. Cloud synthesis and paid voices require user configuration and approval."
+              }
+            },
+            "notes": "本地引擎和共享组件按需准备；参考录音由用户导入。云配音及收费音色需要用户配置和确认。",
+            "publishedAt": "2026-11-09T00:29:05.950Z",
+            "version": "1.0.1"
+          },
+          {
+            "locales": {
+              "en": {
+                "notes": "Includes preset reference voices for 11 characters. AI Buddy 2.0.11 imports them after installation while preserving custom voices and selections. No automatic audio upload or cloud voice creation."
+              }
+            },
+            "notes": "内含11位角色的预制参考声线，配合AI酱2.0.11安装后自动补入；保留自定义声线和原选择。不会自动上传音频或创建云音色。",
+            "publishedAt": "2026-11-09T18:03:46.056Z",
+            "version": "1.0.2"
+          },
+          {
+            "locales": {
+              "en": {
+                "notes": "Requires AI Buddy 2.0.13. Both voice engines depend on shared runtime 1.0.3 exactly and preserve preset reference voices and custom selections. Cloud speech follows the general network proxy; uploading references or creating cloud voices requires user configuration and approval."
+              }
+            },
+            "notes": "需要AI酱2.0.13；两个语音引擎精确依赖共享组件1.0.3，保留预制参考声线与自定义选择。云配音联网跟随通用网络代理，上传参考录音或创建云音色仍需用户配置与确认。",
+            "publishedAt": "2026-11-10T02:20:57.991Z",
+            "version": "1.0.3"
+          }
+        ],
+        "repositoryUrl": "https://github.com/lXiaoSel1/AI-Buddy-Voice",
+        "reviewsRepository": "lXiaoSel1/AI-Buddy-Voice",
+        "status": "published",
+        "tags": [
+          "official",
+          "voice"
+        ]
+      },
+      {
+        "authorId": "author.lxiaosel1",
+        "backend": "buddy-v1",
+        "category": "voice",
+        "description": "选择本地 GPT-SoVITS V5 Turbo 或 MiniMax 云配音。共用本地流式识别、录音、轮流 Live 和播放。",
+        "id": "ai-buddy.voice-gpt-sovits",
+        "name": "GPT-SoVITS 语音",
+        "packageName": "ai-buddy.voice-gpt-sovits",
+        "readme": "# AI 酱语音 · AI Buddy Voice\n\n<p align=\"center\">\n  <a href=\"https://github.com/lXiaoSel1/AI-Buddy-Voice/releases\"><img src=\"https://img.shields.io/github/v/release/lXiaoSel1/AI-Buddy-Voice?label=%E7%89%88%E6%9C%AC\" alt=\"版本\"></a>\n  <img src=\"https://img.shields.io/badge/%E9%9C%80%E8%A6%81-AI%20%E9%85%B1%202.0.13-ff8fab\" alt=\"需要 AI 酱 2.0.13\">\n  <img src=\"https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%2F11%20x64-8a2be2\" alt=\"平台：Windows 10/11 x64\">\n  <img src=\"https://img.shields.io/badge/%E6%9C%AC%E6%9C%BA%E9%85%8D%E9%9F%B3-NVIDIA%20%E6%98%BE%E5%8D%A1-76b900\" alt=\"本机配音：NVIDIA 显卡\">\n  <a href=\"LICENSE.md\"><img src=\"https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF-Apache--2.0%20%2B%20Commons%20Clause-e05d44\" alt=\"许可：Apache-2.0 + Commons Clause\"></a>\n</p>\n\n**简体中文** · [English](#english)\n\n[AI 酱本体](https://github.com/lXiaoSel1/AI-Buddy) · [B站陪伴](https://github.com/lXiaoSel1/AI-Buddy-Bilibili) · [QQ连接](https://github.com/lXiaoSel1/AI-Buddy-QQ) · [一起玩牌](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) · **语音**（本仓库）\n\n**当前版本：1.0.3** · 需要 [AI 酱](https://github.com/lXiaoSel1/AI-Buddy) 2.0.13。这是 AI 酱的官方插件，在 AI 酱的 **扩展中心** 里安装，不用单独下载。之前装过旧版的话，升级到 AI 酱 2.0.13 后，在 **扩展中心 → 更新与维护** 里把它更新到 1.0.3。\n\n让 AI 酱里的角色开口说话。她的回复会用她自己的声音读出来，文字跟着播放进度出现；你也可以开 Live 和她轮流说话，或者录一段话转成文字、改好再发。本仓库是两个语音插件 **Breeze 语音** 和 **GPT-SoVITS 语音** 的源码，它们共用一个内部组件。\n\n<img src=\"docs/images/voice-chat-speaking.webp\" width=\"760\" alt=\"Galgame 私聊：DeepSeek 正在说话，已读完的半句变暗；① 顶栏的语音 ② 录音输入 ③ Live ④ 停止朗读（演示数据）\">\n\n## 能做什么\n\n- **读出她的回复**：私聊、群聊和一起玩牌里都能用。配音的回复按实际播放进度显示，已经读完的部分会变暗；配音失败或超时后，文字照常显示（牌桌上最多等 15 秒）。\n- **Live 轮流说话**：你说一句，她回一句；进度条显示你说、识别、她想、她说四个阶段。\n- **录音输入**：说完以后，识别出的文字放进输入框，可以先改再发，不会自动发送。\n- **11 位角色的预制声音**：两个插件各带 11 档，安装后自动导入，保留已有的声音选择和自定义录音。也可以换成你自己准备的录音。录音默认只存在这台电脑上，只给这位角色用；只有你明确同意云端克隆时才会上传。\n- **本机或云端**：默认在这台电脑上配音，不上传、不花钱；不想占显卡时可以改用 MiniMax 云配音，按字数计费。\n- **牌桌喊话**：在一起玩牌里，她们会用合成语音喊出「All in」「三条」这类话，牌桌的声音菜单里有单独的语音音量。\n\n## 选哪个插件\n\n两个插件装一个就够，也可以都装。它们共用同一套语音识别，同一时间只运行一个本机配音引擎：换成另一个时，会先停掉当前这个，再启动新的。显存门槛只是启动检查，不保证每台电脑都能加载成功。\n\n| | Breeze 语音 | GPT-SoVITS 语音 |\n|---|---|---|\n| 语气 | 能跟着情绪变语气 | 只有平静的语气 |\n| 显卡 | NVIDIA（CUDA），启动时至少 9.5 GiB 空闲显存 | NVIDIA（CUDA），启动时至少 4 GiB 空闲显存 |\n| 第一次准备时下载（含共用的语音识别，十进制 GB） | 约 11.18 GB | 约 6.92 GB |\n| 参考录音 | 一段平静语气、只有一个人说话的录音 | 同左，长度 3–10 秒 |\n| 用途限制 | 模型和生成的声音只限研究和非商业用途，商业用途要另外取得书面许可，见[来源和许可](#来源和许可) | 见各组件的许可说明 |\n\n两个插件都可以改用 **MiniMax 云配音**。云端模式只准备共用组件，不需要本机的声音模型和显卡。\n\n## 快速上手\n\n**1. 安装。** 在 AI 酱左侧栏打开 **扩展中心 → 发现**，在「Breeze 语音」或「GPT-SoVITS 语音」右边点 **安装…**。插件包（含预制参考）Breeze 约 8 MB、GPT-SoVITS 约 11 MB，安装后会自动导入对应的 11 档预制声线，已有设置保持不变。声音模型要等第一次启动时才准备。\n\n**2. 打开语音插件页。** 左侧栏 **插件 → 语音**。也可以在 **扩展中心 → 已安装** 里点「启动」或「打开」，或者直接在 Galgame 顶栏打开语音，插件会自动启动。\n\n下图是本机配音、组件都已就绪时的样子；组件没准备好时会先显示准备页，改用 MiniMax 云端时会显示云音色管理。\n\n<img src=\"docs/images/voice-plugin-page.webp\" width=\"760\" alt=\"语音插件页：① 两个插件的页签 ② 换成我的录音 ③ 在哪里配音 ④ 本机组件（演示数据）\">\n\n1. 顶部切换 Breeze 和 GPT-SoVITS 的页面。只是看，不会切换正在用的引擎。\n2. **角色声音**：每位角色的声音和状态。点 **换成我的录音…** 给当前角色换声音，见第 4 步。\n3. **在哪里配音**：「这台电脑」或「MiniMax 云端」。\n4. **本机组件**：语音识别和声音模型是否就绪。\n\n**3. 准备组件。** 第一次用时，本机组件会显示「需要准备」。点 **下载** 开始下载，会显示进度，离开这一页也会接着下。只下载你选的那个引擎和共用的语音识别，不会顺带下载另一个引擎。\n\n从 AI 酱 2.0.12 起，如果插件更新后用的还是同一套组件、文件也都在这台电脑上，这一行会显示「需要校验」。点 **下载** 旁边的 **校验** 就行，不会重新下载；校验发现文件缺了或内容不对，再点 **下载**；提示校验被中断，或者校验时文件有变动，点 **重新校验**。AI 酱 2.0.13 修好了文件没问题却校验失败的情况；校验中途取消或失败时，已经核对过的文件下次不用重来。\n\n<img src=\"docs/images/voice-prepare.webp\" width=\"620\" alt=\"本机组件：语音识别已就绪，Breeze 声音模型需要准备（演示数据）\">\n\n<img src=\"docs/images/voice-prepare-progress.webp\" width=\"620\" alt=\"准备中：Breeze 声音模型的下载进度条（演示数据）\">\n\n**4. （可选）换成你的录音。** 先在 Galgame 里切到想换声音的角色，再回到插件页点 **换成我的录音…**：填上录音里说了什么，点 **换成这段录音**，选一段语气平静、只有一个人说话的 WAV 录音。GPT-SoVITS 的录音要 3–10 秒，这是模型本身的要求，导入时 AI 酱不会替你检查长度。请只用你有权使用的录音。\n\n从 AI 酱 2.0.12 起，角色有两份以上的声音时，**换成我的录音…** 左边会出现 **她的声音** 下拉，随时可以换回「预制声线」或别的录音。如果她正在说话，这一句会停下，下一句开始用新声音。\n\n<img src=\"docs/images/voice-my-recording.webp\" width=\"620\" alt=\"给 DeepSeek 换成你的录音：录音里说了什么、选择录音文件，以及录音只保存在这台电脑上的说明（演示数据）\">\n\n**5. 在聊天里用。** Galgame 顶栏右侧的 **语音** 显示现在的状态；点开可以开关语音、切换配音插件和配音位置。\n\n<img src=\"docs/images/voice-popover.webp\" width=\"620\" alt=\"Galgame 顶栏的语音弹层：语音开关、配音插件、在哪里配音和她的声音（演示数据）\">\n\n## Live 和录音输入\n\n点输入框右边的 **Live**，你说一句、她回一句，她说完会自动轮到你。点 **结束 Live** 只结束 Live，不会再发一条消息。\n\n<img src=\"docs/images/voice-live-listening.webp\" width=\"620\" alt=\"Live：正在听你说话，识别中的文字显示在条里（演示数据）\">\n\n<img src=\"docs/images/voice-live.webp\" width=\"620\" alt=\"Live：DeepSeek 在说，① 四个阶段停在「她说」② 结束 Live（演示数据）\">\n\n- Live 和录音输入都要 Windows 允许 AI 酱使用麦克风。被拒绝时会提示你去系统设置里允许。\n- 点 Live 后会先准备好需要的组件再打开麦克风，这期间可以先打字；声音模型还在加载时，Live 按钮不能点。\n- 配音失败或回复没能开始时，Live 可能会退出，需要再点一次；已经保存的回复不会丢。\n- 私聊和群聊之间切换，或者离开 Galgame 页面，不会自动替你重新打开麦克风。\n\n输入框左边的话筒是 **录音输入**：说完以后，识别出的文字放进输入框，标着「来自录音」，可以先改再发。取消会保留你原来输入的内容。\n\n<img src=\"docs/images/voice-record-draft.webp\" width=\"620\" alt=\"录音输入：识别出的文字已放进输入框，标着「来自录音 · 可以先改再发」（演示数据）\">\n\n## 群聊和牌桌\n\n群聊用同一个语音入口，正在说话的角色用她自己的声音；群聊 Auto 会等当前这句的文字和声音呈现完，再轮到下一位，停止或出错时也会放行。私聊和群聊之间切换时，会停掉正在读的那一句，语音开关保持不变。\n\n<img src=\"docs/images/voice-group.webp\" width=\"620\" alt=\"群聊：Claude 正在说话，顶栏显示语音正在说，Auto 在等这一句读完（演示数据）\">\n\n从 AI 酱 2.0.9 起，[一起玩牌](https://github.com/lXiaoSel1/AI-Buddy-Card-Games) 的声音菜单会多一条 **语音** 音量；牌桌上的文字等声音开始再显示，最多等 15 秒。\n\n## MiniMax 云配音\n\n在插件页把「在哪里配音」改成 **MiniMax 云端**，按提示新增一条云配音配置：名字、模型和你自己的 MiniMax API Key。Key 加密保存在这台电脑上，保存后不再显示；保存配置不会上传任何声音。AI 酱 2.0.13 起，新增配置时可以选 **地区**（中国大陆 / 国际），两个地区的 Key 不通用，换地区要重新填 Key；云配音的联网跟随 AI 酱 **通用设置 → 网络** 里的代理（需要语音插件 1.0.3）。\n\n<img src=\"docs/images/voice-cloud.webp\" width=\"760\" alt=\"云配音：各角色的云端声音状态、在哪里配音选了 MiniMax 云端、云配音账号和克隆费用说明（演示数据）\">\n\n- **给角色换云端音色**：在这个 MiniMax 账号已有的系统音色、克隆音色和设计音色里搜索挑选，只改当前这位角色。\n\n<img src=\"docs/images/voice-cloud-voices.webp\" width=\"620\" alt=\"给 DeepSeek 换云端音色：全部、系统音色、克隆音色、设计音色分类和搜索（演示数据）\">\n\n- **批量准备云端声音**：把几位角色的参考录音一次克隆成云端音色。开始之前会弹出确认窗口，列出要上传哪些角色、新克隆几个、大概多少钱。克隆的角色一开始都不勾选，只上传你明确选中并确认的那几位。\n- **过期的云端音色**（AI 酱 2.0.13 起）：克隆的音色过期后，这位角色那一行会写「这个云端音色已经过期。」，点 **重新克隆…** 重新克隆一个，照样先弹出费用确认窗口。\n\n<img src=\"docs/images/voice-cloud-cost.webp\" width=\"420\" alt=\"确认窗口：上传 3 个角色的声音到 MiniMax，新克隆 3 个，克隆音色费约 ¥29.70，激活用的文字合成另按字数计费（演示数据）\">\n\n按 MiniMax 国内版官方定价，标准按量的克隆音色参考价为每个 ¥9.90，第一次用它合成时收取；文字合成另按 MiniMax 的字符计费规则算。一切以 MiniMax 账户的实际扣费和服务条款为准。取消只会停止后面的任务，已经提交的克隆或合成仍可能完成并收费。本机的参考录音不会自动变成同样的云端音色，要经过上面的确认上传。\n\n## 下载与磁盘空间\n\n插件包包含源码、固定的组件清单和已批准的 11 角色预制参考，来源与摘要见 [PRESET-SOURCES.md](PRESET-SOURCES.md)。声音模型、Python 环境和其他运行组件由 AI 酱按 `assets.json`、`downloads.json` 单独准备，本仓库不含这些大文件、用户个人参考录音或账户资料。下表是另行准备的运行组件，不含插件包本身。\n\n| 组件 | 第一次下载 | 清单展开后 |\n|---|---:|---:|\n| 共用的语音识别和云配音组件 | 288,922,906 字节 | 432,623,440 字节 |\n| Breeze 引擎 | 10,892,445,259 字节 | 12,882,035,341 字节 |\n| GPT-SoVITS 引擎 | 6,628,886,611 字节 | 9,571,167,222 字节 |\n\n第一次选 Breeze 加共用组件合计约 **11.18 GB**，GPT-SoVITS 加共用组件约 **6.92 GB**（十进制 GB）。已经核对过的组件会复用；下载和解压时还需要额外的临时空间。表中的下载量包含固定的上游模型权重和 FFmpeg，不只是我们镜像的运行组件分包。组件放在 AI 酱存档目录的 `voice/components/` 下。\n\n## 数据与隐私\n\n- 本机配音和语音识别都在这台电脑上完成，录音输入的声音不会发给语音云服务；发出识别出的文字时，和普通消息一样走这位角色的聊天连接。\n- 你导入的参考录音保存在 AI 酱存档目录的 `voice/profiles/` 下，只给对应的角色用。\n- 改用 MiniMax 云配音时，要读出来的文字会发给 MiniMax。参考录音只有在你明确同意云端克隆时才会上传（单个角色或批量都要确认），接口要求时还会附上用于校验的文字，可能产生费用。\n- 语音组件按固定清单下载，并核对大小和 SHA-256。\n- 插件包只带已批准的角色预制参考，不含用户个人录音或账号。全长云参考也只保存在本机，安装不会上传录音或创建 MiniMax 音色。\n\n## 已知限制\n\n- 本机配音需要 NVIDIA 显卡（CUDA）；显存不够时声音模型无法启动，可以改用 MiniMax 云配音（要用你自己的 Key，可能收费）。\n- 发布后已在全新的隔离资料里验证过从目录发现插件、安装共用组件和 Breeze 插件、完整准备共用的语音识别组件；还没在全新的实体电脑上完整试用。\n- 两套真实声音模型的加载和合成、MiniMax 计费、麦克风和长时间听感还没验收；牌桌上文字等声音的 15 秒上限，也还要按实际电脑校准。\n- README 里的截图是用 AI 酱 2.0.9 的界面代码和演示数据拍的：语音状态由测试数据提供，没有加载声音模型，也没有连接 MiniMax。\n\n## 技术说明\n\n三个插件包：`ai-buddy.voice-breeze`、`ai-buddy.voice-gpt-sovits` 和内部共用的 `ai-buddy.voice-shared-runtime`，面向 Windows x64 和 AI Buddy >= 2.0.13。三个包版本均为 1.0.3，两个引擎都精确依赖共用组件 1.0.3。两个引擎都装了时，升级计划会明确列出并一起更新它们和共用组件，保留原来的启停状态和各自的用户资料。\n\n### 独立构建\n\n安装 Node **24.21.0** 后，在源码目录执行，不需要 AI 酱本体、`npm install` 或 `node_modules`：\n\n```console\nnode scripts/build.mjs --out=../voice-artifacts\n```\n\n输出目录必须是全新的，并且在源码仓库之外。构建生成三个插件 ZIP、对应的 `release-entry.json`，以及记录摘要、大小和源码信息的 `packages.json`。`release.json` 固定版本和 `publishedAt`，ZIP 内容按确定的顺序写入；相同的源码字节加上固定的 Node 版本，可以重复构建出相同的包。Git checkout 会记录提交和 tree；从不含 `.git` 的源码归档构建时，这两个字段为 null。\n\n构建工具 `scripts/package-plugin.mjs` 和两个纯 Node SDK 文件 `src/plugin-archive.mjs`、`src/plugin-manifest.mjs` 直接复用自 AI Buddy 集成基线，来源和摘要见 [PROVENANCE.json](PROVENANCE.json)。构建会检查下载覆盖、清单绑定、包内容哈希和私密绝对路径；不会下载模型、启动 worker、调用云 API、签名或发布。正式的签名目录、公开资源可达性和安装后的模型、音频验收由发行流程另行记录。\n\n## 来源和许可\n\n包装代码采用 [LICENSE.md](LICENSE.md) 的 Apache-2.0 加 Commons Clause 条件。模型和第三方组件保留各自的条款，详见组件里的 `ASSET-NOTICES.md` 和资产清单。\n\n- **Breeze**：模型、派生材料和自行部署生成的声音受 BreezeBlue Research and Non-Commercial License v1.1 约束，只限研究和非商业用途；商业用途需要另外取得 BreezeBlue 的书面商业许可。\n- **GPT-SoVITS**：源码、预训练模型和依赖分别保留各自的条款。\n- **FFmpeg**：使用固定的 [Gyan 8.1.2 full build 上游归档](https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-full_build.zip)，归档 SHA-256 为 `b8cdefab5f50590a076c27c2b56b0294a0e6154faded28ba1ba05ebc4f801f57`。AI 酱只提取并逐文件校验清单里的 `ffmpeg.exe`、`LICENSE` 和 `README.txt`，保留供应方的说明；AI 酱的资源分包不镜像 FFmpeg。这个技术准备方式不代表额外的法律授权结论。\n\n## English\n\n**Current version: 1.0.3** · requires [AI Buddy](https://github.com/lXiaoSel1/AI-Buddy) 2.0.13. This is an official AI Buddy plugin; install it from **Extensions** inside AI Buddy, no separate download needed. After upgrading AI Buddy to 2.0.13, update an older plugin under **Extensions → Updates and maintenance**.\n\nLet your AI Buddy characters talk. Her replies are read aloud in her own voice, with the text following the playback; you can also take turns talking with her in Live, or record a few sentences into text and edit them before sending. This repository holds the source of the two voice plugins, **Breeze Voice** and **GPT-SoVITS Voice**, which share one internal runtime.\n\n<img src=\"docs/images/en-voice-plugin-page.webp\" width=\"760\" alt=\"Voice plugin page: Breeze Voice ready, with character voices, where voices are made and parts on this PC (demo data)\">\n\n### What it does\n\n- **Reads her replies aloud** in private chat, group chat and Card Games. A voiced reply appears in step with the actual playback and the part already read is dimmed; if voicing fails or times out, the text is shown anyway (the card table waits at most 15 seconds).\n- **Live**: take turns talking. The strip shows four stages: you, recognizing, thinking, speaking.\n- **Voice input**: the recognized text goes into the input box so you can edit it; nothing is sent automatically.\n- **11 preset character voices**: each plugin imports its 11 presets on installation, preserving existing selections and custom recordings. You can also use a recording you prepared. It stays on this computer by default and is used only for that character; it is uploaded only if you explicitly agree to cloud cloning.\n- **Local or cloud**: local voice uploads nothing and costs nothing; MiniMax cloud voice needs no GPU and is billed by characters.\n- **Table calls**: in Card Games the characters call out things like \"All in\", and the sound menu has a separate voice volume.\n\n### Which plugin\n\nInstall one, or both. They share the same speech recognizer, and only one local voice engine runs at a time; switching stops the current engine before starting the other. The GPU memory figures are start-up checks, not a promise that every computer can load the model.\n\n| | Breeze Voice | GPT-SoVITS Voice |\n|---|---|---|\n| Tone | Follows her mood | Calm only |\n| GPU | NVIDIA (CUDA), at least 9.5 GiB free memory at start | NVIDIA (CUDA), at least 4 GiB free memory at start |\n| First download (including shared recognition, decimal GB) | about 11.18 GB | about 6.92 GB |\n| Reference recording | A calm recording with only one person speaking | Same, 3–10 seconds |\n| Use restriction | Model and generated voices for research and non-commercial use only; commercial use needs separate written permission; see [Sources and licenses](#sources-and-licenses) | See each component's notices |\n\nBoth can switch to **MiniMax cloud voice**, which prepares only the shared runtime and needs no local voice model or GPU.\n\n### Quick start\n\n1. **Install**: in AI Buddy open **Extensions → Discover** and click **Install…** next to Breeze Voice or GPT-SoVITS Voice. Including presets, the Breeze plugin is about 8 MB and GPT-SoVITS about 11 MB. Installation imports the corresponding 11 presets and preserves existing settings; the voice model is prepared the first time it starts.\n2. **Open the voice page**: **Plugins → Voice** in the sidebar, or **Start** / **Open** on the **Installed** tab. Turning voice on in Galgame starts it too.\n3. **Prepare parts**: the first time, parts on this PC show \"Needs setup\". Click **Download** to start; it shows progress and continues if you leave the page. Only the chosen engine and the shared recognizer are downloaded. From AI Buddy 2.0.12, if a plugin update keeps the same parts and their files are already on this PC, the row shows \"Needs verification\": click **Verify** next to **Download** instead and nothing is downloaded again. If verification finds a file missing or its content wrong, use **Download**; if it says verification was interrupted or files changed while verifying, click **Verify again**. AI Buddy 2.0.13 fixes verification failing although the files were fine; when a verification is cancelled or fails, files already checked are not checked again next time.\n4. **(Optional) Use your recording**: switch to the character in Galgame, then choose **Use my recording…**, type exactly what is said, click **Use this recording** and pick a calm WAV with only one person speaking. GPT-SoVITS needs 3–10 seconds, a requirement of the model that AI Buddy does not check on import. Use only recordings you have the right to use. From AI Buddy 2.0.12, once a character has two or more voices, a **Her voice** menu appears to the left of **Use my recording…**, so you can switch back to the preset voice or to another recording at any time. If she is speaking, that sentence stops and the next one uses the new voice.\n5. **Use it in chat**: **Voice** at the right of the Galgame top bar shows the state; click it to turn voice on or off and choose the plugin and where voices are made.\n\n### Live and voice input\n\nClick **Live** right of the input box: you say a line, she answers, and it is your turn again when she finishes. **End Live** ends Live without sending another message. Live and voice input need Windows to allow microphone access. After you click Live, the needed parts are prepared before the microphone opens and you can type meanwhile; while the voice model is loading, the Live button is disabled. If voicing fails or a reply cannot start, Live may end and you need to start it again; saved replies are kept. Switching between private and group chat, or leaving Galgame, never reopens the microphone for you. The microphone left of the input box records into an editable draft; cancelling keeps what you had typed.\n\n### MiniMax cloud voice\n\nSet \"Where voices are made\" to **MiniMax cloud** and add a configuration: name, model and your own MiniMax API key. The key is encrypted on this computer and never shown again; saving a configuration uploads no voices. From AI Buddy 2.0.13 a new configuration has a **Region** choice (Mainland China / International); keys are not shared between regions, so changing the region means entering that region's key, and cloud voice requests follow the proxy under **General settings → Network** (needs voice plugins 1.0.3). When a cloned voice has expired, its row says \"This cloud voice has expired.\" and **Clone again…** makes a new clone after the same cost confirmation. You can change a character's cloud voice (searching the system, cloned or designed voices already in that MiniMax account), or prepare several characters at once. Bulk preparation shows a confirmation listing the characters to upload, the number of new clones and the estimated cost; no character is selected for paid cloning at first. Under MiniMax's official mainland pricing, the standard pay-as-you-go reference price is ¥9.90 per cloned voice, charged the first time it is used, and text synthesis is billed separately under MiniMax's character rules. Your MiniMax account's actual charges and terms are what count. Cancelling stops later steps only; work already submitted may still finish and be charged. A local reference does not automatically become the same cloud voice.\n\n### Downloads and disk space\n\nThe plugin packages contain wrapper source, pinned inventories and the approved 11-character references documented in [PRESET-SOURCES.md](PRESET-SOURCES.md). AI Buddy prepares models, Python and other runtime components separately from `assets.json` and `downloads.json`; this repository contains no runtime archives, model weights, users' personal references or account data. The runtime totals below exclude the plugin packages themselves. Fresh Breeze plus shared components total about **11.18 GB**, GPT-SoVITS plus shared about **6.92 GB** (decimal GB; byte counts in the Chinese table above). Verified components are reused; downloading and extraction need extra temporary space. The totals include fixed upstream weights and FFmpeg. Components live under `voice/components/` in the AI Buddy data folder.\n\n### Data and privacy\n\nLocal voice and speech recognition run on this computer, and voice input audio is not sent to a voice cloud service; text you send from it goes through the character's chat connection like any message. Imported references are stored under `voice/profiles/` and used only for their character. With MiniMax cloud voice, the text to be read is sent to MiniMax; references are uploaded only when you explicitly agree to cloud cloning (for one character or in bulk), with verification text when the API requires it, which may cost money. Components are downloaded from a pinned inventory and checked against their sizes and SHA-256. Only the approved character presets are bundled, with no users' personal recordings or accounts. Full cloud references also stay local; installing the plugin neither uploads audio nor creates a MiniMax voice.\n\n### Known limitations\n\nLocal voice needs an NVIDIA GPU (CUDA). After release, catalog discovery, installing the shared parts and the Breeze plugin, and fully preparing the shared speech recognition were checked in a fresh isolated profile; a full trial on a fresh physical computer is still pending. Real loading and synthesis with both voice models, MiniMax billing, microphones and long listening sessions have not been accepted, and the card table's 15-second wait for audio still needs calibrating. The screenshots were taken with the AI Buddy 2.0.9 interface code and demo data: voice states come from test data, no voice model was loaded and MiniMax was not contacted.\n\n### Technical notes\n\nThree packages: `ai-buddy.voice-breeze`, `ai-buddy.voice-gpt-sovits` and the internal `ai-buddy.voice-shared-runtime`, for Windows x64 and AI Buddy >= 2.0.13. All three packages are version 1.0.3; each engine requires shared runtime 1.0.3 exactly. When both engines are installed, the reviewed upgrade plan updates the installed group together and preserves enablement and independent user data.\n\nWith Node **24.21.0**, build from this checkout (no host checkout, npm installation or dependencies):\n\n```console\nnode scripts/build.mjs --out=../voice-artifacts\n```\n\nUse a fresh output directory outside the repository. The build produces three plugin ZIPs, their `release-entry.json` files and `packages.json` with hashes, sizes and source information. `release.json` fixes the version and `publishedAt`, and ZIP entries are deterministic, so identical source bytes with the pinned Node version reproduce the archives. Git checkouts record the commit and tree; source archives without `.git` record null. The package tool and its two pure-Node SDK files come from the AI Buddy integration baseline; [PROVENANCE.json](PROVENANCE.json) records their source and hashes. Building checks download coverage, inventory binding, archive hashes and private absolute paths; it does not download models, start workers, call cloud APIs, sign or publish.\n\n### Sources and licenses\n\nWrapper code is under the Apache-2.0 plus Commons Clause terms in [LICENSE.md](LICENSE.md). Models and third-party components keep their own terms in the component `ASSET-NOTICES.md` files and inventories. **Breeze** model materials, derivatives and self-hosted outputs carry the BreezeBlue Research and Non-Commercial License v1.1: research and non-commercial use only; commercial use needs a separate written commercial license from BreezeBlue. **GPT-SoVITS** source, pretrained materials and dependencies keep their respective notices. **FFmpeg** comes from the fixed [Gyan 8.1.2 full-build upstream archive](https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-full_build.zip) (SHA-256 above); AI Buddy extracts and verifies only the inventoried `ffmpeg.exe`, `LICENSE` and `README.txt`, and its runtime parts do not mirror FFmpeg. This preparation path makes no separate legal authorization claim.\n",
+        "releases": [
+          {
+            "locales": {
+              "en": {
+                "notes": "Downloads the selected engine and shared component as needed. Import voice references yourself. Cloud synthesis and paid voices require user configuration and approval."
+              }
+            },
+            "notes": "本地引擎和共享组件按需准备；参考录音由用户导入。云配音及收费音色需要用户配置和确认。",
+            "publishedAt": "2026-11-09T00:29:05.950Z",
+            "version": "1.0.1"
+          },
+          {
+            "locales": {
+              "en": {
+                "notes": "Includes preset reference voices for 11 characters. AI Buddy 2.0.11 imports them after installation while preserving custom voices and selections. No automatic audio upload or cloud voice creation."
+              }
+            },
+            "notes": "内含11位角色的预制参考声线，配合AI酱2.0.11安装后自动补入；保留自定义声线和原选择。不会自动上传音频或创建云音色。",
+            "publishedAt": "2026-11-09T18:03:46.056Z",
+            "version": "1.0.2"
+          },
+          {
+            "locales": {
+              "en": {
+                "notes": "Requires AI Buddy 2.0.13. Both voice engines depend on shared runtime 1.0.3 exactly and preserve preset reference voices and custom selections. Cloud speech follows the general network proxy; uploading references or creating cloud voices requires user configuration and approval."
+              }
+            },
+            "notes": "需要AI酱2.0.13；两个语音引擎精确依赖共享组件1.0.3，保留预制参考声线与自定义选择。云配音联网跟随通用网络代理，上传参考录音或创建云音色仍需用户配置与确认。",
+            "publishedAt": "2026-11-10T02:20:57.991Z",
+            "version": "1.0.3"
+          }
+        ],
+        "repositoryUrl": "https://github.com/lXiaoSel1/AI-Buddy-Voice",
+        "reviewsRepository": "lXiaoSel1/AI-Buddy-Voice",
+        "status": "published",
+        "tags": [
+          "official",
+          "voice"
+        ]
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "sshsig",
+    "keyId": "ai-buddy-release",
+    "value": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgUuYWgCA5p99MsDA0n5TW/QwriJ\npMdsxn4GNqJ1WVrTkAAAAaYWktYnVkZHktY29tbXVuaXR5LWNhdGFsb2cAAAAAAAAABnNo\nYTUxMgAAAFMAAAALc3NoLWVkMjU1MTkAAABA7OH3bL9tUVHCZEIMxsNmcwfT2S3Gx9xDZI\n9hbZR9UqH3BUTk6eMg7jhR/M7zydt/pQA5WlKIxN0Gj4xJoxAwAw==\n-----END SSH SIGNATURE-----\n"
+  }
+}

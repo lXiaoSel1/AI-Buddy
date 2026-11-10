@@ -1,6 +1,7 @@
 import {locale} from '../i18n.mjs';
 import {networkErrorMessage} from '../network-errors.mjs';
 export const communityMessages = Object.freeze({
+  '需要更新 AI 酱': 'Update AI Buddy to use this version', '需要 AI 酱 {range}': 'Requires AI Buddy {range}',
   '正在核验 DSH 运行组件…': 'Verifying the DSH runtime component…', '正在启动原生宿主并检查插件…': 'Starting the native host and inspecting the plugin…', '正在检查插件安装计划…': 'Inspecting the plugin installation plan…', '正在提交插件安装请求…': 'Submitting the plugin installation request…', '正在安装插件…': 'Installing the plugin…', '正在应用插件变更…': 'Applying plugin changes…', '正在处理插件请求…': 'Processing the plugin request…', '首次启动会完整核对运行组件，检查完成后将显示安装计划。': 'The first launch verifies the full runtime component. The installation plan appears after inspection.',
   '尚未启动': 'Not started', '需要准备运行组件': 'Runtime component required', '已排队': 'Queued', '正在维护': 'Maintenance in progress', '维护完成': 'Maintenance completed', '维护失败': 'Maintenance failed', '已取消': 'Cancelled', '需要重新确认': 'Review required', '上次维护中断，需检查实际状态': 'Maintenance was interrupted; inspect its actual state',
   '全部分类': 'All categories', '功能与活动': 'Functions and activities', '工作引擎': 'Work engines', '角色与动作': 'Characters and motion', '主题与场景': 'Themes and scenes', '语音': 'Voice', '尚未开放安装': 'Installation not available yet',
@@ -30,6 +31,8 @@ export const communityPlurals = Object.freeze({
 });
 // Plain-language reasons for failure codes (B4 load failures, B5 maintenance records, B6 offline files). Unknown codes return null.
 const FAILURES = {
+  PLUGIN_DEPENDENCY_ERROR: ['这个版本和当前的 AI 酱不兼容，或者缺少它依赖的组件。', 'This version is not compatible with this AI Buddy, or a required component is missing.'],
+  COMMUNITY_NO_COMPATIBLE_RELEASE: ['这个插件的最新版需要更新的 AI 酱。先更新 AI 酱，或者在「版本」里选一个能用的旧版。', 'The latest version of this plugin needs a newer AI Buddy. Update AI Buddy first, or pick an older version under Versions.'],
   MAINTENANCE_OUTCOME_UNKNOWN: ['上次维护时程序退出了，需要先检查实际状态再重试。', 'The app closed during maintenance; check the actual state before retrying.'],
   MAINTENANCE_RECONFIRM_REQUIRED: ['来源、权限或资料变了，需要你重新确认。', 'The source, permissions or data changed; review it again.'],
   MAINTENANCE_FAILED: ['维护没有完成。', 'Maintenance did not finish.'],
@@ -70,5 +73,5 @@ const FAILURES = {
   COMMUNITY_OFFLINE_IDENTITY: ['插件包里的名字或版本和签名不一致。', 'The package name or version differs from what is signed.'],
   COMMUNITY_REVIEW_NOT_CONFIGURED: ['这个作品还没有接入评价。', 'This work does not take reviews yet.'], COMMUNITY_REVIEW_INVALID: ['GitHub 没有确认这条评价。', 'GitHub did not confirm this review.'], COMMUNITY_REVIEW_NOT_FOUND: ['没有找到这条评价草稿。', 'This review draft was not found.'],
 };
-export function communityErrorText(code, language = locale()) { if(code?.startsWith('NETWORK_')||/^(PLUGIN_SOURCE_FETCH_FAILED|PLUGIN_DOWNLOAD_FAILED|DSH_COMPONENT_DOWNLOAD_|FFMPEG_COMPONENT_DOWNLOAD)/.test(code??''))return networkErrorMessage(code?.includes('TIMEOUT')?'NETWORK_TIMEOUT':code,{language,offline:true});const row = FAILURES[code]; return row ? row[language === 'en' ? 1 : 0] : null; }
+export function communityErrorText(code, language = locale()) { if(code?.startsWith('NETWORK_')||/^(PLUGIN_SOURCE_FETCH_FAILED|PLUGIN_DOWNLOAD_FAILED|DSH_COMPONENT_DOWNLOAD_|FFMPEG_COMPONENT_DOWNLOAD)/.test(code??''))return networkErrorMessage(!code?.startsWith('NETWORK_')&&code?.includes('TIMEOUT')?'NETWORK_TIMEOUT':code,{language,offline:true});const row = FAILURES[code]; return row ? row[language === 'en' ? 1 : 0] : null; }
 export function communityCount(key, n, translate) { const forms = locale() === 'en' && communityPlurals[key]; return (forms ? forms[n === 1 ? 0 : 1] : translate(key)).replaceAll('{n}', n); }

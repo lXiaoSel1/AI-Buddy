@@ -8,6 +8,7 @@ import {Transform} from 'node:stream';
 import {createInflateRaw} from 'node:zlib';
 import net from 'node:net';
 import {openQqPreparation} from './qq-component-transaction.mjs';
+import {renamePluginPath} from './plugin-files.mjs';
 
 const fail=code=>Object.assign(Error(code),{code});
 export async function sha256File(path){const hash=createHash('sha256');for await(const chunk of createReadStream(path))hash.update(chunk);return hash.digest('hex');}
@@ -53,7 +54,7 @@ export async function verifyComponent(directory,descriptor){
 }
 const downloadHosts=new Set(['github.com','release-assets.githubusercontent.com','objects.githubusercontent.com','objects-origin.githubusercontent.com']);
 async function downloadResponse(url,options){for(let i=0;i<6;i++){const parsed=new URL(url);if(parsed.protocol!=='https:'||!downloadHosts.has(parsed.hostname)||parsed.username||parsed.password)throw fail('QQ_COMPONENT_DOWNLOAD_ORIGIN');const response=await fetch(parsed,{...options,redirect:'manual'});if([301,302,303,307,308].includes(response.status)){await response.body?.cancel();url=new URL(response.headers.get('location'),parsed).href;continue;}return response;}throw fail('QQ_COMPONENT_DOWNLOAD_REDIRECT');}
-export function createQqComponent({directory,descriptor,network,fetchImpl=fetch,fetchDownload}={}){
+export function createQqComponent({directory,descriptor,network,fetchImpl=fetch,fetchDownload,renameOptions={}}={}){
  let pending=null;
  async function ensure({signal,onProgress=()=>{},official=false}={}){
   if(process.platform!=='win32'||process.arch!=='x64')throw fail('QQ_COMPONENT_PLATFORM_UNSUPPORTED');
@@ -78,7 +79,20 @@ export function createQqComponent({directory,descriptor,network,fetchImpl=fetch,
     stage=await transaction.begin();const part=transaction.partial;
     await noLinks(part);await transaction.phase('downloading');
     await downloadPinnedFile(descriptor,part,{partial:part,fetchImpl:fetchDownload??fetchImpl,planDownload:network?.planDownload,official,signal,onProgress:value=>onProgress({downloadedBytes:value.receivedBytes,totalBytes:value.totalBytes}),validateUrl:value=>{const url=new URL(value);if(url.protocol!=='https:'||!downloadHosts.has(url.hostname)||url.username||url.password)throw fail('QQ_COMPONENT_DOWNLOAD_ORIGIN');return url;}});
-    await transaction.phase('extracting');await extractPinnedZip(part,stage,descriptor,{signal});await writeFile(join(stage,'buddy-component.json'),JSON.stringify({sha256:descriptor.sha256,version:descriptor.version}),{flag:'wx'});signal?.throwIfAborted();await rename(stage,target);
+    await transaction.phase('extracting');await extractPinnedZip(part,stage,descriptor,{signal});await writeFile(join(stage,'buddy-component.json'),JSON.stringify({sha256:descriptor.sha256,version:descriptor.version}),{flag:'wx'});signal?.throwIfAborted();
+    const containerIdentity=await lstat(transaction.directory,{bigint:true}),stageIdentity=await lstat(stage,{bigint:true});let renameFailure;
+    try{await renamePluginPath(stage,target,{...renameOptions,retryBudgetMs:10000,renameImpl:async(source,destination)=>{
+     signal?.throwIfAborted();await noLinks(source);await noLinks(destination);
+     const container=await lstat(transaction.directory,{bigint:true}),current=await lstat(source,{bigint:true});
+     if(!container.isDirectory()||container.dev!==containerIdentity.dev||container.ino!==containerIdentity.ino||!current.isDirectory()||current.dev!==stageIdentity.dev||current.ino!==stageIdentity.ino)throw fail('QQ_COMPONENT_RECOVERY_REQUIRED');
+     if(await lstat(destination).catch(error=>{if(error.code==='ENOENT')return null;throw error;}))throw fail('QQ_COMPONENT_REPAIR_REQUIRED');
+     signal?.throwIfAborted();try{return await (renameOptions.renameImpl??rename)(source,destination);}catch(cause){renameFailure=cause;throw cause;}
+    }});}catch(cause){
+     if(cause!==renameFailure)throw cause;
+     const systemCode=/^E[A-Z0-9_]{1,31}$/.test(cause.code??'')?cause.code:'UNKNOWN',diagnostic={systemCode,syscall:'rename',source:relative(transaction.directory,stage),target:relative(transaction.directory,target)};
+     if(['EPERM','EACCES','EBUSY'].includes(systemCode))throw Object.assign(Error('Connection component commit rename temporarily unavailable'),{code:'QQ_COMPONENT_COMMIT_RENAME',...diagnostic});
+     throw Object.assign(cause,diagnostic);
+    }
     await transaction.phase('committed');await transaction.complete();return target;
    }catch(cause){
     if(transaction&&stage){if(['QQ_COMPONENT_HASH_MISMATCH','QQ_COMPONENT_SIZE_MISMATCH'].includes(cause.code)){await noLinks(transaction.partial);await rm(transaction.partial,{force:true});}await transaction.cleanupStage();await transaction.interrupted();}

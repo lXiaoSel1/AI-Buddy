@@ -16,8 +16,8 @@ async function fixture(t){
  let v=await service.invoke('games.table.create',{commandId:'create',type:'texas',players:[{kind:'user'},{kind:'ai',characterId:'a'}],buyIn:200});
  if(v.actorKind==='user')v=await service.invoke('games.table.action',{tableId:v.tableId,commandId:'user-call',expectedVersion:v.version,action:{type:'call'}});
  profile.keyCiphertext='after';
- await assert.rejects(service.invoke('games.model.request',{tableId:v.tableId,expectedVersion:v.version,requestId:'revoked'}),{code:'GAME_BINDING_REVOKED'});
- v=await service.invoke('games.table.read',{tableId:v.tableId});
+ v=await service.invoke('games.model.request',{tableId:v.tableId,expectedVersion:v.version,requestId:'revoked'});
+ assert.equal(v.model.code,'GAME_BINDING_REVOKED');assert.equal(v.model.status,'needs-retry');assert.equal(v.status,'paused');
  return {db,economy,service,profile,view:v,requests:()=>requests};
 }
 test('explicit rebind continues the same hand while preserving the original binding and receipts',async t=>{

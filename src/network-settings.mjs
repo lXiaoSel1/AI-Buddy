@@ -23,10 +23,13 @@ export function downloadRequestPlan(value,settings=NETWORK_DEFAULTS,{official=fa
 export function isLoopback(value){try{return ['localhost','127.0.0.1','[::1]','::1'].includes(new URL(value).hostname);}catch{return false;}}
 export function proxyRoutes(value){
   if(!value||value==='DIRECT')return [{kind:'direct'}];
-  return String(value).split(';').filter(part=>part.trim()).map(part=>{
-    const entry=part.trim();if(entry==='DIRECT')return {kind:'direct'};
-    if(/^https?:\/\//i.test(entry)){const url=endpoint(entry,{proxy:true});return {kind:new URL(url).protocol.slice(0,-1),url};}
-    const match=/^(PROXY|HTTPS|HTTP)\s+([^\s]+)$/i.exec(entry);if(!match)throw Object.assign(Error('系统代理协议暂不支持'),{code:'NETWORK_PROXY_UNSUPPORTED'});
-    const url=endpoint((match[1].toUpperCase()==='HTTPS'?'https://':'http://')+match[2],{proxy:true});return {kind:new URL(url).protocol.slice(0,-1),url};
-  });
+  const routes=[];
+  for(const part of String(value).split(';')){
+    const entry=part.trim();if(entry==='DIRECT'){routes.push({kind:'direct'});continue;}
+    if(/^https?:\/\//i.test(entry)){const url=endpoint(entry,{proxy:true});routes.push({kind:new URL(url).protocol.slice(0,-1),url});continue;}
+    const match=/^(PROXY|HTTPS|HTTP)\s+([^\s]+)$/i.exec(entry);if(!match)continue;
+    const url=endpoint((match[1].toUpperCase()==='HTTPS'?'https://':'http://')+match[2],{proxy:true});routes.push({kind:new URL(url).protocol.slice(0,-1),url});
+  }
+  if(!routes.length)throw Object.assign(Error('系统代理协议暂不支持'),{code:'NETWORK_PROXY_UNSUPPORTED'});
+  return routes;
 }

@@ -42,9 +42,9 @@ export function createNodeNetworkFetch({resolveRoute=async()=>[{kind:'direct'}],
       function onAbort(){fail(request.signal.reason);}
       function onReady(){
         if(settled||ready)return;ready=true;clearTimeout(connectTimer);
-        if(headersTimeoutMs>0)headersTimer=setTimeout(()=>fail(Object.assign(Error('Response headers timed out'),{code:'UND_ERR_HEADERS_TIMEOUT'})),headersTimeoutMs);
+        if(headersTimeoutMs>0)headersTimer=setTimeout(()=>fail(Object.assign(Error('Response headers timed out'),{code:'UND_ERR_HEADERS_TIMEOUT',phase:'headers'})),headersTimeoutMs);
       }
-      if(connectTimeoutMs>0)connectTimer=setTimeout(()=>fail(Object.assign(Error('Network connection timed out'),{code:'ETIMEDOUT'})),connectTimeoutMs);
+      if(connectTimeoutMs>0)connectTimer=setTimeout(()=>fail(Object.assign(Error('Network connection timed out'),{code:'ETIMEDOUT',phase:'connect'})),connectTimeoutMs);
       request.signal.addEventListener('abort',onAbort,{once:true});
       try{outgoing=implementation.request(url,{method:request.method,headers:Object.fromEntries(request.headers),agent,signal:request.signal},incoming=>{
         if(settled){incoming.destroy();return;}settled=true;cleanup();
@@ -74,7 +74,7 @@ export function createNodeNetworkFetch({resolveRoute=async()=>[{kind:'direct'}],
       if(!request.headers.has('content-length')&&!request.headers.has('transfer-encoding')&&(body!==null||['POST','PUT'].includes(request.method)))request.headers.set('content-length',String(body?.length??0));
       let routes=await resolveRoute(url.href);if(typeof routes==='string')routes=proxyRoutes(routes);if(!Array.isArray(routes)||!routes.length)throw Error('No proxy route available');
       let response,lastError;
-      for(const route of routes){try{response=await once(url,request,body,route,hop>0);break;}catch(cause){lastError=cause;const code=cause?.cause?.code??cause?.cause?.cause?.code;if(request.signal.aborted||!['ECONNREFUSED','ETIMEDOUT','ENETUNREACH','EHOSTUNREACH'].includes(code))throw cause;}}
+      for(const route of routes){try{response=await once(url,request,body,route,hop>0);break;}catch(cause){lastError=cause;const code=cause?.cause?.code??cause?.cause?.cause?.code;if(request.signal.aborted||!['ECONNREFUSED','ETIMEDOUT','ENETUNREACH','EHOSTUNREACH'].includes(code)&&!(route.kind!=='direct'&&code==='ERR_PROXY_TUNNEL'))throw cause;}}
       if(!response)throw lastError;
       if(![301,302,303,307,308].includes(response.status)||!response.headers.get('location')||request.redirect==='manual')return response;
       await response.body?.cancel();if(request.redirect==='error')throw Object.assign(Error('Network redirect rejected'),{code:'NETWORK_REDIRECT'});

@@ -1,6 +1,6 @@
 {
   "payload": {
-    "generatedAt": "2026-11-09T18:03:46.056Z",
+    "generatedAt": "2026-11-10T02:20:57.991Z",
     "id": "ai-buddy-official",
     "packages": [
       {
@@ -4853,6 +4853,397 @@
           "version": "1.0.2"
         },
         "publishedAt": "2026-11-09T18:03:46.056Z"
+      },
+      {
+        "archive": {
+          "bytes": 248958,
+          "sha256": "2a649fc210a00f20b5000d82ac56ba8a6e383c71947bc899880a9307ac90c06e",
+          "url": "https://github.com/lXiaoSel1/AI-Buddy-Voice/releases/download/v1.0.3/ai-buddy.voice-shared-runtime-1.0.3.zip"
+        },
+        "manifest": {
+          "activationEvents": [],
+          "apiRange": "^1.0.0",
+          "appRange": ">=2.0.13",
+          "arch": "x64",
+          "author": "lXiaoSel1",
+          "capabilities": [],
+          "category": "voice",
+          "compatibleDataVersions": [
+            1
+          ],
+          "dataSchemaVersion": 1,
+          "dependencies": {},
+          "description": "两种语音引擎共用的识别、云配音 worker 与运行协议；自动管理的内部依赖。",
+          "entry": "asr_worker.py",
+          "files": [
+            {
+              "bytes": 4490,
+              "path": "asr.py",
+              "sha256": "19ddc7b7ffa1e3d58614caecbe26df94efe93ae9793166d972acbb398b7ba2e9"
+            },
+            {
+              "bytes": 1698,
+              "path": "asr_worker.py",
+              "sha256": "7401a00522cff5ade2f00853d1edd2b20c10b1e6c47f75810c6809556b1926f8"
+            },
+            {
+              "bytes": 2049,
+              "path": "ASSET-NOTICES.md",
+              "sha256": "d96c2b3bf59ab71b0de74158c7d1e04d3ef4a05b18b37462ad094608d9839de0"
+            },
+            {
+              "bytes": 675616,
+              "path": "assets.json",
+              "sha256": "36402e36a0e3249db75d6d93995bfd696f1759b0c1c8620300ab8a3df92b5eee"
+            },
+            {
+              "bytes": 14048,
+              "path": "cloud_speech.py",
+              "sha256": "c943cf188f61e131dc9a40da622a5fabb044cdbd250830409a97df89bb48fd63"
+            },
+            {
+              "bytes": 251444,
+              "path": "downloads.json",
+              "sha256": "8d6e870ecb95054e55a1e7454e9b129d024ebd77dd2980aa3f1edceb5ed6838a"
+            },
+            {
+              "bytes": 13663,
+              "path": "LICENSE.md",
+              "sha256": "743e12419085102e444fd36c1df870d9fcd64badcc03cc551ae0fae81f517b3a"
+            },
+            {
+              "bytes": 2921,
+              "path": "worker_protocol.py",
+              "sha256": "204769ac9411983c6522402a6f0b8b5fce74519a6675ad07bbf152925afc2455"
+            }
+          ],
+          "id": "ai-buddy.voice-shared-runtime",
+          "kind": "runtime",
+          "license": "Apache-2.0 + Commons Clause",
+          "name": "AI Buddy 共享语音运行依赖",
+          "platform": "win32",
+          "schemaVersion": 1,
+          "version": "1.0.3"
+        },
+        "publishedAt": "2026-11-10T02:20:57.991Z"
+      },
+      {
+        "archive": {
+          "bytes": 7656792,
+          "sha256": "f976545531cd72ac72dd58a7364c61dcb2e0cd4a52321dad8ebde91032f377d3",
+          "url": "https://github.com/lXiaoSel1/AI-Buddy-Voice/releases/download/v1.0.3/ai-buddy.voice-breeze-1.0.3.zip"
+        },
+        "manifest": {
+          "activationEvents": [
+            "onCommand:voice.breeze"
+          ],
+          "apiRange": "^1.0.0",
+          "appRange": ">=2.0.13",
+          "arch": "x64",
+          "author": "lXiaoSel1",
+          "capabilities": [
+            "commands.register"
+          ],
+          "category": "voice",
+          "compatibleDataVersions": [
+            1
+          ],
+          "dataSchemaVersion": 1,
+          "dependencies": {
+            "ai-buddy.voice-shared-runtime": "1.0.3"
+          },
+          "description": "选择本地 Breeze 或 MiniMax 云配音。共用本地流式识别、录音、轮流 Live 和播放。",
+          "entry": "entry.mjs",
+          "files": [
+            {
+              "bytes": 2237,
+              "path": "ASSET-NOTICES.md",
+              "sha256": "8ab1153a9f94afa1ef1e57abda0baab2806425cca90854220b94fcc673e31215"
+            },
+            {
+              "bytes": 5152097,
+              "path": "assets.json",
+              "sha256": "2ac28cbb5632d3fcd250536fa30710ff2539d4ffda0235fa35a74aad3a212d37"
+            },
+            {
+              "bytes": 3981,
+              "path": "breeze_worker.py",
+              "sha256": "9bae23e9f853ffb153f47d12e7a99038e2a709f20a1541dd512b17a4a958ddbd"
+            },
+            {
+              "bytes": 809,
+              "path": "cadence.py",
+              "sha256": "67fb5c4740e231252245d72e01e34e4bd9cda189014c7661cd6baa80b674978f"
+            },
+            {
+              "bytes": 2159095,
+              "path": "downloads.json",
+              "sha256": "f63179fa70ab90723df79fa58bbc3557b3e1da5119e703a8d78f3d2a2c8ee467"
+            },
+            {
+              "bytes": 279,
+              "path": "entry.mjs",
+              "sha256": "d28fabfa5ebbd013e0b1fd3a05e1cd7c99ebb26a5d29455a6236100913de476a"
+            },
+            {
+              "bytes": 13663,
+              "path": "LICENSE.md",
+              "sha256": "743e12419085102e444fd36c1df870d9fcd64badcc03cc551ae0fae81f517b3a"
+            },
+            {
+              "bytes": 703470,
+              "path": "presets/audio/chatgpt-calm.wav",
+              "sha256": "14908ee642e93fb5172a9cabdcd8353b2fce8f4efb4857ad04dabb4e07af818d"
+            },
+            {
+              "bytes": 640776,
+              "path": "presets/audio/claude-calm.wav",
+              "sha256": "7a5c0c5de385a039e59fecc18fb408d9663de49cd423cc10fcb05109dd5b97b3"
+            },
+            {
+              "bytes": 585604,
+              "path": "presets/audio/deepseek-calm.wav",
+              "sha256": "4f2cc378b6252edcd45f1c455493874235ed642c6daae49f6c292e374293bd6c"
+            },
+            {
+              "bytes": 734816,
+              "path": "presets/audio/gemini-calm.wav",
+              "sha256": "3b51ab677546c2491f7ff02eaecc28412165225e16561daf7e8861226a8188c4"
+            },
+            {
+              "bytes": 702216,
+              "path": "presets/audio/glm-calm.wav",
+              "sha256": "d7cb00798fc78dec9ceb9f9ff1b238aaaa3055c01a1b19a54f448039acd2e974"
+            },
+            {
+              "bytes": 684662,
+              "path": "presets/audio/grok-calm.wav",
+              "sha256": "1387e15bf8cb599b8c12aef7737149df22ebfc33900d5fc7c8667df4346d2334"
+            },
+            {
+              "bytes": 672122,
+              "path": "presets/audio/hunyuan-calm.wav",
+              "sha256": "008150757eeeec5759514c91fa2c072157fbbe04190e8ea9b0919e0d3a99e2f2"
+            },
+            {
+              "bytes": 634506,
+              "path": "presets/audio/kimi-calm.wav",
+              "sha256": "1c34dce6285284f105ee86cf5b9c15a7593250443e7d5507066bbef55c78494e"
+            },
+            {
+              "bytes": 688422,
+              "path": "presets/audio/minimax-calm.wav",
+              "sha256": "af7cc7ff5324e5b5db4af371ee4e3a23fba5080575dd36add85e3bd0c558af84"
+            },
+            {
+              "bytes": 734816,
+              "path": "presets/audio/qwen-calm.wav",
+              "sha256": "c116003389917914d01c81bd18815f1f0216b181a5aaac1a45b81fc413f57d85"
+            },
+            {
+              "bytes": 738578,
+              "path": "presets/audio/seed-calm.wav",
+              "sha256": "2b21b9c2b878162096875ea6add714caa6723202dbf98d2c91a22b1dc7f181d8"
+            },
+            {
+              "bytes": 10934,
+              "path": "presets/index.json",
+              "sha256": "a81131e31a072497ac5b27caccd4bb19a3cf2818af963bcee8b0ff198dd21805"
+            }
+          ],
+          "id": "ai-buddy.voice-breeze",
+          "kind": "plugin",
+          "license": "Apache-2.0 + Commons Clause",
+          "name": "Breeze 语音",
+          "platform": "win32",
+          "schemaVersion": 1,
+          "version": "1.0.3"
+        },
+        "publishedAt": "2026-11-10T02:20:57.991Z"
+      },
+      {
+        "archive": {
+          "bytes": 10267737,
+          "sha256": "607457d750b460cd851dc36cfb7498cc5b1f16d75e422f5d813b685610977e9c",
+          "url": "https://github.com/lXiaoSel1/AI-Buddy-Voice/releases/download/v1.0.3/ai-buddy.voice-gpt-sovits-1.0.3.zip"
+        },
+        "manifest": {
+          "activationEvents": [
+            "onCommand:voice.gpt-sovits"
+          ],
+          "apiRange": "^1.0.0",
+          "appRange": ">=2.0.13",
+          "arch": "x64",
+          "author": "lXiaoSel1",
+          "capabilities": [
+            "commands.register"
+          ],
+          "category": "voice",
+          "compatibleDataVersions": [
+            1
+          ],
+          "dataSchemaVersion": 1,
+          "dependencies": {
+            "ai-buddy.voice-shared-runtime": "1.0.3"
+          },
+          "description": "选择本地 GPT-SoVITS V5 Turbo 或 MiniMax 云配音。共用本地流式识别、录音、轮流 Live 和播放。",
+          "entry": "entry.mjs",
+          "files": [
+            {
+              "bytes": 2237,
+              "path": "ASSET-NOTICES.md",
+              "sha256": "8ab1153a9f94afa1ef1e57abda0baab2806425cca90854220b94fcc673e31215"
+            },
+            {
+              "bytes": 4662018,
+              "path": "assets.json",
+              "sha256": "0174e12240469f16e0bfb0630f5a6337c2c63f58ba4717443968b9a32f44657d"
+            },
+            {
+              "bytes": 1922171,
+              "path": "downloads.json",
+              "sha256": "dbf98ab5b0619a275dd31354e0ca945f79d869b01de331f838ff23f61d1cc59a"
+            },
+            {
+              "bytes": 288,
+              "path": "entry.mjs",
+              "sha256": "b8d6156541d74a7d030e9a49ba23881cf9025492dc66427773ec412acf1bdb66"
+            },
+            {
+              "bytes": 4499,
+              "path": "gpt_worker.py",
+              "sha256": "35d3c22bacea917904b7c663753c2544bacfcafc49d1aa6cd74b4446210b1bda"
+            },
+            {
+              "bytes": 13663,
+              "path": "LICENSE.md",
+              "sha256": "743e12419085102e444fd36c1df870d9fcd64badcc03cc551ae0fae81f517b3a"
+            },
+            {
+              "bytes": 280844,
+              "path": "presets/audio/chatgpt-calm.wav",
+              "sha256": "07e6003af297b2ab78fbbdb673a72e185c12827755e6d5574ca934ac11857219"
+            },
+            {
+              "bytes": 703470,
+              "path": "presets/audio/chatgpt-cloud.wav",
+              "sha256": "14908ee642e93fb5172a9cabdcd8353b2fce8f4efb4857ad04dabb4e07af818d"
+            },
+            {
+              "bytes": 248684,
+              "path": "presets/audio/claude-calm.wav",
+              "sha256": "b7d16ea69f7c533370e94847079cc291b6cb147e499fa83f0ce59afe0676264e"
+            },
+            {
+              "bytes": 640776,
+              "path": "presets/audio/claude-cloud.wav",
+              "sha256": "7a5c0c5de385a039e59fecc18fb408d9663de49cd423cc10fcb05109dd5b97b3"
+            },
+            {
+              "bytes": 321548,
+              "path": "presets/audio/deepseek-calm.wav",
+              "sha256": "0cfbfd74c4733d61aec445e39a76acdd59ca8226e8d1f26561695f4c95319492"
+            },
+            {
+              "bytes": 585604,
+              "path": "presets/audio/deepseek-cloud.wav",
+              "sha256": "4f2cc378b6252edcd45f1c455493874235ed642c6daae49f6c292e374293bd6c"
+            },
+            {
+              "bytes": 426764,
+              "path": "presets/audio/gemini-calm.wav",
+              "sha256": "cfc05fb063a8657e4e2f302ed9ed1901577413bdb50fd3e5b73e761d7d059a47"
+            },
+            {
+              "bytes": 734816,
+              "path": "presets/audio/gemini-cloud.wav",
+              "sha256": "3b51ab677546c2491f7ff02eaecc28412165225e16561daf7e8861226a8188c4"
+            },
+            {
+              "bytes": 361004,
+              "path": "presets/audio/glm-calm.wav",
+              "sha256": "0b2dc95c7c1f2b136fff28dfd3b121539457020b38fa2709df6a88e7a0bcbd5e"
+            },
+            {
+              "bytes": 702216,
+              "path": "presets/audio/glm-cloud.wav",
+              "sha256": "d7cb00798fc78dec9ceb9f9ff1b238aaaa3055c01a1b19a54f448039acd2e974"
+            },
+            {
+              "bytes": 414284,
+              "path": "presets/audio/grok-calm.wav",
+              "sha256": "c1075a94be2d44ba61c3bf2b1dd762b7b224ebaac1fff1cf96921f9cdf859147"
+            },
+            {
+              "bytes": 684662,
+              "path": "presets/audio/grok-cloud.wav",
+              "sha256": "1387e15bf8cb599b8c12aef7737149df22ebfc33900d5fc7c8667df4346d2334"
+            },
+            {
+              "bytes": 255884,
+              "path": "presets/audio/hunyuan-calm.wav",
+              "sha256": "11082632c7a50c4b42355f2c5bfaaaf6942951b73d64d837843fbde55e4a5900"
+            },
+            {
+              "bytes": 672122,
+              "path": "presets/audio/hunyuan-cloud.wav",
+              "sha256": "008150757eeeec5759514c91fa2c072157fbbe04190e8ea9b0919e0d3a99e2f2"
+            },
+            {
+              "bytes": 224684,
+              "path": "presets/audio/kimi-calm.wav",
+              "sha256": "81ba9eaab5e943b2e461c1debc7332f529b5b4d58a9024b6686e0b40c7e9d93e"
+            },
+            {
+              "bytes": 634506,
+              "path": "presets/audio/kimi-cloud.wav",
+              "sha256": "1c34dce6285284f105ee86cf5b9c15a7593250443e7d5507066bbef55c78494e"
+            },
+            {
+              "bytes": 367724,
+              "path": "presets/audio/minimax-calm.wav",
+              "sha256": "203e69d5d1bdf5939ae8da14675a0963bb5bf3a680efd3071b676e1a680cbd93"
+            },
+            {
+              "bytes": 688422,
+              "path": "presets/audio/minimax-cloud.wav",
+              "sha256": "af7cc7ff5324e5b5db4af371ee4e3a23fba5080575dd36add85e3bd0c558af84"
+            },
+            {
+              "bytes": 173084,
+              "path": "presets/audio/qwen-calm.wav",
+              "sha256": "8a01c7a9b266dec420681b917243406ad35987057e761a4721a825ed49964e1d"
+            },
+            {
+              "bytes": 734816,
+              "path": "presets/audio/qwen-cloud.wav",
+              "sha256": "c116003389917914d01c81bd18815f1f0216b181a5aaac1a45b81fc413f57d85"
+            },
+            {
+              "bytes": 420524,
+              "path": "presets/audio/seed-calm.wav",
+              "sha256": "ec9e3d58eb5cfc839d294c9c1eb7c9f2d39ff6a9ad8d223eff143dcd8a3e85d8"
+            },
+            {
+              "bytes": 738578,
+              "path": "presets/audio/seed-cloud.wav",
+              "sha256": "2b21b9c2b878162096875ea6add714caa6723202dbf98d2c91a22b1dc7f181d8"
+            },
+            {
+              "bytes": 9974,
+              "path": "presets/index.json",
+              "sha256": "f5290e6ddfb4895b0a4b398f09d02684c701cf2c3228708bdad7a6f4f641b851"
+            }
+          ],
+          "id": "ai-buddy.voice-gpt-sovits",
+          "kind": "plugin",
+          "license": "Apache-2.0 + Commons Clause",
+          "name": "GPT-SoVITS 语音",
+          "platform": "win32",
+          "schemaVersion": 1,
+          "version": "1.0.3"
+        },
+        "publishedAt": "2026-11-10T02:20:57.991Z"
       }
     ],
     "schemaVersion": 1
@@ -4860,6 +5251,6 @@
   "signature": {
     "algorithm": "sshsig",
     "keyId": "ai-buddy-release",
-    "value": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgUuYWgCA5p99MsDA0n5TW/QwriJ\npMdsxn4GNqJ1WVrTkAAAAXYWktYnVkZHktcGx1Z2luLWNhdGFsb2cAAAAAAAAABnNoYTUx\nMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAax8c4IVumJVo4sY1y4NmDvBQ1rfMUTb1pI9WU5\n88bkhtuj5WjsTov0St0kcKUY/r0eMQnyA57vszndySY7ZUDg==\n-----END SSH SIGNATURE-----\n"
+    "value": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgUuYWgCA5p99MsDA0n5TW/QwriJ\npMdsxn4GNqJ1WVrTkAAAAXYWktYnVkZHktcGx1Z2luLWNhdGFsb2cAAAAAAAAABnNoYTUx\nMgAAAFMAAAALc3NoLWVkMjU1MTkAAABAy6YGB9keEcA6tlLiVOGC0xfYNJ744frqNh6OqY\n0+Kemadvy9lBBzMzSfa6sW+WVNfQQ2j38BML//8etenA8lDg==\n-----END SSH SIGNATURE-----\n"
   }
 }

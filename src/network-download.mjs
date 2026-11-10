@@ -78,7 +78,7 @@ export async function downloadPinnedFile(item,target,{fetchImpl=fetch,planDownlo
     await retainRejected(partial);
     throw Object.assign(failure('NETWORK_MIRROR_MISMATCH',networkErrorMessage('NETWORK_MIRROR_MISMATCH')),{network:true,retryOfficial:true,technicalCode:error.code,technical:{code:error.code},cause:error});
    }
-   const retriable=['NETWORK_CONNECT_FAILED','NETWORK_DOWNLOAD_INCOMPLETE','NETWORK_TIMEOUT','ECONNRESET','ETIMEDOUT','ECONNREFUSED'].includes(error?.code)||error instanceof TypeError;
+   const retriable=['NETWORK_CONNECT_FAILED','NETWORK_RESPONSE_TIMEOUT','NETWORK_DOWNLOAD_INCOMPLETE','NETWORK_TIMEOUT','ECONNRESET','ETIMEDOUT','ECONNREFUSED'].includes(error?.code)||error instanceof TypeError;
    if(!retriable||error.status>=400&&error.status<500&&error.status!==429||attempt>=retries)throw error;
    // Retry only transport failures. The verified prefix stays at .partial.
   }finally{clearTimeout(timer);if(response?.body&&!response.body.locked)await response.body.cancel().catch(()=>{});}

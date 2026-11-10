@@ -9,6 +9,7 @@ const messages={
  QQ_COMPONENT_DISK_FULL:['组件准备空间不足，请先腾出磁盘空间后重试。','Not enough disk space to prepare the component. Free space and retry.'],
  QQ_COMPONENT_HASH_MISMATCH:['下载文件校验不通过，未运行该文件。请重试下载。','Download integrity check failed. The file was not run. Retry the download.'],
  QQ_COMPONENT_PREPARATION_BUSY:['另一实例正在准备组件，请等待其结束。','Another instance is preparing the component. Wait for it to finish.'],
+ QQ_COMPONENT_COMMIT_RENAME:['连接组件解压好了，但暂时被系统占用。等几秒再点「重新扫码」，不用重新下载。','The connection component was extracted but is still in use by the system. Wait a few seconds and click Scan again; nothing will be downloaded again.'],
  QQ_COMPONENT_RESTART_REQUIRED:['QQ组件要求重新启动，请点击连接重试。','The QQ component requested a restart. Click Connect to retry.'],
  QQ_COMPONENT_START_TIMEOUT:['QQ组件启动超时，已停止本次连接，请重试。','The QQ component startup timed out. This connection was stopped; retry.'],
  QQ_COMPONENT_PLATFORM_UNSUPPORTED:['扫码QQ组件目前仅支持 Windows x64；其他平台可使用高级连接。','The QR component currently supports Windows x64. Other platforms can use advanced connections.'],

@@ -8,7 +8,7 @@ import {Icon} from './ui-icons.mjs';
 import {StatusPill,Menu} from './ui-controls.mjs';
 import {Dialog} from './ui-dialog.mjs';
 import {PluginLogo} from './community-install-page.mjs';
-import {pluginResult} from './plugin-center-helpers.mjs';
+import {pluginResult,pluginErrorText} from './plugin-center-helpers.mjs';
 import {EMBED_TARGETS,embedCapable} from './plugin-embed-targets.mjs';
 const h=React.createElement;
 const plugins=()=>globalThis.window?.whale?.plugins;
@@ -63,10 +63,21 @@ function StateCard({target,title,text,actions=null,extra=null,progress=false}){
   return h('div',{className:'embed-state',role:'status'},h('div',{className:'embed-state-c'},h(PluginLogo,{packageName:EMBED_TARGETS[target].packageName,size:56}),h('h3',null,title),h('p',null,text),
     progress&&h('span',{className:'ws-meter embed-indet','aria-hidden':true},h('b')),extra,actions&&h('div',{className:'ws-row-btns'},actions)));
 }
+/** Prepare through the same pinned component plan as Extension Center, never by fetching a renderer URL. */
+export async function prepareEmbedRuntime(api,{isCurrent=()=>true,onReady=()=>{}}={}){
+  const plan=pluginResult(await api.action({action:'dsh-component-plan'}));
+  if(!isCurrent())return;
+  if(!plan?.planId)throw Object.assign(Error(t('运行组件尚未准备完成')),{code:'DSH_RUNTIME_NOT_READY'});
+  const result=pluginResult(await api.action({action:'dsh-component-install',planId:plan.planId}));
+  if(result?.state!=='ready')throw Object.assign(Error(t('运行组件尚未准备完成')),{code:'DSH_RUNTIME_NOT_READY'});
+  if(isCurrent())await onReady();
+}
 /** G2–G5: the placeholder the page is laid over, and the screens shown before it is there. */
 export function EmbedArea({target,record,view,state,onCommunity,onStatus,logPath=null}){
   const area=useRef(null),[snap,setSnap]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[shown,setShown]=useState(()=>globalThis.document?.visibilityState!=='hidden'),[refused,setRefused]=useState(null);
-  const name=embedName(target),live=['start','run','err'].includes(view);
+  const scope=useRef(null);
+  useEffect(()=>{const current={target};scope.current=current;return()=>{if(scope.current===current)scope.current=null;};},[target]);
+  const name=embedName(target),live=['start','run','err'].includes(view),runtimeMissing=(refused??state?.code)==='DSH_RUNTIME_NOT_READY';
   // the host refused to open the page (e.g. a data import is running): say so, with Retry, instead of spinning
   useEffect(()=>setRefused(null),[target,state?.state]);
   if(refused&&view==='start')view=refused==='PLUGIN_BUSY'?'waiting':'err';
@@ -90,13 +101,15 @@ export function EmbedArea({target,record,view,state,onCommunity,onStatus,logPath
     return()=>{observer.disconnect();window.removeEventListener('resize',report);void embed({op:'slot',target,rect:null}).catch(()=>{});};
   },[target,placed,shown,!!state]);
   useEffect(()=>{const on=event=>setSnap(event.detail?.image??null);window.addEventListener('buddy-embed-cover',on);return()=>window.removeEventListener('buddy-embed-cover',on);},[]);
-  const act=async work=>{setBusy(true);setError('');try{await work();}catch(e){setError(e.message);}finally{setBusy(false);}};
+  const act=async work=>{setBusy(true);setError('');try{await work();}catch(e){setError(pluginErrorText(e));}finally{setBusy(false);}};
   const enable=()=>act(async()=>pluginResult(await plugins().action({action:'dsh-enable',packageKey:record.packageKey})));
+  const prepareRuntime=()=>act(async()=>{const captured=scope.current;await prepareEmbedRuntime(plugins(),{isCurrent:()=>!!captured&&scope.current===captured,onReady:async()=>{setRefused(null);await embed({op:'reload',target});}});});
   const failure=error&&h('p',{className:'ui-alert warn',role:'alert'},error);
   let screen=null;
   if(view==='start')screen=h(StateCard,{target,title:t('正在准备 {name}').replace('{name}',name),text:t('DSH 后台正在启动。AI 酱启动后第一次打开要先核验运行组件，可能要等一分钟左右；准备好后这里直接显示插件页。'),progress:true});
   else if(view==='off')screen=h(StateCard,{target,title:t('{name}已停用').replace('{name}',name),text:t(PAUSED[target]),extra:failure,actions:[h('button',{key:'e',type:'button',className:'ui-btn primary',disabled:busy,onClick:()=>void enable()},Icon('power',{size:16}),busy?t('正在启用…'):t('启用')),h('button',{key:'v',type:'button',className:'ui-btn ghost',onClick:()=>onCommunity?.({tab:'installed',packageName:EMBED_TARGETS[target].packageName})},t('在扩展中心查看'))]});
   else if(waiting)screen=h(StateCard,{target,title:t('等待插件空闲'),text:t('插件正在处理另一项操作，空闲后会自动重试。'),progress:true});
+  else if(view==='err'&&runtimeMissing)screen=h(StateCard,{target,title:t('运行组件还没准备好'),text:t('准备好运行组件后，就能在这里打开插件。'),progress:busy,extra:failure,actions:[h('button',{key:'p',type:'button',className:'ui-btn primary',disabled:busy,onClick:()=>void prepareRuntime()},Icon('download',{size:16}),t(busy?'正在准备运行组件…':'准备运行组件'))]});
   else if(view==='err')screen=h(StateCard,{target,title:t('插件页打不开'),text:t('DSH 后台没有响应。可以先重试；还不行就在单独窗口打开，或者去扩展中心看维护记录。'),
     extra:(refused??state?.code??logPath)&&h('details',{className:'work-entry-tech'},h('summary',null,t('技术详情：错误代码和日志位置')),...[(refused??state?.code)&&t('错误代码：{code}').replace('{code}',refused??state.code),logPath&&t('日志：{path}').replace('{path}',logPath)].filter(Boolean).map((line,i)=>h('code',{key:i},line))),
     actions:[h('button',{key:'r',type:'button',className:'ui-btn primary',onClick:()=>{setRefused(null);send({op:'reload',target});}},Icon('retry',{size:16}),t('重试')),h('button',{key:'w',type:'button',className:'ui-btn ghost',onClick:()=>send({op:'popout',target})},Icon('external',{size:16}),t('在单独窗口打开'))]});

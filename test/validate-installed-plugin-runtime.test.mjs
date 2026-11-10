@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {dirname, join, resolve, sep} from 'node:path';
 import {
   parseGateArgs, inspectCandidateIdentity, requireDocumentHandshake,
-  requirePluginPlan, requireOldPlugin, requireProcessBinding, validateInstalledPluginRuntime, OFFICIAL_TARGETS,
+  requirePluginPlan, requireOldPlugin, requireProcessBinding, validateInstalledPluginRuntime, OFFICIAL_TARGETS, OFFICIAL_VOICE_TARGET, requireVoicePlan, requireVoiceInstall,
 } from '../scripts/validate-installed-plugin-runtime.mjs';
 
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -101,4 +101,14 @@ test('native QQ and card plans do not invent Bilibili-only hostComponents', () =
 test('Bilibili no-download preflight still requires explicit host component evidence', () => {
   const target=OFFICIAL_TARGETS[0],plan={packageKey:'dsh:official:'+target.packageName,packageRef:{sourceId:'official',packageName:target.packageName,exactVersion:target.version,sourceDigest:target.digest},planId:'plan',sourceFingerprint:'SHA256:trusted-catalog',catalogDigest:'e'.repeat(64),declaredCapabilities:[]};
   assert.throws(()=>requirePluginPlan(plan,target,{requireComponentsReady:true}),/component|download/i);
+});
+
+test('official voice gate requires current package plan and a usable enabled production authority',()=>{
+ const v=OFFICIAL_VOICE_TARGET,plan={sourceId:'official',planId:'plan',keyFingerprint:'SHA256:trusted',catalogSha256:'f'.repeat(64),packages:[{manifest:{id:v.id,version:v.version,dependencies:{[v.sharedId]:v.version}},archive:{sha256:v.digest}},{manifest:{id:v.sharedId,version:v.version},archive:{sha256:v.sharedDigest}}]};
+ const installed={id:v.id,version:v.version,sourceId:'official',archiveSha256:v.digest,installed:true,enabled:true,usable:true,state:'ready'};
+ requireVoicePlan(plan);requireVoiceInstall(plan,installed);
+ assert.throws(()=>requireVoicePlan({...plan,packages:plan.packages.slice(0,1)}),/shared/);
+ assert.throws(()=>requireVoiceInstall(plan,{...installed,enabled:false}),/installed and enabled/);
+ assert.throws(()=>requireVoiceInstall(plan,{...installed,version:'1.0.2'}),/1.0.2/);
+ assert.throws(()=>requireVoicePlan({...plan,sourceId:'legacy'}),/identity/);
 });

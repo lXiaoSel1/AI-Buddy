@@ -106,6 +106,21 @@ def validate_row(row, upgrade=False):
     return dict(target=target, packageName=name, version=expected_version, sourceDigest=expected_digest, firstDocument=first, secondDocument=second, **({'fromVersion': row['before']['exactVersion'], 'fromDigest': row['before']['sourceDigest']} if upgrade else {}))
 
 
+def validate_voice(value):
+    require(isinstance(value, dict) and value.get('passed') is True, 'Breeze voice installation/enable proof is missing')
+    plan, installed = value.get('plan'), value.get('installed')
+    require(isinstance(plan, dict) and plan.get('sourceId') == 'official' and text(plan.get('planId')) and text(plan.get('keyFingerprint')) and digest(plan.get('catalogSha256')), 'Voice production catalog/plan identity is missing')
+    packages = plan.get('packages')
+    require(isinstance(packages, list), 'Voice plan packages are missing')
+    for package_id, expected_digest in [('ai-buddy.voice-breeze', 'f976545531cd72ac72dd58a7364c61dcb2e0cd4a52321dad8ebde91032f377d3'), ('ai-buddy.voice-shared-runtime', '2a649fc210a00f20b5000d82ac56ba8a6e383c71947bc899880a9307ac90c06e')]:
+        found = [row for row in packages if isinstance(row, dict) and isinstance(row.get('manifest'), dict) and row['manifest'].get('id') == package_id]
+        require(len(found) == 1 and found[0]['manifest'].get('version') == '1.0.3' and found[0].get('archive', {}).get('sha256') == expected_digest, 'Latest official voice package identity differs')
+        if package_id == 'ai-buddy.voice-breeze':
+            require(found[0]['manifest'].get('dependencies', {}).get('ai-buddy.voice-shared-runtime') == '1.0.3', 'Voice shared dependency must be exact')
+    require(isinstance(installed, dict) and all(installed.get(key) is True for key in ('installed', 'enabled', 'usable')) and installed.get('state') == 'ready', 'Voice did not install and enable successfully')
+    require((installed.get('id'), installed.get('sourceId'), installed.get('version'), installed.get('archiveSha256')) == ('ai-buddy.voice-breeze', 'official', '1.0.3', 'f976545531cd72ac72dd58a7364c61dcb2e0cd4a52321dad8ebde91032f377d3'), 'Enabled voice identity differs')
+
+
 def validate_proof(proof, mode, expected_version, manifest_sha, package_sha, main_sha):
     require(type(proof.get('schemaVersion')) is int and proof['schemaVersion'] == 1 and proof.get('kind') == KIND and proof.get('scope') == SCOPE and proof.get('passed') is True and proof.get('mode') == mode, 'Runtime proof kind/scope/schema/passed/mode is invalid')
     require(proof.get('expectedVersion') == expected_version, 'Runtime proof expectedVersion differs from manifest appVersion')
@@ -123,6 +138,7 @@ def validate_proof(proof, mode, expected_version, manifest_sha, package_sha, mai
     rows = proof.get('rows')
     require(isinstance(rows, list), 'Runtime plugin target list is missing')
     if mode == 'install':
+        validate_voice(proof.get('voice'))
         require(len(rows) == 3 and {row.get('target') for row in rows if isinstance(row, dict)} == set(TARGETS), 'Install proof requires three distinct official targets')
     else:
         require(len(rows) == 1, 'Plugin update proof requires exactly one target')

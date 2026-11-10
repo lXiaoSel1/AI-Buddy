@@ -1,15 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash, generateKeyPairSync, sign} from 'node:crypto';
-import {mkdir, mkdtemp, rm} from 'node:fs/promises';
+import {mkdir, mkdtemp, readFile, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {buildPluginArchive} from '../src/plugin-archive.mjs';
 import {createPluginManager} from '../src/plugin-manager.mjs';
-import {canonicalPluginJson} from '../src/plugin-manifest.mjs';
+import {canonicalPluginJson, pluginCompatibility} from '../src/plugin-manifest.mjs';
+import {verifyPluginCatalog} from '../src/plugin-catalog.mjs';
 import {pluginSourceFingerprint} from '../src/plugin-sources.mjs';
 import {createVoicePackageAuthority} from '../src/voice/package-authority.mjs';
 import {supportsVoiceManifest} from '../src/voice/package-contract.mjs';
+import {createCommunityService} from '../src/community/service.mjs';
 
 const breeze = 'ai-buddy.voice-breeze', gpt = 'ai-buddy.voice-gpt-sovits', shared = 'ai-buddy.voice-shared-runtime';
 
@@ -46,13 +48,13 @@ function archive(id, version, dependency, appRange) {
   return {bytes, item: {manifest: spec, archive: {url: `${origin}/${id}/${version}.zip`, bytes: bytes.length, sha256: hash(bytes)}, publishedAt: '2026-11-08T00:00:00Z'}};
 }
 
-async function setup(t, {dependency = (id, version) => version,appVersion='2.0.9',appRange} = {}) {
+async function setup(t, {dependency = (id, version) => version,appVersion='2.0.9',appRange,versions=['1.0.0', '1.0.1', '1.0.3']} = {}) {
   const root = await mkdtemp(join(tmpdir(), 'buddy-voice-generation-')), dataRoot = join(root, 'profile');
   await mkdir(dataRoot);
   const {privateKey, publicKey} = generateKeyPairSync('ed25519');
   const ssh = 'ssh-ed25519 ' + Buffer.concat([field('ssh-ed25519'), field(publicKey.export({type: 'spki', format: 'der'}).subarray(-32))]).toString('base64');
   const voiceTestFingerprint = pluginSourceFingerprint(ssh);
-  const packages = ['1.0.0', '1.0.1'].flatMap(version => [breeze, gpt, shared].map(id => archive(id, version, dependency(id, version),appRange)));
+  const packages = versions.flatMap(version => [breeze, gpt, shared].map(id => archive(id, version, dependency(id, version),appRange)));
   const payload = {schemaVersion: 1, id: 'voice-generation-fixture', generatedAt: '2026-11-08T00:00:00Z', packages: packages.map(row => row.item)};
   const descriptor = {schemaVersion: 1, id: payload.id, name: 'Voice generation fixture', catalogUrl: `${origin}/catalog.json`, publicKey: ssh, keyId: 'voice-generation-test'};
   const envelope = {payload, signature: {keyId: descriptor.keyId, algorithm: 'ed25519', value: sign(null, Buffer.from(canonicalPluginJson(payload)), privateKey).toString('base64')}};
@@ -71,7 +73,18 @@ async function setup(t, {dependency = (id, version) => version,appVersion='2.0.9
     const plan = await authority.action({action: 'plan', sourceId, requests: ids.map(id => ({id, version}))});
     return authority.action({action: 'install', planId: plan.planId});
   };
-  return {authority, manager, sourceId, install};
+  // A distinct fixture key signs these synthetic discovery releases; this is never an official signature.
+  const discovery = {schemaVersion: 1, type: 'ai-buddy-community-catalog', id: 'voice-generation-fixture', generatedAt: payload.generatedAt,
+    source: {descriptorId: descriptor.id, keyFingerprint: voiceTestFingerprint}, authors: [{id: 'fixture.author', name: 'Fixture author', githubLogin: 'fixture-author'}],
+    works: [breeze, gpt].map(id => ({id, backend: 'buddy-v1', packageName: id, name: id, description: 'Synthetic voice compatibility fixture', authorId: 'fixture.author', category: 'voice', releases: versions.map(version => ({version, publishedAt: payload.generatedAt}))}))};
+  const discoveryEnvelope = {payload: discovery, signature: {keyId: descriptor.keyId, algorithm: 'ed25519', value: sign(null, Buffer.from(canonicalPluginJson(discovery)), privateKey).toString('base64')}};
+  const community = async () => {
+    const service = await createCommunityService({root, dataRoot, legacyManager: manager, voiceEnabled: true, voiceTestFingerprint, pollMs: 0});
+    t.after(() => service.close());
+    await service.action({action: 'community-load-catalog', sourceId, envelope: discoveryEnvelope});
+    return service;
+  };
+  return {authority, manager, sourceId, install, community};
 }
 
 test('both 1.0.0 voice engines remain supported with their exact 1.0.0 shared dependency', () => {
@@ -80,7 +93,7 @@ test('both 1.0.0 voice engines remain supported with their exact 1.0.0 shared de
 
 test('voice engine support rejects other generations and inexact or mismatched shared dependencies', () => {
   for (const id of [breeze, gpt]) {
-    for (const [version, dependency] of [['1.0.0', '1.0.1'], ['1.0.1', '1.0.0'], ['1.0.0', '^1.0.0'], ['1.0.1', '^1.0.1'], ['1.0.2', '1.0.1'], ['1.0.2', '^1.0.2'], ['1.0.3', '1.0.3']]) {
+    for (const [version, dependency] of [['1.0.0', '1.0.1'], ['1.0.1', '1.0.0'], ['1.0.0', '^1.0.0'], ['1.0.1', '^1.0.1'], ['1.0.2', '1.0.1'], ['1.0.2', '^1.0.2'], ['1.0.3', '1.0.2'], ['1.0.3', '^1.0.3'], ['1.0.4', '1.0.4']]) {
       assert.equal(supportsVoiceManifest(manifest(id, version, dependency)), false, `${id}@${version} -> ${dependency}`);
     }
   }
@@ -90,7 +103,41 @@ test('both 1.0.2 voice engines are supported only with their exact 1.0.2 shared 
   for (const id of [breeze, gpt]) assert.equal(supportsVoiceManifest(manifest(id, '1.0.2')), true, id);
 });
 
-for (const version of ['1.0.0', '1.0.1']) test(`the host can enable and lease both ${version} engines with their ${version} shared runtime`, async t => {
+test('both 1.0.3 voice engines require their exact 1.0.3 shared dependency', () => {
+  for (const id of [breeze, gpt]) assert.equal(supportsVoiceManifest(manifest(id, '1.0.3')), true, id);
+});
+
+test('every app-compatible voice engine in the original signed official catalog has host activation support', async () => {
+  const catalog = verifyPluginCatalog(await readFile(new URL('./fixtures/official-registration/catalog.json', import.meta.url), 'utf8'));
+  assert.ok(catalog.packages.some(item => item.manifest.id === breeze && item.manifest.version === '1.0.3'));
+  for (const {manifest} of catalog.packages.filter(item => [breeze, gpt].includes(item.manifest.id) && pluginCompatibility(item.manifest, {appVersion: '2.0.14'}).compatible)) {
+    assert.equal(supportsVoiceManifest(manifest), true, manifest.id + '@' + manifest.version);
+  }
+});
+
+test('an app-compatible future voice contract is neither the default search release nor an update candidate', async t => {
+  const f = await setup(t, {versions: ['1.0.3', '1.0.4']});
+  const result = await f.manager.action({action: 'search', sourceId: f.sourceId});
+  assert.equal(result.items.find(row => row.manifest.id === breeze).manifest.version, '1.0.3');
+  const future = await f.manager.action({action: 'details', sourceId: f.sourceId, id: breeze, version: '1.0.4'});
+  assert.equal(future.activation.reason, '需要更新 AI 酱');
+  await f.install([breeze], '1.0.3');
+  assert.deepEqual((await f.manager.action({action: 'update-candidates'})).updates, []);
+});
+
+test('discovery skips an app-compatible future contract and rejects an explicitly selected unsupported version', async t => {
+  const f = await setup(t, {versions: ['1.0.3', '1.0.4']}), service = await f.community();
+  const plan = await service.action({action: 'dsh-plan', sourceId: f.sourceId, id: breeze});
+  assert.equal(plan.packages.find(item => item.manifest.id === breeze).manifest.version, '1.0.3');
+  await assert.rejects(service.action({action: 'dsh-plan', sourceId: f.sourceId, id: breeze, version: '1.0.4'}), {code: 'PLUGIN_INCOMPATIBLE'});
+});
+
+test('a discovery catalog containing only voice 1.0.3 explains incompatibility on host 2.0.12', async t => {
+  const f = await setup(t, {versions: ['1.0.3'], appVersion: '2.0.12', appRange: '>=2.0.13'}), service = await f.community();
+  await assert.rejects(service.action({action: 'dsh-plan', sourceId: f.sourceId, id: breeze}), {code: 'COMMUNITY_NO_COMPATIBLE_RELEASE', message: '这个插件的最新版需要更新的 AI 酱。先更新 AI 酱，或者在「版本」里选一个能用的旧版。'});
+});
+
+for (const version of ['1.0.0', '1.0.1', '1.0.3']) test(`the host can enable and lease both ${version} engines with their ${version} shared runtime`, async t => {
   const {authority, sourceId, install} = await setup(t);
   await install([breeze, gpt], version);
   for (const id of [breeze, gpt]) await authority.action({action: 'enable', sourceId, id});

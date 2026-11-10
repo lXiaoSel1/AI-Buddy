@@ -7,7 +7,7 @@ import {canonicalPluginJson, compareVersions, satisfiesHostVersionRange, satisfi
 import {stablePatchUpdate, legacyUpdateKey} from '../plugin-update-policy.mjs';
 import {fetchPluginJson, isVoiceSourceAuthorized} from '../plugin-sources.mjs';
 import {verifyPluginMetadata} from '../plugin-download-integrity.mjs';
-import {isVoiceCommunityWork} from '../voice/package-contract.mjs';
+import {isVoiceCommunityWork, supportsVoiceManifest} from '../voice/package-contract.mjs';
 import {createPluginBackendRegistry} from '../plugin-backends.mjs';
 import {BUDDY_PLUGIN_CAPABILITIES} from '../buddy-plugin-services/capability-grants.mjs';
 import {BUDDY_BRIDGE_COMPATIBILITY_VERSION} from '../buddy-plugin-services/version.mjs';
@@ -186,15 +186,82 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
     const stars = work => work.rating.smoothed ?? -1;
     ranked.sort(request.sort === 'new' ? (a, b) => Date.parse(currentRelease(b).publishedAt) - Date.parse(currentRelease(a).publishedAt) || a.key.localeCompare(b.key) : request.sort === 'stars' ? (a, b) => stars(b) - stars(a) || b.rating.count - a.rating.count || a.key.localeCompare(b.key) : (a, b) => b.recommendation.score - a.recommendation.score || a.key.localeCompare(b.key));
     const page = Math.max(1, Math.floor(Number(request.page) || 1)), pageSize = Math.max(1, Math.min(50, Math.floor(Number(request.pageSize) || 24)));
-    return {items: ranked.slice((page - 1) * pageSize, page * pageSize).map(work => { const key = communityPackageKey({backend: work.backend, sourceId: work.sourceId, packageName: work.packageName}); const author = catalogs.get(work.sourceId)?.authors.find(value => value.id === work.authorId); return {...work, authorName: author?.name ?? null, authorLogin: author?.githubLogin ?? null, favorite: preferences.favorites.includes(work.key), ...(work.category === 'voice' ? {installable: voiceWorkSupported(work)} : {}), stale: errors.has(work.sourceId), installed: work.backend === 'dsh' ? publicInstallation(registry.packages[key], runtimeVerified.has(key)) : null}; }), total: ranked.length, page, pageSize, sources: sourceRows()};
+    const visible = await Promise.all(ranked.slice((page - 1) * pageSize, page * pageSize).map(workInstallationView));
+    return {items: visible.map(work => { const key = communityPackageKey({backend: work.backend, sourceId: work.sourceId, packageName: work.packageName}); const author = catalogs.get(work.sourceId)?.authors.find(value => value.id === work.authorId); return {...work, authorName: author?.name ?? null, authorLogin: author?.githubLogin ?? null, favorite: preferences.favorites.includes(work.key), ...(work.category === 'voice' ? {installable: voiceWorkSupported(work)} : {}), stale: errors.has(work.sourceId), installed: work.backend === 'dsh' ? publicInstallation(registry.packages[key], runtimeVerified.has(key)) : null}; }), total: ranked.length, page, pageSize, sources: sourceRows()};
   }
   function voiceWorkSupported(work) {
     return voiceEnabled && isVoiceCommunityWork(work) &&
       isVoiceSourceAuthorized(work.sourceId,catalogs.get(work.sourceId)?.verified.keyFingerprint,voiceTestFingerprint);
   }
+  const voiceCatalogRefreshes = new Map();
+  async function ensureVoiceCatalog(work) {
+    const row = legacyManager.snapshot().sources?.find(source => source.sourceId === work.sourceId);
+    if (!row || row.catalogAvailable === true) return;
+    if (!voiceCatalogRefreshes.has(work.sourceId)) {
+      const pending = (async () => {
+        await legacyManager.action({action: 'sources-refresh', sourceId: work.sourceId});
+        const refreshed = legacyManager.snapshot().sources?.find(source => source.sourceId === work.sourceId);
+        if (refreshed?.catalogAvailable !== true) {
+          const failure = refreshed?.lastError ?? {code: 'PLUGIN_SOURCE_NOT_CACHED', message: '来源尚无已验证目录，请先刷新'};
+          throw Object.assign(Error(failure.message), failure);
+        }
+      })();
+      voiceCatalogRefreshes.set(work.sourceId, pending);
+      void pending.finally(() => { if (voiceCatalogRefreshes.get(work.sourceId) === pending) voiceCatalogRefreshes.delete(work.sourceId); }).catch(() => {});
+    }
+    await voiceCatalogRefreshes.get(work.sourceId);
+  }
+  async function voiceReleaseCompatibility(work, release) {
+    let item;
+    try { item = await legacyManager.action({action: 'details', sourceId: work.sourceId, id: work.packageName, version: release.version}); }
+    catch (cause) { if (cause.code !== 'PLUGIN_NOT_FOUND') throw cause; }
+    if (!item) return {compatible: false, hostSupported: false, reasons: ['not-in-catalog']};
+    const hostSupported = supportsVoiceManifest(item.manifest);
+    return {compatible: item.compatible && hostSupported, hostSupported, reasons: item.reasons ?? [], requiredAppRange: item.manifest.appRange, currentAppVersion: legacyManager.snapshot().appVersion};
+  }
+  async function workInstallationView(work) {
+    const appVersion = legacyManager.snapshot().appVersion;
+    const releases = await Promise.all(work.releases.map(async release => {
+      let compatibility;
+      if (isVoiceCommunityWork(work)) compatibility = await voiceReleaseCompatibility(work, release);
+      else if (work.backend === 'dsh') {
+        const ranges = release.package.compatibility, reasons = [];
+        if (!appVersion || !satisfiesHostVersionRange(appVersion, ranges.app)) reasons.push('app-version');
+        if (!satisfiesVersionRange(bridgeCompatibilityVersion, ranges.bridge)) reasons.push('bridge-version');
+        if (nativeState.version && !satisfiesHostVersionRange(nativeState.version, ranges.dsh)) reasons.push('runtime-version');
+        compatibility = {compatible: reasons.length ? false : nativeState.version ? true : null, reasons, requiredAppRange: ranges.app, currentAppVersion: appVersion};
+      } else compatibility = {compatible: true, reasons: []};
+      return {...release, compatibility};
+    }));
+    const selected = [...releases].sort((a, b) => -compareVersions(a.version, b.version)).find(release => release.compatibility.compatible === true);
+    return {...work, releases, installationVersion: selected?.version ?? null};
+  }
+  async function installRelease(work, version) {
+    const releases = version ? [currentRelease(work, version)] : [...work.releases].sort((a, b) => -compareVersions(a.version, b.version));
+    if (isVoiceCommunityWork(work)) {
+      for (const release of releases) {
+        if ((await voiceReleaseCompatibility(work, release)).compatible) return release;
+      }
+    } else if (work.backend === 'dsh') {
+      const appVersion = legacyManager.snapshot().appVersion;
+      let runtimeVersion = nativeState.version;
+      if (!version && backends.supports('dsh', 'probe')) {
+        const runtime = await backends.invoke('dsh', 'probe'); nativeState = safeNativeResult(runtime); runtimeVersion = runtime.version;
+      }
+      for (const release of releases) {
+        const ranges = release.package.compatibility;
+        if (appVersion && satisfiesHostVersionRange(appVersion, ranges.app) && satisfiesVersionRange(bridgeCompatibilityVersion, ranges.bridge) &&
+          (!runtimeVersion || satisfiesHostVersionRange(runtimeVersion, ranges.dsh))) return release;
+      }
+    } else return releases[0];
+    if (version) fail('这个版本和当前的 AI 酱不兼容。', 'PLUGIN_INCOMPATIBLE');
+    fail('这个插件的最新版需要更新的 AI 酱。先更新 AI 酱，或者在「版本」里选一个能用的旧版。', 'COMMUNITY_NO_COMPATIBLE_RELEASE');
+  }
   async function installationIntent(request) {
-    const work = workFor(request.sourceId, request.id), release = currentRelease(work, request.version);
+    const work = workFor(request.sourceId, request.id);
     if ((work.status ?? 'published') !== 'published' || !(['function', 'work-engine'].includes(work.category) || voiceWorkSupported(work))) fail('This work is withdrawn or its category has no install backend', 'COMMUNITY_INSTALL_UNAVAILABLE');
+    if (isVoiceCommunityWork(work)) await ensureVoiceCatalog(work);
+    const release = await installRelease(work, request.version);
     if (work.backend === 'buddy-v1') return legacyManager.action({action: 'plan', sourceId: work.sourceId, requests: [{id: work.packageName, version: release.version}]});
     const parsedRef = parseDshPackageRef(release.package, {sourceId: work.sourceId}), packageRef = {...parsedRef, hostPluginId: pluginIdentity(parsedRef)}, packageKey = communityPackageKey(packageRef), installed = registry.packages[packageKey];
     if (request.updateFrom !== undefined && (installed?.exactVersion !== request.updateFrom || packageRef.sourceDigest !== request.updateDigest || compareVersions(packageRef.exactVersion, request.updateFrom) <= 0))
@@ -492,7 +559,7 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
       case 'community-open': return openCatalogs();
       case 'community-refresh': return refreshCatalogs(request);
       case 'community-search': return list(request);
-      case 'community-details': { const work = workFor(request.sourceId, request.id), catalog = catalogs.get(work.sourceId); return {work:work.category==='voice'?{...work,installable:voiceWorkSupported(work)}:work, author: catalog.authors.find(author => author.id === work.authorId), authorWorks: catalog.works.filter(value => value.authorId === work.authorId && (value.status ?? 'published') !== 'withdrawn').length, followed: preferences.follows.includes(work.sourceId + ':' + work.authorId), reviews: aggregateReviews(reviews.get(work.sourceId), [work.id])[work.id] ?? {count: 0, sum: 0, reviews: []}, updatePolicy: preferences.updatePolicies[communityPackageKey({backend: work.backend, sourceId: work.sourceId, packageName: work.packageName})] ?? 'manual'}; }
+      case 'community-details': { const work = workFor(request.sourceId, request.id), catalog = catalogs.get(work.sourceId); if (voiceWorkSupported(work)) await ensureVoiceCatalog(work); const view = await workInstallationView(work); return {work:work.category==='voice'?{...view,installable:voiceWorkSupported(work)}:view, author: catalog.authors.find(author => author.id === work.authorId), authorWorks: catalog.works.filter(value => value.authorId === work.authorId && (value.status ?? 'published') !== 'withdrawn').length, followed: preferences.follows.includes(work.sourceId + ':' + work.authorId), reviews: aggregateReviews(reviews.get(work.sourceId), [work.id])[work.id] ?? {count: 0, sum: 0, reviews: []}, updatePolicy: preferences.updatePolicies[communityPackageKey({backend: work.backend, sourceId: work.sourceId, packageName: work.packageName})] ?? 'manual'}; }
       case 'community-author': { await availableSource(request.sourceId); const catalog = catalogs.get(request.sourceId), author = catalog?.authors.find(value => value.id === request.id); if (!author) fail('Author not found', 'COMMUNITY_AUTHOR_NOT_FOUND'); return {author, followed: preferences.follows.includes(request.sourceId + ':' + author.id), works: (await list({sourceId: request.sourceId, authorId: author.id})).items}; }
       case 'community-favorite': case 'community-follow': return writePreferences(() => { const key = String(request.key), valid = type === 'community-favorite' ? allWorks().some(work => work.key === key) : [...catalogs].some(([sourceId, catalog]) => catalog.authors.some(author => sourceId + ':' + author.id === key)); if (!valid || typeof request.enabled !== 'boolean') fail('Invalid favorite/follow selection', 'COMMUNITY_REQUEST_INVALID'); const field = type === 'community-favorite' ? 'favorites' : 'follows'; preferences[field] = request.enabled ? [...new Set([...preferences[field], key])] : preferences[field].filter(value => value !== key); return {enabled: request.enabled}; });
       case 'community-export-preferences': return {schemaVersion: 1, favorites: copy(preferences.favorites), follows: copy(preferences.follows)};

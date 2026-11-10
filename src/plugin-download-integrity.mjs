@@ -8,5 +8,5 @@ export function pluginMirrorIntegrity(cause,info){
 }
 export function verifyPluginMetadata(value,verify){try{return verify(value);}catch(cause){throw pluginMirrorIntegrity(cause,metadata.get(value));}}
 
-const transientDownloadCodes=new Set(['NETWORK_CONNECT_FAILED','NETWORK_TIMEOUT','ECONNRESET','ECONNREFUSED','ETIMEDOUT','EAI_AGAIN','UND_ERR_SOCKET','UND_ERR_CONNECT_TIMEOUT','UND_ERR_BODY_TIMEOUT']);
+const transientDownloadCodes=new Set(['NETWORK_CONNECT_FAILED','NETWORK_RESPONSE_TIMEOUT','NETWORK_TIMEOUT','ECONNRESET','ECONNREFUSED','ETIMEDOUT','EAI_AGAIN','UND_ERR_SOCKET','UND_ERR_CONNECT_TIMEOUT','UND_ERR_BODY_TIMEOUT']);
 export async function retryPluginDownload(run,signal){for(let attempt=0;;attempt++){signal?.throwIfAborted();try{return await run();}catch(cause){if(signal?.aborted)throw signal.reason;const code=typeof cause?.code==='string'?cause.code:typeof cause?.cause?.code==='string'?cause.cause.code:'';if(attempt>=2||!(transientDownloadCodes.has(code)||!code&&cause instanceof TypeError))throw cause;}}}

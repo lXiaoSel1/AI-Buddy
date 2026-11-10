@@ -349,13 +349,17 @@ export async function createCompanionService({store,engine,provider,dataRoot=nul
  function scheduleChoices({captured,token,card,connection,requestId,body,committed,relation}){
   cancelChoices(captured.conversationId);const job={requestId,controller:new AbortController()};choiceJobs.set(captured.conversationId,job);
   void trackTask(new Promise(resolve=>setImmediate(resolve)).then(()=>{if(closing||job.controller.signal.aborted)return;return runModel(card,async()=>{
+   const turnSignal=provider.currentTurnSignal?.(),cancel=()=>{if(choiceJobs.get(captured.conversationId)===job)cancelChoices(captured.conversationId);else job.controller.abort();};
+   if(turnSignal?.aborted)cancel();else turnSignal?.addEventListener('abort',cancel,{once:true});
+   try{
    if(job.controller.signal.aborted)return;assertLife(store.state,card.id,token);
    const result=await call('companion-generate-choices',{relationship:relation,userText:body,replyText:committed.text,signal:job.controller.signal});
    if(job.controller.signal.aborted||choiceJobs.get(captured.conversationId)!==job||closing)return;
    assertLife(store.state,card.id,token);
    await store.mutate(state=>{const row=state.conversations[captured.conversationId];if(row.messages.at(-1)?.id!==requestId+':reply')return;row.choices=copy(result.choices??[]);row.choicesFor=requestId+':reply';row.choicesStatus='ready';});
    outputs.emit(requestId,'timing',{name:'choices-ready'});outputs.emit(requestId,'choices.ready',{});
-  },job.controller.signal,{background:true,capturedConnection:connection}).catch(async error=>{if(!job.controller.signal.aborted){await store.mutate(state=>{const row=state.conversations[captured.conversationId];if(row?.messages.at(-1)?.requestId===requestId){row.choicesStatus='failed';row.choicesError=String(error.message);}});audit({type:'choices-failed',requestId,message:error.message});outputs.emit(requestId,'choices.failed',{message:error.message});}});}).finally(()=>{if(choiceJobs.get(captured.conversationId)===job)choiceJobs.delete(captured.conversationId);}));
+   }finally{turnSignal?.removeEventListener('abort',cancel);}
+  },job.controller.signal,{background:true,capturedConnection:connection}).catch(async error=>{if(error.code==='ABORT_ERR'||error.name==='AbortError'){if(choiceJobs.get(captured.conversationId)===job)cancelChoices(captured.conversationId);return;}if(!job.controller.signal.aborted){await store.mutate(state=>{const row=state.conversations[captured.conversationId];if(row?.messages.at(-1)?.requestId===requestId){row.choicesStatus='failed';row.choicesError=String(error.message);}});audit({type:'choices-failed',requestId,message:error.message});outputs.emit(requestId,'choices.failed',{message:error.message});}});}).finally(()=>{if(choiceJobs.get(captured.conversationId)===job)choiceJobs.delete(captured.conversationId);}));
  }
  const voiceFailure=(submission,requestId,reason='reply-failed')=>submission?.saved?{scope:submission.scope,submissionId:submission.captureId,requestId:requestId??submission.requestId??submission.messageId,reason}:null;
  function chat(args={},submission=null){if(closing)return Promise.reject(closingError());return trackTask(chatTurn(args,submission));}

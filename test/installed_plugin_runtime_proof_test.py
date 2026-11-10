@@ -35,6 +35,7 @@ class RuntimeProofTests(unittest.TestCase):
         self.manifest_path.write_text(json.dumps(self.manifest), encoding='utf-8')
         identity = dict(root='E:/synthetic/installed', build='E:/synthetic/installed/builds/2.0.14', dataRoot='E:/synthetic/installed/local/data', version='2.0.14', processId=12345, installationRecordSha256='c' * 64, manifestSha256=hashlib.sha256(self.manifest_path.read_bytes()).hexdigest(), appPackageSha256='a' * 64, mainSha256='b' * 64, codeDirectorySha256='d' * 64, codeFiles=[dict(path='main.cjs', bytes=4, sha256='b' * 64)])
         self.runtime = dict(schemaVersion=1, kind='installed-plugin-runtime-release-gate', scope='synthetic isolated validation only', fixture='SYNTHETIC RECEIPTS ONLY: no app ever ran', passed=True, expectedVersion='2.0.14', mode='install', identityBefore=identity, identityAfter=deepcopy(identity), rows=[self.row(target) for target in TARGETS])
+        self.runtime['voice'] = dict(passed=True, id='ai-buddy.voice-breeze', plan=dict(sourceId='official', planId='synthetic-voice-plan', keyFingerprint='SHA256:synthetic-only', catalogSha256='f' * 64, packages=[dict(manifest=dict(id='ai-buddy.voice-breeze', version='1.0.3', dependencies={'ai-buddy.voice-shared-runtime': '1.0.3'}), archive=dict(sha256='f976545531cd72ac72dd58a7364c61dcb2e0cd4a52321dad8ebde91032f377d3')), dict(manifest=dict(id='ai-buddy.voice-shared-runtime', version='1.0.3'), archive=dict(sha256='2a649fc210a00f20b5000d82ac56ba8a6e383c71947bc899880a9307ac90c06e'))]), installed=dict(id='ai-buddy.voice-breeze', version='1.0.3', sourceId='official', installed=True, enabled=True, usable=True, state='ready', archiveSha256='f976545531cd72ac72dd58a7364c61dcb2e0cd4a52321dad8ebde91032f377d3'))
         self.update = deepcopy(self.runtime)
         self.update['mode'] = 'upgrade-plugin'
         row = self.row(TARGETS[0])
@@ -66,6 +67,20 @@ class RuntimeProofTests(unittest.TestCase):
         self.assertEqual(result['appPackageSha256'], 'a' * 64)
         self.assertEqual(result['mainSha256'], 'b' * 64)
         self.assertEqual(result['runtimeProof']['sha256'], hashlib.sha256(self.runtime_path.read_bytes()).hexdigest())
+
+    def test_install_proof_requires_actual_latest_voice_install_and_enable(self):
+        del self.runtime['voice']
+        with self.assertRaisesRegex(ValueError, 'voice|Voice|Breeze'):
+            self.validate()
+
+    def test_wrong_voice_version_digest_or_enable_cannot_pass(self):
+        original = deepcopy(self.runtime['voice'])
+        for field, value in [('version', '1.0.2'), ('enabled', False), ('usable', False), ('archiveSha256', '0' * 64)]:
+            with self.subTest(field=field):
+                self.runtime['voice'] = deepcopy(original)
+                self.runtime['voice']['installed'][field] = value
+                with self.assertRaisesRegex(ValueError, 'voice|Voice'):
+                    self.validate()
 
     def test_qualification_fields_cannot_claim_pass_for_wrong_kind_scope_schema_or_mode(self):
         original = deepcopy(self.runtime)

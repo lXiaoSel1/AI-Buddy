@@ -3460,5 +3460,10 @@
   "以下步骤未完成：": "These steps did not finish:",
   "部分服务已经停止。重新打开后就能继续用。": "Some services have stopped. Reopen the app to continue.",
   "退出并重新打开": "Exit and reopen",
-  "仍然重新打开": "Reopen anyway"
+  "仍然重新打开": "Reopen anyway",
+  "语音尚未启用": "Voice is not enabled",
+  "图片输入：未知（目录未收录；不会自动试读）": "Image input: unknown (not in the catalog; no automatic probe)",
+  "需要更新 AI 酱": "Update AI Buddy to use this version",
+  "运行组件还没准备好": "The runtime component is not ready yet",
+  "准备好运行组件后，就能在这里打开插件。": "Prepare the runtime component to open this plugin here."
 }

@@ -82,7 +82,7 @@ test('simulation: a failed native enable can be explicitly retried after compone
 });
 test('simulation: incompatible app/bridge/runtime releases fail before native installation', async t => {
   const f = await setupCommunity(t), payload = catalog(f.pub); payload.works[0].releases[0].package.compatibility.app = '^9.0.0'; await f.load(payload);
-  await assert.rejects(f.service.action({action: 'dsh-plan', sourceId: f.pub.source.sourceId, id: 'test.tools'}), {code: 'PLUGIN_INCOMPATIBLE'}); assert.equal(f.calls.some(call => call[0] === 'install' || call[0] === 'plan'), false);
+  await assert.rejects(f.service.action({action: 'dsh-plan', sourceId: f.pub.source.sourceId, id: 'test.tools'}), {code: 'COMMUNITY_NO_COMPATIBLE_RELEASE'}); assert.equal(f.calls.some(call => call[0] === 'install' || call[0] === 'plan'), false);
 });
 test('simulation: a safe automatic update restores the prior enabled intent through real lifecycle confirmation', async t => {
   const f = await setupCommunity(t); await f.load(); await f.install(); const key = f.service.snapshot().dsh.installed[0].packageKey; await f.service.action({action: 'dsh-enable', packageKey: key}); await f.service.drainMaintenance(); await f.service.action({action: 'community-set-update-policy', packageKey: key, policy: 'auto'});

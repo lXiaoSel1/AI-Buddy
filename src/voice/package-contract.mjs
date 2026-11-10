@@ -1,6 +1,6 @@
 export const VOICE_SHARED_PACKAGE = 'ai-buddy.voice-shared-runtime';
 export const VOICE_PACKAGE_VERSION = '1.0.0';
-export const VOICE_PACKAGE_VERSIONS = Object.freeze(['1.0.0', '1.0.1', '1.0.2']);
+export const VOICE_PACKAGE_VERSIONS = Object.freeze(['1.0.0', '1.0.1', '1.0.2', '1.0.3']);
 export const VOICE_PROVIDERS = Object.freeze(['local', 'minimax']);
 export const VOICE_CLOUD_WORKER = 'cloud_speech.py';
 export const VOICE_ENGINES = Object.freeze({

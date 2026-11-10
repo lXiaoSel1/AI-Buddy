@@ -3,6 +3,10 @@ import {randomUUID} from 'node:crypto';
 const fail=code=>Object.assign(Error(code),{code});
 export const SOCIAL_LOGIN_PLUGINS=Object.freeze({bilibili:'@ai-buddy/bilibili-companion',qq:'@ai-buddy/qq-connect'});
 const active=new Set(['preparing','waiting-qr','waiting-confirmation','verifying','cleaning-up']);
+function preparationDiagnostic(cause){
+ if(cause?.code!=='QQ_COMPONENT_COMMIT_RENAME'||!['EPERM','EACCES','EBUSY'].includes(cause.systemCode)||cause.syscall!=='rename'||!/^stage-[a-f0-9-]{36}$/.test(cause.source??'')||!/^napcat-\d+\.\d+\.\d+$/.test(cause.target??''))return {};
+ return {errorDiagnostic:{systemCode:cause.systemCode,syscall:'rename',source:cause.source,target:cause.target}};
+}
 // Only this coordinator may commit a verified identity. A cancelled driver can
 // finish late, but never creates or replaces a managed account.
 export function createSocialLogin({accounts,drivers,onUpdate=()=>{},now=Date.now}={}){
@@ -48,7 +52,7 @@ export function createSocialLogin({accounts,drivers,onUpdate=()=>{},now=Date.now
    try{await drivers[platform].stop?.({attemptId:row.public.attemptId});row.draining=false;}catch{publish(row,{phase:'failed',errorCode:'SOCIAL_LOGIN_STOP_PENDING'});return;}
    if(current(row)){
     const errorCode=typeof cause?.code==='string'&&/^[A-Z0-9_]{1,80}$/.test(cause.code)?cause.code:'SOCIAL_LOGIN_FAILED',host=cause?.host??cause?.details?.host;
-    publish(row,{phase:errorCode==='SOCIAL_LOGIN_EXPIRED'?'needs-login':errorCode==='SOCIAL_LOGIN_CANCELLED'?'cancelled':'failed',errorCode,retryOfficial:platform==='qq'&&!official&&errorCode==='NETWORK_MIRROR_MISMATCH'&&cause?.retryOfficial===true,...typeof host==='string'&&/^[a-zA-Z0-9.-]{1,253}$/.test(host)?{errorHost:host}:{}});
+    publish(row,{phase:errorCode==='SOCIAL_LOGIN_EXPIRED'?'needs-login':errorCode==='SOCIAL_LOGIN_CANCELLED'?'cancelled':'failed',errorCode,...preparationDiagnostic(cause),retryOfficial:platform==='qq'&&!official&&errorCode==='NETWORK_MIRROR_MISMATCH'&&cause?.retryOfficial===true,...typeof host==='string'&&/^[a-zA-Z0-9.-]{1,253}$/.test(host)?{errorHost:host}:{}});
    }
   });
   return status(platform);

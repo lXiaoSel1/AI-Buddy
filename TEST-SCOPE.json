@@ -2,6 +2,18 @@
   "schemaVersion": 1,
   "kind": "ai-buddy-public-host-tests",
   "retainedTestFiles": [
+    "test/round2-card-binding-recovery.test.mjs",
+    "test/round2-qq-rename.test.mjs",
+    "test/round2-proxy-routes.test.mjs",
+    "test/round2-network-timeouts.test.mjs",
+    "test/round2-network-electron.test.mjs",
+    "test/round2-mood-backoff.test.mjs",
+    "test/round2-background-connections.test.mjs",
+    "test/round2-api-retry-after.test.mjs",
+    "test/community-install-compatibility.test.mjs",
+    "test/community-install-compatibility-ui.test.mjs",
+    "test/audit214-round2-ui.test.mjs",
+    "test/audit214-round2-inventory.test.mjs",
     "test/audit214-dsh-network-bootstrap.test.mjs",
     "test/audit214-network-node.test.mjs",
     "test/audit214-network-service.test.mjs",
@@ -495,6 +507,9 @@
     "test/working-rig.test.mjs"
   ],
   "retainedSupportFiles": [
+    "test/support/round2-network-electron.mjs",
+    "test/support/round2-network-electron.cjs",
+    "test/fixtures/official-registration/community-catalog.json",
     "test/support/audit214-network-electron.cjs",
     "test/support/audit214-network-electron.mjs",
     "test/fixtures/public-community/catalog.json",

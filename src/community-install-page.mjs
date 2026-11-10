@@ -32,7 +32,7 @@ function Engines({engines}){
  return h('div',{className:'ext-col','data-work-engines':true},...rows.map(row=>h('div',{key:row.engine,className:'ext-ieng'},h('span',{className:'ext-logo',style:{'--pl':'28px'},'aria-hidden':true},Icon(row.engine==='kimi'?'bolt':'terminal',{size:14})),h('span',{className:'ext-ir-main'},h('b',null,row.name),row.sub&&h('small',{className:'ext-cap'},row.sub)),h(StatusPill,{tone:row.tone},row.label))));
 }
 const NEXT={'@ai-buddy/bilibili-companion':['下一步连接 B站账号。连好后，观看和发评论在插件设置里分别打开。','启用并连接 B站账号','link'],'@ai-buddy/qq-connect':['下一步扫码登录 QQ，再选一位替你回复的角色。第一次扫码会下载 QQ 登录组件。','启用并扫码登录','qr'],'@ai-buddy/work-collaboration':[null,'启用并打开工作窗口','external']};
-export function InstallPage({work,source,official:officialSource,plan,granted,onGrant,keepsEnabled,stage,runtime,job,record,busy,engines,catalogOnline=false,onBack,onInstall,onCancelPlan,onEnable,onOpen,onNext,onRetry,onImport,onAddCatalog}){
+export function InstallPage({work,source,official:officialSource,plan,planError,requestedVersion,granted,onGrant,keepsEnabled,stage,runtime,job,record,busy,engines,catalogOnline=false,onBack,onInstall,onCancelPlan,onEnable,onOpen,onNext,onRetry,onImport,onAddCatalog}){
  // Review 低-4: the official texts only for the official source (by source and name), or on the A3 page that has no plan yet.
  const packageName=plan?.packageRef?.packageName??work?.packageName??'',official=officialSource??!!source?.official,profile=official||stage==='unavailable'?officialProfile(packageName):null,text=workText(work??{packageName},{official:!!profile});
  const declared=plan?.declaredCapabilities??[],added=new Set(plan?.addedCapabilities??[]),locked=!['plan','unavailable'].includes(stage),upgrade=plan?.priorDataSchemaVersion!=null;
@@ -41,7 +41,9 @@ export function InstallPage({work,source,official:officialSource,plan,granted,on
  const order=['plan','runtime','installing','installed'],at=Math.max(1,order.indexOf(stage)+1);
  const voice=isVoiceEnginePackage(packageName),steps=voice?[t('核对来源'),t('校验共享依赖'),t('安装'),t('启用')]:[t('勾选权限'),t('准备运行组件'),t('安装'),profile?profile.next:t('启用')];
  const stepper=h('ol',{className:'ext-isteps'},...steps.map((label,i)=>h('li',{key:i,className:i+1<at||stage==='installed'&&i<3?'done':i+1===at||stage==='installed'&&i===3?'cur':''},h('span',null,i+1<at||stage==='installed'&&i<3?Icon('check',{size:12}):i+1),h('b',null,label),i===1&&h('small',null,t('只在第一次')))));
- const version=plan?.packageRef?.exactVersion??work?.releases?.[0]?.version,size=formatBytes(plan?.packageBytes??plan?.downloadBytes);
+ const installedVersion=record?.packageRef?.exactVersion??record?.exactVersion??record?.current??record?.version;
+ const plannedVersion=plan?.packageRef?.exactVersion??plan?.packages?.find(row=>row.manifest?.id===packageName)?.manifest.version;
+ const version=(stage==='installed'?installedVersion:null)??plannedVersion??requestedVersion??work?.installationVersion??installedVersion,size=formatBytes(plan?.packageBytes??plan?.downloadBytes);
  const head=h('div',{className:'ext-ihead'},
   h('button',{type:'button',className:'ui-btn ghost sm ext-back',onClick:onBack},Icon('chevron',{size:14}),t('扩展中心 · 发现')),
   h('div',{className:'ext-ih-main'},h(PluginLogo,{packageName,size:64}),h('div',{className:'ext-ih-text'},h('h2',{className:'ws-ptitle'},profile?.name??text.name??packageName),
@@ -65,7 +67,7 @@ export function InstallPage({work,source,official:officialSource,plan,granted,on
  if(stage==='unavailable')state=h('div',{className:'ext-col','data-install-unavailable':true},h('div',{className:'ui-alert warn',role:'status'},Icon('archive',{size:16}),h('div',null,h('b',null,catalogOnline?t('目录里还没有这个插件'):t('官方目录还没有上线')),h('p',null,t('可以从文件安装：选一个已签名的插件包，核对签名后会显示这个插件的安装计划。')))),
   h('button',{type:'button',className:'ui-btn primary',disabled:busy,onClick:onImport},Icon('file',{size:16}),t('从文件安装…')),h('button',{type:'button',className:'ui-btn ghost sm',disabled:busy,onClick:onAddCatalog},t('添加社区目录地址')));
  else if(stage==='plan'){const none=declared.length>0&&n===0;state=h('div',{className:'ext-col'},
-  h('button',{type:'button',className:'ui-btn primary',disabled:busy||none||!plan,onClick:onInstall},busy?h('span',{className:'ui-spinner','aria-hidden':true}):Icon('download',{size:16}),!plan?t('正在读取安装计划…'):none?t('先勾选要授予的权限'):declared.length?t('安装，只授予勾选的 {n} 项').replace('{n}',n):t('安装')),
+  h('button',{type:'button',className:'ui-btn primary',disabled:busy||none||!plan&&!planError,onClick:!plan&&planError?onRetry:onInstall},busy?h('span',{className:'ui-spinner','aria-hidden':true}):Icon('download',{size:16}),!plan?t(planError?'重新查看安装计划':'正在读取安装计划…'):none?t('先勾选要授予的权限'):declared.length?t('安装，只授予勾选的 {n} 项').replace('{n}',n):t('安装')),
   h('p',{className:'ext-cap'},t('勾几项，按钮就写授予几项。安装后不会自动启用。')),plan&&h('button',{type:'button',className:'ui-btn ghost sm',disabled:busy,onClick:onCancelPlan},t('取消')));}
  else if(stage==='runtime')state=runtime;
  else if(stage==='installing'){const failed=['failed','needs-user','interrupted-needs-user'].includes(job?.state);state=failed?h('div',{className:'ext-col'},h('div',{className:'ui-alert warn',role:'status'},Icon('alert',{size:16}),h('div',null,h('b',null,job.state==='failed'?t('安装没有完成'):t('需要你再确认一次')),job.error&&h('p',null,job.error.text??job.error.message))),h('button',{type:'button',className:'ui-btn',disabled:busy,onClick:onRetry},Icon('refresh',{size:16}),t('重新查看安装计划'))):

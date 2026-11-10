@@ -47,6 +47,25 @@ async function listenServer(t, server, protocol = 'http') {
 
 const serve = (t, handler) => listenServer(t, http.createServer(handler));
 
+test('G2 mixed PAC uses HTTP CONNECT first then DIRECT after a rejected CONNECT', {timeout:5000},async t=>{
+  const origin=await listenServer(t,https.createServer({key:fixtureKey,cert:fixtureCert},(_req,res)=>res.end('mixed PAC success')),'https');
+  let refusal=false;const connects=[],upstreams=new Set();
+  const proxy=await serve(t,(_req,res)=>{res.writeHead(400);res.end();});
+  t.after(()=>{for(const socket of upstreams)socket.destroy();});
+  proxy.server.on('connect',(req,client,head)=>{
+    connects.push({url:req.url,refusal});
+    if(refusal==='stall'){client.resume();return;}
+    if(refusal){client.end('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n');return;}
+    const upstream=net.connect(origin.server.address().port,'127.0.0.1',()=>{client.write('HTTP/1.1 200 Connection Established\r\n\r\n');if(head.length)upstream.write(head);upstream.pipe(client);client.pipe(upstream);});
+    upstreams.add(upstream);upstream.once('close',()=>upstreams.delete(upstream));upstream.once('error',()=>client.destroy());client.once('close',()=>upstream.destroy());
+  });
+  const pac=`PROXY 127.0.0.1:${proxy.server.address().port}; SOCKS5 127.0.0.1:${proxy.server.address().port}; DIRECT;`;
+  const adapter=createNodeNetworkFetch({ca:fixtureCert,resolveRoute:async()=>pac,connectTimeoutMs:300});
+  assert.equal(await (await adapter(origin.url+'/proxied')).text(),'mixed PAC success');assert.equal(connects.length,1);
+  refusal=true;assert.equal(await (await adapter(origin.url+'/fallback')).text(),'mixed PAC success');assert.equal(connects.length,2);
+  refusal='stall';assert.equal(await (await adapter(origin.url+'/timeout-fallback')).text(),'mixed PAC success');assert.equal(connects.length,3);
+});
+
 async function echoRequest(req, res) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -240,7 +259,7 @@ test('F7c configured connection deadline covers a stalled real TLS handshake', {
   const {error, elapsedMs} = await timeoutOutcome(t, adapter, url);
   assert.equal(accepted, 1, 'fixture must accept a real TCP connection');
   assert.ok(clientHelloBytes > 0, 'TLS negotiation must actually start');
-  assert.equal(error?.code, 'NETWORK_TIMEOUT');
+  assert.equal(error?.code, 'NETWORK_CONNECT_FAILED');
   assert.ok(elapsedMs < 300, 'connection timeout must occur before the fixture watchdog');
   await assertPeerClosed(closed);
 });
@@ -268,7 +287,7 @@ test('F7c configured connection deadline covers a stalled proxy CONNECT handshak
   });
   const {error, elapsedMs} = await timeoutOutcome(t, adapter, 'https://127.0.0.1:443/fixture');
   assert.equal(connects, 1, 'fixture must receive the real CONNECT request');
-  assert.equal(error?.code, 'NETWORK_TIMEOUT');
+  assert.equal(error?.code, 'NETWORK_CONNECT_FAILED');
   assert.ok(elapsedMs < 300, 'proxy handshake timeout must occur before the fixture watchdog');
   await assertPeerClosed(closed);
 });
@@ -284,7 +303,7 @@ test('F7c configured response-headers deadline rejects a silent HTTP origin', {t
   const adapter = createNodeNetworkFetch({connectTimeoutMs: 60, headersTimeoutMs: 90});
   const {error, elapsedMs} = await timeoutOutcome(t, adapter, `${origin.url}/silent`);
   assert.equal(requests, 1, 'fixture must receive a real HTTP request');
-  assert.equal(error?.code, 'NETWORK_TIMEOUT');
+  assert.equal(error?.code, 'NETWORK_RESPONSE_TIMEOUT');
   assert.ok(elapsedMs < 300, 'headers timeout must occur before the fixture watchdog');
   await assertPeerClosed(closed);
 });

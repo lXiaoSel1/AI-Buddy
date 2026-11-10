@@ -245,7 +245,14 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
    if(combined.reason?.code==='GAME_MODEL_CANCELLED')throw combined.reason;
    let current;
    if(!closing)try{current=table(t.id);}catch{}
-   if(current?.status==='active'&&current.version===t.version)modelFault(t,turn,typeof error?.code==='string'?error.code:'GAME_MODEL_FAILED',requestId+':fault-pause');
+   if(current?.status==='active'&&current.version===t.version){
+    const paused=modelFault(t,turn,typeof error?.code==='string'?error.code:'GAME_MODEL_FAILED',requestId+':fault-pause');
+    if(['GAME_BINDING_REVOKED','GAME_BINDING_MISSING'].includes(error?.code)){
+     await check();checkSync?.();combined.throwIfAborted();
+     const latest=table(t.id);
+     if(latest.status==='paused'&&latest.version===paused.version){const recovery=view(latest);if(recovery.bindingRecovery)return {...recovery,model:copy(faults.get(t.id).status)};}
+    }
+   }
    throw error;
   }finally{if(running.get(t.id)?.task===task)running.delete(t.id);}
  }

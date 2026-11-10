@@ -11,6 +11,22 @@ export const OFFICIAL_TARGETS = Object.freeze([
   {target: 'qq', id: 'ai-buddy.qq-connect', packageName: '@ai-buddy/qq-connect', version: '2.0.10', digest: 'c58110307866f15a309bbb9ad2839e521ea61caf897bc7666e0353f582545a6d'},
   {target: 'card-games', id: 'ai-buddy.card-games', packageName: '@ai-buddy/card-games', version: '1.1.5', digest: '7f2c6dcfff0bd3a2e0ad602fea03c1361490914e4764821b374bdd59f7eb086d'},
 ].map(Object.freeze));
+export const OFFICIAL_VOICE_TARGET = Object.freeze({id:'ai-buddy.voice-breeze',version:'1.0.3',digest:'f976545531cd72ac72dd58a7364c61dcb2e0cd4a52321dad8ebde91032f377d3',sharedId:'ai-buddy.voice-shared-runtime',sharedDigest:'2a649fc210a00f20b5000d82ac56ba8a6e383c71947bc899880a9307ac90c06e'});
+export function requireVoicePlan(plan){
+  const target=OFFICIAL_VOICE_TARGET,packages=plan?.packages;
+  assert.ok(plan?.sourceId==='official'&&plan.planId&&hex(plan.catalogSha256)&&plan.keyFingerprint&&Array.isArray(packages),'Production voice catalog/plan identity is missing');
+  const engine=packages.filter(row=>row.manifest?.id===target.id),shared=packages.filter(row=>row.manifest?.id===target.sharedId);
+  assert.equal(engine.length,1,'Latest official Breeze package is missing');assert.equal(shared.length,1,'Exact shared voice package is missing');
+  assert.equal(engine[0].manifest.version,target.version,'Voice plan did not select the latest supported version');
+  assert.equal(engine[0].manifest.dependencies?.[target.sharedId],target.version,'Shared voice dependency is not exact');
+  assert.equal(engine[0].archive.sha256,target.digest,'Voice archive differs from the public pin');
+  assert.equal(shared[0].manifest.version,target.version);assert.equal(shared[0].archive.sha256,target.sharedDigest,'Shared voice archive differs from the public pin');
+}
+export function requireVoiceInstall(plan,installed){
+  requireVoicePlan(plan);const target=OFFICIAL_VOICE_TARGET;
+  assert.ok(installed?.installed===true&&installed.enabled===true&&installed.usable===true&&installed.state==='ready','Breeze was not installed and enabled through the production authority');
+  assert.equal(installed.sourceId,'official');assert.equal(installed.id,target.id);assert.equal(installed.version,target.version);assert.equal(installed.archiveSha256,target.digest);
+}
 const CODE_FILES = ['package.json', 'main.cjs', 'preload.cjs', 'plugin-client-preload.cjs', 'dsh-network-bootstrap.mjs', 'dsh-platform/native-bridge-host.mjs', 'dsh-platform/inert-bootstrap.mjs', 'dsh-component-worker.mjs', 'ffmpeg-component-worker.mjs', 'work-archive-cursor-worker.mjs', 'voice-assets-worker.cjs', 'bili-full-media-worker.mjs', 'monitor-worker.cjs', 'plugin-maintenance.cjs', 'index.html'];
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const hex = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -264,6 +280,19 @@ export async function validateInstalledPluginRuntime(options) {
       row.restart = restarted.job; row.second = await pageHandshake(target, row.first.document);
       row.finalStop = await disable(target, row.packageKey); row.passed = true; activeRow = null;
       await event('plugin-completed', {target: target.target, document: row.second.document.targetId});
+    }
+    if(options.mode==='install'){
+      // Same Discover intent/legacy install as the UI, intentionally no explicit version and no asset/model preparation.
+      const voice=evidence.voice={passed:false,id:OFFICIAL_VOICE_TARGET.id};
+      voice.plan=await action({action:'dsh-plan',sourceId:'official',id:'ai-buddy.voice-breeze'});
+      requireVoicePlan(voice.plan);
+      await action({action:'install',planId:voice.plan.planId});
+      const installed=await status();voice.installedBeforeEnable=installed.voicePackages?.find(row=>row.id===voice.id);
+      assert.equal(voice.installedBeforeEnable?.installed,true,'Official Breeze installation did not register');
+      await action({action:'enable',sourceId:'official',id:voice.id});
+      voice.installed=(await status()).voicePackages?.find(row=>row.id===voice.id);
+      requireVoiceInstall(voice.plan,voice.installed);voice.passed=true;
+      await event('voice-installed-enabled',{id:voice.id,version:voice.installed.version});
     }
     evidence.identityAfter = await inspectCandidateIdentity(options, await call('installation-status'));
     assert.equal(evidence.identityAfter.processId, evidence.identityBefore.processId, 'Application process changed during the gate');

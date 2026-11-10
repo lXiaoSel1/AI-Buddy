@@ -6,7 +6,14 @@ export function apiHttpError(status,metadata={}){
  const message=status===401?'API Key 无效，请重新配置':status===403?'当前账户没有该模型的访问权限':status===404?'服务地址或模型 ID 不存在':status===429?'请求受限或额度不足，请稍后重试':status>=500?'模型服务暂时不可用，请稍后重试':'API 请求失败，请检查模型和协议配置';
  return Object.assign(Error(message+' (HTTP '+status+')'),{code:'API_HTTP_ERROR',httpError:{status,...metadata}});
 }
+function retryAfterDelay(value){
+ if(typeof value!=='string')return undefined;value=value.trim();let delay;
+ if(/^\d+$/.test(value))delay=Number(value)*1000;
+ else if(/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(value))delay=Math.max(0,Date.parse(value)-Date.now());
+ return Number.isSafeInteger(delay)&&delay>=0?delay:undefined;
+}
 export async function readApiHttpError(response,{signal,secrets=[]}={}){
+ const retryAfterMs=response.status===429?retryAfterDelay(response.headers.get('retry-after')):undefined;
  const metadata={},reader=response.body?.getReader();let raw='',timer,stopRead,stopped=false;
  const stoppedRead=new Promise(resolve=>{stopRead=()=>{stopped=true;resolve(null);void reader?.cancel().catch(()=>{});};});
  if(reader){
@@ -21,5 +28,5 @@ export async function readApiHttpError(response,{signal,secrets=[]}={}){
  for(const field of ['code','type'])if(permitted(error?.[field],secrets)&&codes.has(error[field]))metadata[field]=error[field];
  if(permitted(error?.param,secrets)&&params.has(error.param))metadata.param=error.param;
  const requestId=[response.headers.get('x-request-id'),response.headers.get('request-id'),response.headers.get('x-ms-request-id'),body?.request_id,body?.requestId,error?.request_id].map(value=>safeProviderRequestId(value,secrets)).find(Boolean);if(requestId)metadata.requestId=requestId;
- return apiHttpError(response.status,metadata);
+ const failure=apiHttpError(response.status,metadata);if(retryAfterMs!==undefined)failure.retryAfterMs=retryAfterMs;return failure;
 }

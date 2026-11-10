@@ -15,15 +15,16 @@ export class ModelRouter{
   get supportsSubmissionLifecycle(){return true;}
   constructor({codex,dataRoot,crypto,legacy=false,onChange=()=>{},onUsage=()=>{},onActivity=()=>{},audit=()=>{},fetchImpl,timeoutMs=110000,gameIdleTimeoutMs=120000,storeName='model-connections.json',presets=MODEL_PRESETS,protocols=API_PROTOCOLS,outputLimit=()=>8192,searchPolicy=()=>false,onNativeSearch=()=>{}}){
     if(!Number.isSafeInteger(gameIdleTimeoutMs)||gameIdleTimeoutMs<1||gameIdleTimeoutMs>2147483647)throw RangeError('Invalid game model idle timeout');
-    Object.assign(this,{codex,dataRoot,crypto,onChange,onActivity,audit,timeoutMs,gameIdleTimeoutMs,presets,protocols,outputLimit,searchPolicy,onNativeSearch});this.store=createSnapshotStorage(join(dataRoot,storeName));this.#imageProbes=new ModelImageProbe({dataRoot});this.enabled=false;this.activeTurns=0;this.controllers=new Set();this.context=new AsyncLocalStorage();this.tail=Promise.resolve();this.transport=new ApiTransport({fetchImpl,onUsage,audit});
+    Object.assign(this,{codex,dataRoot,crypto,onChange,onActivity,audit,timeoutMs,gameIdleTimeoutMs,presets,protocols,outputLimit,searchPolicy,onNativeSearch});this.store=createSnapshotStorage(join(dataRoot,storeName));this.#imageProbes=new ModelImageProbe({dataRoot});this.enabled=false;this.activeTurns=0;this.turns=new Set();this.controllers=new Set();this.context=new AsyncLocalStorage();this.tail=Promise.resolve();this.transport=new ApiTransport({fetchImpl,onUsage,audit});
     this.ready=readJson(this.store,null).then(async value=>{await this.#imageProbes.ready;this.state=value??{version:1,activeId:legacy?'codex':null,profiles:legacy?[{id:'codex',kind:'codex',name:'本机 Codex 登录',protocol:'codex',baseUrl:'',model:codex.defaultModel,models:[]}]:[]};if(!value)await this.store.writeText(JSON.stringify(this.state));return this;});
   }
   selected(){return this.context.getStore()?.profile??this.state?.profiles.find(profile=>profile.id===this.state.activeId)??null;}
+  currentTurnSignal(){return this.context.getStore()?.signal??null;}
   currentSelection(){const profile=this.selected();return profile&&profile.model?{provider:profile.id,model:profile.model}:null;}
   get defaultModel(){return this.selected()?.model??'';}
   get currentName(){return this.selected()?.name??'尚未选择模型';}
   get currentKind(){return this.selected()?.kind??null;}
-  status(){return {enabled:this.enabled,model:this.defaultModel,provider:this.currentKind,name:this.currentName,busy:this.activeTurns>0};}
+  status(){return {enabled:this.enabled,model:this.defaultModel,provider:this.currentKind,name:this.currentName,busy:[...this.turns].some(turn=>turn.priority===0)};}
   publicProfile(profile){return {id:profile.id,kind:profile.kind,name:profile.name,protocol:profile.protocol,baseUrl:profile.baseUrl,model:profile.model,models:profile.models??[],...(this.protocols===API_PROTOCOLS?{reasoningEffort:profileEffort(profile),contextTokens:profile.contextTokens??null,imageCapability:this.imageCapability(profile)}:{}),...(profile.region?{region:profile.region}:{}),keyConfigured:!!profile.keyCiphertext};}
   view(){return {...this.status(),codexModel:this.codex.defaultModel,activeId:this.state.activeId,presets:this.presets,profiles:this.state.profiles.map(profile=>this.publicProfile(profile))};}
   async mutate(fn){const result=this.tail.then(async()=>{await this.ready;const previous=this.state,next=structuredClone(previous);const value=await fn(next);await this.store.writeText(JSON.stringify(next));this.state=next;this.onChange(this.view());return value??this.view();});this.tail=result.catch(()=>{});return result;}
@@ -48,12 +49,13 @@ export class ModelRouter{
     }
     return profile;
   }
-  unlocked(id){if(this.activeTurns&&(id===undefined||[...(this.lanes?.values()??[])].some(lane=>lane.executing===id||lane.queue.some(turn=>turn.profile.id===id))||id===this.state.activeId))throw Error('请等待当前对话完成后再修改或切换连接');}
-  async save(draft){return this.mutate(state=>{const previous=draft.id?state.profiles.find(profile=>profile.id===draft.id):null;if(draft.id&&!previous)throw Error('连接不存在');this.unlocked(previous?.id??'new');const profile=this.validateDraft(draft,previous);const index=state.profiles.findIndex(value=>value.id===profile.id);if(index<0)state.profiles.push(profile);else state.profiles[index]=profile;return this.publicProfile(profile);});}
-  async remove(id){return this.mutate(state=>{this.unlocked(id);if(!state.profiles.some(profile=>profile.id===id))throw Error('连接不存在');state.profiles=state.profiles.filter(profile=>profile.id!==id);if(state.activeId===id){state.activeId=null;this.setEnabled(false);}});}
+  unlocked(id){if([...this.turns].some(turn=>turn.priority===0&&(id===undefined||turn.profile.id===id||id===this.state.activeId)))throw Error('请等待当前对话完成后再修改或切换连接');}
+  cancelBackground(id){for(const turn of this.turns)if(turn.priority>0&&turn.profile.id===id)turn.controller.abort(turnCancelled());}
+  async save(draft){return this.mutate(state=>{const previous=draft.id?state.profiles.find(profile=>profile.id===draft.id):null;if(draft.id&&!previous)throw Error('连接不存在');this.unlocked(previous?.id??'new');const profile=this.validateDraft(draft,previous);if(previous)this.cancelBackground(previous.id);const index=state.profiles.findIndex(value=>value.id===profile.id);if(index<0)state.profiles.push(profile);else state.profiles[index]=profile;return this.publicProfile(profile);});}
+  async remove(id){return this.mutate(state=>{this.unlocked(id);if(!state.profiles.some(profile=>profile.id===id))throw Error('连接不存在');this.cancelBackground(id);state.profiles=state.profiles.filter(profile=>profile.id!==id);if(state.activeId===id){state.activeId=null;this.setEnabled(false);}});}
   materialize(profile){if(!profile||!profile.model)throw Error('请先选择连接并填写模型 ID');if(profile.kind==='codex')return {...profile};let key='';if(profile.keyCiphertext){try{key=this.crypto.decryptString(Buffer.from(profile.keyCiphertext,'base64'));}catch{throw Error('API Key 无法解密，请重新填写');}}if(!key&&!localEndpoint(profile.baseUrl))throw Error('请先填写 API Key');return {...profile,key};}
-  async activate(id){return this.mutate(state=>{this.unlocked();const profile=state.profiles.find(value=>value.id===id);this.materialize(profile);state.activeId=id;if(this.codex.enabled)this.codex.setEnabled(false);});}
-  setEnabled(value){if(value)this.materialize(this.selected());this.enabled=!!value;if(!this.enabled){for(const controller of this.controllers)controller.abort();this.codex.setEnabled(false);}this.onChange(this.state?this.view():null);}
+  async activate(id){return this.mutate(state=>{this.unlocked();const profile=state.profiles.find(value=>value.id===id);this.materialize(profile);if(state.activeId!==id)this.cancelBackground(state.activeId);state.activeId=id;if(this.codex.enabled)this.codex.setEnabled(false);});}
+  setEnabled(value){if(value)this.materialize(this.selected());this.enabled=!!value;if(!this.enabled){for(const turn of this.turns)turn.controller.abort(turnCancelled());for(const controller of this.controllers)controller.abort();this.codex.setEnabled(false);}this.onChange(this.state?this.view():null);}
   listProviders(){return this.state.profiles.map(profile=>({id:profile.id,name:profile.name}));}
   listModels(id){const profile=this.state.profiles.find(value=>value.id===id);if(!profile)return [];return [...(profile.models??[]),...(profile.model&&!(profile.models??[]).some(value=>value.id===profile.model)?[{id:profile.model,name:profile.model}]:[])].map(model=>({...model,...(this.protocols===API_PROTOCOLS?{imageCapability:this.imageCapability({...profile,model:model.id})}:{})}));}
   resolveModelInfo(providerId,modelId){const profile=this.selected()?.id===providerId?this.selected():this.state.profiles.find(p=>p.id===providerId),effort=profileEffort(profile);return {reasoning:{efforts:effort?[{id:effort}]:[]}};}
@@ -81,17 +83,18 @@ export class ModelRouter{
     if(signal?.aborted)return Promise.reject(turnCancelled());
     const captured=structuredClone(profile);this.materialize(captured);
     this.lanes??=new Map();const key=captured.id??captured.kind??'default';let lane=this.lanes.get(key);if(!lane)this.lanes.set(key,lane={queue:[],running:false,executing:null});
-    this.activeTurns++;this.onChange(this.view());
+    const controller=new AbortController();signal=signal?AbortSignal.any([signal,controller.signal]):controller.signal;
+    this.activeTurns++;
     // Capture every caller ALS (activity, privacy and budget), then select the
     // frozen connection inside that context. The lane pump belongs to whichever
     // request started it and must not lend that request's scope to queued work.
-    const execute=AsyncLocalStorage.bind(()=>this.context.run({profile:this.materialize(captured)},fn));
+    const execute=AsyncLocalStorage.bind(()=>this.context.run({profile:this.materialize(captured),signal},fn));
     return new Promise((resolve,reject)=>{
-      const turn={profile:captured,execute,priority,signal,resolve,reject,abort:()=>{
+      const turn={profile:captured,execute,priority,signal,controller,resolve,reject,abort:()=>{
         const index=lane.queue.indexOf(turn);if(index<0)return;
-        lane.queue.splice(index,1);signal?.removeEventListener('abort',turn.abort);this.activeTurns--;reject(turnCancelled());this.onChange(this.view());
+        lane.queue.splice(index,1);signal?.removeEventListener('abort',turn.abort);this.turns.delete(turn);this.activeTurns--;reject(turnCancelled());this.onChange(this.view());
       }};
-      lane.queue.push(turn);signal?.addEventListener('abort',turn.abort,{once:true});
+      this.turns.add(turn);lane.queue.push(turn);this.onChange(this.view());signal?.addEventListener('abort',turn.abort,{once:true});
       if(signal?.aborted)turn.abort();
       queueMicrotask(()=>this.pumpTurns(lane));
     });
@@ -99,7 +102,7 @@ export class ModelRouter{
   async pumpTurns(lane){
     if(lane.running)return;lane.running=true;
     try{while(lane.queue.length){lane.queue.sort((a,b)=>a.priority-b.priority);const turn=lane.queue.shift();turn.signal?.removeEventListener('abort',turn.abort);lane.executing=turn.profile.id;
-      try{if(turn.signal?.aborted)throw turnCancelled();turn.resolve(await turn.execute());}catch(error){turn.reject(error);}finally{lane.executing=null;this.activeTurns--;this.onChange(this.view());}
+      try{if(turn.signal?.aborted)throw turnCancelled();const result=await turn.execute();if(turn.signal?.aborted)throw turnCancelled();turn.resolve(result);}catch(error){turn.reject(error);}finally{lane.executing=null;this.turns.delete(turn);this.activeTurns--;this.onChange(this.view());}
     }}finally{lane.running=false;}
   }
   requestController(signal,timeout=this.timeoutMs,{idle=false}={}){
@@ -111,7 +114,7 @@ export class ModelRouter{
   }
   async *stream(options){
     options={...this.requestContext?.getStore(),...options};
-    await this.ready;if(!this.enabled)throw Error('联网聊天已关闭');const profile=this.materialize(this.selected());const idle=true,request=this.requestController(options.signal,options.gameBinding?this.gameIdleTimeoutMs:this.timeoutMs,{idle});
+    await this.ready;if(!this.enabled)throw Error('联网聊天已关闭');const profile=this.materialize(this.selected()),turnSignal=this.context.getStore()?.signal,signal=turnSignal&&options.signal?AbortSignal.any([turnSignal,options.signal]):turnSignal??options.signal;const idle=true,request=this.requestController(signal,options.gameBinding?this.gameIdleTimeoutMs:this.timeoutMs,{idle});
     const activityId='chat:'+randomUUID(),activity={id:activityId,kind:options.purpose==='cg-theme'?'cg-theme':'chat',purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId};this.onActivity({...activity,active:true});
     try{
       const selectedPolicy=(options.singleSubmission===true||options.gameBinding)?false:await this.searchPolicy({profile:this.publicProfile(profile),purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId}),policy=selectedPolicy===true?{allowed:true}:selectedPolicy&&typeof selectedPolicy==='object'?selectedPolicy:{allowed:false},capability=nativeSearchCapability(profile);
@@ -121,7 +124,7 @@ export class ModelRouter{
       if(policy.allowed===true&&!capability.supported){yield {type:'native-search-status',status:'unavailable',capability,reason:capability.reason};if(policy.required)throw Object.assign(Error(capability.reason),{code:'NATIVE_SEARCH_UNAVAILABLE'});scoped.system=(options.system??'')+'\n当前连接的原生联网能力尚未可用。本次不能声称已经联网核实；需要时明确说明未完成核验。';}
       if(profile.kind==='codex'){this.codex.setEnabled(true);const args={...scoped,connectionIdentity:connectionIdentity(profile),model:profile.model,reasoningEffort:profileEffort(profile),signal:request.controller.signal};yield* this.observeNativeSearch(this.codex.streamForConnection?this.codex.streamForConnection(profile.id,args):this.codex.stream(args),scoped);}else yield* this.observeNativeSearch(this.streamWithRetry(profile,scoped,request.controller.signal),scoped);
       request.controller.signal.throwIfAborted();
-    }catch(error){const reason=request.controller.signal.reason;if(idle&&reason?.code==='GAME_MODEL_TIMEOUT')throw reason;throw error;}
+    }catch(error){const reason=request.controller.signal.reason;if(reason?.code==='ABORT_ERR'||idle&&reason?.code==='GAME_MODEL_TIMEOUT')throw reason;throw error;}
     finally{request.controller.abort();request.dispose();this.onActivity({...activity,active:false});}
   }
   withRequestContext(metadata,fn){this.requestContext??=new AsyncLocalStorage();return this.requestContext.run(metadata,fn);}
