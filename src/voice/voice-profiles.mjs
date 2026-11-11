@@ -14,29 +14,37 @@ const invalid = (message, code = 'VOICE_PROFILE_INVALID') => Object.assign(new E
 const validId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(value) && !['__proto__', 'constructor', 'prototype'].includes(value);
 export const voicePresetReceiptKey = row => JSON.stringify([row.sourceId,row.id,row.version,row.archiveSha256]);
 
-function validateWav(bytes) {
+export function validateWav(bytes, {maxDurationSeconds = 30, strictContainer = false} = {}) {
   if (bytes.length < 44 || bytes.toString('ascii', 0, 4) !== 'RIFF' || bytes.toString('ascii', 8, 12) !== 'WAVE') {
     throw invalid('声音参考必须是 WAV 文件');
   }
+  if (strictContainer && bytes.readUInt32LE(4) !== bytes.length - 8) throw invalid('WAV 容器长度无效');
   let format;
-  let dataSize = 0;
-  for (let offset = 12; offset + 8 <= bytes.length;) {
+  let dataSize;
+  let offset = 12;
+  for (; offset + 8 <= bytes.length;) {
     const tag = bytes.toString('ascii', offset, offset + 4);
     const size = bytes.readUInt32LE(offset + 4);
     const start = offset + 8;
     if (start + size > bytes.length) throw invalid('WAV 文件不完整');
+    if (tag === 'fmt ' && strictContainer && (format || size < 16)) throw invalid('WAV 音频格式区块无效');
     if (tag === 'fmt ' && size >= 16) {
       format = { codec: bytes.readUInt16LE(start), channels: bytes.readUInt16LE(start + 2),
         rate: bytes.readUInt32LE(start + 4), block: bytes.readUInt16LE(start + 12), bits: bytes.readUInt16LE(start + 14) };
+      if (strictContainer && bytes.readUInt32LE(start + 8) !== format.rate * format.block) throw invalid('WAV 字节率无效');
     }
-    if (tag === 'data') dataSize = size;
+    if (tag === 'data') {
+      if (strictContainer && (!format || dataSize !== undefined)) throw invalid('WAV 音频数据区块无效');
+      dataSize = size;
+    }
     offset = start + size + (size % 2);
   }
+  if (strictContainer && offset !== bytes.length) throw invalid('WAV 区块未完整对齐');
   if (!format || ![1, 3].includes(format.codec) || ![1, 2].includes(format.channels) ||
       format.rate < 8000 || format.rate > 192000 || ![8, 16, 24, 32].includes(format.bits) ||
       format.block !== format.channels * format.bits / 8 || (format.codec === 3 && format.bits !== 32) ||
-      !dataSize || dataSize % format.block || dataSize / format.block / format.rate > 30) {
-    throw invalid('声音参考须为 30 秒以内的单声道或立体声 PCM WAV');
+      !dataSize || dataSize % format.block || dataSize / format.block / format.rate > maxDurationSeconds) {
+    throw invalid(`声音参考须为 ${maxDurationSeconds} 秒以内的单声道或立体声 PCM WAV`);
   }
   return {durationMs:dataSize/format.block/format.rate*1000};
 }

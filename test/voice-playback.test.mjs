@@ -84,6 +84,46 @@ test('the renderer keeps one voice output and acknowledges card audio after chat
   assert.equal(listeners.size,0);assert.equal(audio.contexts[0].state,'closed');
 });
 
+test('stop reading keeps a failed IPC request tracked and ignores old PCM after confirmation',async()=>{
+  const audio=audioFactory(),states=[],actions=[];
+  let emit,failStop=true,started=0,stopped=0;
+  const create=options=>{const context=audio.create(options),source=context.createBufferSource;context.createBufferSource=()=>({...source(),start(){started++;},stop(){stopped++;}});return context;};
+  const api={
+    async action(op,payload){
+      actions.push({op,payload});
+      if(op!=='stop-reading')return;
+      if(failStop)throw Error('transport failed');
+      await emit({type:'turn',state:'skipped',requestId:payload.requestId});
+      return {stopped:true};
+    },
+    onEvent(listener){emit=listener;return()=>{};},
+  };
+  const output=ensureVoiceOutput(api,{createContext:create}),release=output.retain();
+  const scope={channel:'app-private',characterId:'pet',personaId:'persona',conversationId:'chat'};
+  const old={...scope,...envelope(0)},next={...old,requestId:'next',segmentId:'next:voice:0'};
+  const off=output.subscribe(scope,state=>states.push(state));
+  try{
+    await emit({...segment(0),envelope:old});
+    await emit({...pcm(0),envelope:old});
+    await emit({...segment(0),envelope:next});
+    await emit({...pcm(0),envelope:next});
+    assert.equal(started,1);
+    await output.stopReading(old.requestId);
+    assert.equal(stopped,0);
+    assert.equal(states.at(-1).error,'transport failed');
+    assert.equal(states.at(-1).activeRequestId,old.requestId);
+    failStop=false;
+    await output.stopReading(old.requestId);
+    await emit({...pcm(0),envelope:old});
+    await output.stopReading(old.requestId);
+    await emit({type:'audio',phase:'end',envelope:next});
+    assert.equal(stopped,1);
+    assert.equal(started,2);
+    assert.equal(states.at(-1).activeRequestId,next.requestId);
+    assert.deepEqual(actions.filter(row=>row.op==='stop-reading').map(row=>row.payload.requestId),[old.requestId,old.requestId]);
+  }finally{off();await release();}
+});
+
 test('card and chat requests play in FIFO order and scoped cancellation preserves the other channel',async()=>{
   const audio=audioFactory(),calls=[],listeners=new Set(),states=[];let stopped=0,started=0;
   const create=options=>{const context=audio.create(options),source=context.createBufferSource;context.createBufferSource=()=>({...source(),start(){started++;},stop(){stopped++;}});return context;};

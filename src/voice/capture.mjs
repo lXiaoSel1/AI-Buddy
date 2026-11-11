@@ -4,16 +4,16 @@ export function createHostVoiceCapture({action,onState=()=>{},onPartial=()=>{},o
   getMedia=()=>navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false}),
   makeContext=()=>new AudioContext({sampleRate:16000}),makeNode=context=>new AudioWorkletNode(context,'voice-capture'),
   workletURL=new URL('./voice-capture-worklet.js',location.href).href}){
-  let generation=0,stream,context,node,source,gain,current,queue=[],queuedBytes=0,pumping,flushResolve,opening=false;
+  let generation=0,stream,context,node,source,gain,current,hostCaptureId,queue=[],queuedBytes=0,pumping,flushResolve,opening=false;
   const gate=enabled=>node?.port.postMessage({enabled});
   function release(){
-    generation++;opening=false;current=null;queue=[];queuedBytes=0;pumping=undefined;gate(false);
+    generation++;opening=false;current=null;hostCaptureId=undefined;queue=[];queuedBytes=0;pumping=undefined;gate(false);
     for(const item of [source,node,gain])try{item?.disconnect();}catch{}
     source=node=gain=undefined;const old=stream;stream=undefined;old?.getTracks().forEach(track=>track.stop());
     const audio=context;context=undefined;audio?.close().catch(()=>{});flushResolve?.();flushResolve=undefined;onState('idle');
   }
   async function stop(){release();await action('stop');}
-  function fail(error){release();void action('stop').catch(()=>{});onError(error);}
+  function fail(error){const id=hostCaptureId;release();void action('stop',{id}).catch(()=>{});onError(error);}
   async function pump(){
     if(pumping)return pumping;
     const ticket=generation;
@@ -29,10 +29,10 @@ export function createHostVoiceCapture({action,onState=()=>{},onPartial=()=>{},o
   }
   async function start(mode){
     if(current||opening)throw Error('请先结束当前录音');
-    const ticket=++generation;opening=true;onState('preparing');let acquired;
+    const ticket=++generation;opening=true;onState('preparing');let acquired,ack;
     try{
-      const ack=await action('capture-start',{mode});
-      if(ticket!==generation){await action('stop');return;}
+      ack=await action('capture-start',{mode});
+      if(ticket!==generation){if(ack?.id)await action('stop',{id:ack.id});return;}
       if(!ack?.id)throw Error('本地识别组件未就绪');
       acquired=await getMedia();
       if(ticket!==generation){acquired.getTracks().forEach(track=>track.stop());return;}
@@ -40,7 +40,7 @@ export function createHostVoiceCapture({action,onState=()=>{},onPartial=()=>{},o
       try{await audio.audioWorklet.addModule(workletURL);await audio.resume();}
       catch(error){await audio.close().catch(()=>{});throw error;}
       if(ticket!==generation){acquired.getTracks().forEach(track=>track.stop());await audio.close();return;}
-      stream=acquired;context=audio;current={id:ack.id,mode};source=context.createMediaStreamSource(stream);node=makeNode(context);gain=context.createGain();gain.gain.value=0;
+      stream=acquired;context=audio;hostCaptureId=ack.id;current={id:ack.id,mode};source=context.createMediaStreamSource(stream);node=makeNode(context);gain=context.createGain();gain.gain.value=0;
       source.connect(node);node.connect(gain);gain.connect(context.destination);
       node.port.onmessage=({data})=>{
         if(ticket!==generation)return;
@@ -53,7 +53,7 @@ export function createHostVoiceCapture({action,onState=()=>{},onPartial=()=>{},o
       const owned=stream;stream.getAudioTracks()[0].onended=()=>{if(stream===owned)fail(Error('麦克风断开，已有草稿保留'));};
       gate(true);onState(mode==='live'?'listening':'recording',{resetPartial:true});
       return ack;
-    }catch(error){acquired?.getTracks().forEach(track=>track.stop());if(ticket===generation){release();await action('stop').catch(()=>{});}throw error;}
+    }catch(error){acquired?.getTracks().forEach(track=>track.stop());if(ticket===generation){release();await action('stop',ack?.id?{id:ack.id}:{}).catch(()=>{});}throw error;}
     finally{if(ticket===generation)opening=false;}
   }
   function event(value){
@@ -67,7 +67,7 @@ export function createHostVoiceCapture({action,onState=()=>{},onPartial=()=>{},o
     if(['processing','waiting-playback'].includes(value.state)){gate(false);queue=[];queuedBytes=0;current=null;onState(value.state);return;}
     if(value.state==='listening'&&stream){
       const resetPartial=current?.id!==value.id;
-      current={id:value.id,mode:'live'};gate(true);onState('listening',{resetPartial});
+      hostCaptureId=value.id;current={id:value.id,mode:'live'};gate(true);onState('listening',{resetPartial});
     }
   }
   async function finish(){

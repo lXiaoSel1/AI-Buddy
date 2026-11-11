@@ -107,7 +107,7 @@ export function createVoiceHost({network,dataRoot,build,crypto,getGame,getPlatfo
     if(value.type==='invalidate'){microphone=false;getGame()?.voiceCancel?.();if(value.reason==='scope-changed'){cloudGateway?.invalidateState();}if(value.reason==='scope-changed')void cards.reconcile?.().catch(error=>audit({type:'card-voice',code:error.code}));}
     send(value);
   };
-  const controller=components.controller??createVoiceController({getScope:()=>getGame()?.voiceScope(),submit:args=>getGame().voiceSubmit(args),send:publish,
+  const controller=components.controller??createVoiceController({getScope:()=>getGame()?.voiceScope(),submit:args=>getGame().voiceSubmit(args),skipPresentation:requestId=>getGame()?.voiceSkip?.(requestId),send:publish,
     listPackages:()=>getPlatform()?.voicePackageStatus()??[],runtime:chatRuntime,assets,profiles,settings});
   async function cardSelection(){
     if(closed)throw fault('语音服务已关闭','VOICE_HOST_CLOSED');
@@ -151,12 +151,15 @@ export function createVoiceHost({network,dataRoot,build,crypto,getGame,getPlatfo
     if(stopping)return stopping;
     const pending=[...cloudOperations];
     const task=(async()=>{
-      await Promise.all([cards.recoverStop?.(),controller.recoverStop?.()]);
       // Cloud preparation/list/binding has no speech owner. Stop the shared root too.
-      const results=await Promise.allSettled([controller.invalidate(reason),stopCards(reason),runtime.stopEngine?.()]);
+      // Begin physical release even if a scope transition is waiting on a serial worker drain.
+      const release=Promise.resolve().then(()=>runtime.stopEngine?.());
+      void release.catch(()=>{});
+      const recovery=await Promise.allSettled([cards.recoverStop?.(),controller.recoverStop?.()]);
+      const results=await Promise.allSettled([controller.invalidate(reason),stopCards(reason),release]);
       // The operation writes its failure receipt before maintenance may change registry state.
       await Promise.allSettled([...pending,pendingAssets]);
-      const failed=results.find(value=>value.status==='rejected');if(failed){stopFailure=failed.reason;throw stopFailure;}
+      const failed=[...recovery,...results].find(value=>value.status==='rejected');if(failed){stopFailure=failed.reason;throw stopFailure;}
       stopFailure=undefined;
     })();
     stopping=task;void task.finally(()=>{if(stopping===task)stopping=null;}).catch(()=>{});return task;
@@ -307,17 +310,19 @@ export function createVoiceHost({network,dataRoot,build,crypto,getGame,getPlatfo
       return componentStatus(payload.packageId);
     }
     if(['characterId','personaId','lifeId','operationId','conversationId','engine',...(!['profiles','profile-select','profile-selections','assets-prepare','assets-import','assets-verify'].includes(op)?['packageId']:[])].some(key=>Object.hasOwn(payload,key)))throw fault('语音身份只能由宿主指定','VOICE_SCOPE_FORGED');
+    if(op==='stop-reading'){
+      if(Object.keys(payload).some(key=>key!=='requestId')||typeof payload.requestId!=='string'||!payload.requestId||payload.requestId.length>200)throw fault('语音参数无效','VOICE_ACTION_INVALID');
+      return controller.action(op,payload);
+    }
     if(op==='stop'){
       if(payload.channel==='card-table')return stopCards('user-stop');
       if(payload.channel==='app-chat'){
+        if(payload.id!==undefined&&(typeof payload.id!=='string'||!payload.id||payload.id.length>200))throw fault('语音参数无效','VOICE_ACTION_INVALID');
+        if(payload.id!==undefined)return controller.action(op,payload);
         livePreparationEpoch++;
         const pendingAssets=assetOperation?.liveGeneration!==undefined?cancelAssets('user-stop'):undefined;
-        await controller.recoverStop?.();
-        // Revoke controller turns before closing their presentation. The
-        // presentation callback otherwise routes them through synthesis failure.
-        const stopped=controller.invalidate('chat-stopped');
-        getGame()?.voiceCancel?.();
-        await Promise.all([stopped,pendingAssets]);return;
+        const [result]=await Promise.all([controller.action(op,payload),pendingAssets]);
+        return result;
       }
       if(payload.channel!=null)throw fault('未知语音频道','VOICE_ACTION_INVALID');
       return stopAll('user-stop');

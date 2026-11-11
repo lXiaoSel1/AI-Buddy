@@ -8,13 +8,14 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {createVoiceCloud} from '../src/voice/cloud.mjs';
+import {fixtureVoiceWav} from './support/voice-wav.mjs';
 
 const params = {engine:'breeze',packageId:'ai-buddy.voice-breeze',characterId:'whale',profileId:'voice1',profileVersion:1};
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(),'buddy-formal-cloud-'));
   const script = join(root,'worker.mjs');
-  const reference=Buffer.alloc(44+320000);reference.write('RIFF');reference.write('WAVE',8);
+  const reference=fixtureVoiceWav();
   const referencePath=join(root,'approved.wav');await writeFile(referencePath,reference);
   await writeFile(script, `
 import {createInterface} from 'node:readline';

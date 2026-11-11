@@ -13,16 +13,16 @@ export function createVoiceConversation({voice,current,valid,persist,beginPresen
   function update(turn) {
     if (!turn.finished || [...turn.segments.values()].some(segment=>!segment.terminal)) return false;
     if(!turns.delete(turn.scope.requestId))return false;
-    completePresentation(turn.scope,turn.closed);
+    completePresentation(turn.scope,turn.closed,turn.skipping);
     return true;
   }
   function records(turn) {
     return turn ? [...turn.segments.values()].flatMap(segment=>segment.receipts) : [];
   }
-  async function begin(scope, target) {
+  async function begin(scope, target, submissionId) {
     if (!voice || !valid(scope) || !sameVoiceScope(target,current())) return null;
     let lease;
-    try {lease=await voice.admit(scope);} catch (error) {report(error);return null;}
+    try {lease=await voice.admit(scope,submissionId);} catch (error) {report(error);return null;}
     if (!lease || lease.epoch==null || lease.voiceProfileVersion==null) return null;
     if (!valid(scope) || !sameVoiceScope(target,current())) {
       void invoke(()=>voice.finish({requestId:scope.requestId,failed:true})).catch(report);
@@ -39,19 +39,31 @@ export function createVoiceConversation({voice,current,valid,persist,beginPresen
     if (terminal.has(status)) segment.terminal=true;
     return receipt;
   }
+  function persistTerminal(turn,segment,status) {
+    const receipt=record(segment,status);
+    void invoke(()=>persist(turn.scope,receipt)).catch(report);
+  }
+  function skip(requestId) {
+    const turn=turns.get(requestId);
+    if(!turn||turn.closed||turn.skipping)return;
+    turn.skipping=true;
+    for(const segment of turn.segments.values()){
+      if(!segment.terminal)persistTerminal(turn,segment,'explicitlySkipped');
+    }
+    update(turn);
+  }
   function finish(turn,failed=false,unadmitted=null) {
     if (!turn) {
       if(failed&&unadmitted)void invoke(()=>voice.finish({...unadmitted,failed:true})).catch(report);
       return;
     }
-    if (turn.closed || turn.finished && !failed) return;
+    if (turn.finished && (turn.closed || !failed)) return;
     turn.finished=true;
-    turn.closed=failed;
+    turn.closed||=failed;
     if (failed) {
       for (const segment of turn.segments.values()) {
         if (segment.terminal) continue;
-        const receipt=record(segment,'interrupted');
-        void invoke(()=>persist(turn.scope,receipt)).catch(report);
+        persistTerminal(turn,segment,'interrupted');
       }
     }
     update(turn);
@@ -61,18 +73,19 @@ export function createVoiceConversation({voice,current,valid,persist,beginPresen
     });
   }
   function emit(turn,segment) {
-    if (!turn || turn.finished || !turns.has(turn.scope.requestId)) return;
+    if (!turn || turn.finished || turn.closed || !turns.has(turn.scope.requestId)) return;
     if (!valid(turn.scope) || !sameVoiceScope(turn.target,current())) {finish(turn,true);return;}
     const index=turn.segments.size;
     const envelope=Object.freeze({...turn.scope,index,segmentId:turn.scope.requestId+':voice:'+index});
     const textRange={start:turn.offset,end:turn.offset+segment.text.length};
     turn.offset=textRange.end;
     turn.segments.set(envelope.segmentId,{envelope,textRange,receipts:[],terminal:false});
+    if(turn.skipping){persistTerminal(turn,turn.segments.get(envelope.segmentId),'explicitlySkipped');return;}
     if(index===0)beginPresentation(turn.scope);
     return invoke(()=>voice.segment({envelope,...segment})).then(value=>{
-      if (value===false) finish(turn,true);
+      if (value===false&&!turn.skipping) finish(turn,true);
       return value;
-    },error=>{report(error);finish(turn,true);});
+    },error=>{if(!turn.skipping){report(error);finish(turn,true);}});
   }
   async function receipt({envelope,status,playedMs}={}) {
     const turn=turns.get(envelope?.requestId);
@@ -87,7 +100,7 @@ export function createVoiceConversation({voice,current,valid,persist,beginPresen
     const ready=update(turn);
     return {accepted,ready,requestId:turn.scope.requestId};
   }
-  return {begin,emit,finish,receipt,records,blocked:id=>turns.has(id),
+  return {begin,emit,finish,receipt,records,skip,blocked:id=>turns.has(id),
     presenting:target=>[...turns.values()].some(turn=>turn.segments.size>0&&sameVoiceScope(target,turn.target)),
     cancel(predicate) {for (const turn of turns.values()) if (predicate(turn.scope,turn.target)) finish(turn,true);}};
 }

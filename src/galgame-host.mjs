@@ -58,7 +58,7 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
   let sequence=0;
   return {
     get gameEconomy(){return companion.r95?.feeding?.gameEconomy;},viewState:()=>companion.viewState(),cardGamesPortrait:companion.cardGamesPortrait,gameContext:scope=>companion.gameContext(scope),recordGameFact:value=>companion.recordGameFact(value),
-    voiceScope:companion.voiceScope,voiceSubmit:companion.voiceSubmit,voiceReceipt:companion.voiceReceipt,voiceCancel:companion.voiceCancel,
+    voiceScope:companion.voiceScope,voiceSubmit:companion.voiceSubmit,voiceReceipt:companion.voiceReceipt,voiceSkip:companion.voiceSkip,voiceCancel:companion.voiceCancel,
     async action(action,args={}) {
      const previous=voice?companion.voiceScope():null;
      try{

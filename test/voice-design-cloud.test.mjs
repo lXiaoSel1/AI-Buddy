@@ -79,7 +79,7 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
     const find=selector=>document.querySelector(selector);
     const click=async selector=>{const element=find(selector);check(element,'Present: '+selector);element.click();await wait();};
     const input=async(selector,value)=>{const element=find(selector);check(element,'Present: '+selector);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(element,value);element.dispatchEvent(new Event('input',{bubbles:true}));await wait();};
-    let snapshot=${JSON.stringify({state})},update,releasePrepare,queryFailure=false,previewBad=false,holdQuery=false,releaseQuery;
+    let snapshot=${JSON.stringify({state})},update,releasePrepare,queryFailure=false,previewBad=false,shortReference=false,holdQuery=false,releaseQuery;
     Object.assign(snapshot.state.cloudBatch.items.find(row=>row.characterId==='claude'),{status:'profile-incomplete',availableStatus:'not-prepared',missingEngines:['gpt']});
     snapshot.state.cloudBatch.items.push({characterId:'qwen',status:'preparing'});
     snapshot.state.cloudBatch.items.push({characterId:'chatgpt',status:'activation-confirmed-query-pending',missingEngines:['gpt']});
@@ -88,7 +88,12 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
     const plan=ids=>{const count=ids.includes('claude')?2:1;return {selectedCharacterIds:ids,selectedCount:ids.length,cloneCount:count,activationCount:count,firstUseCount:count,reuseCount:0,blockedCount:0,planHash:'approved-plan',pricing:{currency:'CNY',cloneUnitPrice:9.9,cloneEstimate:count*9.9,checkedOn:'2026-11-07'}};};
     const session={snapshot:()=>snapshot,runAction:async(op,payload)=>{
       calls.push({op,payload:structuredClone(payload)});
-      if(op==='cloud-batch-preview')return {plan:previewBad?{...plan(payload.selectedCharacterIds),planHash:''}:plan(payload.selectedCharacterIds)};
+      if(op==='cloud-batch-preview'){
+        const next=plan(payload.selectedCharacterIds);
+        if(shortReference)return {plan:{...next,cloneCount:0,activationCount:0,firstUseCount:0,blockedCount:1,pricing:{...next.pricing,cloneEstimate:0},
+          actions:[{characterId:'claude',action:'blocked-reference',code:'CLOUD_REFERENCE_TOO_SHORT',message:'云端克隆的参考录音至少需要 10 秒，请更换录音。'}]}};
+        return {plan:previewBad?{...next,planHash:''}:next};
+      }
       if(op==='cloud-batch-prepare'){
         emit({cloudBatchWorking:true,cloudBatch:{state:'running',items:[{characterId:'claude',status:'preparing'}],total:1}});
         await new Promise(resolve=>releasePrepare=resolve);return {state:'cancelled'};
@@ -120,7 +125,14 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
       check(find('[data-cloud-confirm]').disabled,'Expired preview cannot be confirmed');Date.now=realNow;
       await click('dialog .ui-dlg-act .ghost');previewBad=true;await click('[data-cloud-prepare]');
       check(find('[data-cloud-confirm]').disabled,'Malformed preview cannot be confirmed');
-      await click('dialog .ui-dlg-act .ghost');previewBad=false;await click('[data-cloud-prepare]');await click('[data-cloud-confirm]');
+      await click('dialog .ui-dlg-act .ghost');previewBad=false;shortReference=true;
+      await click('[data-cloud-prepare]');
+      check(find('dialog [role="alert"]')?.textContent.includes('云端克隆的参考录音至少需要 10 秒'),'Short reference shows a specific Chinese correction');
+      check(!find('[data-cloud-cost]')&&!find('[data-cloud-confirm]'),'Short reference opens neither a fee estimate nor upload consent');
+      setLocale('en');emit({});await wait();
+      check(find('dialog [role="alert"]')?.textContent.includes('at least 10 seconds'),'Short reference shows a specific English correction');
+      setLocale('zh-CN');await click('dialog .ui-dlg-act .ghost');shortReference=false;
+      await click('[data-cloud-prepare]');await click('[data-cloud-confirm]');
       const sent=calls.find(row=>row.op==='cloud-batch-prepare').payload;
       check(JSON.stringify(sent.selectedCharacterIds)==='["claude"]'&&sent.planHash==='approved-plan'&&sent.consentUpload===true&&sent.consentActivation===true,'Prepare preserves exact plan and both explicit consents');
       check(find('[data-cloud-cancel]')&&!find('[data-cloud-cancel]').disabled,'Running work remains cancellable');

@@ -5,12 +5,13 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {createVoiceCloud} from '../src/voice/cloud.mjs';
+import {fixtureVoiceWav} from './support/voice-wav.mjs';
 import {createServer} from 'node:http';
 
 const scope={engine:'breeze',packageId:'ai-buddy.voice-breeze',characterId:'whale',profileId:'voice1',profileVersion:1};
 async function fixture(t,options={}) {
   const dataRoot=await mkdtemp(join(tmpdir(),'voice-r5-cloud-'));
-  const audio=Buffer.alloc(320044);audio.write('RIFF');audio.write('WAVE',8);
+  const audio=fixtureVoiceWav();
   const path=join(dataRoot,'reference.wav');await writeFile(path,audio);
   let key='synthetic-account-key',connection={provider:'minimax',model:'speech-2.8-turbo',keyRef:'synthetic-ref'};
   const requests=[];
@@ -178,7 +179,7 @@ test('official HTTP upload clone formal activation and query cross a local serve
 
 test('unscoped pre-r5 unknown receipt blocks new submission and remains explicitly reconcilable',async t=>{
   const external=providerBoundary(),f=await fixture(t,{batchProvider:external.provider});
-  const audio=Buffer.alloc(320044);audio.write('RIFF');audio.write('WAVE',8);
+  const audio=fixtureVoiceWav();
   await mkdir(join(f.dataRoot,'voice','cloud','receipts'),{recursive:true});
   await writeFile(join(f.dataRoot,'voice','cloud','receipts','old-receipt.json'),JSON.stringify({schemaVersion:1,characterId:scope.characterId,
     provider:'minimax',voiceId:'buddy-old-unknown',sourceSHA:createHash('sha256').update(audio).digest('hex'),status:'failed-or-unconfirmed',stages:[{stage:'clone-request-submitted'}]}));

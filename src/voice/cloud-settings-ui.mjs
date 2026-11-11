@@ -181,6 +181,8 @@ function CloudVoiceChoices({snapshot,session,state,selected,batch,selectionKey,l
   }
   const filtered=voices?.filter(row=>(!category||row.category===category)&&(!search.trim()||(row.name+' '+row.voiceId).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())))??[];
   const closeConfirm=()=>{previewFlight.current++;setConfirm(false);setPreview(null);setPreviewBusy(false);};
+  const blockedReferences=plan?.actions?.filter(row=>row.action==='blocked-reference')??[];
+  const referenceBlocked=blockedReferences.length>0;
   const amount=plan?.pricing?.cloneEstimate,unitPrice=plan?.pricing?.cloneUnitPrice,currency=plan?.pricing?.currency,money=value=>typeof value==='number'&&Number.isFinite(value)?(currency==='CNY'?'¥':currency==='USD'?'US$':currency+' ')+value.toFixed(2):t('待核对');
   const sourceUrl=plan?.pricing?.sourceUrl,sourceAllowed=typeof sourceUrl==='string'&&/^https:\/\/platform\.minimax\.(?:cn|io)\/(?:docs\/pricing\/|subscribe\/token-plan(?:\?|$))/.test(sourceUrl);
   const readyCount=items.filter(row=>rowTone(row)==='ok').length,preparingCount=items.filter(row=>rowTone(row)==='busy').length;
@@ -215,7 +217,10 @@ function CloudVoiceChoices({snapshot,session,state,selected,batch,selectionKey,l
         h(CloudCharacterRows,{items,selectedIds,onToggle:toggleCharacter,locked}),
         h('div',{className:'vx-sum'},h('span',null,h('b',null,t('已选 {count} 个角色').replace('{count}',String(selectedCount)))),btn(t('下一步：确认费用'),{className:'ui-btn primary','data-cloud-prepare':true,disabled:locked||!selected?.configured||!selectedIds.length,onClick:previewBatch})),
         btn(t('核对准备状态'),{className:'ui-btn sm ghost','data-cloud-preview':true,disabled:!!snapshot?.working||selectionUnavailable,onClick:()=>{if(selectionUnavailable)return;setPreview(null);void session?.runAction('cloud-batch-reconcile',{});}})))),
-    confirm&&h(CloudDesignDialog,{title:t('上传 {count} 个角色的声音到 MiniMax？').replace('{count}',String(selectedCount)),onClose:closeConfirm,width:600,footer:h(React.Fragment,null,btn(t('取消'),{className:'ui-btn ghost',onClick:closeConfirm}),btn(t('同意上传，开始准备'),{className:'ui-btn primary','data-cloud-confirm':true,disabled:locked||previewBusy||!validPlan||!selected?.configured,onClick:prepareBatch},'upload'))},
+    confirm&&h(CloudDesignDialog,{title:referenceBlocked?t('请检查云端克隆参考录音'):previewBusy?t('正在核对云端克隆参考录音…'):t('上传 {count} 个角色的声音到 MiniMax？').replace('{count}',String(selectedCount)),onClose:closeConfirm,width:600,footer:h(React.Fragment,null,btn(t('取消'),{className:'ui-btn ghost',onClick:closeConfirm}),!referenceBlocked&&btn(t('同意上传，开始准备'),{className:'ui-btn primary','data-cloud-confirm':true,disabled:locked||previewBusy||!validPlan||!selected?.configured,onClick:prepareBatch},'upload'))},
+      referenceBlocked?h('ul',{role:'alert',className:'vx-cloud-plan-actions settings-error'},...blockedReferences.map((row,index)=>
+        h('li',{key:index},cloudCharacterLabel(items.find(item=>cloudCharacterId(item)===row.characterId)??row)+' · '+cloudVoiceError(row)))):
+      h(React.Fragment,null,
       h('p',null,t('会把下面 {count} 个角色的完整参考录音和文字上传到 MiniMax，并各合成一句来激活音色。').replace('{count}',String(selectedCount))),
       h('p',{className:'ws-muted'},t('本次使用配置：')+(selected?.name??t('尚未配置'))),
       h('div',{className:'vx-faces'},...selectedIds.map(id=>{const row=items.find(row=>cloudCharacterId(row)===id)??{characterId:id};return h('span',{key:id},h(CloudCharacterFace,{row}),cloudCharacterLabel(row));})),
@@ -231,5 +236,5 @@ function CloudVoiceChoices({snapshot,session,state,selected,batch,selectionKey,l
         h('p',{className:'settings-note'},t('价格核对日期：')+(plan.pricing?.checkedOn??t('待核对'))),sourceAllowed&&h('a',{href:sourceUrl,target:'_blank',rel:'noreferrer'},t('MiniMax 官方计费说明')),
         plan.blockedCount>0&&h('p',{role:'alert',className:'settings-error'},t('有 {count} 项状态无法确认，请先核对，暂不提交。').replace('{count}',String(plan.blockedCount))),
         plan.actions?.length>0&&h('ul',{className:'vx-cloud-plan-actions'},...plan.actions.map((row,index)=>h('li',{key:index},cloudCharacterLabel(items.find(item=>cloudCharacterId(item)===row.characterId)??row)+' · '+t(({'new-clone':'新增克隆',activation:'首次合成激活','reuse-existing':'复用已有音色','blocked-unknown':'状态待核对'})[row.action]??'状态待核对'),row.code?' · '+cloudVoiceError(row):'')))),
-      h('p',{className:'settings-note'},t('取消只停止后续任务，已提交的克隆或合成可能仍完成或收费。完成后仍需核对激活状态并试听。'))));
+      h('p',{className:'settings-note'},t('取消只停止后续任务，已提交的克隆或合成可能仍完成或收费。完成后仍需核对激活状态并试听。')))));
 }

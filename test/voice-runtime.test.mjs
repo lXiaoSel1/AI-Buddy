@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createVoiceRuntime} from '../src/voice/runtime.mjs';
 
-async function fixture(t, {initializeDelay=0,checkInitializePaths=false} = {}) {
+async function fixture(t, {initializeDelay=0,checkInitializePaths=false,drainTimeoutMs} = {}) {
   const {join} = await import('node:path');
   const {tmpdir} = await import('node:os');
   const {mkdtemp, rm, writeFile} = await import('node:fs/promises');
@@ -34,6 +34,7 @@ for await (const line of createInterface({input:process.stdin})) {
 `);
   const running = new Map(), admitted = [];
   const runtime = createVoiceRuntime({
+    drainTimeoutMs,
     resolveAssets: async kind => ({python:process.execPath, script, root:dir, assetRoot:dir, cacheRoot:dir, proof:kind}),
     resolveProfile: async () => ({path:script, text:'参考', language:'zh', referenceStyle:'calm', referenceSource:'neutral-fallback'}),
     supervisor: {
@@ -67,7 +68,7 @@ test('synthesis preserves reference fallback and real rate and retires the previ
 });
 
 test('cancelling an in-flight synthesis retires only the owned worker', async t => {
-  const {runtime,running} = await fixture(t);
+  const {runtime,running} = await fixture(t,{drainTimeoutMs:30});
   const controller = new AbortController();
   const pending = runtime.speak({engine:'gpt',characterId:'a',profileId:'v1',text:'pending',signal:controller.signal});
   await pending.next();

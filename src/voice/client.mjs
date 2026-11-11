@@ -49,7 +49,7 @@ export function ensureVoiceOutput(api=globalThis.whale?.voice,{createContext}={}
   const subscribers=new Set(),events=new Set(),errors=new Set(),requests=new Map(),retired=new Set();
   const terminal=new Set(['audioCompleted','explicitlySkipped','interrupted','failed']);
   let owners=0,closed=false,active,scope,errorScope,subtitle=null,speaking=false,error=null;
-  const snapshot=expected=>{const matches=matchesChat(expected,scope);return {subtitle:matches?subtitle:null,speaking:matches&&speaking,error:matchesChat(expected,errorScope)?error:null,
+  const snapshot=expected=>{const matches=matchesChat(expected,scope);return {subtitle:matches?subtitle:null,speaking:matches&&speaking,activeRequestId:matches&&speaking?active?.id:null,error:matchesChat(expected,errorScope)?error:null,
     requests:[...requests.values()].filter(row=>matchesChat(expected,row.envelope)).map(row=>({requestId:row.id,envelope:row.envelope,phase:row.phase,hasSegments:row.segments.size>0,subtitle:active===row&&subtitle?.envelope?.requestId===row.id?subtitle:null}))};};
   const notify=()=>{for(const row of subscribers)row.listener(snapshot(row.scope));};
   const action=(...args)=>Promise.resolve(api.action(...args)).then(pluginClientResult);
@@ -75,7 +75,7 @@ export function ensureVoiceOutput(api=globalThis.whale?.voice,{createContext}={}
     const removed=[...requests.values()].filter(predicate),receipts=[];
     for(const row of removed){row.cancelled=true;requests.delete(row.id);retire(row.id);}
     if(removed.includes(active)){active=undefined;playback.reset();}
-    for(const row of removed)for(const envelope of row.segments.values()){
+    if(status)for(const row of removed)for(const envelope of row.segments.values()){
       if(row.terminal.has(envelope.segmentId))continue;row.terminal.add(envelope.segmentId);
       receipts.push(action('receipt',{envelope,status}));
     }
@@ -88,6 +88,10 @@ export function ensureVoiceOutput(api=globalThis.whale?.voice,{createContext}={}
     if(event.type==='invalidate')return cancel(row=>inChannel(event.channel??'app-chat',row));
     const id=event.envelope?.requestId??event.requestId;
     if(id&&retired.has(id))return Promise.resolve();
+    if(event.type==='turn'&&event.state==='skipped'){
+      if(id)retire(id);
+      return cancel(row=>row.id===id,null);
+    }
     const failed=event.type==='segment'&&event.state==='failed'||event.type==='turn'&&event.failed;
     if(failed)onError({message:event.message??'配音失败，回复文字已保留',code:event.code},event.envelope??null);
     if(!id)return Promise.resolve();
@@ -125,7 +129,15 @@ export function ensureVoiceOutput(api=globalThis.whale?.voice,{createContext}={}
     onError(listener){errors.add(listener);return()=>errors.delete(listener);},
     prepare:rate=>playback.prepare(rate),
     setCardMix:value=>playback.setMix(value),
-    stopChat:async()=>{await Promise.all([cancel(row=>inChannel('app-chat',row)),action('stop',{channel:'app-chat'})]);},
+    stopChat:()=>action('stop',{channel:'app-chat'}),
+    async stopReading(requestId){
+      if(!requestId||active?.id!==requestId||!inChannel('app-chat',active))return;
+      const envelope=active.envelope;
+      try{
+        const result=await action('stop-reading',{requestId});
+        if(result?.stopped)await cancel(row=>row.id===requestId,null);
+      }catch(error){onError(error,envelope);}
+    },
     stop:async()=>{await Promise.all([cancel(()=>true),action('stop')]);},
     async close(){if(closed)return;closed=true;rendererOutputs.delete(api);off?.();await cancel(()=>true);subscribers.clear();events.clear();errors.clear();await playback.close();}
   };
@@ -196,7 +208,11 @@ export function createVoicePlayback({action,onSubtitle=()=>{},onBusy=()=>{},onEr
       if(event.phase==='end')player.accept({type:'segment_done',requestId,index:envelope.index});
       if(finished)player.accept({type:'generated',requestId});
     });
-    tail=operation.catch(error=>{const envelope=currentEnvelope;reset();onError(error);void action('stop',{channel:envelope?.channel==='card-table'?'card-table':'app-chat'}).catch(()=>{});onFailure(envelope);});return operation;
+    tail=operation.catch(error=>{
+      const envelope=currentEnvelope;
+      reset();onError(error);onFailure(envelope);
+      if(envelope?.channel==='card-table')void action('stop',{channel:'card-table'}).catch(()=>{});
+    });return operation;
   }
   return {handle,reset,setMix:mix.set,prepare:rate=>outputs.prepare(rate),close:async()=>{reset();mix.close();await outputs.close();}};
 }
@@ -262,6 +278,8 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
       publish({phase:null,...(value.state?{state:{...value.state,live:false,capture:null}}:{})});
     }
     if(event.type==='turn'&&event.state==='admitted')publish({phase:null});
+    if(event.type==='turn'&&event.state==='skipped'&&value.phase?.requestId===event.requestId)publish({phase:null});
+    if(event.type==='capture'&&event.reason==='capture-stopped'&&value.state)publish({state:{...value.state,live:false,capture:null}});
     if(event.type==='phase'&&matchesChat(value.state?.scope,event.envelope)&&['lifeId','operationId'].every(key=>value.state.scope[key]===event.envelope[key])){
       publish({phase:{requestId:event.requestId,stage:event.stage}});
       if(event.stage==='error')onError({message:event.code==='VOICE_PREFLIGHT_TIMEOUT'?'配音准备超时，已停止；回复文字已保留':phaseText.error});
@@ -425,7 +443,7 @@ export function useVoiceClient(scopeKey,onDraft){
   const live=matching&&!value?.stoppingCapture&&(value?.captureMode==='live'||value?.state?.live||value?.state?.capture?.mode==='live'),recording=matching&&!value?.stoppingCapture&&(value?.captureMode==='record'||value?.state?.capture?.mode==='record')&&value?.captureState!=='idle';
   useEffect(()=>{setCaptureAttempt(null);},[scopeKey,JSON.stringify(snapshot?.state?.scope)]);
   const control=placement=>h(VoiceChatControls,{snapshot:value,session:session.current,scope:expected,presentation,placement,captureAttempt,onCaptureAttempt:setCaptureAttempt});
-  return {controls:control('legacy'),topControls:control('top'),inputLeft:control('input-left'),inputRight:control('input-right'),inputReplacement:control('replacement'),alerts:control('alerts'),replacingInput:!!(recording||live&&!preparing),live:!!live,draftFromVoice:draftScope===scopeKey,clearDraftSource:()=>setDraftScope(null),speakingIndicator:presentation.subtitle?h(VoiceSpeakingIndicator):null,stopReading:presentation.speaking?h(VoiceButton,{kind:'ghost sm',icon:'stop',onClick:()=>session.current?.output.stopChat()},L('停止朗读','Stop reading')):null,subtitle:presentation.subtitle,speaking:presentation.speaking,presentation};
+  return {controls:control('legacy'),topControls:control('top'),inputLeft:control('input-left'),inputRight:control('input-right'),inputReplacement:control('replacement'),alerts:control('alerts'),replacingInput:!!(recording||live&&!preparing),live:!!live,draftFromVoice:draftScope===scopeKey,clearDraftSource:()=>setDraftScope(null),speakingIndicator:presentation.subtitle?h(VoiceSpeakingIndicator):null,stopReading:presentation.speaking?h(VoiceButton,{kind:'ghost sm',icon:'stop',onClick:()=>session.current?.output.stopReading(presentation.activeRequestId)},L('停止朗读','Stop reading')):null,subtitle:presentation.subtitle,speaking:presentation.speaking,presentation};
 }
 
 export function VoiceSettingsPanel({snapshot,session,onPlugins,onChat,selectedPackageId,onSelectPackage}){

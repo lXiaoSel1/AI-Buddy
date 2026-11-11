@@ -22,7 +22,7 @@ for await(const text of createInterface({input:process.stdin,crlfDelay:Infinity}
  if(row.op==='speak'){
   ${mode==='delayed'?"await new Promise(resolve=>setTimeout(resolve,60));":""}
   send({id:row.id,type:'pcm',sample_rate:24000,pcm:Buffer.alloc(${mode==='blocked'?262144:4}).toString('base64')});
-  ${mode==='blocked'?"for(let i=0;i<200;i++)send({id:row.id,type:'pcm',sample_rate:24000,pcm:Buffer.alloc(262144).toString('base64')});await new Promise(()=>{});":mode==='hung'?"await new Promise(()=>{});":"await new Promise(resolve=>setTimeout(resolve,80));send({id:row.id,type:'done'});"}
+  ${mode==='blocked'?"for(let i=0;i<200;i++)send({id:row.id,type:'pcm',sample_rate:24000,pcm:Buffer.alloc(262144).toString('base64')});await new Promise(()=>{});":mode==='hung'?"await new Promise(()=>{});":mode==='slow'?"if(row.text==='slow'){await new Promise(resolve=>setTimeout(resolve,2300));send({id:row.id,type:'pcm',sample_rate:24000,pcm:'CAAAAA=='});}send({id:row.id,type:'done'});":"await new Promise(resolve=>setTimeout(resolve,80));send({id:row.id,type:'done'});"}
  }
 }`);
   const owned=new Map(),counts={starts:0,releases:0};let rejectStop=options.rejectStop??false;
@@ -118,6 +118,37 @@ test('cancelling while the parser is awaiting first PCM consumes that pending re
     await chat.cancelCurrent();assert.equal((await pending).error.code,'VOICE_OWNER_STOPPED');
     assert.equal((await Array.fromAsync(cards.speak(request('b')))).filter(row=>row.type==='pcm').length,1);
     assert.equal(f.counts.starts,1);assert.equal(f.counts.releases,0);
+  }finally{await runtime.close();await f.close();}
+});
+
+test('a slow cancelled reply drains without replacing the worker or playing its remaining PCM',async()=>{
+  const f=await fixture('slow'),runtime=createSpeechRuntime({local:f.local}),chat=runtime.channel('chat');
+  try{
+    await chat.prepare({engine:'breeze',packageId});
+    const signal=new AbortController(),old=chat.speak({...request('a'),text:'slow',signal:signal.signal});
+    while((await old.next()).value.type!=='pcm'){}
+    signal.abort();
+    const stopped=assert.rejects(old.next(),{name:'AbortError'});
+    const next=Array.fromAsync(chat.speak(request('b')));
+    const [,packets]=await Promise.all([stopped,next]);
+    assert.equal((await chat.ready({engine:'breeze'})).ready,true);
+    assert.deepEqual(packets.filter(row=>row.type==='pcm').map(row=>row.pcm),[Buffer.alloc(4)]);
+    assert.deepEqual(f.counts,{starts:1,releases:0});
+  }finally{await runtime.close();await f.close();}
+});
+
+test('explicit engine stop preempts a pending drain for a silent worker',async()=>{
+  const f=await fixture('hung',{drainTimeoutMs:2500}),runtime=createSpeechRuntime({local:f.local}),chat=runtime.channel('chat');
+  try{
+    const old=chat.speak(request('a'));
+    while((await old.next()).value.type!=='pcm'){}
+    const drain=chat.cancelCurrent();
+    await delay(20);
+    const started=performance.now();
+    await Promise.all([runtime.stopEngine(),drain]);
+    assert.ok(performance.now()-started<1800,'explicit stop must preempt the in-progress drain');
+    assert.deepEqual(f.counts,{starts:1,releases:1});
+    assert.equal((await chat.ready({engine:'breeze'})).ready,false);
   }finally{await runtime.close();await f.close();}
 });
 

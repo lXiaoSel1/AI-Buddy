@@ -14,6 +14,11 @@ const rejectedCode=code=>/^CLOUD_REMOTE_\d+$/.test(code??'')||/^CLOUD_HTTP_4\d\d
 const accountRejected=code=>['CLOUD_REMOTE_1002','CLOUD_REMOTE_1004','CLOUD_REMOTE_1008','CLOUD_HTTP_401','CLOUD_HTTP_403','CLOUD_HTTP_429'].includes(code);
 const hasVoice=(voices,voiceId)=>voices.some(row=>(typeof row==='string'?row:row?.voiceId??row?.voice_id)===voiceId);
 const otherBinding=(binding,row)=>binding&&(!binding.provenance?.startsWith('approved-reference-clone')||row&&row.voiceId!==binding.voiceId&&row.retiredBindingVoiceId!==binding.voiceId);
+const retryStage=row=>{
+  if(!row)return 'pending';
+  if(row.status!=='failed'||row.outcome!=='rejected')return row.stage;
+  return row.stage==='activation-submitted'?'cloned':row.fileId?'uploaded':'pending';
+};
 const existingRow=(ctx,binding)=>({characterId:ctx.request.characterId,voiceId:binding.voiceId,status:binding.activatedAt?'activated':'reuse-existing',
   stage:'existing-binding',activationState:binding.activatedAt?'activated':'unknown',provenance:binding.provenance,category:binding.category,action:'reuse-existing',state:'ready'});
 const publicRow=row=>({characterId:row.characterId,voiceId:row.voiceId,status:row.status,stage:row.stage,
@@ -124,6 +129,14 @@ export function createVoiceBatch({dataRoot,resolveContext,readReference,findBind
     else if(row.stage==='upload-submitted'||row.stage==='clone-submitted'||row.stage==='activation-submitted')row.status='unknown';
     return row;
   }
+  async function cloneAction(ctx,row,base){
+    const renewal=row?.status==='expired';
+    if(renewal||retryStage(row)==='pending'){
+      try{await readReference(ctx);}
+      catch(error){return {...base,action:'blocked-reference',code:error.code??'CLOUD_REFERENCE',message:error.message};}
+    }
+    return {...base,action:'new-clone',cloneRequired:true,activationRequired:true,...(renewal?{renewal:true,code:'CLOUD_VOICE_EXPIRED'}:{})};
+  }
   async function project(ctx,row){
     await saveBinding(ctx,{characterId:ctx.request.characterId,profileId:ctx.request.profileId,profileVersion:ctx.request.profileVersion,
       voiceId:row.voiceId,provider:ctx.connection.provider,sourceSHA:row.sourceSHA,language:row.language,receiptId:row.id,preparedAt:row.preparedAt,
@@ -164,7 +177,7 @@ export function createVoiceBatch({dataRoot,resolveContext,readReference,findBind
     refresh(row);
     if(row.status==='failed'&&row.outcome==='rejected'){
       row.lastRejection={code:row.errorCode,stage:row.stage,at:row.updatedAt??row.createdAt};
-      row.stage=row.stage==='activation-submitted'?'cloned':row.fileId?'uploaded':'pending';row.status='pending';delete row.errorCode;delete row.outcome;
+      row.stage=retryStage(row);row.status='pending';delete row.errorCode;delete row.outcome;
     }
     const notify=async()=>{try{await options.onProgress?.(publicRow(row));}catch{ /* UI notification cannot change a confirmed provider result. */ }};
     const save=async()=>{row.updatedAt=time();await persist(state);await notify();};
@@ -190,7 +203,7 @@ export function createVoiceBatch({dataRoot,resolveContext,readReference,findBind
       state.rows[key.id]=row;await save();
     }
     if(row.stage==='pending'||row.stage==='uploaded'){
-      const reference=await readReference(ctx);await check(ctx,options);
+      const reference=await readReference(ctx,{upload:row.stage==='pending'||!!options.legacyClone});await check(ctx,options);
       if(options.legacyClone){
         row.stage='clone-submitted';row.status='preparing';await save();await check(ctx,options);
         try{
@@ -297,18 +310,18 @@ export function createVoiceBatch({dataRoot,resolveContext,readReference,findBind
           const base={characterId:key.characterId,sourceSHA:key.sourceSHA,language:key.language,voiceId:binding?.voiceId??row?.voiceId,cloneRequired:false,activationRequired:false};
           if(otherBinding(binding,row))actions.push({...base,action:'reuse-existing',provenance:binding.provenance});
           else if(row?.status==='unknown')actions.push({...base,action:'blocked-unknown',code:row.errorCode??'CLOUD_PREPARE_UNKNOWN'});
-          else if(row?.status==='expired')actions.push({...base,action:'new-clone',cloneRequired:true,activationRequired:true,renewal:true,code:'CLOUD_VOICE_EXPIRED'});
+          else if(row?.status==='expired')actions.push(await cloneAction(ctx,row,base));
           else if(row?.activatedAt||binding?.activatedAt)actions.push({...base,action:'reuse-existing',provenance:binding?.provenance});
           else if(row?.stage==='cloned'||row?.stage==='activation-submitted'&&row.outcome==='rejected'||binding)actions.push({...base,action:'activation',activationRequired:true});
           else if(!row&&await oldMatch(ctx)||!row&&(await hasOtherAccount(ctx)||Object.values(state.rows).some(other=>other.characterId===key.characterId&&other.sourceSHA===key.sourceSHA&&other.accountScope!==key.accountScope)))actions.push({...base,action:'blocked-unknown',code:'CLOUD_ACCOUNT_CONFIRMATION'});
-          else actions.push({...base,action:'new-clone',cloneRequired:true,activationRequired:true});
+          else actions.push(await cloneAction(ctx,row,base));
         }catch(error){actions.push({characterId:params.characterId,engine:params.engine,action:'blocked-unknown',cloneRequired:false,activationRequired:false,code:error.code??'CLOUD_CONFIG'});fingerprints.push({params,code:error.code??'CLOUD_CONFIG'});}
       }
       const cloneCount=actions.filter(row=>row.cloneRequired).length,firstUseCount=actions.filter(row=>row.activationRequired).length,global=providerName==='minimax-global',cloneUnitPrice=global?1.5:9.9;
       const pricing={currency:global?'USD':'CNY',cloneUnitPrice,cloneEstimate:Math.round(firstUseCount*cloneUnitPrice*100)/100,estimateOnly:true,
         sourceUrl:global?'https://platform.minimax.io/subscribe/token-plan?tab=api-enterprise':'https://platform.minimax.cn/docs/pricing/overview',checkedOn:'2026-11-07'};
       return {selectedCharacterIds,selectedCount:selectedCharacterIds.length,cloneCount,firstUseCount,activationCount:actions.filter(row=>row.activationRequired).length,reuseCount:actions.filter(row=>row.action==='reuse-existing').length,
-        blockedCount:actions.filter(row=>row.action==='blocked-unknown').length,actions,pricing,planHash:hash(JSON.stringify({fingerprints,selectedCharacterIds,actions,pricing}))};
+        blockedCount:actions.filter(row=>row.action==='blocked-unknown'||row.action==='blocked-reference').length,actions,pricing,planHash:hash(JSON.stringify({fingerprints,selectedCharacterIds,actions,pricing}))};
     },
     async reconcile(params,options={}){
       const state=await load(),ctx=await resolveContext(params,options.signal),key=identity(ctx),row=state.rows[key.id];

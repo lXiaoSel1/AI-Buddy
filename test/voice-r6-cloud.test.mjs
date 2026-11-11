@@ -8,15 +8,15 @@ import {createVoiceSettings} from '../src/voice/settings.mjs';
 import {createVoiceCredentials} from '../src/voice/credentials.mjs';
 import {createVoiceProfiles} from '../src/voice/voice-profiles.mjs';
 import {createVoiceCloud} from '../src/voice/cloud.mjs';
+import {fixtureVoiceWav} from './support/voice-wav.mjs';
 
 const packageIds={breeze:'ai-buddy.voice-breeze',gpt:'ai-buddy.voice-gpt-sovits'};
 
-async function fixture(t,{roles=2,provider={},separateReferences=false,noCloudReference=false,beforeResolveProfile,transport}={}){
+async function fixture(t,{roles=2,provider={},separateReferences=false,noCloudReference=false,referenceMs=10000,makeReference=fixtureVoiceWav,beforeResolveProfile,transport}={}){
   const dataRoot=await mkdtemp(join(tmpdir(),'voice-r6-cloud-'));
   const settings=createVoiceSettings({dataRoot}),profiles=createVoiceProfiles({dataRoot});
   const credentials=createVoiceCredentials({dataRoot,crypto:{isEncryptionAvailable:()=>true,encryptString:value=>Buffer.from(value),decryptString:bytes=>bytes.toString()}});
-  const reference=Buffer.alloc(320044);reference.write('RIFF');reference.writeUInt32LE(reference.length-8,4);reference.write('WAVEfmt ',8);reference.writeUInt32LE(16,16);
-  reference.writeUInt16LE(1,20);reference.writeUInt16LE(1,22);reference.writeUInt32LE(16000,24);reference.writeUInt32LE(32000,28);reference.writeUInt16LE(2,32);reference.writeUInt16LE(16,34);reference.write('data',36);reference.writeUInt32LE(320000,40);
+  const reference=makeReference(referenceMs);
   const path=join(dataRoot,'reference.wav');await writeFile(path,reference);
   const alternate=join(dataRoot,'alternate.wav');const other=Buffer.from(reference);other[100]=1;await writeFile(alternate,other);
   const characters=Array.from({length:roles},(_,i)=>({id:'role'+i,name:'角色'+i}));
@@ -58,8 +58,44 @@ test('r6 preview starts with no selected roles and preparation requires a nonemp
   assert.equal(f.calls.length,0);
 });
 
-test('r6 one selected role creates only its actual deduplicated voice and reports official reference pricing',async t=>{
-  const f=await fixture(t,{roles:3});
+test('r6 cloud clone preview blocks a 9.999-second local reference before consent or cost',async t=>{
+  const f=await fixture(t,{roles:1,referenceMs:9999});
+  const local=await f.profiles.resolve(await f.scope('role0'));
+  assert.equal(local.durationMs,9999);
+  const preview=await f.preview(['role0']);
+  assert.equal(preview.plan.blockedCount,1);
+  assert.equal(preview.plan.cloneCount,0);
+  assert.equal(preview.plan.activationCount,0);
+  assert.equal(preview.plan.pricing.cloneEstimate,0);
+  assert.deepEqual(preview.plan.actions.map(row=>[row.action,row.code]),[['blocked-reference','CLOUD_REFERENCE_TOO_SHORT']]);
+  const rejected=await f.cloud.prepareBatch({profiles:[await f.scope('role0')],consentUpload:true,consentActivation:true});
+  assert.equal(rejected.results[0].code,'CLOUD_REFERENCE_TOO_SHORT');
+  await assert.rejects(f.prepare(['role0']),{code:'CLOUD_REFERENCE_TOO_SHORT'});
+  assert.deepEqual(f.calls,[]);
+});
+
+test('r6 cloud clone rejects ambiguous WAV headers before estimating or uploading',async t=>{
+  const invalidHeaders={
+    'truncated RIFF extent'(bytes){bytes.writeUInt32LE(32036,4);return bytes;},
+    'duplicate format'(bytes){return Buffer.concat([bytes.subarray(0,36),bytes.subarray(12,36),bytes.subarray(36)]);},
+    'duplicate audio data'(bytes){return Buffer.concat([fixtureVoiceWav(1000),bytes.subarray(36)]);},
+  };
+  for(const [name,alter] of Object.entries(invalidHeaders))await t.test(name,async t=>{
+    const f=await fixture(t,{roles:1,makeReference(ms){
+      const bytes=fixtureVoiceWav(ms),malformed=alter(bytes);
+      if(malformed!==bytes)malformed.writeUInt32LE(malformed.length-8,4);
+      return malformed;
+    }});
+    const plan=(await f.preview(['role0'])).plan;
+    assert.equal(plan.cloneCount,0);
+    assert.deepEqual(plan.actions.map(row=>[row.action,row.code]),[['blocked-reference','CLOUD_REFERENCE']]);
+    await assert.rejects(f.prepare(['role0']),{code:'CLOUD_REFERENCE'});
+    assert.deepEqual(f.calls,[]);
+  });
+});
+test('r6 exactly 10 seconds qualifies for the deduplicated quote and uploads the approved WAV',async t=>{
+  let uploaded;
+  const f=await fixture(t,{roles:3,provider:{async upload(_ctx,bytes){uploaded=bytes;return {fileId:1};}}});
   const preview=await f.preview(['role1']);
   assert.equal(preview.plan.selectedCount,1);assert.equal(preview.plan.cloneCount,1);assert.equal(preview.plan.activationCount,1);assert.equal(preview.plan.reuseCount,0);assert.equal(preview.plan.blockedCount,0);
   assert.equal(preview.plan.pricing.currency,'CNY');assert.equal(preview.plan.pricing.cloneUnitPrice,9.9);assert.equal(preview.plan.pricing.cloneEstimate,9.9);
@@ -67,6 +103,7 @@ test('r6 one selected role creates only its actual deduplicated voice and report
   assert.equal(preview.plan.actions.filter(row=>row.action==='new-clone').length,1);
   const result=await f.gateway.action('cloud-batch-prepare',{selectedCharacterIds:['role1'],planHash:preview.plan.planHash,consentUpload:true,consentActivation:true});
   assert.equal(result.results.every(row=>row.characterId==='role1'),true);
+  assert.deepEqual(uploaded,fixtureVoiceWav(10000));
   assert.equal(f.calls.filter(row=>row[0]==='clone').length,1);assert.equal(f.calls.filter(row=>row[0]==='activate').length,1);
   assert.equal(f.calls.filter(row=>row[0]==='clone').every(row=>row[1]==='role1'),true);
 });
@@ -105,7 +142,7 @@ test('r6 a selected role with two different references is quoted and cloned twic
 const catalogTransport=voices=>async(assets,request,{signal})=>({events:(async function*(){signal.throwIfAborted();assert.equal(request.op,'voices');yield {type:'result',voices};})(),closed:Promise.resolve(),cancel:async()=>{}});
 
 test('r6 server catalog system voices retain real names, share across roles and remain existing bindings during prepare',async t=>{
-  const f=await fixture(t,{roles:2,transport:catalogTransport([{voice_id:'official-system',voice_name:'真实官方名称',category:'system_voice'},{voice_id:'private-clone',voice_name:'我的音色',category:'voice_cloning'}])});
+  const f=await fixture(t,{roles:2,referenceMs:9999,transport:catalogTransport([{voice_id:'official-system',voice_name:'真实官方名称',category:'system_voice'},{voice_id:'private-clone',voice_name:'我的音色',category:'voice_cloning'}])});
   const catalog=await f.cloud.listVoices(await f.scope('role0'));
   assert.deepEqual(catalog[0],{voiceId:'official-system',name:'真实官方名称',category:'system_voice'});
   for(const characterId of ['role0','role1'])for(const engine of ['breeze','gpt']){
@@ -115,6 +152,18 @@ test('r6 server catalog system voices retain real names, share across roles and 
   const preview=await f.preview(['role0','role1']);assert.equal(preview.plan.cloneCount,0);assert.equal(preview.plan.activationCount,0);assert.equal(preview.plan.reuseCount,2);
   await f.prepare(['role0','role1']);assert.equal(f.calls.length,0);
   for(const characterId of ['role0','role1'])assert.equal((await f.cloud.status(await f.scope(characterId))).voiceId,'official-system');
+});
+
+test('r6 changing the WAV bytes after the fee preview invalidates consent before any provider call',async t=>{
+  const f=await fixture(t,{roles:1});
+  const selection=['role0'];
+  const preview=await f.preview(selection);
+  const {cloudReference}=await f.profiles.resolve(await f.scope('role0'));
+  const bytes=await readFile(cloudReference.path);
+  bytes[44]=1;
+  await writeFile(cloudReference.path,bytes);
+  await assert.rejects(f.gateway.action('cloud-batch-prepare',{selectedCharacterIds:selection,planHash:preview.plan.planHash,consentUpload:true,consentActivation:true}),{code:'CLOUD_PLAN_CHANGED'});
+  assert.deepEqual(f.calls,[]);
 });
 
 test('r6 a binding or model change invalidates the confirmed fee plan before any upload',async t=>{

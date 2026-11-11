@@ -84,8 +84,10 @@ export function createCloudVoiceGateway({settings,profiles,credentials,cloud,get
   async function planFor(captured,selectedCharacterIds){
     const rows=captured.rows.filter(row=>selectedCharacterIds.includes(row.characterId));
     const plan=await cloud.batchPreview({profiles:rows,selectedCharacterIds});
-    for(const characterId of selectedCharacterIds)if(!rows.some(row=>row.characterId===characterId))plan.actions.push({characterId,action:'blocked-unknown',cloneRequired:false,activationRequired:false,code:'CLOUD_PROFILE_REQUIRED'});
-    plan.blockedCount=plan.actions.filter(row=>row.action==='blocked-unknown').length;
+    for(const characterId of selectedCharacterIds)if(!rows.some(row=>row.characterId===characterId)){
+      plan.actions.push({characterId,action:'blocked-unknown',cloneRequired:false,activationRequired:false,code:'CLOUD_PROFILE_REQUIRED'});
+      plan.blockedCount++;
+    }
     plan.planHash=createHash('sha256').update(JSON.stringify({plan,config:configIdentity(captured.config),selections:captured.selections.filter(row=>selectedCharacterIds.includes(row.characterId)),
       scopes:captured.scopes.filter(row=>selectedCharacterIds.includes(row.characterId))})).digest('hex');
     return plan;
@@ -118,6 +120,8 @@ export function createCloudVoiceGateway({settings,profiles,credentials,cloud,get
     const captured=await gather(),selectedCharacterIds=reconcile?captured.characters.map(row=>row.id):selection(payload,captured,{required:true});
     const plan=reconcile?null:await planFor(captured,selectedCharacterIds);
     if(!reconcile&&plan.planHash!==payload.planHash)throw fail('CLOUD_PLAN_CHANGED','云配音配置、声音档案或当前绑定已改变，请刷新费用计划并重新确认');
+    const invalidReference=plan?.actions.find(row=>row.action==='blocked-reference');
+    if(invalidReference)throw fail(invalidReference.code,invalidReference.message);
     const selectedRows=captured.rows.filter(row=>selectedCharacterIds.includes(row.characterId));
     await stopAll(reconcile?'cloud-batch-reconciling':'cloud-batch-preparing');const hostGeneration=assertOpen();
     if(generation!==epoch)throw fail('CLOUD_CONFIGURATION_CHANGED','云配音操作已撤销');

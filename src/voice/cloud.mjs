@@ -6,6 +6,7 @@ import {StringDecoder} from 'node:string_decoder';
 import {assertPluginTreeNoLinks} from '../plugin-archive.mjs';
 import {writeAtomic} from '../atomic-write.mjs';
 import {voicePythonEnvironment} from './python-environment.mjs';
+import {validateWav} from './voice-profiles.mjs';
 import {createVoiceBatch,createMiniMaxVoiceProvider} from './batch-voices.mjs';
 
 const packages = {breeze:'ai-buddy.voice-breeze',gpt:'ai-buddy.voice-gpt-sovits'};
@@ -262,22 +263,30 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
       return {...binding,state:'ready'};
     } finally {await finish(token);}
   }
-  async function referencePlan(ctx) {
+  async function referencePlan(ctx,{upload=true}={}) {
     const reference=ctx.profile.cloudReference;
-    if (reference?.authorized!==true || !isAbsolute(reference.path??'') || !/^[a-f0-9]{64}$/.test(reference.sha256??'') ||
+    if (reference?.authorized!==true || typeof reference.path!=='string' || !isAbsolute(reference.path) || !/^[a-f0-9]{64}$/.test(reference.sha256??'') ||
         !Number.isSafeInteger(reference.bytes) || reference.bytes<44 || reference.bytes>20*1024*1024 ||
-        !Number.isFinite(reference.durationMs) || reference.durationMs<10000 || reference.durationMs>300000 ||
         typeof reference.text!=='string') throw fail('CLOUD_REFERENCE','当前角色没有已批准的完整云端克隆参考');
-    await assertPluginTreeNoLinks(reference.path);
-    const before=await lstat(reference.path,{bigint:true});
-    if (!before.isFile() || before.nlink!==1n || before.size!==BigInt(reference.bytes)) throw fail('CLOUD_REFERENCE_CHANGED','云端克隆参考文件已变化');
-    const bytes=await readFile(reference.path);
-    const after=await lstat(reference.path,{bigint:true});
-    if (before.ino!==after.ino || before.dev!==after.dev || before.size!==after.size || before.mtimeNs!==after.mtimeNs ||
-        before.ctimeNs!==after.ctimeNs || bytes.length!==reference.bytes || hash(bytes)!==reference.sha256 ||
-        bytes.toString('ascii',0,4)!=='RIFF' || bytes.toString('ascii',8,12)!=='WAVE') throw fail('CLOUD_REFERENCE_CHANGED','云端克隆参考摘要校验失败');
+    let bytes;
+    try{
+      await assertPluginTreeNoLinks(reference.path);
+      const before=await lstat(reference.path,{bigint:true});
+      if(!before.isFile()||before.nlink!==1n||before.size!==BigInt(reference.bytes))throw Error();
+      bytes=await readFile(reference.path);
+      const after=await lstat(reference.path,{bigint:true});
+      if(before.ino!==after.ino||before.dev!==after.dev||before.size!==after.size||before.mtimeNs!==after.mtimeNs||
+         before.ctimeNs!==after.ctimeNs||bytes.length!==reference.bytes||hash(bytes)!==reference.sha256||
+         bytes.toString('ascii',0,4)!=='RIFF'||bytes.toString('ascii',8,12)!=='WAVE')throw Error();
+    }catch{throw fail('CLOUD_REFERENCE_CHANGED','云端克隆参考文件已变化，请重新选择录音。');}
+    let durationMs=reference.durationMs;
+    if(upload){
+      try{({durationMs}=validateWav(bytes,{maxDurationSeconds:300,strictContainer:true}));}
+      catch{throw fail('CLOUD_REFERENCE','当前角色没有已批准的完整云端克隆参考');}
+      if(durationMs<10000)throw fail('CLOUD_REFERENCE_TOO_SHORT','云端克隆的参考录音至少需要 10 秒，请更换录音。');
+    }
     return {bytes,reference,plan:{characterId:ctx.request.characterId,profileId:ctx.request.profileId,profileVersion:ctx.request.profileVersion,
-      provider:ctx.connection.provider,sourceSHA:reference.sha256,durationMs:reference.durationMs,bytes:reference.bytes,
+      provider:ctx.connection.provider,sourceSHA:reference.sha256,durationMs,bytes:reference.bytes,
       action:'upload-and-clone',requiresConsent:true,remoteUpload:true,cloudListeningAcceptance:'pending'}};
   }
   async function previewPlan(params) {

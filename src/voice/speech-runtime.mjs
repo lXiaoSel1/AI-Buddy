@@ -176,11 +176,17 @@ export function createSpeechRuntime({local, cloud,preflightTimeoutMs=VOICE_PREFL
     // Revoke the old epoch immediately. Pending PCM is discarded while the
     // single Python request reader drains the same sequence to its terminal.
     for(const job of jobs)if(job.source===source)job.controller.abort(fail('VOICE_OWNER_STOPPED','该语音来源已停止'));
-    source.stopping=serialize(async()=>{
+    let cleanup;
+    const begin=serialize(()=>{
       if(target){
         const selected=provider==='minimax'?cloud:local;
-        const cleanup=selected?.cancelCurrent?selected.cancelCurrent():selected?.stopEngine?.();
-        await allStopped([cleanup]);
+        cleanup=allStopped([Promise.resolve().then(()=>selected?.cancelCurrent?selected.cancelCurrent():selected?.stopEngine?.())]);
+      }
+    });
+    // Full release must be able to stop the provider during cancellation.
+    source.stopping=begin.then(async()=>{
+      if(target){
+        await cleanup;
         await returnCancelled(target);
         if(active===target)active=undefined;target.release();
       }

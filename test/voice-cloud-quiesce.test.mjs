@@ -6,12 +6,13 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {createVoiceHost} from '../src/voice/host.mjs';
 import {createVoiceCloud} from '../src/voice/cloud.mjs';
+import {fixtureVoiceWav} from './support/voice-wav.mjs';
 import {createVoiceSettings} from '../src/voice/settings.mjs';
 
 const gate=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};};
 async function fixture(t){
   const dataRoot=await mkdtemp(join(tmpdir(),'voice-cloud-quiesce-'));
-  const reference=Buffer.alloc(64);reference.write('RIFF');reference.write('WAVE',8);
+  const reference=fixtureVoiceWav();
   const file=join(dataRoot,'reference.wav');await writeFile(file,reference);
   const scope={channel:'app-private',characterId:'alice',personaId:'persona',lifeId:'life',operationId:'operation',conversationId:'private'};
   const profile={id:'alice-breeze',version:1,characterId:'alice',engine:'breeze',cloudReference:{path:file,authorized:true,bytes:reference.length,sha256:createHash('sha256').update(reference).digest('hex'),durationMs:10000,text:'approved reference'}};

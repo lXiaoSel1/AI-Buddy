@@ -78,7 +78,7 @@ test('channel stops preserve the other owner while ordinary stop and maintenance
   const cardStops=f.stops.filter(owner=>owner==='card-table').length;
   await f.host.action('stop',{channel:'app-chat'});
   assert.equal(f.stops.filter(owner=>owner==='card-table').length,cardStops);
-  assert.equal(f.host.snapshot().cardSpeechBusy,true);assert.ok(f.stops.includes('chat'));
+  assert.equal(f.host.snapshot().cardSpeechBusy,true);assert.equal(f.stops.includes('chat'),false);
   const chatStops=f.stops.filter(owner=>owner==='chat').length,cancels=f.cancelled();
   await f.host.action('stop',{channel:'card-table'});
   assert.equal(f.stops.filter(owner=>owner==='chat').length,chatStops);assert.equal(f.cancelled(),cancels);
@@ -134,6 +134,7 @@ test('stopping an active reading interrupts its presentation without stopping re
   const conversation=createVoiceConversation({voice:f.host.controller,current:f.game.voiceScope,valid:()=>true,
     persist:async()=>{},beginPresentation:()=>{},completePresentation:()=>{},now:()=>1,audit:()=>{}});
   f.game.voiceCancel=()=>conversation.cancel(()=>true);
+  f.game.voiceSkip=conversation.skip;
   chat.cancelCurrent=async()=>{};
   chat.speak=async function*({signal}){
     const aborted=new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));
@@ -147,12 +148,122 @@ test('stopping an active reading interrupts its presentation without stopping re
   assert.equal(await conversation.emit(turn,{text:'朗读过程中停止。'}),true);
   await entered.promise;
 
-  await f.host.action('stop',{channel:'app-chat'});
+  await f.host.action('stop-reading',{requestId:'reading'});
   assert.deepEqual(f.stops,[]);
+  assert.equal(conversation.blocked('reading'),true,'text generation can still finish');
+  conversation.finish(turn);
   assert.equal(conversation.blocked('reading'),false);
   const state=await f.host.action('state');
   assert.deepEqual(state.preparation,{state:'ready',target:'speech'});
   assertChatControlsReady(state);
+});
+
+test('stop reading removes only the selected reply while the next reply stays queued',async t=>{
+  const f=await fixture(t),chat=f.channels.chat,entered=Promise.withResolvers(),drained=Promise.withResolvers();
+  t.after(()=>drained.resolve());
+  f.game.voiceScope=()=>({channel:'app-group',characterId:'alice',personaId:'persona-one',conversationId:'group-chat',lifeId:'life-alice',operationId:'operation-one'});
+  const conversation=createVoiceConversation({voice:f.host.controller,current:f.game.voiceScope,valid:()=>true,
+    persist:async()=>{},beginPresentation:()=>{},completePresentation:()=>{},now:()=>1,audit:()=>{}});
+  f.game.voiceSkip=conversation.skip;
+  chat.speak=async function*({text}){
+    if(text==='旧回复。'){entered.resolve();await drained.promise;}
+    yield {type:'pcm',pcm:Buffer.alloc(4),sampleRate:24000};
+  };
+  await f.host.action('prepare',{target:'speech'});
+  const scope=f.game.voiceScope();
+  const old=await conversation.begin({...scope,requestId:'old-reply',messageId:'old-message'},scope);
+  assert.equal(await conversation.emit(old,{text:'旧回复。'}),true);
+  await entered.promise;
+  assert.equal(await conversation.emit(old,{text:'旧回复第二段。'}),true);
+  const next=await conversation.begin({...scope,requestId:'next-reply',messageId:'next-message'},scope);
+  assert.equal(await conversation.emit(next,{text:'新回复。'}),true);
+  try{
+    await f.host.action('stop-reading',{requestId:'old-reply'});
+    assert.equal(conversation.blocked('old-reply'),true);
+    await conversation.emit(old,{text:'跳过后才到达的语段。'});
+    conversation.finish(old);
+    assert.equal(conversation.blocked('old-reply'),false);
+    assert.equal(conversation.blocked('next-reply'),true);
+    assert.deepEqual(conversation.records(old).map(row=>row.status),['explicitlySkipped','explicitlySkipped','explicitlySkipped']);
+    assert.equal((await f.host.action('state')).epoch,0);
+    assertChatControlsReady({...await f.host.action('state'),scope});
+  }finally{drained.resolve();}
+  await until(()=>f.events.some(event=>event.type==='audio'&&event.phase==='pcm'&&event.envelope.requestId==='next-reply'));
+  assert.equal(f.events.some(event=>event.type==='audio'&&event.phase==='pcm'&&event.envelope.requestId==='old-reply'),false);
+  assert.deepEqual(f.stops,[]);
+});
+
+test('skipping a Live reply waits for text completion and ending Live fences a later reply',async t=>{
+  const f=await fixture(t),chat=f.channels.chat;
+  const conversation=createVoiceConversation({voice:f.host.controller,current:f.game.voiceScope,valid:()=>true,
+    persist:async()=>{},beginPresentation:()=>{},completePresentation:()=>{},now:()=>1,audit:()=>{}});
+  f.game.voiceSkip=conversation.skip;
+  f.game.voiceSubmit=async()=>({accepted:true});
+  let captures=0;
+  chat.startCapture=async()=>{captures++;};
+  chat.feedCapture=async()=>({endpoint:true});
+  chat.finishCapture=async()=>({text:'测试语音输入'});
+  const scope=f.game.voiceScope();
+  await f.host.action('prepare',{target:'live'});
+  const first=await f.host.action('capture-start',{mode:'live'});
+  await f.host.action('capture-feed',{id:first.id,pcm:new Uint8Array(4)});
+  const turn=await conversation.begin({...scope,requestId:'live-first',messageId:'first'},scope,first.id);
+  await conversation.emit(turn,{text:'Live 的回复。'});
+  await until(()=>f.events.some(event=>event.type==='audio'&&event.phase==='pcm'));
+  await f.host.action('stop-reading',{requestId:'live-first'});
+  assert.equal(captures,1);
+  assert.equal((await f.host.action('state')).live,true);
+  conversation.finish(turn);
+  await until(()=>captures===2);
+  const next=(await f.host.action('state')).capture;
+  assert.notEqual(next.id,first.id);
+  await f.host.action('capture-feed',{id:next.id,pcm:new Uint8Array(4)});
+  await f.host.action('stop',{channel:'app-chat'});
+  assert.equal((await f.host.action('state')).live,false);
+  assert.equal(await conversation.begin({...scope,requestId:'late-live',messageId:'late'},scope,next.id),null);
+  assert.equal(captures,2);
+  assertChatControlsReady(await f.host.action('state'));
+  assert.deepEqual(f.stops,[]);
+});
+
+test('a late scoped ASR stop error cannot replace a newer successful invalidation',async t=>{
+  const f=await fixture(t),chat=f.channels.chat,entered=Promise.withResolvers(),late=Promise.withResolvers();
+  let cancels=0;
+  chat.cancelCapture=async()=>{if(++cancels===1){entered.resolve();return late.promise;}};
+  chat.startCapture=async()=>{};
+  chat.cancelCurrent=async()=>{};
+  await f.host.action('prepare',{target:'speech'});
+  await f.host.action('capture-start',{mode:'record'});
+  const scoped=f.host.action('stop',{channel:'app-chat'});
+  await entered.promise;
+  const transition=f.host.controller.invalidate('scope-changed');
+  await transition;
+  late.reject(Error('old ASR cleanup finished after the transition'));
+  await scoped;
+  assert.equal((await f.host.action('state')).stopping,false);
+  assertChatControlsReady(await f.host.action('state'));
+  await f.host.action('capture-start',{mode:'record'});
+});
+
+test('stop reading drops a stale ready indicator after a confirmed worker retirement',async t=>{
+  const f=await fixture(t),chat=f.channels.chat,entered=Promise.withResolvers();
+  let ready=true;
+  chat.ready=async()=>({ready});
+  chat.speak=async function*({signal}){
+    const aborted=new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));
+    entered.resolve();
+    await aborted;
+    ready=false;
+    throw signal.reason;
+  };
+  await f.host.action('prepare',{target:'speech'});
+  const scope={...f.game.voiceScope(),requestId:'retired-reading',messageId:'retired-message'};
+  const lease=await f.host.controller.admit(scope);
+  await f.host.controller.segment({envelope:{...scope,...lease,segmentId:'retired-reading:voice:0',index:0},text:'测试退出。'});
+  await entered.promise;
+  await f.host.action('stop-reading',{requestId:scope.requestId});
+  await until(()=>f.events.some(event=>event.type==='preparation'&&event.preparation.state==='idle'));
+  assert.equal((await f.host.action('state')).preparation.state,'idle');
 });
 
 test('cancelling Live while ASR loads aborts that preparation and keeps an already ready speech engine',async t=>{
@@ -282,13 +393,16 @@ test('renderer settings and configuration events cannot disclose or replace priv
  assert.doesNotMatch(JSON.stringify(f.events),/credentialRef|voice:test-key/);
 });
 
-for(const target of ['app-chat','global'])test('explicit '+target+' stop retries a failed chat cleanup in one click',async t=>{
- const f=await fixture(t);const real=f.channels.chat.stopEngine;
- f.channels.chat.stopEngine=async()=>{throw Object.assign(Error('stop unknown'),{code:'VOICE_WORKER_STOP_FAILED'});};
- await assert.rejects(f.host.action('stop',{channel:'app-chat'}),{code:'VOICE_CLEANUP_FAILED'});
- f.channels.chat.stopEngine=real;
- await f.host.action('stop',target==='global'?{}:{channel:'app-chat'});
- assert.equal((await f.host.action('state')).preparation.state,'idle');
+for(const target of ['app-chat','global'])test('explicit '+target+' stop retries its failed cleanup in one click',async t=>{
+ const f=await fixture(t),chat=f.channels.chat,global=target==='global',payload=global?{}:{channel:'app-chat'};
+ await f.host.action('prepare',{target:'speech'});
+ const method=global?'stopEngine':'cancelCapture',real=chat[method];
+ chat[method]=async()=>{throw Object.assign(Error('stop unknown'),{code:'VOICE_WORKER_STOP_FAILED'});};
+ await assert.rejects(f.host.action('stop',payload),{code:'VOICE_CLEANUP_FAILED'});
+ chat[method]=real;
+ await f.host.action('stop',payload);
+ assert.equal((await f.host.action('state')).preparation.state,global?'idle':'ready');
+ if(!global)assert.deepEqual(f.stops,[]);
 });
 
 test('configuration and profile changes revoke pending card PCM, including an externally changed profile version',async t=>{
