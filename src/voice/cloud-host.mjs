@@ -1,15 +1,21 @@
 import {locale} from '../i18n.mjs';
+import {cloudVoiceReady} from './cloud-readiness.mjs';
 const packages=[['breeze','ai-buddy.voice-breeze'],['gpt','ai-buddy.voice-gpt-sovits']];
 const operations=new Set(['cloud-connection-save','cloud-connection-select','cloud-connection-remove','cloud-batch-preview','cloud-batch-prepare','cloud-batch-reconcile','cloud-batch-cancel']);
 const fail=(code,message)=>Object.assign(Error(message),{code});
 const validId=value=>typeof value==='string'&&/^[a-zA-Z0-9_-]{1,100}$/.test(value)&&!['__proto__','constructor','prototype'].includes(value);
 const scopeIdentity=scope=>JSON.stringify([scope?.characterId,scope?.personaId,scope?.lifeId,scope?.operationId,scope?.contextRevision]);
 const configIdentity=config=>JSON.stringify([config.enabled,config.selectedPackageId,config.packages,config.cloudConnections]);
+const packageIdentity=installed=>installed.map(([,id])=>id).join(',');
 const emptyBatch=()=>({state:'idle',running:false,total:0,completed:0,items:[],results:[],counts:{active:0,prepared:0,unknown:0,failed:0,pending:0}});
 
 /** Host-only routing. No renderer argument can choose a role, life or Key reference. */
-export function createCloudVoiceGateway({settings,profiles,credentials,cloud,getGame,resolvePackage,publish=()=>{},assertOpen=()=>{},stopAll=async()=>{},track=task=>task,getLocale=locale}){
-  let epoch=0,batchRun,admissionRun,admissionIdentity,batchState=emptyBatch(),connectionTail=Promise.resolve();
+export function createCloudVoiceGateway({settings,profiles,credentials,cloud,getGame,listPackages,resolvePackage,publish=()=>{},assertOpen=()=>{},stopAll=async()=>{},track=task=>task,getLocale=locale}){
+  let epoch=0,batchRun,admissionRun,admissionIdentity,batchState=emptyBatch(),batchPackageIdentity,connectionTail=Promise.resolve();
+  function installedPackages(){
+    const rows=listPackages();
+    return packages.filter(([,id])=>rows.some(row=>row.id===id&&row.installed===true));
+  }
   async function cleanupCredential(ref){
     if(!ref||typeof credentials.removeIfUnused!=='function')return;
     await credentials.removeIfUnused(ref,async candidate=>{const current=await settings.get();return current.cloudConnections.items.some(row=>row.credentialRef===candidate)||Object.values(current.packages).some(row=>row.credentialRef===candidate);});
@@ -26,7 +32,7 @@ export function createCloudVoiceGateway({settings,profiles,credentials,cloud,get
   async function publicConnections(){
     const list=await settings.listConnections();return {selectedId:list.selectedId,items:list.items.map(({id,name,provider,model,credentialRef})=>({id,name,provider,model,configured:!!credentialRef}))};
   }
-  async function gather(){
+  async function gather(installed=installedPackages()){
     const game=getGame(),view=game?.viewState?.(),personaId=view?.activePersonaId??game?.voiceScope?.()?.personaId;
     if(!view||!Array.isArray(view.characters)||!validId(personaId)||typeof game.pluginScope!=='function')throw fail('CLOUD_SCOPE','角色列表或当前身份尚未准备');
     const characters=view.characters.filter(row=>validId(row?.id));
@@ -35,19 +41,19 @@ export function createCloudVoiceGateway({settings,profiles,credentials,cloud,get
     for(const character of characters){
       const scope=game.pluginScope(character.id,personaId);scopes.push({characterId:character.id,identity:scopeIdentity(scope)});
       if(scope.characterId!==character.id||scope.personaId!==personaId||!scope.lifeId||!scope.operationId)throw fail('CLOUD_SCOPE','角色人生活动身份无效');
-      for(const [engine,packageId] of packages){
+      for(const [engine,packageId] of installed){
         const profile=await profiles.current({characterId:character.id,engine});
         selections.push({characterId:character.id,engine,id:profile?.id??null,version:profile?.version??null});
         if(profile)rows.push({...scope,engine,packageId,profileId:profile.id,profileVersion:profile.version});
       }
     }
-    return {game,personaId,characters,config,rows,scopes,selections};
+    return {game,personaId,characters,config,rows,scopes,selections,installed};
   }
   async function capturedCheck(captured,generation,hostGeneration,leases){
     if(generation!==epoch||assertOpen()!==hostGeneration)throw fail('CLOUD_CONFIGURATION_CHANGED','云配音操作已撤销');
     const game=getGame(),view=game?.viewState?.();
     if(game!==captured.game||view?.activePersonaId!==captured.personaId||JSON.stringify((view?.characters??[]).filter(row=>validId(row?.id)).map(row=>row.id))!==JSON.stringify(captured.characters.map(row=>row.id))||
-      configIdentity(await settings.get())!==configIdentity(captured.config))throw fail('CLOUD_CONFIGURATION_CHANGED','云配音配置、身份或角色清单已改变，准备已暂停');
+      configIdentity(await settings.get())!==configIdentity(captured.config)||packageIdentity(installedPackages())!==packageIdentity(captured.installed))throw fail('CLOUD_CONFIGURATION_CHANGED','云配音配置、身份或角色清单已改变，准备已暂停');
     for(const row of captured.scopes)if(scopeIdentity(game.pluginScope(row.characterId,captured.personaId))!==row.identity)throw fail('CLOUD_CONFIGURATION_CHANGED','角色人生或身份已改变，旧云音色准备已暂停');
     for(const row of captured.selections){
       const current=await profiles.current({characterId:row.characterId,engine:row.engine});
@@ -60,14 +66,14 @@ export function createCloudVoiceGateway({settings,profiles,credentials,cloud,get
     const items=captured.characters.map(character=>{
       const saved=summary.items?.find(row=>row.characterId===character.id)??{characterId:character.id,status:'not-prepared'};
       const missingEngines=captured.selections.filter(row=>row.characterId===character.id&&!row.id).map(row=>row.engine);
-      return missingEngines.length?{...saved,status:missingEngines.length===packages.length?'profile-missing':'profile-incomplete',
-        code:'CLOUD_PROFILE_REQUIRED',missingEngines,availableStatus:saved.status,message:missingEngines.length===packages.length?'角色缺少声音档案，未提交云端准备':'部分引擎缺少声音档案，角色准备尚未完整'}:saved;
+      if(missingEngines.length===captured.installed.length)return {characterId:character.id,status:'profile-missing',missingEngines};
+      return missingEngines.length?{...saved,missingEngines}:saved;
     });
-    const active=items.filter(row=>['activated','activation-confirmed-query-pending','reuse-existing'].includes(row.status)).length;
+    const active=items.filter(row=>cloudVoiceReady(row.status)).length;
     return {...summary,items,total:items.length,completed:active,available:new Set(captured.rows.map(row=>row.characterId)).size,characterCount:items.length,profileCount:captured.rows.length,
       state:items.length&&active===items.length?'completed':'pending',counts:{active,prepared:items.filter(row=>row.status==='prepared-awaiting-activation').length,
-        unknown:items.filter(row=>row.status==='unknown').length,failed:items.filter(row=>['failed','account-confirmation-required','expired','unavailable','profile-missing','profile-incomplete'].includes(row.status)).length,
-        pending:items.filter(row=>['pending','preparing','not-prepared'].includes(row.status)).length,profileMissing:items.filter(row=>row.missingEngines?.length).length}};
+        unknown:items.filter(row=>row.status==='unknown').length,failed:items.filter(row=>['failed','account-confirmation-required','expired','unavailable','profile-missing'].includes(row.status)).length,
+        pending:items.filter(row=>['pending','preparing','not-prepared'].includes(row.status)).length,profileMissing:items.filter(row=>row.status==='profile-missing').length}};
   }
   function selection(payload,captured,{required=false}={}){
     const ids=payload.selectedCharacterIds??[];
@@ -84,13 +90,16 @@ export function createCloudVoiceGateway({settings,profiles,credentials,cloud,get
       scopes:captured.scopes.filter(row=>selectedCharacterIds.includes(row.characterId))})).digest('hex');
     return plan;
   }
-  async function preview(payload={}){
-    const captured=await gather(),selectedCharacterIds=selection(payload,captured),summary=await cloud.batchStatus({profiles:captured.rows}),plan=await planFor(captured,selectedCharacterIds);
+  async function preview(payload={},installed){
+    const captured=await gather(installed),selectedCharacterIds=selection(payload,captured),summary=await cloud.batchStatus({profiles:captured.rows}),plan=await planFor(captured,selectedCharacterIds);
     return {...includeCharacters(summary,captured),
       plan,actions:plan.actions,requiresConsent:true,remoteUpload:true,formalActivation:true,chargeNotice:'仅处理勾选角色。新音色费用为官方参考估价，首次正式合成时计收，文字合成费另算；未知结果不会自动重发'};
   }
   function progress(row,captured,mode){
     const items=[...(batchState.items??[])],index=items.findIndex(item=>item.characterId===row.characterId);
+    // Reconcile emits single-profile receipts. Its final grouped status read
+    // confirms readiness for roles with more than one installed profile.
+    if(mode==='reconciling'&&cloudVoiceReady(row.status)&&!cloudVoiceReady(items[index]?.status)&&captured.rows.filter(item=>item.characterId===row.characterId).length>1)row={...row,status:'preparing'};
     if(index<0)items.push(row);else items[index]=row;
     batchState={...includeCharacters({...batchState,items,results:items},captured),state:mode,running:true};send();
   }
@@ -113,10 +122,11 @@ export function createCloudVoiceGateway({settings,profiles,credentials,cloud,get
     await stopAll(reconcile?'cloud-batch-reconciling':'cloud-batch-preparing');const hostGeneration=assertOpen();
     if(generation!==epoch)throw fail('CLOUD_CONFIGURATION_CHANGED','云配音操作已撤销');
     const leases=[];
-    for(const [engine,packageId] of packages)if(selectedRows.some(row=>row.engine===engine))leases.push(await resolvePackage(packageId,{provider:'minimax'}));
+    for(const [engine,packageId] of captured.installed)if(selectedRows.some(row=>row.engine===engine))leases.push(await resolvePackage(packageId,{provider:'minimax'}));
     const checkCurrent=()=>capturedCheck(captured,generation,hostGeneration,leases);
     await checkCurrent();
     const initialStatus=await cloud.batchStatus({profiles:captured.rows});await checkCurrent();
+    batchPackageIdentity=packageIdentity(captured.installed);
     if(!selectedRows.length){batchState={...includeCharacters({...initialStatus,results:[]},captured),...(plan?{plan,actions:plan.actions}:{}),running:false};send();return structuredClone(batchState);}
     const mode=reconcile?'reconciling':'running';
     batchState={...includeCharacters({...initialStatus,results:[]},captured),...(plan?{plan,actions:plan.actions}:{}),state:mode,running:true};send();
@@ -137,7 +147,14 @@ export function createCloudVoiceGateway({settings,profiles,credentials,cloud,get
         }else{
           const result=await cloud.prepareBatch({profiles:selectedRows,consentUpload:true,consentActivation:true,checkCurrent,onProgress:row=>progress(row,captured,mode)});
           const currentStatus=await cloud.batchStatus({profiles:captured.rows});
-          const items=currentStatus.items.map(row=>result.items?.find(item=>item.characterId===row.characterId)??row);
+          await checkCurrent();
+          const items=currentStatus.items.map(row=>{
+            const attempted=result.items?.find(item=>item.characterId===row.characterId);
+            // Retain attempt errors that occurred before a receipt existed, but
+            // don't let a completed attempt hide another unfinished profile.
+            if(attempted&&(attempted.status===row.status||!cloudVoiceReady(attempted.status)&&['not-prepared','pending'].includes(row.status)))return attempted;
+            return row;
+          });
           batchState={...includeCharacters({...result,items},captured),plan,actions:plan.actions,running:false};
         }
         send();return structuredClone(batchState);}
@@ -158,9 +175,15 @@ export function createCloudVoiceGateway({settings,profiles,credentials,cloud,get
     invalidateState(){if(!batchRun&&!admissionRun)batchState=emptyBatch();},
     async state(){
       const cloudConnections=await publicConnections();
-      if(!batchRun&&batchState.state==='idle'){
-        try{const value=await preview();batchState={...value,state:'idle',running:false};}
-        catch(error){batchState={...emptyBatch(),state:'unavailable',code:error.code??'CLOUD_SCOPE',message:'请先准备角色和声音档案'};}
+      const installed=installedPackages(),identity=packageIdentity(installed);
+      if(!batchRun&&!admissionRun&&(batchState.state==='idle'||batchPackageIdentity!==identity)){
+        const previous=batchState,generation=epoch;
+        let refreshed;
+        try{const value=await preview({},installed);refreshed={...value,state:'idle',running:false};}
+        catch(error){refreshed={...emptyBatch(),state:'unavailable',code:error.code??'CLOUD_SCOPE',message:'请先准备角色和声音档案'};}
+        if(batchState===previous&&epoch===generation&&!batchRun&&!admissionRun&&identity===packageIdentity(installedPackages())){
+          batchPackageIdentity=identity;batchState=refreshed;
+        }
       }
       return {cloudConnections,cloudBatch:structuredClone(batchState)};
     },

@@ -3332,6 +3332,8 @@
   "角色的云端声音": "Cloud voices",
   "{ready} 个已就绪 · {preparing} 个准备中": "{ready} ready · {preparing} preparing",
   "还没有声音档案": "No voice profile",
+  "{engine} 还没有声音档案，这次只准备 {other}": "{engine} has no voice profile yet, so only {other} will be prepared",
+  "{engine} 还没有声音档案": "{engine} has no voice profile yet",
   "还没准备": "Not prepared",
   "给 {name} 换音色…": "Change {name}’s voice…",
   "批量准备…": "Prepare several…",

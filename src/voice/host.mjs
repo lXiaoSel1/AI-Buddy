@@ -92,7 +92,7 @@ export function createVoiceHost({network,dataRoot,build,crypto,getGame,getPlatfo
   const runtime=components.runtime??createSpeechRuntime({local,cloud});
   const chatRuntime=runtime.channel?.('chat')??runtime,cardRuntime=runtime.channel?.('card-table')??runtime;
   let microphone=false,closed=false,cardEpoch=0,cardAdmissions=0,cardTail=Promise.resolve(),voiceEpoch=0,stopping=null,stopFailure,cloudGateway;
-  let assetOperation,assetEpoch=0,assetProgress=null;
+  let assetOperation,assetEpoch=0,assetProgress=null,livePreparationEpoch=0;
   const cloudOperations=new Set();
   const tableHands=new Map();
   const publish=raw=>{
@@ -180,17 +180,17 @@ export function createVoiceHost({network,dataRoot,build,crypto,getGame,getPlatfo
     if(closed||row.generation!==assetEpoch||row.controller.signal.aborted||assetIdentity(config,row.engineId)!==row.identity)throw fault('组件准备已取消','VOICE_ASSET_CANCELLED');
     return config;
   }
-  async function prepareAssets({kind,packageId,importLocal=false,verifyOnly=false,forceDownload=false,official=false,expectedProvider}={}){
+  async function prepareAssets({kind,packageId,importLocal=false,verifyOnly=false,forceDownload=false,official=false,expectedProvider,liveGeneration}={}){
     if(assetOperation)throw fault('语音组件正在准备','VOICE_ASSET_BUSY');
     const generation=assetEpoch,config=await settings.get();
-    if(closed||generation!==assetEpoch) return {cancelled:true};
+    if(closed||generation!==assetEpoch||liveGeneration!==undefined&&liveGeneration!==livePreparationEpoch)return {cancelled:true};
     if(assetOperation)throw fault('语音组件正在准备','VOICE_ASSET_BUSY');
     const engineId=packageId??config.selectedPackageId,engine=engineFor(engineId),provider=config.packages[engineId]?.ttsProvider??'local';
     if(expectedProvider!==undefined&&expectedProvider!==provider)throw fault('组件准备选项已变化，请重新选择','VOICE_ASSET_SELECTION_CHANGED');
     const selected=(getPlatform()?.voicePackageStatus()??[]).find(row=>row.id===engineId);
     if(!engine||!selected?.installed||!selected.enabled||!selected.usable||selected.trusted===false)throw fault('选中的语音插件未安装、已停用或未通过校验','VOICE_PACKAGE_UNAVAILABLE');
     if(kind&&(!['asr',engine].includes(kind)||provider==='minimax'&&kind!=='asr'))throw fault('组件与所选插件不匹配','VOICE_ASSET_INVALID');
-    const row=assetOperation={generation,identity:assetIdentity(config,engineId),engineId,provider,controller:new AbortController()};
+    const row=assetOperation={generation,identity:assetIdentity(config,engineId),engineId,provider,liveGeneration,controller:new AbortController()};
     const operation=verifyOnly?'verify':importLocal?'import':'download';
     publishAssets({state:'preparing',phase:'checking',operation,engineId,provider,...(kind?{kind}:{})},row);
     row.task=(async()=>{
@@ -211,14 +211,16 @@ export function createVoiceHost({network,dataRoot,build,crypto,getGame,getPlatfo
     })();return row.task;
   }
   async function prepareSelectedVoice(target='speech'){
+    const liveGeneration=target==='live'?livePreparationEpoch:undefined;
     const generation=voiceEpoch,assetGeneration=assetEpoch,config=await settings.get(),identity=assetIdentity(config);
+    const cancelled=()=>closed||generation!==voiceEpoch||assetGeneration!==assetEpoch||liveGeneration!==undefined&&liveGeneration!==livePreparationEpoch;
     assertVoiceOpen(generation);
-    if(assetGeneration!==assetEpoch)return {cancelled:true};
+    if(cancelled())return {cancelled:true};
     if(!config.enabled)throw fault('语音尚未启用','VOICE_DISABLED');
-    const result=await prepareAssets();
-    if(result?.cancelled||closed||generation!==voiceEpoch||assetGeneration!==assetEpoch)return {cancelled:true};
+    const result=await prepareAssets({liveGeneration});
+    if(result?.cancelled||cancelled())return {cancelled:true};
     const checked=await settings.get();
-    if(closed||generation!==voiceEpoch||assetGeneration!==assetEpoch||assetIdentity(checked)!==identity)return {cancelled:true};
+    if(cancelled()||assetIdentity(checked)!==identity)return {cancelled:true};
     assertVoiceOpen(generation);return publicResult(await controller.action('prepare',{target}));
   }
   function cardEvent(request){
@@ -287,7 +289,10 @@ export function createVoiceHost({network,dataRoot,build,crypto,getGame,getPlatfo
     }
     catch(error){return {...result,sharedWithOtherPlugin:false,otherPluginCode:error.code??'VOICE_CLOUD_BIND_PENDING'};}
   }
-  cloudGateway=createCloudVoiceGateway({settings,profiles,credentials,cloud,getGame,resolvePackage,publish,assertOpen:()=>{assertVoiceOpen();return voiceEpoch;},stopAll,track:task=>{cloudOperations.add(task);void task.finally(()=>cloudOperations.delete(task)).catch(()=>{});return task;}});
+  // Batch cloning uses host HTTP and imported references. The existing
+  // metadata-only authority also covers installed, disabled voice packages.
+  cloudGateway=createCloudVoiceGateway({settings,profiles,credentials,cloud,getGame,listPackages:()=>getPlatform()?.voicePackageStatus?.()??[],
+    resolvePackage:(id,options)=>getPlatform().resolveVoicePresetPackage(id,options),publish,assertOpen:()=>{assertVoiceOpen();return voiceEpoch;},stopAll,track:task=>{cloudOperations.add(task);void task.finally(()=>cloudOperations.delete(task)).catch(()=>{});return task;}});
   async function componentStatus(packageId){
     const engine=engineFor(packageId),installed=(getPlatform()?.voicePackageStatus()??[]).find(row=>row.id===packageId);
     if(!engine||!installed?.installed)throw fault('选中的语音插件未安装、已停用或未通过校验','VOICE_PACKAGE_UNAVAILABLE');
@@ -304,7 +309,16 @@ export function createVoiceHost({network,dataRoot,build,crypto,getGame,getPlatfo
     if(['characterId','personaId','lifeId','operationId','conversationId','engine',...(!['profiles','profile-select','profile-selections','assets-prepare','assets-import','assets-verify'].includes(op)?['packageId']:[])].some(key=>Object.hasOwn(payload,key)))throw fault('语音身份只能由宿主指定','VOICE_SCOPE_FORGED');
     if(op==='stop'){
       if(payload.channel==='card-table')return stopCards('user-stop');
-      if(payload.channel==='app-chat'){const pendingAssets=cancelAssets('user-stop');getGame()?.voiceCancel?.();await controller.recoverStop?.();await Promise.all([controller.invalidate('user-stop'),pendingAssets]);return;}
+      if(payload.channel==='app-chat'){
+        livePreparationEpoch++;
+        const pendingAssets=assetOperation?.liveGeneration!==undefined?cancelAssets('user-stop'):undefined;
+        await controller.recoverStop?.();
+        // Revoke controller turns before closing their presentation. The
+        // presentation callback otherwise routes them through synthesis failure.
+        const stopped=controller.invalidate('chat-stopped');
+        getGame()?.voiceCancel?.();
+        await Promise.all([stopped,pendingAssets]);return;
+      }
       if(payload.channel!=null)throw fault('未知语音频道','VOICE_ACTION_INVALID');
       return stopAll('user-stop');
     }

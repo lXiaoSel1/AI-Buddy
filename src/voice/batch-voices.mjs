@@ -3,6 +3,7 @@ import {lstat,mkdir,readFile,readdir} from 'node:fs/promises';
 import {join,dirname} from 'node:path';
 import {writeAtomic} from '../atomic-write.mjs';
 import {assertPluginTreeNoLinks} from '../plugin-archive.mjs';
+import {cloudVoiceReady} from './cloud-readiness.mjs';
 
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const fail=(code,message)=>Object.assign(Error(message),{code});
@@ -19,11 +20,11 @@ const publicRow=row=>({characterId:row.characterId,voiceId:row.voiceId,status:ro
   activationState:row.activatedAt?'activated':row.stage==='cloned'?'pending':'not-confirmed',
   ...(row.preparedAt?{preparedAt:row.preparedAt,expiresAt:row.activatedAt?null:new Date(Date.parse(row.preparedAt)+expiryMs).toISOString()}:{}),
   ...(row.errorCode?{code:row.errorCode}:{}),...(row.outcome?{outcome:row.outcome}:{}),...(row.remoteVerifiedAt?{remoteVerifiedAt:row.remoteVerifiedAt}:{})});
-const activeStatus=status=>['activated','activation-confirmed-query-pending','reuse-existing'].includes(status);
+const roleStatus=rows=>rows.find(row=>!cloudVoiceReady(row.status))??rows.find(row=>row.status==='activation-confirmed-query-pending')??rows[0];
 function summary(results){
   const groups=new Map();for(const row of results){const list=groups.get(row.characterId)??[];list.push(row);groups.set(row.characterId,list);}
-  const items=[...groups.values()].map(rows=>rows.find(row=>!activeStatus(row.status))??rows[0]);
-  const completed=items.filter(row=>activeStatus(row.status)).length;
+  const items=[...groups.values()].map(roleStatus);
+  const completed=items.filter(row=>cloudVoiceReady(row.status)).length;
   return {state:completed===items.length&&items.length?'completed':'pending',total:items.length,completed,results,items,
     counts:{active:completed,prepared:items.filter(row=>row.status==='prepared-awaiting-activation').length,unknown:items.filter(row=>row.status==='unknown').length,
       failed:items.filter(row=>['failed','account-confirmation-required','expired','unavailable'].includes(row.status)).length,pending:items.filter(row=>['pending','preparing','not-prepared'].includes(row.status)).length}};
@@ -231,16 +232,30 @@ export function createVoiceBatch({dataRoot,resolveContext,readReference,findBind
   async function run(profiles,options){
     if(options.consentUpload!==true)throw fail('CLOUD_CONSENT','请先确认上传角色完整参考音并创建 MiniMax 云端音色');
     if(!Array.isArray(profiles)||profiles.length<1||profiles.length>100)throw fail('CLOUD_SCOPE','云配音批量角色清单无效');
-    const state=await load(),results=[];
+    const state=await load(),results=[],progressByCharacter=new Map();
+    if(options.onProgress)for(const params of profiles){
+      const rows=progressByCharacter.get(params.characterId)??new Map();
+      rows.set(params,{characterId:params.characterId,status:'preparing'});
+      progressByCharacter.set(params.characterId,rows);
+    }
     for(const params of profiles){
       options.signal?.throwIfAborted();await options.checkCurrent?.();
-      try{results.push(await one(params,options,state));}
+      const progress=progressByCharacter.get(params.characterId);
+      async function report(row,finished=false){
+        if(!progress)return;
+        progress.set(params,!finished&&cloudVoiceReady(row.status)?{...row,status:'preparing'}:row);
+        try{await options.onProgress(roleStatus([...progress.values()]));}catch{ /* UI progress cannot change a provider result. */ }
+      }
+      let result,accountBlocked=false;
+      try{result=await one(params,{...options,onProgress:report},state);}
       catch(error){
         if(options.signal?.aborted||error.name==='AbortError'||error.code==='CLOUD_CONFIGURATION_CHANGED')throw error;
-        results.push({characterId:params.characterId,status:error.preparationUnknown?'unknown':error.code==='CLOUD_ACCOUNT_CONFIRMATION'?'account-confirmation-required':'failed',...(error.preparationRejected||rejectedCode(error.code)?{outcome:'rejected'}:{}),code:/^CLOUD_[A-Z0-9_]+$/.test(error.code??'')?error.code:'CLOUD_PREPARE_FAILED',
-          message:error.preparationUnknown?'已提交的云音色操作尚未确认，请先核对结果；不会自动重新提交':/^CLOUD_[A-Z0-9_]+$/.test(error.code??'')?error.message:'云音色准备未完成，请检查声音档案和配置'});
-        if(error.accountBlocked||accountRejected(error.code))break;
+        result={characterId:params.characterId,status:error.preparationUnknown?'unknown':error.code==='CLOUD_ACCOUNT_CONFIRMATION'?'account-confirmation-required':'failed',...(error.preparationRejected||rejectedCode(error.code)?{outcome:'rejected'}:{}),code:/^CLOUD_[A-Z0-9_]+$/.test(error.code??'')?error.code:'CLOUD_PREPARE_FAILED',
+          message:error.preparationUnknown?'已提交的云音色操作尚未确认，请先核对结果；不会自动重新提交':/^CLOUD_[A-Z0-9_]+$/.test(error.code??'')?error.message:'云音色准备未完成，请检查声音档案和配置'};
+        accountBlocked=error.accountBlocked||accountRejected(error.code);
       }
+      results.push(result);await report(result,true);
+      if(accountBlocked)break;
     }
     return summary(results);
   }

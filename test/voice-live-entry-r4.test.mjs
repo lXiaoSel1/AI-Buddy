@@ -132,6 +132,51 @@ test('a Live capture acknowledgement arriving after cancellation cannot issue a 
   }finally{await f.session.stopChat();f.completeCapture();await started;await f.release();}
 });
 
+test('Live shows only the current capture transcript when the next listening turn starts',async()=>{
+  let receive;
+  const api={
+    async action(op){if(op==='state')return configuration;if(op==='capture-start')return {id:'first',mode:'live'};return {ready:true};},
+    onEvent(listener){receive=listener;return()=>{};},
+  };
+  const connect=()=>({connect(){},disconnect(){}}),track={stop(){}},port={postMessage(){}};
+  const context={state:'running',sampleRate:16000,resume:async()=>{},close:async()=>{},audioWorklet:{addModule:async()=>{}},
+    createMediaStreamSource:connect,createGain:()=>({...connect(),gain:{value:0}}),destination:{}};
+  const session=voice.ensureVoiceSession(api,{createContext:({sampleRate})=>({...context,sampleRate}),
+    captureOptions:{workletURL:'fixture',getMedia:async()=>({getTracks:()=>[track],getAudioTracks:()=>[track]}),
+      makeContext:()=>context,makeNode:()=>({...connect(),port})}});
+  const release=session.retain();
+  const markup=()=>renderToStaticMarkup(React.createElement(voice.VoiceChatControls,{snapshot:session.snapshot(),scope,placement:'replacement'}));
+  const capture=(id,state,partial)=>receive({type:'capture',mode:'live',id,state,partial});
+  try{
+    await session.refresh();await session.start('live');
+    await capture('first','listening','上一轮字幕');
+    assert.match(markup(),/上一轮字幕/);
+    await capture('first','processing');
+    assert.match(markup(),/上一轮字幕/);
+    await capture('first','waiting-playback');
+    await capture('second','listening');
+    assert.match(markup(),/正在听，你说吧/);
+    assert.doesNotMatch(markup(),/上一轮字幕/);
+    await capture('first','listening','迟到的字幕');
+    assert.doesNotMatch(markup(),/迟到的字幕/);
+    await capture('second','listening','当前轮字幕');
+    assert.match(markup(),/当前轮字幕/);
+  }finally{await release();}
+});
+
+test('Galgame recording shows preparation before recording and transcribing after Done',()=>{
+  const render=captureState=>renderToStaticMarkup(React.createElement(voice.VoiceChatControls,{
+    snapshot:{...snapshot,captureState,captureMode:'record'},scope,placement:'replacement',
+  }));
+  const preparing=render('preparing');
+  assert.match(preparing,/准备中/);
+  assert.doesNotMatch(preparing,/识别中/);
+  assert.match(preparing,/<button\b[^>]*disabled[^>]*>[\s\S]*?说完了<\/button>/);
+  assert.match(preparing,/<button\b(?:(?!disabled)[^>])*>取消<\/button>/);
+  assert.match(render('recording'),/录音中/);
+  assert.match(render('processing'),/识别中/);
+});
+
 test('ending Live releases the input while ASR stops and ignores the cancelled microphone feed',async()=>{
   const feed=Promise.withResolvers(),feedStarted=Promise.withResolvers(),cleanup=Promise.withResolvers();
   const profilesReading=Promise.withResolvers(),profilesReply=Promise.withResolvers();

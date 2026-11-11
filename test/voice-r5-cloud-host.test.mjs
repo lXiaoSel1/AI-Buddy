@@ -9,31 +9,39 @@ import {createVoiceCredentials} from '../src/voice/credentials.mjs';
 import {createVoiceProfiles} from '../src/voice/voice-profiles.mjs';
 import {createVoiceCloud} from '../src/voice/cloud.mjs';
 
-const packageId='ai-buddy.voice-breeze';
-async function fixture(t,{roles=2,provider={},missing=[]}={}){
+const packageIds={breeze:'ai-buddy.voice-breeze',gpt:'ai-buddy.voice-gpt-sovits'};
+async function fixture(t,{roles=2,provider={},missing=[],installed=['breeze','gpt'],distinct=[]}={}){
   const dataRoot=await mkdtemp(join(tmpdir(),'voice-r5-gateway-'));
   const settings=createVoiceSettings({dataRoot}),profiles=createVoiceProfiles({dataRoot});
   const credentials=createVoiceCredentials({dataRoot,crypto:{isEncryptionAvailable:()=>true,encryptString:value=>Buffer.from(value),decryptString:bytes=>bytes.toString()}});
   const reference=Buffer.alloc(320044);reference.write('RIFF');reference.writeUInt32LE(reference.length-8,4);reference.write('WAVEfmt ',8);reference.writeUInt32LE(16,16);
   reference.writeUInt16LE(1,20);reference.writeUInt16LE(1,22);reference.writeUInt32LE(16000,24);reference.writeUInt32LE(32000,28);reference.writeUInt16LE(2,32);reference.writeUInt16LE(16,34);reference.write('data',36);reference.writeUInt32LE(320000,40);
   const path=join(dataRoot,'reference.wav');await writeFile(path,reference);
+  const alternative=join(dataRoot,'reference-alt.wav');reference[44]=1;await writeFile(alternative,reference);
   const characters=Array.from({length:roles},(_,i)=>({id:'role'+i,name:'角色'+i})),life=new Map(characters.map(row=>[row.id,1]));
-  for(const character of characters)for(const engine of ['breeze','gpt'])if(!missing.includes(character.id+':'+engine))await profiles.importProfile({characterId:character.id,engine,label:'受信参考',
-    references:{calm:{file:path,text:'这是完整参考。',language:'zh'}},cloudReference:{file:path,text:'这是完整参考。',language:'zh'}});
+  for(const character of characters)for(const engine of ['breeze','gpt'])if(!missing.includes(character.id+':'+engine)){
+    const file=distinct.includes(character.id+':'+engine)?alternative:path;
+    const sample={file,text:'这是完整参考。',language:'zh'};
+    await profiles.importProfile({characterId:character.id,engine,label:'受信参考',references:{calm:sample},cloudReference:sample});
+  }
   let selected=characters[0].id,persona='persona',generation=0,clones=0;
   const game={viewState:()=>({characters,activePersonaId:persona}),pluginScope:(characterId,personaId)=>({characterId,personaId,lifeId:'life'+life.get(characterId),operationId:'op'+life.get(characterId),contextRevision:'revision'}),
     voiceScope:()=>({characterId:selected,personaId:persona})};
   const active=new Set(),cloud=createVoiceCloud({dataRoot,resolveConnection:args=>settings.resolveConnection(args),resolveSecret:ref=>credentials.resolve(ref),resolveProfile:params=>profiles.resolve(params),
     batchProvider:{async upload(){return {fileId:1};},async clone(ctx,{voiceId}){clones++;return {voiceId};},async activate(ctx,{voiceId}){active.add(voiceId);return {voiceId};},async voices(){return [...active];},...provider}});
-  const events=[],tasks=new Set();
-  const gateway=createCloudVoiceGateway({settings,profiles,credentials,cloud,getGame:()=>game,resolvePackage:async()=>({assertCurrent(){}}),publish:value=>events.push(value),assertOpen:()=>generation,
+  const events=[],tasks=new Set();let beforeProfileRead;
+  const gateway=createCloudVoiceGateway({settings,profiles:{...profiles,async current(params){
+    const before=beforeProfileRead;beforeProfileRead=undefined;await before?.();return profiles.current(params);
+  }},credentials,cloud,getGame:()=>game,
+    listPackages:()=>Object.entries(packageIds).map(([engine,id])=>({id,installed:installed.includes(engine)})),
+    resolvePackage:async id=>{assert.ok(installed.some(engine=>packageIds[engine]===id));return {assertCurrent(){}};},publish:value=>events.push(value),assertOpen:()=>generation,
     async stopAll(){generation++;await cloud.stopEngine();},track(task){tasks.add(task);void task.finally(()=>tasks.delete(task)).catch(()=>{});return task;}});
   t.after(async()=>{await cloud.close();await Promise.allSettled(tasks);await rm(dataRoot,{recursive:true,force:true});});
-  return {gateway,settings,cloud,profiles,events,characterIds:characters.map(row=>row.id),clones:()=>clones,switchChat:()=>selected=characters.at(-1).id,changeLife:()=>life.set(characters[0].id,2),changePersona:()=>persona='other'};
+  return {gateway,settings,cloud,profiles,events,characterIds:characters.map(row=>row.id),clones:()=>clones,switchChat:()=>selected=characters.at(-1).id,changeLife:()=>life.set(characters[0].id,2),changePersona:()=>persona='other',pauseNextProfileRead:pause=>{beforeProfileRead=pause;}};
 }
 
-async function prepare(f){
-  const selectedCharacterIds=f.characterIds,preview=await f.gateway.action('cloud-batch-preview',{selectedCharacterIds});
+async function prepare(f,selectedCharacterIds=f.characterIds){
+  const preview=await f.gateway.action('cloud-batch-preview',{selectedCharacterIds});
   return f.gateway.action('cloud-batch-prepare',{selectedCharacterIds,planHash:preview.plan.planHash,consentUpload:true,consentActivation:true});
 }
 
@@ -46,15 +54,69 @@ test('gateway manages encrypted cloud configurations without exposing credential
   await assert.rejects(f.gateway.action('cloud-batch-prepare',{consentUpload:true}),{code:'CLOUD_ACTIVATION_CONSENT'});
 });
 
-test('trusted roles with missing engine profiles remain visible and cannot make the batch appear complete',async t=>{
-  const f=await fixture(t,{roles:3,missing:['role1:breeze','role1:gpt','role2:gpt']});
+test('Breeze-only installation prepares every role without consulting an uninstalled engine',async t=>{
+  const f=await fixture(t,{roles:3,installed:['breeze'],missing:['role0:gpt','role1:gpt']});
   await f.gateway.action('cloud-connection-save',{name:'云',key:'synthetic-secret-key'});
-  const preview=await f.gateway.action('cloud-batch-preview');assert.equal(preview.total,3);assert.equal(preview.items.length,3);
+  const preview=await f.gateway.action('cloud-batch-preview',{selectedCharacterIds:f.characterIds});
+  assert.equal(preview.profileCount,3,'a retained profile from an uninstalled engine is excluded');
+  assert.equal(preview.plan.blockedCount,0);assert.equal(preview.plan.cloneCount,3);
+  assert.ok(preview.items.every(row=>row.status==='not-prepared'&&!row.missingEngines?.length));
+  const result=await prepare(f);
+  assert.equal(result.completed,3);assert.equal(result.state,'completed');assert.equal(f.clones(),3);
+  assert.ok(result.items.every(row=>row.status==='activated'&&!row.missingEngines?.length));
+});
+
+test('a partially profiled role can complete while a role without profiles keeps the full batch pending',async t=>{
+  const f=await fixture(t,{roles:3,missing:['role1:breeze','role1:gpt','role2:gpt'],distinct:['role0:gpt']});
+  await f.gateway.action('cloud-connection-save',{name:'云',key:'synthetic-secret-key'});
+  const selectedCharacterIds=['role0','role2'];
+  const preview=await f.gateway.action('cloud-batch-preview',{selectedCharacterIds});assert.equal(preview.total,3);assert.equal(preview.items.length,3);
   assert.equal(preview.items.find(row=>row.characterId==='role1').status,'profile-missing');
   assert.deepEqual(preview.items.find(row=>row.characterId==='role2').missingEngines,['gpt']);
-  const prepared=await prepare(f);
-  assert.equal(prepared.total,3);assert.equal(prepared.completed,1);assert.equal(prepared.items.length,3);
-  assert.equal(prepared.items.find(row=>row.characterId==='role2').status,'profile-incomplete');
+  assert.equal(preview.plan.blockedCount,0);assert.equal(preview.plan.cloneCount,3);assert.equal(preview.plan.pricing.cloneEstimate,29.7);
+  const prepared=await prepare(f,selectedCharacterIds);
+  assert.equal(prepared.total,3);assert.equal(prepared.completed,2);assert.equal(prepared.state,'pending');assert.equal(prepared.items.length,3);
+  assert.equal(prepared.items.find(row=>row.characterId==='role1').status,'profile-missing');
+  assert.equal(prepared.items.find(row=>row.characterId==='role2').status,'activated');
+  assert.deepEqual(prepared.items.find(row=>row.characterId==='role2').missingEngines,['gpt']);
+  assert.equal(f.clones(),3);
+});
+
+test('a role remains in progress while another installed profile still needs activation',async t=>{
+  const secondUpload=gate(),release=gate(),nextRoleUpload=gate(),releaseNextRole=gate();
+  const f=await fixture(t,{roles:2,distinct:['role0:gpt'],provider:{async upload(ctx){
+    if(ctx.request.characterId==='role1'){nextRoleUpload.resolve();await releaseNextRole.promise;}
+    else if(ctx.request.engine==='gpt'){secondUpload.resolve();await release.promise;}
+    return {fileId:1};
+  }}});
+  await f.gateway.action('cloud-connection-save',{name:'云',key:'synthetic-secret-key'});
+  const pending=prepare(f);
+  try{
+    await secondUpload.promise;
+    const updates=f.events.map(event=>event.cloudBatch).filter(batch=>batch.running);
+    assert.ok(updates.every(batch=>batch.completed===0),'the first engine must not mark the role complete');
+    release.resolve();await nextRoleUpload.promise;
+    const active=(await f.gateway.state()).cloudBatch;
+    assert.equal(active.completed,1,'both completed profiles are counted while another role is preparing');
+    assert.equal(active.items.find(row=>row.characterId==='role0').status,'activated');
+  }finally{release.resolve();releaseNextRole.resolve();await pending;}
+  const result=await pending;
+  assert.equal(result.completed,2);assert.equal(f.clones(),3);
+});
+
+test('a late cloud status refresh cannot replace an admitted preparation',async t=>{
+  const reading=gate(),read=gate(),uploading=gate(),uploaded=gate();
+  const f=await fixture(t,{roles:1,provider:{async upload(){uploading.resolve();await uploaded.promise;return {fileId:1};}}});
+  await f.gateway.action('cloud-connection-save',{name:'云',key:'synthetic-secret-key'});
+  f.pauseNextProfileRead(async()=>{reading.resolve();await read.promise;});
+  const refresh=f.gateway.state();
+  await reading.promise;
+  const pending=prepare(f);
+  try{
+    await uploading.promise;read.resolve();
+    const state=(await refresh).cloudBatch;
+    assert.equal(state.running,true);assert.equal(state.plan.cloneCount,1);
+  }finally{read.resolve();uploaded.resolve();await Promise.all([refresh,pending]);}
 });
 
 test('explicit gateway reconciliation repairs lost activation response using queries without clone or activation replay',async t=>{

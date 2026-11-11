@@ -212,7 +212,9 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
   const onError=error=>{if(['VOICE_STATE_CANCELLED','VOICE_ASSET_CANCELLED','VOICE_PREPARATION_CANCELLED','VOICE_ACTION_REVOKED','ABORT_ERR'].includes(error?.code)||error?.name==='AbortError')return;publish({error:error?.code==='VOICE_ASSET_VERIFY_FAILED'?L('校验没通过，请重新下载','Verification failed, please download again'):error?.code==='VOICE_ASSET_VERIFY_REQUIRED'?L('这台电脑上已经有这些文件，请先校验','These files are already on this PC. Verify them first.'):typeof error?.code==='string'&&error.code.startsWith('CLOUD_')?cloudVoiceError(error):t(String(error?.message??error))});};
   const offOutputError=output.onError(onError);
   const action=(...args)=>Promise.resolve(api.action(...args)).then(pluginClientResult);
-  const capture=createHostVoiceCapture({...captureOptions,action:(op,payload)=>action(op,op==='stop'?{...payload,channel:'app-chat'}:payload),onState:captureState=>publish({captureState,...(captureState==='idle'?{captureMode:null,partial:''}:{})}),onError});
+  const capture=createHostVoiceCapture({...captureOptions,action:(op,payload)=>action(op,op==='stop'?{...payload,channel:'app-chat'}:payload),
+    onState:(captureState,{resetPartial=false}={})=>publish({captureState,...(captureState==='idle'?{captureMode:null}:{}),...(resetPartial||captureState==='idle'?{partial:''}:{})}),
+    onPartial:partial=>publish({partial}),onError});
   let refreshing,stoppingCapture;
   async function readProfiles(state){
     if(!state?.scope)return {profilesByPackage:{},profileErrorsByPackage:{}};
@@ -279,7 +281,6 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
     }
     if((event.type==='error'||event.type==='status')&&event.message)onError(event);
     if(event.type==='draft'){drafts.push(event);deliverDrafts();}
-    if(event.type==='capture'&&event.partial)publish({partial:event.partial});
     // A host listening event authorizes microphone acquisition; the browser
     // capture adapter reports listening only after its graph is really active.
     if(event.channel!=='card-table')capture.event(event);
@@ -400,7 +401,7 @@ export function VoiceChatControls({snapshot,session,scope,placement='legacy',pre
   if(placement==='input-left')return h('button',{type:'button',className:'vx-mic','aria-label':L('录音输入','Voice input'),title:L('录音输入：说完把文字放进输入框','Voice input: puts what you said into the box'),disabled:!canRecord||!!presentation?.speaking,onClick:onRecord},VoiceIcon('mic',18));
   if(placement==='input-right')return h('button',{type:'button',className:'vx-livebtn'+(active?' on':''),role:'switch','aria-label':t('Live 轮流交谈'),'aria-checked':active&&!preparing,'aria-busy':preparing||stopping,'data-voice-live':true,disabled:stopping||!active&&(!canStartLive(snapshot,scope)||!ready||!!presentation?.speaking),onClick:toggleLive},VoiceIcon('turns'),h('span',null,'Live'));
   if(placement==='replacement'){
-    if(recording)return h(VoiceRecordingRow,{partial:snapshot?.partial,processing:snapshot?.captureState==='processing'||snapshot?.captureState==='preparing',onCancel,onFinish:()=>run('finishing',()=>session?.finish()),disabled:stopping});
+    if(recording)return h(VoiceRecordingRow,{partial:snapshot?.partial,preparing:snapshot?.captureState==='preparing',processing:snapshot?.captureState==='processing',onCancel,onFinish:()=>run('finishing',()=>session?.finish()),disabled:stopping});
     if(active&&!preparing){const livePhase=presentation?.subtitle?'say':snapshot?.captureState==='processing'?'hear':snapshot?.captureState==='waiting-playback'||presentation?.speaking?'think':'you';return h(VoiceLiveStrip,{phase:livePhase,name:characterName??voiceName(scope?.characterId),partial:snapshot?.partial,onEnd:toggleLive,disabled:stopping});}
     return null;
   }

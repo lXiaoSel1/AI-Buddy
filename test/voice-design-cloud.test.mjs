@@ -33,6 +33,27 @@ test('C3 identifies a reused existing voice without labelling it unverified',()=
   assert.doesNotMatch(html,/等待核对/);
 });
 
+test('cloud voice list distinguishes no profile from a partially profiled role before and after preparation',()=>{
+  const cloudBatch={items:[{characterId:'deepseek',status:'activated',missingEngines:['gpt']},
+    {characterId:'chatgpt',status:'activation-confirmed-query-pending',missingEngines:['gpt']},
+    {characterId:'claude',status:'profile-incomplete',availableStatus:'not-prepared',missingEngines:['breeze'],code:'CLOUD_PROFILE_REQUIRED'},
+    {characterId:'kimi',status:'profile-missing',code:'CLOUD_PROFILE_REQUIRED'}]};
+  const render=()=>renderToStaticMarkup(React.createElement(CloudVoiceSettings,{snapshot:{state:{...state,cloudBatch}}}));
+  try{
+    const zh=render();
+    assert.match(zh,/2 个已就绪/);assert.match(zh,/还没准备/);assert.match(zh,/还没有声音档案/);
+    assert.match(zh,/Breeze 还没有声音档案，这次只准备 GPT-SoVITS/);
+    assert.match(zh,/GPT-SoVITS 还没有声音档案</);
+    assert.match(zh,/首次合成已确认，待查询核对/);
+    assert.doesNotMatch(zh,/GPT-SoVITS 还没有声音档案，这次只准备 Breeze/);
+    assert.doesNotMatch(zh,/CLOUD_PROFILE_REQUIRED/);
+    setLocale('en');
+    const en=render();
+    assert.match(en,/Breeze has no voice profile yet, so only GPT-SoVITS will be prepared/);
+    assert.match(en,/GPT-SoVITS has no voice profile yet</);
+  }finally{setLocale('zh-CN');}
+});
+
 test('C4 displays saved configuration and the new configuration form together without exposing credentials',()=>{
   const html=renderToStaticMarkup(React.createElement(CloudVoiceConnectionManager,{connections:{...state.cloudConnections,items:[{...state.cloudConnections.items[0],key:'DO_NOT_RENDER'}]},onClose(){}}));
   assert.match(html,/vx-cfglist/);
@@ -59,10 +80,12 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
     const click=async selector=>{const element=find(selector);check(element,'Present: '+selector);element.click();await wait();};
     const input=async(selector,value)=>{const element=find(selector);check(element,'Present: '+selector);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(element,value);element.dispatchEvent(new Event('input',{bubbles:true}));await wait();};
     let snapshot=${JSON.stringify({state})},update,releasePrepare,queryFailure=false,previewBad=false,holdQuery=false,releaseQuery;
+    Object.assign(snapshot.state.cloudBatch.items.find(row=>row.characterId==='claude'),{status:'profile-incomplete',availableStatus:'not-prepared',missingEngines:['gpt']});
     snapshot.state.cloudBatch.items.push({characterId:'qwen',status:'preparing'});
+    snapshot.state.cloudBatch.items.push({characterId:'chatgpt',status:'activation-confirmed-query-pending',missingEngines:['gpt']});
     snapshot.state.cloudBatch.items.push({characterId:'expired-fixture',status:'expired'},{characterId:'unknown-fixture',status:'unknown'});
     const emit=patch=>{snapshot={...snapshot,...patch};update({...snapshot});};
-    const plan=ids=>({selectedCharacterIds:ids,selectedCount:ids.length,cloneCount:1,activationCount:1,firstUseCount:1,reuseCount:0,blockedCount:0,planHash:'approved-plan',pricing:{currency:'CNY',cloneUnitPrice:9.9,cloneEstimate:9.9,checkedOn:'2026-11-07'}});
+    const plan=ids=>{const count=ids.includes('claude')?2:1;return {selectedCharacterIds:ids,selectedCount:ids.length,cloneCount:count,activationCount:count,firstUseCount:count,reuseCount:0,blockedCount:0,planHash:'approved-plan',pricing:{currency:'CNY',cloneUnitPrice:9.9,cloneEstimate:count*9.9,checkedOn:'2026-11-07'}};};
     const session={snapshot:()=>snapshot,runAction:async(op,payload)=>{
       calls.push({op,payload:structuredClone(payload)});
       if(op==='cloud-batch-preview')return {plan:previewBad?{...plan(payload.selectedCharacterIds),planHash:''}:plan(payload.selectedCharacterIds)};
@@ -85,12 +108,14 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
       await click('dialog .ui-dlg-act .ghost');await click('dialog [aria-label="关闭"]');
       await click('[data-cloud-open-batch]');
       check(find('[data-cloud-character="deepseek"]').disabled,'Ready voice cannot be selected');
+      check(find('[data-cloud-character="chatgpt"]').disabled,'Confirmed activation awaiting query cannot be selected again');
       check(find('[data-cloud-character="qwen"]').disabled,'Preparing voice cannot be selected');
       check(find('[data-cloud-character="kimi"]').disabled,'Missing profile cannot be selected');
+      check(!find('[data-cloud-character="claude"]').disabled,'A partially profiled role can be selected');
       check(find('[data-cloud-prepare]').disabled,'Empty selection cannot advance');
       await click('[data-cloud-character="claude"]');await click('[data-cloud-prepare]');
       check(calls.filter(row=>row.op==='cloud-batch-preview').length===2&&!calls.some(row=>row.op==='cloud-batch-prepare'),'Cost review does not upload or prepare');
-      check(find('dialog').textContent.includes('Claude')&&find('[data-cloud-cost]').textContent==='¥9.90','Confirmation identifies selected character and actual plan cost');
+      check(find('dialog').textContent.includes('Claude')&&find('[data-cloud-clone-count]').textContent==='2'&&find('[data-cloud-cost]').textContent==='¥19.80','Confirmation identifies selected character and actual clone count and plan cost');
       const realNow=Date.now;Date.now=()=>realNow()+6*60*1000;emit({});await wait();
       check(find('[data-cloud-confirm]').disabled,'Expired preview cannot be confirmed');Date.now=realNow;
       await click('dialog .ui-dlg-act .ghost');previewBad=true;await click('[data-cloud-prepare]');

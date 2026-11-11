@@ -353,7 +353,7 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
     // Host-only read ports. These are not renderer action names or plugin RPCs.
     voicePackageStatus:voiceStatus,
     async resolveVoicePackage(id,options){if(!voiceAuthority)throw error('语音宿主未启用','VOICE_HOST_UNAVAILABLE');return voiceAuthority.resolveVoicePackage(id,options);},
-    async resolveVoicePresetPackage(id){if(!voiceAuthority)throw error('语音宿主未启用','VOICE_HOST_UNAVAILABLE');return voiceAuthority.resolveVoicePresetPackage(id);},
+    async resolveVoicePresetPackage(id,options){if(!voiceAuthority)throw error('语音宿主未启用','VOICE_HOST_UNAVAILABLE');return voiceAuthority.resolveVoicePresetPackage(id,options);},
     resolveDshInstalled:packageKey=>community.resolveDshInstalled(packageKey),
     resolveTrustedSource:sourceId=>community.resolveTrustedSource(sourceId),
     snapshot:()=>({...withLocalCard(community.snapshot()),...voiceSnapshot(),hostDependencies:dependencyCoordinator.snapshot(),mediaComponents:{ffmpeg:ffmpegManager.snapshot()},dshComponent:dshComponentState,platform:{version:'buddy-bridge-v1',activeCalls:inflight,activeTaskToolRuntimes:taskToolBackends.size,registeredPages:[...pages.values()].map(v=>({pluginId:v.pluginId,id:v.descriptor.id,title:v.descriptor.title??v.descriptor.id})),nativeClients:[...clientHost.snapshot(),...cardClientHost.snapshot()],workClients:workClientHost?.snapshot()??[]}}),

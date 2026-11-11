@@ -42,7 +42,9 @@ async function fixture(t,options={}){
   const onUpdate=()=>{if(options.automaticRefresh)void host?.refreshPresetPackages();};
   const config={root,dataRoot,appVersion:'2.0.11',voiceTestFingerprint,onUpdate,fetchImpl:async url=>{network++;if(url===origin+'/source.json')return Response.json(descriptor);if(url===descriptor.catalogUrl)return Response.json(envelope);return new Response(packages.find(row=>row.item.archive.url===url)?.bytes??'',{status:packages.some(row=>row.item.archive.url===url)?200:404});}};
   let manager=await createPluginManager(config),authority=createVoicePackageAuthority({manager,voiceTestFingerprint,onChanged:onUpdate,runnerPath:join(root,'forbidden-runner.cjs'),processFactory:()=>{spawns++;throw Error('Preset import started a plugin');}});
-  const createHost=()=>createVoiceHost({dataRoot,build:root,getGame:()=>({voiceScope:()=>({characterId:'deepseek'})}),getPlatform:()=>({voicePackageStatus:()=>options.packageStatus?options.packageStatus(authority.status()):authority.status(),resolveVoicePresetPackage:(...args)=>{resolutions++;return authority.resolveVoicePresetPackage(...args);},resolveVoicePackage:(...args)=>authority.resolveVoicePackage(...args)}),components:{supervisor:{async close(){}}}});
+  const createHost=()=>createVoiceHost({dataRoot,build:root,getGame:options.getGame??(()=>({voiceScope:()=>({characterId:'deepseek'})})),
+    ...(options.voiceFetch?{network:{fetch:options.voiceFetch},crypto:{isEncryptionAvailable:()=>true,encryptString:value=>Buffer.from(value),decryptString:value=>value.toString()}}:{}),
+    getPlatform:()=>({voicePackageStatus:()=>options.packageStatus?options.packageStatus(authority.status()):authority.status(),resolveVoicePresetPackage:(...args)=>{resolutions++;return authority.resolveVoicePresetPackage(...args);},resolveVoicePackage:(...args)=>authority.resolveVoicePackage(...args)}),components:{supervisor:{async close(){}}}});
   host=createHost();
   t.after(async()=>{await host.close();await authority.close();await manager.close();await rm(root,{recursive:true,force:true});});
   const preview=await authority.action({action:'sources-preview',url:origin+'/source.json'});await authority.action({action:'sources-add',previewId:preview.previewId,keyFingerprint:preview.source.keyFingerprint});const sourceId=preview.source.sourceId;
@@ -60,6 +62,31 @@ test('installing disabled signed voice packages makes all 22 presets readable wi
     const reference=await f.host.profiles.resolve(params);assert.equal(reference.durationMs,4000);assert.equal(reference.cloudReference.durationMs,engine==='gpt'?12000:4000);
   }
   assert.equal(new Set(rows.map(row=>row.id)).size,22);assert.equal(f.spawns(),0);assert.equal(f.network(),fetched);
+});
+
+test('cloud preparation uses both signed installed profiles without enabling the disabled packages',async t=>{
+  const scope={characterId:'deepseek',personaId:'persona',lifeId:'life',operationId:'operation',contextRevision:'revision'};
+  const game={voiceScope:()=>scope,viewState:()=>({activePersonaId:scope.personaId,characters:[{id:scope.characterId}]}),pluginScope:()=>scope};
+  const active=new Set();let clones=0;
+  const f=await fixture(t,{getGame:()=>game,async voiceFetch(url,options){
+    const pathname=new URL(url).pathname,base_resp={status_code:0};
+    if(pathname==='/v1/files/upload')return Response.json({base_resp,file:{file_id:1}});
+    if(pathname==='/v1/voice_clone'){clones++;return Response.json({base_resp});}
+    if(pathname==='/v1/t2a_v2'){active.add(JSON.parse(options.body).voice_setting.voice_id);return Response.json({base_resp,data:{status:2,audio:'0000'}});}
+    if(pathname==='/v1/get_voice')return Response.json({base_resp,voice_cloning:[...active].map(voice_id=>({voice_id}))});
+    throw Error('Unexpected fixture endpoint');
+  }});
+  await f.install(breeze);await f.install(gpt);await f.host.refreshPresetPackages();
+  const file=join(f.root,'reference.wav');await writeFile(file,wav(10));
+  await f.host.profiles.importProfile({characterId:scope.characterId,engine:'breeze',label:'合成参考',references:{calm:{file,text:'这是测试参考音。',language:'zh'}}});
+  assert.ok(f.authority.status().every(row=>row.installed&&!row.enabled));
+  await f.host.action('cloud-connection-save',{name:'测试',key:'synthetic-test-key'});
+  const selectedCharacterIds=[scope.characterId];
+  const preview=await f.host.action('cloud-batch-preview',{selectedCharacterIds});
+  assert.equal(preview.plan.cloneCount,2);assert.equal(preview.plan.pricing.cloneEstimate,19.8);
+  const completed=await f.host.action('cloud-batch-prepare',{selectedCharacterIds,planHash:preview.plan.planHash,consentUpload:true,consentActivation:true});
+  assert.equal(completed.completed,1);assert.equal(clones,2);assert.equal(f.spawns(),0);
+  assert.ok(f.authority.status().every(row=>row.installed&&!row.enabled));
 });
 
 test('upgrading automatically imports after maintenance even when cold recovery already finished',async t=>{

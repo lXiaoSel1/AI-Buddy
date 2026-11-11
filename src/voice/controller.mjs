@@ -387,9 +387,15 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
       // A missing/replaced proof is cold state, never authority to reload or reopen capture.
     }finally{preflight.close();}
   }
-  function invalidate(reason='stopped',{retainEngine=['scope-changed','profile-changed'].includes(reason)}={}){
+  function invalidate(reason='stopped',{retainEngine=['scope-changed','profile-changed','chat-stopped'].includes(reason)}={}){
     if(stopping)return stopping;
-    const retained=reason==='scope-changed'&&retainEngine&&typeof runtime.cancelCurrent==='function'&&!preparationJob&&preparation.state==='ready'&&preparedSignature?.epoch===epoch?preparedSignature:undefined;
+    const chatStop=reason==='chat-stopped';
+    const canRestore=(chatStop||reason==='scope-changed')&&retainEngine&&typeof runtime.cancelCurrent==='function';
+    // The prior speech proof remains current while Live prepares recognition.
+    // A cold Live launch has no prior proof to restore.
+    const speechWasReady=(!preparationJob&&preparation.state==='ready')||(chatStop&&preparationJob?.target==='live');
+    const retained=canRestore&&speechWasReady&&preparedSignature?.epoch===epoch?preparedSignature:undefined;
+    const keepWorker=chatStop?!!retained:retainEngine;
     epoch++;live=null;const old=capture;capture=null;
     lifecycle.abort(fault('旧语音操作已取消','VOICE_STALE_TURN'));lifecycle=new AbortController();
     cancelStateRead();
@@ -401,13 +407,13 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
     wakeCapacity();
     // Revoke first, then await the owned workers. A failed cleanup keeps the gate sealed.
     const job=Promise.allSettled([
-      Promise.resolve().then(()=>runtime.cancelCapture?.()),Promise.resolve().then(()=>retainEngine&&runtime.cancelCurrent?runtime.cancelCurrent():runtime.stopEngine?.()),pumpTask,captureTail,oldPreparation?.task?.catch(()=>{}),
+      Promise.resolve().then(()=>runtime.cancelCapture?.()),Promise.resolve().then(()=>keepWorker&&runtime.cancelCurrent?runtime.cancelCurrent():runtime.stopEngine?.()),pumpTask,captureTail,oldPreparation?.task?.catch(()=>{}),
     ]).then(async results=>{
       captureState('idle',old,{reason});emit({type:'invalidate',epoch,reason});
       const failure=results.find(row=>row.status==='rejected');
       if(failure){cleanupFailure=fault(String(failure.reason?.message??failure.reason),'VOICE_CLEANUP_FAILED');throw cleanupFailure;}
       cleanupFailure=undefined;
-      // Scope revocation ends the sentence and Live microphone, not the user's resident speech engine.
+      // Scope revocation and chat stop recheck the resident speech engine after cleanup.
       for(;;){
         const scope=current(),unchanged=()=>scope?sameVoiceScope(scope,current()):current()==null;
         const restored=await retainedSpeech(retained);

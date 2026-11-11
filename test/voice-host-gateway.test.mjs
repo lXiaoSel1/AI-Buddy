@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import React from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {VoiceChatControls} from '../src/voice/client.mjs';
 import {createVoiceHost} from '../src/voice/host.mjs';
 import {createVoiceSettings} from '../src/voice/settings.mjs';
+import {createVoiceConversation} from '../src/voice/conversation.mjs';
 
 const ids=['ai-buddy.voice-breeze','ai-buddy.voice-gpt-sovits'];
 const cardScope=()=>({channel:'card-table',tableId:'table-one',handId:'hand-one',characterId:'bob',personaId:'persona-one',lifeId:'life-bob',operationId:'operation-one'});
@@ -39,10 +43,17 @@ async function fixture(t,{packageId=ids[0],provider='local',hold=false,readiness
   const host=createVoiceHost({dataRoot,build:'unused',getGame:()=>game,getPlatform:()=>platform,send:event=>events.push(event),
     components:{settings,profiles,runtime,local:{},cloud:{async status(){return {state:'ready'};}},credentials:{},assets:{async prepareSelected(){return {state:'ready'};},async resolve(){return {};},async status(){return {state:'ready'};},...assetsOverride},supervisor:{async close(){}}}});
   t.after(async()=>{release?.();try{await host.close();}finally{await rm(dataRoot,{recursive:true,force:true});}});
-  return {host,settings,events,spoken,ready,stops,gameReceipts,profileReads,profileRows,leases,packages,channels,
+  return {host,game,settings,events,spoken,ready,stops,gameReceipts,profileReads,profileRows,leases,packages,channels,
     releaseSpeech:()=>release?.(),invalidateScope:()=>{valid=false;},cancelled:()=>cancelled};
 }
 const generated=(f,eventId='card-one')=>f.events.some(event=>event.type==='turn'&&event.state==='generated'&&event.requestId==='card:'+eventId&&!event.failed);
+function assertChatControlsReady(state){
+  const render=placement=>renderToStaticMarkup(React.createElement(VoiceChatControls,{state,scope:state.scope,placement,snapshot:{state,captureState:'idle'}}));
+  assert.match(render('top'),/Breeze 就绪/);
+  assert.match(render('input-left'),/vx-mic/);
+  assert.match(render('input-right'),/vx-livebtn/);
+  assert.doesNotMatch(render('input-left')+render('input-right'),/disabled/);
+}
 
 test('the host resolves the table speaker profile for either plugin/provider and routes card receipts away from private chat',async t=>{
   for(const packageId of ids)for(const provider of ['local','minimax'])await t.test(packageId+' / '+provider,async t=>{
@@ -77,6 +88,138 @@ test('channel stops preserve the other owner while ordinary stop and maintenance
     assert.ok(f.stops.slice(before).includes('chat'));assert.ok(f.stops.slice(before).includes('card-table'));assert.ok(f.cancelled()>beforeCancel);
   }
   assert.equal(f.stops.includes('all'),true,'global stop also drains cloud operations without a speech owner');
+});
+
+test('stopping a chat capture keeps resident speech available for the next reply and capture',async t=>{
+  const f=await fixture(t),chat=f.channels.chat;
+  let engineReady=false;
+  const stopEngine=chat.stopEngine;
+  chat.prepare=async()=>{engineReady=true;return {ready:true};};
+  chat.ready=async()=>({ready:engineReady});
+  chat.stopEngine=async()=>{engineReady=false;await stopEngine();};
+  chat.cancelCurrent=async()=>{};
+  chat.startCapture=async()=>{};
+  await f.host.action('prepare',{target:'speech'});
+  const first=await f.host.action('capture-start',{mode:'record'});
+
+  await f.host.action('stop',{channel:'app-chat'});
+  const state=await f.host.action('state');
+  assert.deepEqual(state.preparation,{state:'ready',target:'speech'});
+  assertChatControlsReady(state);
+  assert.equal(state.capture,null);
+  assert.deepEqual(f.stops,[]);
+  await assert.rejects(f.host.action('capture-finish',{id:first.id}),{code:'VOICE_STALE_CAPTURE'});
+
+  const turn={...state.scope,requestId:'after-chat-stop',messageId:'new-message'};
+  const lease=await f.host.controller.admit(turn);
+  assert.ok(lease);
+  const envelope={...turn,...lease,index:0,segmentId:'after-chat-stop:voice:0'};
+  assert.equal(await f.host.controller.segment({envelope,text:'结束后仍然朗读。'}),true);
+  await until(()=>f.events.some(event=>event.type==='audio'&&event.phase==='end'&&event.envelope.requestId===turn.requestId));
+  await f.host.controller.finish({requestId:turn.requestId});
+  await f.host.action('receipt',{envelope,status:'audioCompleted'});
+  const next=await f.host.action('capture-start',{mode:'live'});
+  assert.notEqual(next.id,first.id);
+  await f.host.action('stop',{channel:'app-chat'});
+  assertChatControlsReady(await f.host.action('state'));
+
+  await f.host.action('stop');
+  assert.equal((await f.host.action('state')).preparation.state,'idle');
+  assert.equal(engineReady,false);
+  assert.ok(f.stops.includes('chat'));
+});
+
+test('stopping an active reading interrupts its presentation without stopping resident speech',async t=>{
+  const f=await fixture(t),chat=f.channels.chat,entered=Promise.withResolvers();
+  const conversation=createVoiceConversation({voice:f.host.controller,current:f.game.voiceScope,valid:()=>true,
+    persist:async()=>{},beginPresentation:()=>{},completePresentation:()=>{},now:()=>1,audit:()=>{}});
+  f.game.voiceCancel=()=>conversation.cancel(()=>true);
+  chat.cancelCurrent=async()=>{};
+  chat.speak=async function*({signal}){
+    const aborted=new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));
+    entered.resolve();
+    await aborted;
+  };
+  await f.host.action('prepare',{target:'speech'});
+  const scope=f.game.voiceScope();
+  const turn=await conversation.begin({...scope,requestId:'reading',messageId:'reading-message'},scope);
+  assert.ok(turn);
+  assert.equal(await conversation.emit(turn,{text:'朗读过程中停止。'}),true);
+  await entered.promise;
+
+  await f.host.action('stop',{channel:'app-chat'});
+  assert.deepEqual(f.stops,[]);
+  assert.equal(conversation.blocked('reading'),false);
+  const state=await f.host.action('state');
+  assert.deepEqual(state.preparation,{state:'ready',target:'speech'});
+  assertChatControlsReady(state);
+});
+
+test('cancelling Live while ASR loads aborts that preparation and keeps an already ready speech engine',async t=>{
+  const f=await fixture(t),chat=f.channels.chat;
+  const loading=Promise.withResolvers();
+  let engineReady=false,asrRetired=false,liveAttempts=0;
+  const stopEngine=chat.stopEngine;
+  chat.prepare=async({target,onProgress,signal})=>{
+    if(target==='speech'){engineReady=true;return {ready:true};}
+    if(++liveAttempts>1)return {ready:engineReady};
+    const cancelled=new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+    onProgress({state:'loading',component:'asr'});
+    loading.resolve(signal);
+    return cancelled;
+  };
+  chat.ready=async()=>({ready:engineReady});
+  chat.stopEngine=async()=>{engineReady=false;await stopEngine();};
+  chat.cancelCurrent=async()=>{};
+  chat.cancelCapture=async()=>{asrRetired=true;};
+  await f.host.action('prepare',{target:'speech'});
+  const live=assert.rejects(f.host.action('prepare',{target:'live'}),{code:'VOICE_PREPARATION_CANCELLED'});
+  const signal=await loading.promise;
+  assert.deepEqual((await f.host.action('state')).preparation,{state:'loading',target:'live',component:'asr'});
+
+  await Promise.all([f.host.action('stop',{channel:'app-chat'}),f.host.action('stop',{channel:'app-chat'}),live]);
+  assert.equal(signal.aborted,true);
+  assert.equal(asrRetired,true);
+  assert.deepEqual((await f.host.action('state')).preparation,{state:'ready',target:'speech'});
+  assert.deepEqual(f.stops,[]);
+  assert.deepEqual((await f.host.action('prepare',{target:'live'})).preparation,{state:'ready',target:'live'});
+  assert.equal(liveAttempts,2);
+});
+
+test('ending chat voice does not cancel a separate engine component download',async t=>{
+  const entered=Promise.withResolvers(),finish=Promise.withResolvers();
+  const f=await fixture(t,{assetsOverride:{async prepare(kind,{signal}){entered.resolve(signal);await finish.promise;return {state:'ready'};}}});
+  f.channels.chat.cancelCurrent=async()=>{};
+  await f.host.action('prepare',{target:'speech'});
+  const download=f.host.action('assets-prepare',{kind:'gpt',packageId:ids[1]});
+  const signal=await entered.promise;
+  const stop=f.host.action('stop',{channel:'app-chat'});
+  try{
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(signal.aborted,false);
+    await stop;
+    assert.equal((await f.host.action('state')).preparation.state,'ready');
+  }finally{finish.resolve();await Promise.all([download,stop]);}
+});
+
+test('ending Live cancels its asset preparation without starting recognition or stopping resident speech',async t=>{
+  const entered=Promise.withResolvers();let preparations=0,recognitionStarts=0;
+  const f=await fixture(t,{assetsOverride:{async prepareSelected({signal}){
+    if(++preparations===1)return {state:'ready'};
+    const cancelled=new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+    entered.resolve(signal);return cancelled;
+  }}});
+  const chat=f.channels.chat;
+  chat.cancelCurrent=async()=>{};
+  chat.prepare=async({target})=>{if(target==='live')recognitionStarts++;return {ready:true};};
+  await f.host.action('prepare',{target:'speech'});
+  const pending=f.host.action('prepare',{target:'live'}),signal=await entered.promise;
+  await f.host.action('stop',{channel:'app-chat'});
+  assert.deepEqual(await pending,{cancelled:true});
+  assert.equal(signal.aborted,true);
+  assert.equal(recognitionStarts,0);
+  assert.deepEqual(f.stops,[]);
+  assertChatControlsReady(await f.host.action('state'));
 });
 
 test('global disable and an unusable package reject card admission before synthesis',async t=>{

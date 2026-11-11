@@ -99,7 +99,7 @@ export function createVoicePackageAuthority({manager,runnerPath,processFactory,v
   }
 
   const resolveVoicePackage=(id,{provider='local'}={})=>resolvePackage(id,{provider});
-  const resolveVoicePresetPackage=id=>resolvePackage(id,{preset:true});
+  const resolveVoicePresetPackage=(id,{provider='local'}={})=>resolvePackage(id,{provider,preset:true});
 
   function affected(request) {
     const {action,id,sourceId,planId}=request;

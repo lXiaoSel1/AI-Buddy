@@ -1,6 +1,6 @@
 /** Electron PCM capture uses the same repaired 16k worklet as the streaming lab.
  * Only the main-process controller decides endpoints, submission and replay. */
-export function createHostVoiceCapture({action,onState=()=>{},onError=()=>{},
+export function createHostVoiceCapture({action,onState=()=>{},onPartial=()=>{},onError=()=>{},
   getMedia=()=>navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false}),
   makeContext=()=>new AudioContext({sampleRate:16000}),makeNode=context=>new AudioWorkletNode(context,'voice-capture'),
   workletURL=new URL('./voice-capture-worklet.js',location.href).href}){
@@ -51,7 +51,7 @@ export function createHostVoiceCapture({action,onState=()=>{},onError=()=>{},
         queue.push(pcm);queuedBytes+=pcm.length;void pump().catch(error=>{if(ticket===generation)fail(error);});
       };
       const owned=stream;stream.getAudioTracks()[0].onended=()=>{if(stream===owned)fail(Error('麦克风断开，已有草稿保留'));};
-      gate(true);onState(mode==='live'?'listening':'recording');
+      gate(true);onState(mode==='live'?'listening':'recording',{resetPartial:true});
       return ack;
     }catch(error){acquired?.getTracks().forEach(track=>track.stop());if(ticket===generation){release();await action('stop').catch(()=>{});}throw error;}
     finally{if(ticket===generation)opening=false;}
@@ -59,9 +59,16 @@ export function createHostVoiceCapture({action,onState=()=>{},onError=()=>{},
   function event(value){
     if(value.type==='invalidate'){release();return;}
     if(value.type!=='capture')return;
+    if(typeof value.partial==='string'){
+      if(current?.id===value.id)onPartial(value.partial);
+      return;
+    }
     if(value.state==='idle'){release();return;}
     if(['processing','waiting-playback'].includes(value.state)){gate(false);queue=[];queuedBytes=0;current=null;onState(value.state);return;}
-    if(value.state==='listening'&&stream){current={id:value.id,mode:'live'};gate(true);onState('listening');}
+    if(value.state==='listening'&&stream){
+      const resetPartial=current?.id!==value.id;
+      current={id:value.id,mode:'live'};gate(true);onState('listening',{resetPartial});
+    }
   }
   async function finish(){
     const captured=current;if(!captured)return;
