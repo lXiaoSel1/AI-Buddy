@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import * as voice from '../src/voice/client.mjs';
+import {createVoiceController} from '../src/voice/controller.mjs';
+import {createVoiceSettings} from '../src/voice/settings.mjs';
 
 const scope={channel:'app-private',characterId:'deepseek',personaId:'p',conversationId:'c'};
 const configuration={settings:{enabled:true,packages:{'ai-buddy.voice-breeze':{ttsProvider:'local'}}},selectedPackageId:'ai-buddy.voice-breeze',preparation:{state:'ready',target:'speech'},scope,packages:[{id:'ai-buddy.voice-breeze',installed:true,usable:true}],profile:{label:'Voice'},assets:{tts:{state:'ready'}},engine:'breeze'};
@@ -128,4 +130,84 @@ test('a Live capture acknowledgement arriving after cancellation cannot issue a 
     assert.ok(stops.length>0);
     assert.ok(stops.every(row=>row.args?.channel==='app-chat'),JSON.stringify(stops));
   }finally{await f.session.stopChat();f.completeCapture();await started;await f.release();}
+});
+
+test('ending Live releases the input while ASR stops and ignores the cancelled microphone feed',async()=>{
+  const feed=Promise.withResolvers(),feedStarted=Promise.withResolvers(),cleanup=Promise.withResolvers();
+  const profilesReading=Promise.withResolvers(),profilesReply=Promise.withResolvers();
+  const settings=createVoiceSettings();
+  await settings.update({enabled:true});
+  const listeners=new Set(),port={postMessage(){}};
+  let microphoneStopped=false,stopCalls=0,submissions=0;
+  const controller=createVoiceController({
+    getScope:()=>({...scope,lifeId:'life',operationId:'operation'}),
+    settings,listPackages:()=>[{...configuration.packages[0],enabled:true,engine:'breeze'}],
+    assets:{resolve:async()=>({}),status:async()=>({state:'ready'})},
+    runtime:{
+      startCapture:async()=>{},
+      feedCapture(){feedStarted.resolve();return feed.promise;},
+      async cancelCapture(){if(port.onmessage)feed.reject(new DOMException('Aborted','AbortError'));await cleanup.promise;},
+      stopEngine:async()=>{},
+    },
+    send:event=>{for(const listener of listeners)listener(event);},
+    submit:async()=>{submissions++;return {requestId:'unexpected'};},
+  });
+  const api={
+    async action(op,payload){
+      if(op==='prepare')return {ready:true};
+      if(op==='stop'){
+        stopCalls++;
+        await controller.recoverStop();
+      }
+      if(op==='profiles'&&stopCalls){
+        profilesReading.resolve();
+        return profilesReply.promise;
+      }
+      return controller.action(op,payload);
+    },
+    onEvent(listener){listeners.add(listener);return()=>listeners.delete(listener);},
+  };
+  const connect=()=>({connect(){},disconnect(){}});
+  const track={stop(){microphoneStopped=true;}};
+  const context={state:'running',sampleRate:16000,resume:async()=>{},close:async()=>{},audioWorklet:{addModule:async()=>{}},
+    createMediaStreamSource:connect,createGain:()=>({...connect(),gain:{value:0}}),destination:{}};
+  const session=voice.ensureVoiceSession(api,{
+    createContext:({sampleRate})=>({...context,sampleRate}),
+    captureOptions:{workletURL:'fixture',getMedia:async()=>({getTracks:()=>[track],getAudioTracks:()=>[track]}),
+      makeContext:()=>context,makeNode:()=>({...connect(),port})},
+  });
+  const release=session.retain();
+  const liveStrip=()=>renderToStaticMarkup(React.createElement(voice.VoiceChatControls,{
+    snapshot:session.snapshot(),scope,placement:'replacement',
+  }));
+  let stopping,stopComplete=false;
+  try{
+    await session.refresh();
+    await session.start('live');
+    assert.match(liveStrip(),/正在听/);
+    port.onmessage({data:new ArrayBuffer(320)});
+    await feedStarted.promise;
+    stopping=session.stopChat().then(()=>{stopComplete=true;});
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(microphoneStopped,true);
+    assert.equal(liveStrip(),'');
+    assert.match(renderLive(session.snapshot()),/正在停止 Live/);
+    assert.equal(stopCalls,1);
+    cleanup.resolve();
+    await profilesReading.promise;
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(stopComplete,true,'a slow voice profile read must not hold the Live stop open');
+    await stopping;
+    assert.equal(liveStrip(),'');
+    assert.equal(session.snapshot().state.live,false);
+    assert.equal(session.snapshot().state.settings.enabled,true);
+    assert.equal(session.snapshot().error,'');
+    assert.equal(submissions,0);
+  }finally{
+    cleanup.resolve();
+    profilesReply.resolve([]);
+    await stopping;
+    await release();
+    await controller.close();
+  }
 });

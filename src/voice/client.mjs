@@ -213,7 +213,7 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
   const offOutputError=output.onError(onError);
   const action=(...args)=>Promise.resolve(api.action(...args)).then(pluginClientResult);
   const capture=createHostVoiceCapture({...captureOptions,action:(op,payload)=>action(op,op==='stop'?{...payload,channel:'app-chat'}:payload),onState:captureState=>publish({captureState,...(captureState==='idle'?{captureMode:null,partial:''}:{})}),onError});
-  let refreshing;
+  let refreshing,stoppingCapture;
   async function readProfiles(state){
     if(!state?.scope)return {profilesByPackage:{},profileErrorsByPackage:{}};
     const targets=(state.packages??[]).filter(row=>row.installed).map(row=>row.id).filter(id=>VOICE_PLUGINS.some(row=>row.id===id)&&state.settings?.packages?.[id]?.ttsProvider!=='minimax');
@@ -254,8 +254,11 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
   }
   function deliverDrafts(){const trusted=value.state?.scope;for(let i=0;i<drafts.length;){const event=drafts[i],listener=trusted&&[...draftListeners].find(row=>matchesChat(row.scope,event.scope)&&matchesChat(row.scope,trusted)&&['lifeId','operationId'].every(key=>!trusted[key]||trusted[key]===event.scope?.[key]));if(!listener){i++;continue;}listener.callback(event);drafts.splice(i,1);}publish({pendingDraft:drafts.at(-1)??null});}
   const off=output.onEvent(event=>{
-    if(event.type==='invalidate'&&event.reason==='scope-changed'&&event.channel!=='card-table'){generation++;revision++;}
-    if(event.type==='invalidate'&&event.channel!=='card-table')publish({phase:null});
+    if(event.type==='invalidate'&&event.channel!=='card-table'){
+      if(event.reason==='scope-changed')generation++;
+      revision++;
+      publish({phase:null,...(value.state?{state:{...value.state,live:false,capture:null}}:{})});
+    }
     if(event.type==='turn'&&event.state==='admitted')publish({phase:null});
     if(event.type==='phase'&&matchesChat(value.state?.scope,event.envelope)&&['lifeId','operationId'].every(key=>value.state.scope[key]===event.envelope[key])){
       publish({phase:{requestId:event.requestId,stage:event.stage}});
@@ -282,11 +285,15 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
     if(event.channel!=='card-table')capture.event(event);
   });
   const plugins=globalThis.whale?.plugins?.onUpdate(()=>void refresh().catch(onError));
-  async function perform(fn,cloudOperation=false){
+  async function perform(fn,{cloudOperation=false,waitForRefresh=true}={}){
     const ticket=generation,cloudTicket=value.cloudSelectionRevision,current=()=>ticket===generation&&(!cloudOperation||cloudTicket===value.cloudSelectionRevision);
     operations++;publish({working:true,error:''});
     try{return await fn();}catch(error){if(current())onError(cloudOperation?{message:cloudVoiceError(error)}:error);}
-    finally{operations--;publish({working:operations>0});await refresh().catch(error=>{if(!cloudOperation||current())onError(error);});}
+    finally{
+      operations--;publish({working:operations>0});
+      const updated=refresh().catch(error=>{if(!cloudOperation&&waitForRefresh||current())onError(error);});
+      if(waitForRefresh)await updated;
+    }
   }
   const cloudFlights=new Map();
   function cloudAction(op,payload){
@@ -307,15 +314,25 @@ export function ensureVoiceSession(api=globalThis.whale?.voice,{createContext,ca
       if(!enabled)capture.release();
       return perform(async()=>{await unlocked;if(ticket!==generation)return;return action('configure',patch);});
     },
-    start(mode){const ticket=++generation,unlocked=output.prepare(rate());publish({captureState:'preparing',captureMode:mode});
+    start(mode){if(stoppingCapture)return;const ticket=++generation,unlocked=output.prepare(rate());publish({captureState:'preparing',captureMode:mode});
       return perform(async()=>{try{await unlocked;if(ticket!==generation)return;if(mode==='live'){const ready=await action('prepare',{target:'live'});if(ready?.cancelled){capture.release();publish({captureState:'idle',captureMode:null});return ready;}}if(ticket!==generation)return;return await capture.start(mode);}catch(error){if(ticket===generation)capture.release();throw error;}});
     },
     finish:()=>perform(()=>capture.finish()),
     stop(){generation++;capture.release();return perform(()=>output.stop());},
-    stopChat(){generation++;capture.release();return perform(()=>output.stopChat());},
+    stopChat(){
+      if(stoppingCapture)return stoppingCapture;
+      generation++;revision++;
+      publish({stoppingCapture:true});
+      capture.release();
+      stoppingCapture=perform(()=>output.stopChat(),{waitForRefresh:false}).finally(()=>{
+        stoppingCapture=undefined;
+        publish({stoppingCapture:false});
+      });
+      return stoppingCapture;
+    },
     runAction:(op,payload)=>{
       if(op.startsWith('cloud-connection-'))publish({cloudSelectionRevision:value.cloudSelectionRevision+1});
-      return ['cloud-batch-prepare','cloud-batch-reconcile','cloud-batch-cancel'].includes(op)?cloudAction(op,payload):perform(()=>action(op,payload),op.startsWith('cloud-'));
+      return ['cloud-batch-prepare','cloud-batch-reconcile','cloud-batch-cancel'].includes(op)?cloudAction(op,payload):perform(()=>action(op,payload),{cloudOperation:op.startsWith('cloud-')});
     },
     retain(){const releaseOutput=output.retain();owners++;let released=false;return async()=>{
       if(released)return;released=true;
@@ -355,12 +372,12 @@ export function VoiceToggle({snapshot,onToggle}){
     h('span',{role:snapshot?.error||state?.preparation?.state==='failed'?'alert':'status','aria-live':'polite'},voiceStatus(snapshot)));
 }
 
-const canStartLive=(snapshot,scope)=>['app-private','app-group'].includes(scope?.channel)&&matchesChat(scope,snapshot?.state?.scope)&&snapshot.state.settings?.enabled===true&&snapshot.state.packages?.some(row=>row.id===snapshot.state.selectedPackageId&&row.installed&&row.usable&&row.enabled!==false&&row.trusted!==false)&&(snapshot.captureState??'idle')==='idle'&&!snapshot.working;
+const canStartLive=(snapshot,scope)=>['app-private','app-group'].includes(scope?.channel)&&matchesChat(scope,snapshot?.state?.scope)&&snapshot.state.settings?.enabled===true&&snapshot.state.packages?.some(row=>row.id===snapshot.state.selectedPackageId&&row.installed&&row.usable&&row.enabled!==false&&row.trusted!==false)&&(snapshot.captureState??'idle')==='idle'&&!snapshot.working&&!snapshot.stoppingCapture&&!snapshot.state.stopping;
 
 export function VoiceChatControls({snapshot,session,scope,placement='legacy',presentation,characterName,open,captureAttempt,onCaptureAttempt}){
   const [pending,setPending]=useState(null),flight=useRef(null),scopeKey=[scope?.channel,scope?.characterId,scope?.personaId,scope?.conversationId].join(':');
   useEffect(()=>{flight.current=null;setPending(null);return()=>{flight.current=null;};},[scopeKey]);
-  const operation=pending?.scopeKey===scopeKey?pending.kind:null,matching=['app-private','app-group'].includes(scope?.channel)&&matchesChat(scope,snapshot?.state?.scope),phase=snapshot?.state?.preparation,loading=phase?.target==='live'&&['checking','verifying','loading'].includes(phase.state),active=matching&&(operation==='starting'||snapshot?.captureMode==='live'||snapshot?.state?.live===true||snapshot?.state?.capture?.mode==='live'||loading),preparing=active&&(operation==='starting'||snapshot?.captureState==='preparing'||loading),stopping=operation==='stopping';
+  const operation=pending?.scopeKey===scopeKey?pending.kind:null,matching=['app-private','app-group'].includes(scope?.channel)&&matchesChat(scope,snapshot?.state?.scope),phase=snapshot?.state?.preparation,loading=phase?.target==='live'&&['checking','verifying','loading'].includes(phase.state),stopping=operation==='stopping'||snapshot?.stoppingCapture,active=matching&&!stopping&&(operation==='starting'||snapshot?.captureMode==='live'||snapshot?.state?.live===true||snapshot?.state?.capture?.mode==='live'||loading),preparing=active&&(operation==='starting'||snapshot?.captureState==='preparing'||loading);
   function run(kind,fn){
     const current={kind,scopeKey};flight.current=current;setPending(current);
     const done=()=>{if(flight.current===current){flight.current=null;setPending(null);}};
@@ -404,7 +421,7 @@ export function useVoiceClient(scopeKey,onDraft){
     return()=>{off();draftOff();};
   },[api,scopeKey]);
   const value=presentation.error?{...snapshot,error:presentation.error}:snapshot,matching=matchesChat(expected,value?.state?.scope),preparation=value?.state?.preparation,preparing=value?.captureState==='preparing'||preparation?.target==='live'&&['checking','verifying','loading'].includes(preparation.state);
-  const live=matching&&(value?.captureMode==='live'||value?.state?.live||value?.state?.capture?.mode==='live'),recording=matching&&(value?.captureMode==='record'||value?.state?.capture?.mode==='record')&&value?.captureState!=='idle';
+  const live=matching&&!value?.stoppingCapture&&(value?.captureMode==='live'||value?.state?.live||value?.state?.capture?.mode==='live'),recording=matching&&!value?.stoppingCapture&&(value?.captureMode==='record'||value?.state?.capture?.mode==='record')&&value?.captureState!=='idle';
   useEffect(()=>{setCaptureAttempt(null);},[scopeKey,JSON.stringify(snapshot?.state?.scope)]);
   const control=placement=>h(VoiceChatControls,{snapshot:value,session:session.current,scope:expected,presentation,placement,captureAttempt,onCaptureAttempt:setCaptureAttempt});
   return {controls:control('legacy'),topControls:control('top'),inputLeft:control('input-left'),inputRight:control('input-right'),inputReplacement:control('replacement'),alerts:control('alerts'),replacingInput:!!(recording||live&&!preparing),live:!!live,draftFromVoice:draftScope===scopeKey,clearDraftSource:()=>setDraftScope(null),speakingIndicator:presentation.subtitle?h(VoiceSpeakingIndicator):null,stopReading:presentation.speaking?h(VoiceButton,{kind:'ghost sm',icon:'stop',onClick:()=>session.current?.output.stopChat()},L('停止朗读','Stop reading')):null,subtitle:presentation.subtitle,speaking:presentation.speaking,presentation};

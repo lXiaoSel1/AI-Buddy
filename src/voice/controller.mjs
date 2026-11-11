@@ -96,7 +96,11 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
     if(!session?.waiting||closed||stopping||!matches(session.scope)||session.epoch!==epoch||turns.size)return;
     session.waiting=false;session.pending=null;
     try{await serialCapture(()=>beginCapture('live',session));}
-    catch(error){if(live===session)live=null;emit({type:'error',code:error.code??'VOICE_CAPTURE_FAILED',message:String(error.message)});}
+    catch(error){
+      if(session.epoch!==epoch||!matches(session.scope))return;
+      if(live===session)live=null;
+      emit({type:'error',code:error.code??'VOICE_CAPTURE_FAILED',message:String(error.message)});
+    }
   }
   async function settleTurn(turn){
     if(!turn.finished||[...turn.segments.values()].some(row=>!row.terminal))return;
@@ -312,12 +316,12 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
   }
   async function beginCapture(mode,session){
     ensureOpen();
-    const scope=current(),generation=epoch;
+    const scope=current(),generation=epoch,signal=lifecycle.signal;
     if(!scope)throw fault('请先打开角色聊天','VOICE_SCOPE_CHANGED');
-    const chosen=await selected();ensureOpen();
+    const chosen=await selected(signal);ensureOpen();
     if(capture||live?.waiting)throw fault('麦克风正在使用或正在等待播放','VOICE_CAPTURE_BUSY');
     if(mode==='live'&&typeof runtime.prepare==='function'&&(!preparedSignature||preparedSignature.epoch!==epoch||preparedSignature.target!=='live'||preparedSignature.proof!==packageProof(chosen)))await prepare('live');
-    await assets.resolve('asr',chosen.row.id);
+    await waitVoiceOperation(()=>assets.resolve('asr',chosen.row.id,{signal}),signal);
     ensureOpen();
     if(generation!==epoch||!matches(scope))throw fault('角色已切换','VOICE_SCOPE_CHANGED');
     const row={id:randomUUID(),mode,scope,epoch:generation,bytes:0,finishing:false};
@@ -325,19 +329,20 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
     try{
       await runtime.startCapture({engineId:chosen.row.id});
       assertCapture(row.id);
-      const checked=await selected();ensureOpen();assertCapture(row.id);
+      const checked=await selected(signal);ensureOpen();assertCapture(row.id);
       if(packageProof(checked)!==packageProof(chosen))throw fault('语音插件已改变','VOICE_PACKAGE_CHANGED');
       if(session)live=session;
       captureState(mode==='live'?'listening':'recording',row);
       return {id:row.id,mode};
-    }catch(error){await retireCapture(row);throw error;}
+    }catch(error){if(row.epoch===epoch)await retireCapture(row);throw error;}
   }
   async function finalizeCapture(id,limit=false){
     const row=assertCapture(id);
     if(row.finishing)throw fault('录音正在完成','VOICE_CAPTURE_BUSY');
     row.finishing=true;captureState('processing',row);
     try{
-      await selected();
+      await selected(lifecycle.signal);
+      assertCapture(id);
       const result=await runtime.finishCapture();
       assertCapture(id);capture=null;
       const text=String(result?.text??'').trim();
@@ -359,7 +364,7 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
       const accepted=await submit({scope:copy(row.scope),text,submissionId:row.id});
       if(live===session&&session.pending?.submissionId===row.id)session.pending.requestId=accepted?.requestId??null;
       return {submitted:true,text,accepted};
-    }catch(error){await retireCapture(row);throw error;}
+    }catch(error){if(row.epoch===epoch)await retireCapture(row);throw error;}
   }
   async function retainedSpeech(signature){
     if(!signature||typeof runtime.ready!=='function')return;
@@ -502,7 +507,8 @@ export function createVoiceController({getScope,submit,send=()=>{},listPackages,
     if(op==='capture-feed')return serialCapture(async()=>{
       const row=assertCapture(payload.id);
       try{
-        await selected();
+        await selected(lifecycle.signal);
+        assertCapture(row.id);
         if(!(payload.pcm instanceof Uint8Array)||!payload.pcm.byteLength||payload.pcm.byteLength%2||payload.pcm.byteLength>32000)throw fault('录音 PCM 无效','VOICE_CAPTURE_INVALID');
         row.bytes+=payload.pcm.byteLength;
         const result=await runtime.feedCapture({pcm:payload.pcm});assertCapture(row.id);

@@ -40,6 +40,35 @@ test('recorded speech becomes a draft, and a cancelled capture cannot submit sta
   assert.ok(events.some(event=>event.type==='capture'&&event.state==='idle'));
 });
 
+test('stopping Live cancels a pending configuration read before forwarding old PCM',async()=>{
+  const reading=Promise.withResolvers(),held=Promise.withResolvers();
+  const settings=createVoiceSettings();
+  const config=await settings.update({enabled:true});
+  let hold=false,forwarded=false,stopped=false;
+  const {voice}=await fixture({
+    settings:{get(){if(!hold)return config;reading.resolve();return held.promise;}},
+    runtime:{
+      startCapture:async()=>{},cancelCapture:async()=>{},stopEngine:async()=>{},
+      feedCapture:async()=>{forwarded=true;return {};},
+    },
+  });
+  const capture=await voice.action('capture-start',{mode:'live'});
+  hold=true;
+  const feed=assert.rejects(voice.action('capture-feed',{id:capture.id,pcm:new Uint8Array(320)}));
+  await reading.promise;
+  const stop=voice.action('stop').then(()=>{stopped=true;});
+  try{
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(stopped,true,'ending Live must not wait for a revoked read-only request');
+  }finally{
+    hold=false;
+    held.resolve(config);
+    await Promise.all([stop,feed]);
+    await voice.close();
+  }
+  assert.equal(forwarded,false);
+});
+
 test('admission freezes the host role profile and rechecks plugin permission; cloud needs a binding but no local TTS assets',async()=>{
   const {voice,settings,rows,calls}=await fixture();
   const turn={...scope,requestId:'request-1',messageId:'message-1'};
@@ -78,6 +107,37 @@ test('Live submits an endpoint once and waits for actual final playback before l
   await voice.action('receipt',{envelope:token,status:'audioCompleted',playedMs:100});
   await until(()=>listeningIds().size===2);
   await voice.close();
+});
+
+test('ending Live while the next listening turn is preparing does not report a capture error',async()=>{
+  const preparing=Promise.withResolvers(),held=Promise.withResolvers();
+  let asrReads=0;
+  const {voice,events}=await fixture({
+    assets:{
+      resolve(kind){
+        if(kind!=='asr'||++asrReads===1)return {};
+        preparing.resolve();
+        return held.promise;
+      },
+      status:async()=>({state:'ready'}),
+    },
+  });
+  const capture=await voice.action('capture-start',{mode:'live'});
+  await voice.action('capture-feed',{id:capture.id,pcm:new Uint8Array(320)});
+  assert.ok(await voice.admit({...scope,requestId:'reply',messageId:'reply-message'}));
+  const reply=voice.finish({requestId:'reply'});
+  await preparing.promise;
+  const stop=voice.action('stop');
+  try{
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(events.some(event=>event.type==='error'),false);
+  }finally{
+    held.resolve({});
+    await Promise.all([reply,stop]);
+    await voice.close();
+  }
+  const listeningIds=new Set(events.filter(event=>event.type==='capture'&&event.state==='listening').map(event=>event.id));
+  assert.equal(listeningIds.size,1);
 });
 
 test('output buffers stay bounded and a stale role cannot continue queued synthesis',async()=>{

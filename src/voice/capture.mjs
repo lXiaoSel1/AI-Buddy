@@ -7,7 +7,7 @@ export function createHostVoiceCapture({action,onState=()=>{},onError=()=>{},
   let generation=0,stream,context,node,source,gain,current,queue=[],queuedBytes=0,pumping,flushResolve,opening=false;
   const gate=enabled=>node?.port.postMessage({enabled});
   function release(){
-    generation++;opening=false;current=null;queue=[];queuedBytes=0;gate(false);
+    generation++;opening=false;current=null;queue=[];queuedBytes=0;pumping=undefined;gate(false);
     for(const item of [source,node,gain])try{item?.disconnect();}catch{}
     source=node=gain=undefined;const old=stream;stream=undefined;old?.getTracks().forEach(track=>track.stop());
     const audio=context;context=undefined;audio?.close().catch(()=>{});flushResolve?.();flushResolve=undefined;onState('idle');
@@ -16,8 +16,9 @@ export function createHostVoiceCapture({action,onState=()=>{},onError=()=>{},
   function fail(error){release();void action('stop').catch(()=>{});onError(error);}
   async function pump(){
     if(pumping)return pumping;
+    const ticket=generation;
     const job=(async()=>{
-      while(current&&queue.length){
+      while(ticket===generation&&current&&queue.length){
         const captured=current,parts=[];let size=0;
         while(queue.length&&size+queue[0].length<=16384){const part=queue.shift();parts.push(part);size+=part.length;queuedBytes-=part.length;}
         const pcm=new Uint8Array(size);let offset=0;for(const part of parts){pcm.set(part,offset);offset+=part.length;}
@@ -42,11 +43,12 @@ export function createHostVoiceCapture({action,onState=()=>{},onError=()=>{},
       stream=acquired;context=audio;current={id:ack.id,mode};source=context.createMediaStreamSource(stream);node=makeNode(context);gain=context.createGain();gain.gain.value=0;
       source.connect(node);node.connect(gain);gain.connect(context.destination);
       node.port.onmessage=({data})=>{
+        if(ticket!==generation)return;
         if(data?.type==='flushed'){flushResolve?.();flushResolve=undefined;return;}
         if(!current||!(data instanceof ArrayBuffer))return;
         const pcm=new Uint8Array(data);
         if(!pcm.length||pcm.length%2||pcm.length>16384||queuedBytes+pcm.length>256000){fail(Error('识别连接跟不上录音，已停止；已有草稿保留'));return;}
-        queue.push(pcm);queuedBytes+=pcm.length;void pump().catch(fail);
+        queue.push(pcm);queuedBytes+=pcm.length;void pump().catch(error=>{if(ticket===generation)fail(error);});
       };
       const owned=stream;stream.getAudioTracks()[0].onended=()=>{if(stream===owned)fail(Error('麦克风断开，已有草稿保留'));};
       gate(true);onState(mode==='live'?'listening':'recording');

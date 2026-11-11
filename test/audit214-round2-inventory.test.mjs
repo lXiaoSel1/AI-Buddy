@@ -11,7 +11,7 @@ const repo=fileURLToPath(new URL('..',import.meta.url));
 test('current public inventory passes both production loaders with the same actual byte digest',()=>{
  const actual=createHash('sha256').update(readFileSync(join(repo,'scripts/media-baselines/public-204-assets.json'))).digest('hex');
  const inventory=loadPublicAssetInventory(repo);
- assert.equal(inventory.applicationVersion,'2.0.14');
+ assert.equal(inventory.applicationVersion,JSON.parse(readFileSync(join(repo,'package.json'),'utf8')).version);
  assert.equal(PUBLIC_ASSET_INVENTORY_SHA256,actual);
  const code='import sys;sys.path.insert(0,sys.argv[1]);from public_distribution_validation import load_inventory,INVENTORY_SHA256;load_inventory();print(INVENTORY_SHA256)';
  const result=spawnSync(process.platform==='win32'?'py':'python3',[...(process.platform==='win32'?['-3','-B']:['-B']),'-c',code,join(repo,'scripts')],{cwd:repo,encoding:'utf8',windowsHide:true});
