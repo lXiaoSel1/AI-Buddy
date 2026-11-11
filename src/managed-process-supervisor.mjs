@@ -96,15 +96,26 @@ export function createManagedProcessSupervisor({guardPath,statePath,inspect,spaw
     return owned.query;
   }
   function retireGuard(key,owned){
-    if(owned.retirement)return owned.retirement;
+    const retryReceipt=owned.retryStopReceipt;
+    if(owned.retirement&&!retryReceipt)return owned.retirement;
+    owned.retryStopReceipt=false;
     // Publish the shared promise before yielding. New queries join retirement;
     // pending queries drain before the single close command ends the pipe.
     owned.retirement=Promise.resolve().then(async()=>{
-      if(owned.query)await owned.query.catch(()=>{});
-      if(owned.child.exitCode==null&&!owned.child.stdin.destroyed&&!owned.child.stdin.writableEnded)owned.child.stdin.end('close\n');
-      const exit=await owned.exited;
-      if(exit.code!==0)throw fail('OS guard could not confirm shutdown','WORK_PROCESS_STOP_UNCONFIRMED');
-      const receipt=await stopReceipt(owned.proof,owned.identity);
+      if(!retryReceipt){
+        if(owned.query)await owned.query.catch(()=>{});
+        if(owned.child.exitCode==null&&!owned.child.stdin.destroyed&&!owned.child.stdin.writableEnded)owned.child.stdin.end('close\n');
+        const exit=await owned.exited;
+        if(exit.code!==0)throw fail('OS guard could not confirm shutdown','WORK_PROCESS_STOP_UNCONFIRMED');
+      }
+      let receipt;
+      try{receipt=await stopReceipt(owned.proof,owned.identity);}
+      catch(cause){
+        // Keep custody revoked. A later release may reread the same proof
+        // after a filesystem error, without reopening the guard's control pipe.
+        owned.retryStopReceipt=['ENOENT','EACCES','EPERM','EBUSY'].includes(cause?.code);
+        throw cause;
+      }
       if(guards.get(key)===owned)guards.delete(key);
       onState({type:'guard-retired',key,guardId:owned.proof.guardId,guardPid:owned.proof.guardPid,receiptPath:owned.proof.receiptPath,activeProcesses:0});
       return receipt;

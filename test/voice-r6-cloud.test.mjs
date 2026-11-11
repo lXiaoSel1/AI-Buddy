@@ -9,6 +9,8 @@ import {createVoiceCredentials} from '../src/voice/credentials.mjs';
 import {createVoiceProfiles} from '../src/voice/voice-profiles.mjs';
 import {createVoiceCloud} from '../src/voice/cloud.mjs';
 
+const packageIds={breeze:'ai-buddy.voice-breeze',gpt:'ai-buddy.voice-gpt-sovits'};
+
 async function fixture(t,{roles=2,provider={},separateReferences=false,noCloudReference=false,beforeResolveProfile,transport}={}){
   const dataRoot=await mkdtemp(join(tmpdir(),'voice-r6-cloud-'));
   const settings=createVoiceSettings({dataRoot}),profiles=createVoiceProfiles({dataRoot});
@@ -32,13 +34,14 @@ async function fixture(t,{roles=2,provider={},separateReferences=false,noCloudRe
   const build=()=>createVoiceCloud({dataRoot,resolveConnection:args=>settings.resolveConnection(args),resolveSecret:ref=>credentials.resolve(ref),resolveProfile:async params=>{await beforeResolveProfile?.(params);const profile=await profiles.resolve(params);return noCloudReference?{...profile,cloudReference:undefined}:profile;},batchProvider,
     resolveRuntime:async()=>({}),transport});
   let cloud=build();
-  const makeGateway=()=>createCloudVoiceGateway({settings,profiles,credentials,cloud,getGame:()=>game,resolvePackage:async()=>({assertCurrent(){}}),assertOpen:()=>generation,
+  const makeGateway=()=>createCloudVoiceGateway({settings,profiles,credentials,cloud,getGame:()=>game,
+    listPackages:()=>Object.values(packageIds).map(id=>({id,installed:true})),resolvePackage:async()=>({assertCurrent(){}}),assertOpen:()=>generation,
     async stopAll(){generation++;await cloud.stopEngine();},track(task){tasks.add(task);void task.finally(()=>tasks.delete(task)).catch(()=>{});return task;}});
   let gateway=makeGateway();
   t.after(async()=>{await cloud.close();await Promise.allSettled(tasks);await rm(dataRoot,{recursive:true,force:true});});
   await gateway.action('cloud-connection-save',{name:'云',key:'synthetic-r6-key'});
   return {get gateway(){return gateway;},get cloud(){return cloud;},profiles,settings,dataRoot,calls,characters,
-    async scope(characterId,engine='breeze'){const profile=await profiles.current({characterId,engine});return {characterId,engine,packageId:engine==='breeze'?'ai-buddy.voice-breeze':'ai-buddy.voice-gpt-sovits',profileId:profile.id,profileVersion:profile.version};},
+    async scope(characterId,engine='breeze'){const profile=await profiles.current({characterId,engine});return {characterId,engine,packageId:packageIds[engine],profileId:profile.id,profileVersion:profile.version};},
     async preview(selectedCharacterIds){return gateway.action('cloud-batch-preview',selectedCharacterIds===undefined?{}:{selectedCharacterIds});},
     async prepare(selectedCharacterIds){const value=await this.preview(selectedCharacterIds);return gateway.action('cloud-batch-prepare',{selectedCharacterIds,planHash:value.plan.planHash,consentUpload:true,consentActivation:true});},
     async reopen(){await cloud.close();cloud=build();gateway=makeGateway();}};

@@ -114,7 +114,18 @@ export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onS
   }
   throw fail('SOCIAL_LOGIN_EXPIRED');
  }
- async function start(options){let row;const operation=(async()=>{try{row=await launch(options);return await awaitOnline(row,{...options,signal:row.signal});}catch(cause){const owned=row??runs.get(options.attemptId);if(owned)await stopRow(owned);throw cause;}})();pending.add(operation);try{return await operation;}finally{pending.delete(operation);}}
+ async function start(options){
+  let row;
+  const operation=(async()=>{
+   try{row=await launch(options);return await awaitOnline(row,{...options,signal:row.signal});}
+   catch(cause){
+    try{await stopRow(row??runs.get(options.attemptId));}
+    catch(cleanup){throw Object.assign(Error('QQ connection cleanup failed',{cause:cleanup}),{code:cleanup?.code,loginCause:cause});}
+    throw cause;
+   }
+  })();
+  pending.add(operation);try{return await operation;}finally{pending.delete(operation);}
+ }
  async function committed(result,account){
   let warningCode;
   // Profile binding already committed atomically with the account. These are

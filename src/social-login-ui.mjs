@@ -29,7 +29,7 @@ export function qrExpiryText(seconds,en=locale()==='en'){
 export function useSocialLogin(api,onAccountsChanged=()=>{}){
  const en=locale()==='en',t=(a,b)=>en?b:a;
  const [snapshot,setSnapshot]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[errorCode,setErrorCode]=useState(''),[requested,setRequested]=useState(null);
- const alive=useRef(false),lock=useRef(false),seenRequest=useRef(null),seenConnected=useRef(new Set()),changed=useRef(onAccountsChanged);changed.current=onAccountsChanged;
+ const alive=useRef(false),actions=useRef(0),actionSequence=useRef(0),seenRequest=useRef(null),seenConnected=useRef(new Set()),changed=useRef(onAccountsChanged);changed.current=onAccountsChanged;
  const call=async request=>pluginResult(await api.action(request));
  useEffect(()=>{
   alive.current=true;let timer,pending=false;
@@ -40,10 +40,17 @@ export function useSocialLogin(api,onAccountsChanged=()=>{}){
   void update();return()=>{alive.current=false;clearTimeout(timer);};
  },[api]);
  // the error code stays out of the sentence; the dialog shows it under 技术详情
- async function act(action,platform,payload={}){if(lock.current)return;lock.current=true;setBusy(true);setError('');setErrorCode('');try{
+ async function act(action,platform,payload={}){
+  // Closing a rescan can revoke its restart before the start IPC returns.
+  if(actions.current&&action!=='social-login-cancel')return;
+  actions.current++;
+  const sequence=++actionSequence.current,canUpdate=()=>alive.current&&sequence===actionSequence.current;
+  if(alive.current){setBusy(true);setError('');setErrorCode('');}try{
   if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).some(key=>!['official','retryAttemptId'].includes(key))||Object.keys(payload).length&&action!=='social-login-start'||payload.official!==undefined&&typeof payload.official!=='boolean'||payload.retryAttemptId!==undefined&&(typeof payload.retryAttemptId!=='string'||payload.retryAttemptId.length>100))throw Object.assign(Error('Invalid login retry'),{code:'SOCIAL_LOGIN_RETRY_STALE'});
-  const result=await call({action,platform,...(payload.official!==undefined?{official:payload.official}:{}),...(payload.retryAttemptId!==undefined?{retryAttemptId:payload.retryAttemptId}:{})});if(alive.current)setSnapshot(old=>({...old,states:(old?.states??[]).map(row=>row.platform===platform?result:row)}));
- }catch(cause){if(alive.current){setError(socialLoginErrorText(cause?.code,en,cause?.host??cause?.details?.host??''));setErrorCode(typeof cause?.code==='string'?cause.code:'SOCIAL_LOGIN_FAILED');}}finally{lock.current=false;if(alive.current)setBusy(false);}}
+  const result=await call({action,platform,...(payload.official!==undefined?{official:payload.official}:{}),...(payload.retryAttemptId!==undefined?{retryAttemptId:payload.retryAttemptId}:{})});if(canUpdate())setSnapshot(old=>({...old,states:(old?.states??[]).map(row=>row.platform===platform?result:row)}));
+ }catch(cause){if(canUpdate()){setError(socialLoginErrorText(cause?.code,en,cause?.host??cause?.details?.host??''));setErrorCode(typeof cause?.code==='string'?cause.code:'SOCIAL_LOGIN_FAILED');}}finally{
+  actions.current--;if(alive.current&&!actions.current)setBusy(false);
+ }}
  const stateOf=platform=>snapshot?.states?.find(row=>row.platform===platform)??{phase:'not-connected'};
  return {snapshot,stateOf,component:snapshot?.component,busy,error,errorCode,act,requested,clearRequested:()=>setRequested(null)};
 }
@@ -61,12 +68,13 @@ export function SocialLoginDialog({platform,login,onClose,onOpenPlugin,autoStart
  const left=state.phase==='waiting-qr'&&state.qr?qrSecondsLeft(qrSince,Math.max(clock,qrSince??0)):null;
  const at={preparing:0,'waiting-qr':1,'waiting-confirmation':2,verifying:2,connected:3}[state.phase]??-1;
  const steps=[qq?t('准备连接组件','Prepare'):t('打开登录窗口','Open login'),t('手机扫码','Scan'),t('手机上确认','Confirm'),t('完成','Done')];
- const close=()=>{if(active&&state.phase!=='cleaning-up')void login.act('social-login-cancel',platform);onClose();};
+ const canCancel=state.phase!=='cleaning-up'||state.rescanPending;
+ const close=()=>{if(active&&canCancel||qq&&login.busy&&state.errorCode==='SOCIAL_LOGIN_STOP_PENDING')void login.act('social-login-cancel',platform);onClose();};
  const failed=['needs-login','cancelled','failed'].includes(state.phase);
  const officialRetry=qq&&state.phase==='failed'&&state.errorCode==='NETWORK_MIRROR_MISMATCH'&&state.retryOfficial===true&&typeof state.attemptId==='string';
  const safety=qq?t('扫码本身不会自动发消息、发表评论或调用模型。不会读取你日常 QQ 的资料。','Scanning does not send messages, post comments or call a model, and does not read your everyday QQ data.'):t('扫码本身不会自动发表评论或调用模型。','Scanning does not post comments or call a model.');
  return h(Dialog,{title:qq?t('连接 QQ 账号','Connect a QQ account'):t('连接 B站账号','Connect a Bilibili account'),subtitle:qq?t('用来让角色在 QQ 里回复你允许的人','So a character can answer the people you allow'):bilibiliLoginHint(en),onClose:close,'data-social-login':platform,
-  footer:h(React.Fragment,null,active&&h('button',{type:'button',className:'ui-btn ghost',disabled:login.busy||state.phase==='cleaning-up',onClick:close},t('取消','Cancel')),h('span',{className:'spacer'}),
+  footer:h(React.Fragment,null,active&&h('button',{type:'button',className:'ui-btn ghost',disabled:login.busy||!canCancel,onClick:close},t('取消','Cancel')),h('span',{className:'spacer'}),
    state.phase==='connected'?h(React.Fragment,null,onOpenPlugin&&h('button',{type:'button',className:'ui-btn primary',onClick:()=>{onClose();onOpenPlugin(qq?'@ai-buddy/qq-connect':'@ai-buddy/bilibili-companion');}},Icon('external',{size:16}),qq?t('去设置 QQ连接','Set up QQ Connect'):t('去设置 B站陪伴','Set up Bilibili Companion')),h('button',{type:'button',className:'ui-btn ghost',onClick:onClose},t('完成','Done')))
    :!active&&h(React.Fragment,null,officialRetry&&h('button',{type:'button',className:'ui-btn primary',disabled:login.busy,'data-social-login-official-retry':true,onClick:()=>void login.act('social-login-start',platform,{official:true,retryAttemptId:state.attemptId})},t('改用官方地址重试','Retry using official addresses')),h('button',{type:'button',className:'ui-btn '+(officialRetry?'ghost':'primary'),disabled:login.busy,onClick:()=>void login.act('social-login-start',platform)},Icon('qr',{size:16}),failed?t('重新扫码','Scan again'):t('开始连接','Start'))))},
   h('ol',{className:'ext-steps'},...steps.map((label,i)=>h('li',{key:i,className:i<at||state.phase==='connected'?'done':i===at?'cur':''},h('span',null,i<at||state.phase==='connected'?Icon('check',{size:12}):i+1),label))),
@@ -76,7 +84,7 @@ export function SocialLoginDialog({platform,login,onClose,onOpenPlugin,autoStart
   state.phase==='waiting-qr'&&h('div',{className:'ext-qrwrap'},state.qr?h('img',{className:'ext-qr',src:state.qr,alt:qq?t('使用手机QQ扫描此二维码','Scan this code with mobile QQ'):t('用手机 B站扫这个二维码','Scan with the Bilibili app')}):null,h('div',{className:'ext-col'},h('b',null,qq?t('用手机 QQ 扫这个二维码','Scan with QQ on your phone'):state.qr?t('用手机 B站扫这个二维码','Scan with the Bilibili app'):t('在弹出的 B站官方登录窗口里扫码','Scan in the official Bilibili login window')),h('p',{className:'ext-cap'},safety),h('div',{className:'ws-row-btns'},h('button',{type:'button',className:'ui-btn sm',disabled:login.busy,onClick:()=>void login.act('social-login-refresh',platform)},Icon('refresh',{size:14}),t('刷新二维码','Refresh QR code')),left!=null&&h('span',{className:'ext-cap','data-qr-expiry':left},qrExpiryText(left,en))))),
   state.phase==='waiting-confirmation'&&h('p',{className:'ext-cap'},t('需要设备验证时，在手机上完成，确认后会自动检查连接。','If device verification appears, finish it on your phone; the connection is checked automatically.')),
   state.phase==='connected'&&h('div',{className:'ui-alert ext-okalert'},Icon('check',{size:16}),h('div',null,h('b',null,state.account?state.account.label+' · '+state.account.accountId:t('账号已连接','Account connected')),h('p',null,qq?t('下一步在 QQ连接 里选角色和允许的联系人，然后启用。','Next, choose a character and allowed contacts in QQ Connect, then enable it.'):t('下一步在 B站陪伴 里选角色和观看设置，然后启用。','Next, choose a character and viewing settings in Bilibili Companion, then enable it.')))),
-  state.errorCode&&h('div',{className:'ui-alert warn',role:'alert'},Icon('alert',{size:16}),h('div',null,socialLoginErrorText(state.errorCode,en,state.errorHost??''),h('details',{className:'ext-tech'},h('summary',null,t('技术详情','Technical details')),h('code',null,state.errorCode+(state.errorHost?' · '+state.errorHost:'')+(state.errorDiagnostic?' · '+state.errorDiagnostic.systemCode+' · '+state.errorDiagnostic.syscall+' · '+state.errorDiagnostic.source+' → '+state.errorDiagnostic.target:''))))),
+  state.errorCode&&h('div',{className:'ui-alert warn',role:'alert'},Icon('alert',{size:16}),h('div',null,socialLoginErrorText(state.errorCode,en,state.errorHost??''),h('details',{className:'ext-tech'},h('summary',null,t('技术详情','Technical details')),h('code',null,state.errorCode+(state.errorHost?' · '+state.errorHost:'')+(state.errorDiagnostic?' · '+state.errorDiagnostic.systemCode+' · '+state.errorDiagnostic.syscall+' · '+state.errorDiagnostic.source+' → '+state.errorDiagnostic.target:'')),state.startErrorCode&&h('div',null,t('连接失败','Connection error'),' · ',h('code',null,state.startErrorCode)),state.cleanupErrorCode&&h('div',null,t('清理失败','Cleanup error'),' · ',h('code',null,state.cleanupErrorCode))))),
   login.error&&h('div',{role:'alert',className:'ext-err'},h('p',null,login.error),login.errorCode&&h('details',{className:'ext-tech'},h('summary',null,t('技术详情','Technical details')),h('code',null,login.errorCode))),
   qq&&component&&h('details',{className:'ext-tech'},h('summary',null,t('连接组件','Connection component')),h('code',null,`NapCat ${component.version} · ${(component.bytes/1e6).toFixed(1)} MB · Windows x64\n`+t('首次点击连接即从 NapCat 固定发行版下载。第三方连接组件，保留其 Limited Redistribution License。','First connection downloads the pinned NapCat release. This third-party component retains its Limited Redistribution License.')),h('a',{href:component.url,target:'_blank',rel:'noreferrer'},t('查看固定下载来源','View pinned download source'))));
 }

@@ -9,7 +9,7 @@ import {createManagedProcessSupervisor} from '../src/managed-process-supervisor.
 
 // Controlled OS inventory/Job Object transport contracts. The separate Windows
 // fixture verifies these behaviours with real owned processes and the pinned exe.
-async function fixture(t,{tamper,exitCode=0,replyDelay=0}={}){
+async function fixture(t,{tamper,exitCode=0,replyDelay=0,holdReceipt=false}={}){
   const directory=await mkdtemp(join(tmpdir(),'core14-guard-contract-')),guardPath=join(directory,'guard.bytes'),statePath=join(directory,'state.json');
   await writeFile(guardPath,'controlled guard image, not executable');
   const runtime=1000001,runA=1000002,runB=1000003;
@@ -24,7 +24,7 @@ async function fixture(t,{tamper,exitCode=0,replyDelay=0}={}){
       setTimeout(()=>{child.stdout.emit('data',Buffer.from(JSON.stringify({requestId:line.trim().slice(7),activeProcesses:child.active})+'\n'));callback?.();},replyDelay);
       return true;
     },end(){assert.equal(this.writableEnded,false,'guard pipe may only close once');this.writableEnded=true;child.ends++;
-      void delay(replyDelay).then(async()=>{remove(rootPid);child.active=0;const receipt={schemaVersion:1,guardId:args[5],ownerPid:Number(args[0]),ownerCreationTime:args[1],rootPid,rootCreationTime:args[3],activeProcesses:0};await writeFile(args[4],JSON.stringify(tamper?tamper(receipt):receipt));remove(child.pid);child.exitCode=exitCode;child.emit('exit',exitCode,null);});
+      void delay(replyDelay).then(async()=>{remove(rootPid);child.active=0;const receipt={schemaVersion:1,guardId:args[5],ownerPid:Number(args[0]),ownerCreationTime:args[1],rootPid,rootCreationTime:args[3],activeProcesses:0};child.writeReceipt=()=>writeFile(args[4],JSON.stringify(tamper?tamper(receipt):receipt));if(!holdReceipt)await child.writeReceipt();remove(child.pid);child.exitCode=exitCode;child.emit('exit',exitCode,null);});
     }});
     children.set(rootPid,child);
     queueMicrotask(()=>child.stdout.emit('data',Buffer.from(JSON.stringify({ready:true,ownerPid:process.pid,rootPid,killOnOwnerExit:true,breakawayAllowed:false})+'\n')));
@@ -87,6 +87,17 @@ test('guard failure and guard image drift retain uncertainty instead of acceptin
 test('runtime releaseRoot is idempotent with concurrent close and preserves exact durable identity',async t=>{
   const f=await fixture(t,{replyDelay:3});const values=await Promise.all([f.supervisor.releaseRoot({runtimeId:'native'}),f.supervisor.releaseRoot({runtimeId:'native'}),f.supervisor.close()]);
   assert.equal(values[0].stopped,true);assert.deepEqual(values[0],values[1]);assert.equal(f.children.get(f.runtime).ends,1);assert.equal(f.supervisor.snapshot().osGuards,0);
+});
+
+test('runtime release can recheck a temporarily unavailable receipt without closing the guard twice',async t=>{
+  const f=await fixture(t,{holdReceipt:true}),child=f.children.get(f.runtime);
+  const release=()=>f.supervisor.releaseRoot({runtimeId:'native'});
+  await assert.rejects(release,{code:'ENOENT'});
+  assert.throws(()=>f.supervisor.rootCustody({runtimeId:'native',pid:f.runtime,creationTime:'20'}),{code:'WORK_PROCESS_GUARD_UNAVAILABLE'});
+  await child.writeReceipt();
+  const proof=await release();
+  assert.equal(proof.stopped,true);assert.equal(proof.pid,f.runtime);
+  assert.deepEqual(await release(),proof);assert.equal(child.ends,1);
 });
 
 test('successful new-born admission invalidates only that runtime prior release receipt',async t=>{

@@ -24,3 +24,17 @@ for(const language of ['zh-CN','en'])for(const platform of ['bilibili','qq'])tes
 for(const language of ['zh-CN','en'])test(`the Bilibili account card agrees with login guidance in ${language}`,()=>{
  setLocale(language);try{const html=renderToStaticMarkup(React.createElement(SocialAccounts,{api:{action:async()=>{throw Error('SSR must not call the host');}}}));assert.doesNotMatch(html,/只看视频不需要账号|Watching needs no account/);assert.match(html,language==='en'?/official Bilibili login window/:/B站官方登录窗口/);assert.match(html,language==='en'?/separate permission/:/单独授权/);}finally{setLocale('zh-CN');}
 });
+
+test('QQ cleanup failure shows both diagnostic codes and keeps rescan available',()=>{
+ const state={phase:'failed',errorCode:'SOCIAL_LOGIN_STOP_PENDING',startErrorCode:'QQ_COMPONENT_START_TIMEOUT',cleanupErrorCode:'EBUSY'};
+ const login={stateOf:()=>state,busy:false,act:async()=>{}};
+ const render=()=>renderToStaticMarkup(React.createElement(SocialLoginDialog,{platform:'qq',login,autoStart:false,onClose(){}}));
+ for(const language of ['zh-CN','en']){
+  setLocale(language);
+  try{
+   const html=render();
+   assert.match(html,/<details[^>]*>.*<code>SOCIAL_LOGIN_STOP_PENDING<\/code>.*<code>QQ_COMPONENT_START_TIMEOUT<\/code>.*<code>EBUSY<\/code>/);
+   assert.match(html,language==='en'?/Scan again/:/重新扫码/);
+  }finally{setLocale('zh-CN');}
+ }
+});

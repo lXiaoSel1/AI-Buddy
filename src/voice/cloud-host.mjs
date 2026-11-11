@@ -150,9 +150,9 @@ export function createCloudVoiceGateway({settings,profiles,credentials,cloud,get
           await checkCurrent();
           const items=currentStatus.items.map(row=>{
             const attempted=result.items?.find(item=>item.characterId===row.characterId);
-            // Retain attempt errors that occurred before a receipt existed, but
-            // don't let a completed attempt hide another unfinished profile.
-            if(attempted&&(attempted.status===row.status||!cloudVoiceReady(attempted.status)&&['not-prepared','pending'].includes(row.status)))return attempted;
+            // An explicit refusal can occur before a new receipt is written.
+            // Preserve it even when the previous clone is awaiting activation.
+            if(attempted&&(attempted.outcome==='rejected'||attempted.status===row.status||!cloudVoiceReady(attempted.status)&&['not-prepared','pending'].includes(row.status)))return attempted;
             return row;
           });
           batchState={...includeCharacters({...result,items},captured),plan,actions:plan.actions,running:false};
