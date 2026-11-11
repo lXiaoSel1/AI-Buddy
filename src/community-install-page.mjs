@@ -32,14 +32,14 @@ function Engines({engines}){
  return h('div',{className:'ext-col','data-work-engines':true},...rows.map(row=>h('div',{key:row.engine,className:'ext-ieng'},h('span',{className:'ext-logo',style:{'--pl':'28px'},'aria-hidden':true},Icon(row.engine==='kimi'?'bolt':'terminal',{size:14})),h('span',{className:'ext-ir-main'},h('b',null,row.name),row.sub&&h('small',{className:'ext-cap'},row.sub)),h(StatusPill,{tone:row.tone},row.label))));
 }
 const NEXT={'@ai-buddy/bilibili-companion':['下一步连接 B站账号。连好后，观看和发评论在插件设置里分别打开。','启用并连接 B站账号','link'],'@ai-buddy/qq-connect':['下一步扫码登录 QQ，再选一位替你回复的角色。第一次扫码会下载 QQ 登录组件。','启用并扫码登录','qr'],'@ai-buddy/work-collaboration':[null,'启用并打开工作窗口','external']};
-export function InstallPage({work,source,official:officialSource,plan,planError,requestedVersion,granted,onGrant,keepsEnabled,stage,runtime,job,record,busy,engines,catalogOnline=false,onBack,onInstall,onCancelPlan,onEnable,onOpen,onNext,onRetry,onImport,onAddCatalog}){
+export function InstallPage({work,source,official:officialSource,plan,planError,requestedVersion,granted,onGrant,keepsEnabled,stage,runtime,job,record,busy,engines,catalogOnline=false,storageNotice,onBack,onInstall,onCancelPlan,onEnable,onOpen,onNext,onRetry,onImport,onAddCatalog}){
  // Review 低-4: the official texts only for the official source (by source and name), or on the A3 page that has no plan yet.
  const packageName=plan?.packageRef?.packageName??work?.packageName??'',official=officialSource??!!source?.official,profile=official||stage==='unavailable'?officialProfile(packageName):null,text=workText(work??{packageName},{official:!!profile});
  const declared=plan?.declaredCapabilities??[],added=new Set(plan?.addedCapabilities??[]),locked=!['plan','unavailable'].includes(stage),upgrade=plan?.priorDataSchemaVersion!=null;
  const shown=locked&&record?.grantedCapabilities?record.grantedCapabilities:granted;
  const n=shown.filter(id=>declared.includes(id)).length;
  const order=['plan','runtime','installing','installed'],at=Math.max(1,order.indexOf(stage)+1);
- const voice=isVoiceEnginePackage(packageName),steps=voice?[t('核对来源'),t('校验共享依赖'),t('安装'),t('启用')]:[t('勾选权限'),t('准备运行组件'),t('安装'),profile?profile.next:t('启用')];
+ const voice=isVoiceEnginePackage(packageName),steps=voice?[t('核对来源'),t('校验共享依赖'),t('安装'),t('启用')]:[t('勾选权限'),t('准备运行组件'),t('安装'),profile&&!storageNotice?profile.next:t('启用')];
  const stepper=h('ol',{className:'ext-isteps'},...steps.map((label,i)=>h('li',{key:i,className:i+1<at||stage==='installed'&&i<3?'done':i+1===at||stage==='installed'&&i===3?'cur':''},h('span',null,i+1<at||stage==='installed'&&i<3?Icon('check',{size:12}):i+1),h('b',null,label),i===1&&h('small',null,t('只在第一次')))));
  const installedVersion=record?.packageRef?.exactVersion??record?.exactVersion??record?.current??record?.version;
  const plannedVersion=plan?.packageRef?.exactVersion??plan?.packages?.find(row=>row.manifest?.id===packageName)?.manifest.version;
@@ -72,11 +72,12 @@ export function InstallPage({work,source,official:officialSource,plan,planError,
  else if(stage==='runtime')state=runtime;
  else if(stage==='installing'){const failed=['failed','needs-user','interrupted-needs-user'].includes(job?.state);state=failed?h('div',{className:'ext-col'},h('div',{className:'ui-alert warn',role:'status'},Icon('alert',{size:16}),h('div',null,h('b',null,job.state==='failed'?t('安装没有完成'):t('需要你再确认一次')),job.error&&h('p',null,job.error.text??job.error.message))),h('button',{type:'button',className:'ui-btn',disabled:busy,onClick:onRetry},Icon('refresh',{size:16}),t('重新查看安装计划'))):
   h('div',{className:'ext-col',role:'status','aria-live':'polite'},h('div',{className:'ext-row'},h('span',{className:'ui-spinner','aria-hidden':true}),h('b',null,job?.state==='queued'?t('已排队'):t('正在安装插件…'))),h('p',{className:'ext-cap'},job?.state==='queued'?t('工作繁忙时会排队，忙完后自动继续。'):t('装好后会显示在「已安装」里。')));}
- else{const next=NEXT[packageName],enabled=!!record?.enabled;state=h('div',{className:'ext-col','data-install-next':packageName},h('div',{className:'ui-alert ext-okalert',role:'status'},Icon('check',{size:16}),h('div',null,h('b',null,enabled?t('已安装，已启用'):t('已安装，还没启用')))),
+ else{const next=storageNotice?null:NEXT[packageName],enabled=!!record?.enabled;state=h('div',{className:'ext-col','data-install-next':packageName},h('div',{className:'ui-alert ext-okalert',role:'status'},Icon('check',{size:16}),h('div',null,h('b',null,enabled?t('已安装，已启用'):t('已安装，还没启用')))),
+  storageNotice&&h('p',{className:'ext-cap',role:'status'},storageNotice),
   profile&&next?.[0]&&h('p',{className:'ext-cap'},t(next[0])),
   profile?.nextAction==='work'&&h(React.Fragment,null,h('b',{className:'ext-sm'},t('选一个工作引擎')),h(Engines,{engines})),
   h('div',{className:'ws-row-btns'},enabled?h('button',{type:'button',className:'ui-btn primary',disabled:busy,onClick:onOpen},Icon('external',{size:16}),t(voice?'语音设置':'打开')):h('button',{type:'button',className:'ui-btn primary',disabled:busy,onClick:onEnable},profile&&next?h(React.Fragment,null,Icon(next[2],{size:16}),t(next[1])):t('启用')),
-   !enabled&&h('button',{type:'button',className:'ui-btn ghost',onClick:onBack},t('稍后')),enabled&&profile?.nextAction==='accounts'&&h('button',{type:'button',className:'ui-btn ghost',onClick:onNext},profile.next)));}
+   !enabled&&h('button',{type:'button',className:'ui-btn ghost',onClick:onBack},t('稍后')),enabled&&!storageNotice&&profile?.nextAction==='accounts'&&h('button',{type:'button',className:'ui-btn ghost',onClick:onNext},profile.next)));}
  const side=h('aside',{className:'ws-card ext-card ext-iside'},h('h3',{className:'ws-sec'},t('安装')),stepper,h('hr',{className:'ext-hr'}),state,profile&&h(React.Fragment,null,h('hr',{className:'ext-hr'}),h('div',{className:'ext-ineed'},h('b',null,t('还需要')),...profile.need.map((row,i)=>h('div',{key:i,className:'ext-row top'},h('span',{className:'ext-cap-ic'},Icon(row.icon,{size:16})),h('span',null,h('b',null,row.text),h('small',null,row.sub)))))));
  return h('div',{className:'ext-ipage','data-community-install-page':packageName,'data-install-stage':stage},head,h('div',{className:'ext-ibody'},
   h('div',{className:'ext-col'},profile&&h('section',{className:'ws-card ext-card'},h('h3',{className:'ws-sec'},t('装好以后')),list(profile.does)),perms,profile&&h('section',{className:'ws-card ext-card'},h('h3',{className:'ws-sec'},t('以后还会单独问你')),list(profile.later)),tech),side));

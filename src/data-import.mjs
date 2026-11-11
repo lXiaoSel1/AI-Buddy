@@ -6,12 +6,13 @@ import {pipeline} from 'node:stream/promises';
 import {Transform} from 'node:stream';
 import {createInterface} from 'node:readline';
 import {spawn} from 'node:child_process';
-import {createSnapshotStorage} from './storage.mjs';
+import {createSnapshotStorage,hasSnapshotHistory,isSnapshotCommit} from './storage.mjs';
 import {writeAtomic} from './atomic-write.mjs';
 import {registeredDataPath,normalizedPipe} from './installation-record.mjs';
 import {requestLocalControl} from './local-control.mjs';
 import {deferredSaves} from './deferred-saves.mjs';
 
+const companionArchive='galgame/companion.json',globalArchive='galgame/storages/dsh-whale-galgame/global.json';
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const json=p=>JSON.parse(readFileSync(p,'utf8'));
 const excluded=new Set(['chromium','crash-reports']);
@@ -44,20 +45,53 @@ export async function importInventory(root,{signal,onFile=()=>{}}={}){
  return {files,exclusions,bytes:files.reduce((n,f)=>n+f.bytes,0),sha256:fileIndexSha(files)};
 }
 
+const recoveryRequired=path=>Object.assign(Error('没有可验证的有效存档提交：'+path),{code:'SNAPSHOT_RECOVERY_REQUIRED'});
+async function lstatIfPresent(path){
+ try{return await lstat(path);}catch(error){if(error.code==='ENOENT')return null;throw error;}
+}
+async function inspectLegacy(path,root,protectExisting){
+ if(protectExisting){
+  const directory=await lstatIfPresent(root);
+  if(directory&&(!directory.isDirectory()||hasSnapshotHistory(await readdir(root))))throw recoveryRequired(path);
+ }
+ if(!protectExisting&&!existsSync(path))return null;
+ const info=protectExisting?await lstatIfPresent(path):await lstat(path);
+ if(!info)return null;
+ if(!info.isFile())throw Error('存档记录不可读取：'+path);
+ return JSON.parse(await readFile(path,'utf8'));
+}
+
 // Inspection never opens a game. Registered current stores are flushed first;
 // an unregistered offline source remains read-only and does not run retention.
-export async function inspectSnapshot(path){
+export async function inspectSnapshot(path,{protectExisting=false}={}){
  await deferredSaves.beforeRead(path);
- const journal=path+'.snapshots/commits.jsonl';
- if(!existsSync(journal)){if(!existsSync(path))return null;const s=await lstat(path);if(s.isSymbolicLink()||!s.isFile())throw Error('存档记录不可读取：'+path);return JSON.parse(await readFile(path,'utf8'));}
+ const root=path+'.snapshots',journal=join(root,'commits.jsonl');
+ const journalInfo=protectExisting?await lstatIfPresent(journal):null;
+ if(protectExisting?!journalInfo:!existsSync(journal))return inspectLegacy(path,root,protectExisting);
+ if(protectExisting&&!journalInfo.isFile())throw recoveryRequired(path);
  for(const limit of [64,1024,16384]){
   const candidates=[];const lines=createInterface({input:createReadStream(journal),crlfDelay:Infinity});
-  for await(const line of lines){try{const row=JSON.parse(line);if(typeof row.file==='string'&&basename(row.file)===row.file&&/^[a-f0-9]{64}$/i.test(row.sha256)){candidates.push(row);if(candidates.length>limit)candidates.shift();}}catch{}}
+  for await(const line of lines){
+   let row;
+   try{row=JSON.parse(line);}catch{continue;}
+   const valid=protectExisting?isSnapshotCommit(row):typeof row?.file==='string'&&basename(row.file)===row.file&&typeof row.sha256==='string'&&/^[a-f0-9]{64}$/i.test(row.sha256);
+   if(valid){candidates.push(row);if(candidates.length>limit)candidates.shift();}
+  }
   for(const row of candidates.reverse()){
-   const file=join(dirname(journal),row.file);try{const s=await lstat(file);if(s.isSymbolicLink()||!s.isFile())continue;if(await fileSha(file)!==row.sha256.toLowerCase())continue;return JSON.parse(await readFile(file,'utf8'));}catch{}
+   const file=join(root,row.file);
+   try{
+    const info=await lstat(file);
+    if(!info.isFile()){
+     if(protectExisting)throw recoveryRequired(path);
+     continue;
+    }
+    if(await fileSha(file)!==row.sha256.toLowerCase())continue;
+    return JSON.parse(await readFile(file,'utf8'));
+   }catch(error){if(protectExisting&&error.code!=='ENOENT')throw error;}
   }
   if(candidates.length<limit)break;
  }
+ if(protectExisting)throw recoveryRequired(path);
  throw Error('没有可验证的有效存档提交：'+path);
 }
 
@@ -66,8 +100,8 @@ export async function hasBusinessData(dataRoot){
  return (await readdir(dataRoot)).some(name=>!excluded.has(name)&&!temporary.has(name)&&name!==IMPORT_GUARD&&name!=='captures');
 }
 export async function importSummary(dataRoot,files){
- const companion=await inspectSnapshot(join(dataRoot,'galgame/companion.json'));
- const global=await inspectSnapshot(join(dataRoot,'galgame/storages/dsh-whale-galgame/global.json'));
+ const companion=await inspectSnapshot(join(dataRoot,companionArchive),{protectExisting:true});
+ const global=await inspectSnapshot(join(dataRoot,globalArchive),{protectExisting:true});
  const models=await inspectSnapshot(join(dataRoot,'model-connections.json'));
  const cgs=await inspectSnapshot(join(dataRoot,'cg-jobs.json'));
  if(!companion&&!global&&!models&&!files.some(f=>/^(settings\.json|.*\.sqlite(?:3)?$|api-usage\.jsonl$)/.test(f.path)))throw Error('所选目录没有可识别的 AI 酱存档，请选择旧程序或实际存档目录');
@@ -96,13 +130,14 @@ async function sourceStopped(source,query=requestLocalControl){
 }
 
 export async function pauseImportedWork(dataRoot,{planId,sourceIdentity,now=Date.now()}={}){
+ const companionPath=join(dataRoot,companionArchive),companion=await inspectSnapshot(companionPath,{protectExisting:true});
  const original=await inspectSnapshot(join(dataRoot,'cg-jobs.json'));let pausedCgs=0;
  if(original){const jobs=structuredClone(original);for(const job of jobs.jobs??[])if(['queued','planning','generating'].includes(job.status)){job.pausedFrom=job.status;job.status='paused';job.pauseReason='import';job.pausedAt=now;pausedCgs++;}
   if(pausedCgs)await createSnapshotStorage(join(dataRoot,'cg-jobs.json'),{retention:false}).writeText(JSON.stringify(jobs));}
- const companion=await inspectSnapshot(join(dataRoot,'galgame/companion.json'));let interruptedRequests=0;
+ let interruptedRequests=0;
  if(companion){const next=structuredClone(companion);for(const conversation of Object.values(next.conversations??{}))for(const message of conversation.messages??[])if(message.presentation==='pending'||['pending','pending-presentation','generating','draft'].includes(message.status)){message.status='interrupted';if(message.presentation==='pending')message.presentation='discarded';message.interruptedByImport=planId;interruptedRequests++;}
   for(const group of Object.values(next.groups??{}))if(group.pending&&!group.pending.settlement){group.importedPending=group.pending;group.pending=null;interruptedRequests++;}
-  if(interruptedRequests)await createSnapshotStorage(join(dataRoot,'galgame/companion.json'),{retention:false}).writeText(JSON.stringify(next));}
+  if(interruptedRequests)await createSnapshotStorage(companionPath,{retention:false,protectExisting:true}).writeText(JSON.stringify(next));}
  writeAtomic(join(dataRoot,IMPORT_GUARD),JSON.stringify({version:1,active:true,planId,sourceIdentity,pausedCgs,interruptedRequests,at:now}));
  return {pausedCgs,interruptedRequests};
 }

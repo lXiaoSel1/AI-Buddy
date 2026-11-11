@@ -1,5 +1,8 @@
 import {networkErrorMessage} from './network-errors.mjs';
+import {SOCIAL_STORAGE_UNAVAILABLE} from './buddy-plugin-services/social-contract.mjs';
+export {SOCIAL_STORAGE_UNAVAILABLE};
 const messages={
+ [SOCIAL_STORAGE_UNAVAILABLE]:['暂时无法读取社交账号。资料已保留，请检查数据目录能否访问，再重启 AI 酱。','Social accounts cannot be read. Your data is preserved. Check that the data folder is accessible, then restart AI Buddy.'],
  SOCIAL_LOGIN_RETRY_STALE:['原下载失败记录已变化，请重新连接。','The original failed download changed. Start a new connection.'],
  SOCIAL_LOGIN_EXPIRED:['登录已过期，请重新扫码。','Login expired. Scan again.'],
  SOCIAL_LOGIN_IDENTITY_MISMATCH:['账号核对不一致，请取消后选择正确账号重新扫码。','Account identities do not match. Cancel and scan with the intended account.'],

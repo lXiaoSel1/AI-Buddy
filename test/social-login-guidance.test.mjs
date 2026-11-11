@@ -38,3 +38,23 @@ test('QQ cleanup failure shows both diagnostic codes and keeps rescan available'
   }finally{setLocale('zh-CN');}
  }
 });
+
+test('unreadable account storage shows a restart message and safe details without login or setup controls',()=>{
+ const socialStorage={state:'unavailable',code:'SOCIAL_STORAGE_UNAVAILABLE',database:'social-core/accounts-v1.sqlite',stage:'user-version',diagnostic:{code:'ERR_SQLITE_ERROR',sqliteCode:266,message:'C:/private/credential-sentinel'}};
+ const login={stateOf:()=>({phase:'not-connected'}),snapshot:{states:[],socialStorage},act:async()=>{}};
+ for(const language of ['zh-CN','en']){
+  setLocale(language);
+  try{
+   const modal=renderToStaticMarkup(React.createElement(SocialLoginDialog,{platform:'qq',login,onClose(){}}));
+   const accounts=renderToStaticMarkup(React.createElement(SocialAccounts,{api:{},socialStorage}));
+   for(const html of [modal,accounts]){
+    assert.match(html,language==='en'?/restart AI Buddy/i:/重启 AI 酱/);
+    assert.match(html,/social-core\/accounts-v1\.sqlite/);
+    assert.match(html,/user-version/);
+    assert.match(html,/266/);
+    assert.match(html,language==='en'?/Copy diagnostic/:/复制诊断/);
+    assert.doesNotMatch(html,/credential-sentinel|扫码连接|开始连接|未连接|新增连接|Not connected|New connection|>Start</);
+   }
+  }finally{setLocale('zh-CN');}
+ }
+});

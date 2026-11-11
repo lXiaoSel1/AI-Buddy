@@ -3,7 +3,8 @@ import {locale} from './i18n.mjs';
 import {Icon} from './ui-icons.mjs';
 import {Dialog} from './ui-dialog.mjs';
 import {pluginResult} from './plugin-center-helpers.mjs';
-import {socialLoginErrorText} from './social-login-errors.mjs';
+import {SOCIAL_STORAGE_UNAVAILABLE,socialLoginErrorText} from './social-login-errors.mjs';
+import {SOCIAL_ACCOUNTS_DATABASE} from './buddy-plugin-services/social-contract.mjs';
 const h=React.createElement;
 const stages={
  'not-connected':['未连接','Not connected'],preparing:['正在准备连接…','Preparing connection…'],
@@ -25,6 +26,28 @@ export function qrExpiryText(seconds,en=locale()==='en'){
  const m=Math.floor(seconds/60),s=seconds%60;
  return en?`Expires in ${m}:${String(s).padStart(2,'0')}`:(m?`${m} 分 ${s} 秒后过期`:`${s} 秒后过期`);
 }
+
+export function SocialStorageNotice({storage}){
+ const en=locale()==='en';
+ const [copied,setCopied]=useState(false),details=useRef(null);
+ const token=value=>typeof value==='string'&&/^[a-z0-9_-]{1,80}$/i.test(value)?value:null;
+ const diagnostic=storage?.diagnostic;
+ const summary=[SOCIAL_STORAGE_UNAVAILABLE,SOCIAL_ACCOUNTS_DATABASE,token(storage?.stage),token(diagnostic?.code),Number.isSafeInteger(diagnostic?.sqliteCode)?diagnostic.sqliteCode:null].filter(value=>value!=null).join('\n');
+ async function copy(){
+  try{await navigator.clipboard.writeText(summary);setCopied(true);}
+  catch{
+   const selection=globalThis.getSelection?.();
+   if(!selection||!details.current)return;
+   const range=details.current.ownerDocument.createRange();
+   range.selectNodeContents(details.current);selection.removeAllRanges();selection.addRange(range);
+  }
+ }
+ return h('div',{className:'ui-alert warn',role:'alert','data-social-storage-unavailable':true},Icon('alert',{size:16}),
+  h('div',null,h('p',null,socialLoginErrorText(SOCIAL_STORAGE_UNAVAILABLE,en)),
+   h('details',{className:'ext-tech'},h('summary',null,en?'Technical details':'技术详情'),h('pre',{ref:details},summary),
+    h('button',{type:'button',className:'ui-btn sm',onClick:()=>void copy()},en?'Copy diagnostic':'复制诊断'),
+    copied&&h('span',{role:'status'},en?'Copied':'已复制'))));
+}
 /** Polls the login state of both platforms (unchanged cadence: every 1.5 s while the page is open). */
 export function useSocialLogin(api,onAccountsChanged=()=>{}){
  const en=locale()==='en',t=(a,b)=>en?b:a;
@@ -32,15 +55,18 @@ export function useSocialLogin(api,onAccountsChanged=()=>{}){
  const alive=useRef(false),actions=useRef(0),actionSequence=useRef(0),seenRequest=useRef(null),seenConnected=useRef(new Set()),changed=useRef(onAccountsChanged);changed.current=onAccountsChanged;
  const call=async request=>pluginResult(await api.action(request));
  useEffect(()=>{
-  alive.current=true;let timer,pending=false;
-  const update=async()=>{if(pending||!alive.current)return;pending=true;try{const value=await call({action:'social-login-status'});if(!alive.current)return;setSnapshot(value);
+  alive.current=true;let timer,pending=false,live=true,unavailable=false;
+  const update=async()=>{if(pending||!live)return;pending=true;try{const value=await call({action:'social-login-status'});if(!live)return;setSnapshot(value);
+   unavailable=value.socialStorage?.state==='unavailable';
+   if(unavailable){setRequested(null);return;}
    if(value.requestId&&seenRequest.current!==value.requestId){seenRequest.current=value.requestId;setRequested(value.requestedPlatform);}
    for(const row of value.states)if(row.phase==='connected'&&!seenConnected.current.has(row.attemptId)){seenConnected.current.add(row.attemptId);changed.current();}
-  }catch{if(alive.current)setError(t('无法读取登录状态，请重新打开连接页。','Unable to read login status. Reopen this page.'));}finally{pending=false;if(alive.current)timer=setTimeout(update,1500);}};
-  void update();return()=>{alive.current=false;clearTimeout(timer);};
+  }catch{if(live)setError(t('无法读取登录状态，请重新打开连接页。','Unable to read login status. Reopen this page.'));}finally{pending=false;if(live&&!unavailable)timer=setTimeout(update,1500);}};
+  void update();return()=>{live=false;alive.current=false;clearTimeout(timer);};
  },[api]);
  // the error code stays out of the sentence; the dialog shows it under 技术详情
  async function act(action,platform,payload={}){
+  if(snapshot?.socialStorage?.state==='unavailable')return;
   // Closing a rescan can revoke its restart before the start IPC returns.
   if(actions.current&&action!=='social-login-cancel')return;
   actions.current++;
@@ -57,14 +83,17 @@ export function useSocialLogin(api,onAccountsChanged=()=>{}){
 /** Scan-to-connect as a four-step modal (approved design B7). Closing while a login is running cancels it. */
 export function SocialLoginDialog({platform,login,onClose,onOpenPlugin,autoStart=true}){
  const en=locale()==='en',t=(a,b)=>en?b:a;
+ const storage=login.snapshot?.socialStorage,unavailable=storage?.state==='unavailable';
  const state=login.stateOf(platform),active=ACTIVE_LOGIN.includes(state.phase),qq=platform==='qq',component=login.component;
  // B7: one click on 「扫码连接」 is enough; the dialog starts the scan as soon as it knows nothing is running yet
  const started=useRef(false);
- useEffect(()=>{if(!autoStart||started.current||!login.snapshot)return;started.current=true;const current=login.stateOf(platform);if(loginAutoStarts(current.phase)&&!(platform==='qq'&&current.phase==='failed'))void login.act('social-login-start',platform);},[login.snapshot]);
+ useEffect(()=>{if(!autoStart||started.current||!login.snapshot||unavailable)return;started.current=true;const current=login.stateOf(platform);if(loginAutoStarts(current.phase)&&!(platform==='qq'&&current.phase==='failed'))void login.act('social-login-start',platform);},[login.snapshot]);
  // QR expiry countdown, from when this code appeared
  const [qrSince,setQrSince]=useState(()=>state.qr?Date.now():null),[clock,setClock]=useState(()=>Date.now());
  useEffect(()=>{setQrSince(state.qr?Date.now():null);},[state.qr]);
  useEffect(()=>{if(!qrSince)return;const timer=setInterval(()=>setClock(Date.now()),1000);return()=>clearInterval(timer);},[qrSince]);
+ if(unavailable)return h(Dialog,{title:t('社交账号暂不可用','Social accounts unavailable'),onClose,'data-social-login':platform},h(SocialStorageNotice,{storage}));
+ if(login.snapshot===null)return h(Dialog,{title:t('正在读取账号状态','Reading account status'),onClose,'data-social-login':platform},h('p',{role:'status'},login.error||t('正在读取账号状态…','Reading account status…')));
  const left=state.phase==='waiting-qr'&&state.qr?qrSecondsLeft(qrSince,Math.max(clock,qrSince??0)):null;
  const at={preparing:0,'waiting-qr':1,'waiting-confirmation':2,verifying:2,connected:3}[state.phase]??-1;
  const steps=[qq?t('准备连接组件','Prepare'):t('打开登录窗口','Open login'),t('手机扫码','Scan'),t('手机上确认','Confirm'),t('完成','Done')];

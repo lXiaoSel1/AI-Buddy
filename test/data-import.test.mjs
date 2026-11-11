@@ -77,6 +77,50 @@ test('tampered copied bytes fail the independent final index check',async()=>{
 test('an invalid snapshot hash is rejected at preview without writing a repaired source snapshot',async()=>{
  const f=await fixture();try{const folder=join(f.source,'galgame/storages/dsh-whale-galgame/global.json.snapshots'),file=readdirSync(folder).find(s=>s.endsWith('.json'));writeFileSync(join(folder,file),'{}');const before=await importInventory(f.source);await assert.rejects(()=>f.prepare(),/可验证|有效存档/);assert.equal((await importInventory(f.source)).sha256,before.sha256);assert.equal(f.commits.length,0);}finally{f.close();}
 });
+test('preview rejects companion and global snapshot history whose journal is missing',async t=>{
+ for(const archive of ['galgame/companion.json','galgame/storages/dsh-whale-galgame/global.json']){
+  await t.test(archive,async()=>{
+   const f=await fixture();try{
+    const path=join(f.source,archive),journal=join(path+'.snapshots','commits.jsonl');
+    renameSync(journal,join(f.base,'held-journal'));
+    if(archive.endsWith('companion.json'))write(path,JSON.stringify({schema:2,cards:{stale:{name:'旧副本'}}}));
+    const before=await importInventory(f.source);
+    await assert.rejects(()=>f.prepare(),{code:'SNAPSHOT_RECOVERY_REQUIRED'});
+    assert.equal(f.service.state().phase,'failed');
+    assert.equal((await importInventory(f.source)).sha256,before.sha256);
+    assert.equal(f.commits.length,0);
+   }finally{f.close();}
+  });
+ }
+});
+
+test('preview uses an older verified companion commit only if the newer payload is missing or fails checksum',async()=>{
+ const f=await fixture();try{
+  const path=join(f.source,'galgame/companion.json'),newer=await snapshot(path,{schema:2,personas:{new:{name:'新副本'}}});
+  const payload=join(path+'.snapshots',newer.version),held=join(f.base,'held-payload');
+  renameSync(payload,held);
+  assert.equal((await f.prepare()).summary.personas,2);
+  writeFileSync(payload,'checksum mismatch');
+  assert.equal((await f.prepare()).summary.personas,2);
+  renameSync(payload,join(f.base,'mismatched-payload'));
+  mkdirSync(payload);
+  await assert.rejects(()=>f.prepare(),{code:'SNAPSHOT_RECOVERY_REQUIRED'});
+  assert.equal(f.commits.length,0);
+ }finally{f.close();}
+});
+
+test('normalization preserves imported files when companion history has no journal',async()=>{
+ const f=await fixture();try{
+  const path=join(f.source,'galgame/companion.json');
+  renameSync(join(path+'.snapshots','commits.jsonl'),join(f.base,'held-journal'));
+  write(path,JSON.stringify({schema:2,conversations:{stale:{messages:[{status:'pending',text:'旧副本'}]}}}));
+  const before=await importInventory(f.source);
+  await assert.rejects(()=>pauseImportedWork(f.source,{planId:'fixture-plan'}),{code:'SNAPSHOT_RECOVERY_REQUIRED'});
+  assert.equal((await importInventory(f.source)).sha256,before.sha256);
+  assert.equal(existsSync(join(f.source,IMPORT_GUARD)),false);
+ }finally{f.close();}
+});
+
 test('imported jobs and unfinished requests pause without losing submitted/remote evidence or presented history',async()=>{
  const f=await fixture();try{const result=await pauseImportedWork(f.source,{planId:'fixture-plan',sourceIdentity:'source-identity',now:555});assert.equal(result.pausedCgs,4);assert.equal(result.interruptedRequests,2);const jobs=(await inspectSnapshot(join(f.source,'cg-jobs.json'))).jobs;for(const j of jobs.filter(j=>j.id!=='ready')){assert.equal(j.status,'paused');assert.equal(j.pauseReason,'import');assert.equal(j.pausedAt,555);}assert.equal(jobs.find(j=>j.id==='remote').remoteTask.id,'preserve-task');assert.equal(jobs.find(j=>j.id==='uncertain').submittedAt,456);assert.equal(jobs.find(j=>j.id==='uncertain').prompt,'原提示C');assert.equal(jobs.find(j=>j.id==='ready').status,'ready');
   const c=await inspectSnapshot(join(f.source,'galgame/companion.json'));assert.equal(c.conversations.a.messages[0].status,'presented');assert.equal(c.conversations.a.messages[0].text,'身份A的完整原文');assert.equal(c.conversations.a.messages[1].status,'interrupted');assert.equal(c.groups.g.pending,null);assert.equal(c.groups.g.importedPending.id,'pending-group');assert.equal(c.lives.deepseek.personality.version,3);assert.equal(c.lives.deepseek.relationships.b.affection,8);const guard=JSON.parse(readFileSync(join(f.source,IMPORT_GUARD),'utf8'));assert.equal(guard.active,true);assert.equal(guard.planId,'fixture-plan');

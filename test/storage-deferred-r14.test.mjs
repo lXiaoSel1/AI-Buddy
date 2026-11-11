@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync,writeFileSync,readFileSync,utimesSync,existsSync,copyFileSync} from 'node:fs';
+import {mkdtempSync,rmSync,writeFileSync,readFileSync,utimesSync,existsSync,copyFileSync,mkdirSync,renameSync,rmdirSync} from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import {syncBuiltinESMExports} from 'node:module';
 import {join} from 'node:path';
@@ -8,6 +8,67 @@ import {tmpdir} from 'node:os';
 import {createSnapshotStorage,parseCommits,retentionState} from '../src/storage.mjs';
 
 const fresh=t=>{const dir=mkdtempSync(join(tmpdir(),'storage-r14-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));return join(dir,'state.json');};
+
+test('a journal I/O failure can be retried on the same snapshot storage instance',async t=>{
+ const path=fresh(t),journal=join(path+'.snapshots','commits.jsonl');
+ await createSnapshotStorage(path).writeText('original content');
+ const held=journal+'.held';renameSync(journal,held);mkdirSync(journal);
+ const storage=createSnapshotStorage(path);
+ await assert.rejects(storage.readText(),{code:'EISDIR'});
+ rmdirSync(journal);renameSync(held,journal);
+ assert.equal(await storage.readText(),'original content');
+});
+
+test('protected saves recover an older verified commit and report it without rewriting the journal',async t=>{
+ const path=fresh(t),directory=path+'.snapshots',journal=join(directory,'commits.jsonl'),seed=createSnapshotStorage(path);
+ const older=await seed.writeText('verified older state');
+ const newer=await seed.writeText('newer state');
+ const before=readFileSync(journal),expected=parseCommits(before.toString()).commits[0];
+ writeFileSync(join(directory,newer.version),'checksum mismatch');
+ const events=[],store=createSnapshotStorage(path,{protectExisting:true,onAudit:event=>events.push(event)});
+ assert.equal((await store.stat()).version,older.version);
+ assert.equal(await store.readText(),'verified older state');
+ assert.deepEqual(events,[{type:'snapshot-fallback',target:path,skipped:1,version:older.version,recoveredAt:expected.timestamp}]);
+ assert.deepEqual(readFileSync(journal),before);
+});
+
+test('protected saves do not mistake an unreadable newest payload for a missing one',async t=>{
+ const path=fresh(t),directory=path+'.snapshots',seed=createSnapshotStorage(path);
+ await seed.writeText('verified older state');
+ const newer=await seed.writeText('newer state');
+ const newest=join(directory,newer.version),held=newest+'.held';renameSync(newest,held);mkdirSync(newest);
+ const storage=createSnapshotStorage(path,{protectExisting:true,deferWrites:true});
+ await assert.rejects(storage.writeText('would overwrite a protected save'),{code:'EISDIR'});
+ rmdirSync(newest);renameSync(held,newest);
+ assert.equal(await storage.readText(),'newer state');
+ assert.equal((await storage.flush()).operation,'unchanged');
+});
+
+test('a torn snapshot journal does not let a protected save start over or use stale bare JSON',async t=>{
+ const path=fresh(t),directory=path+'.snapshots',journal=join(directory,'commits.jsonl');
+ const stale='{"generation":1}',torn='\n{"file":';
+ writeFileSync(path,stale);mkdirSync(directory);writeFileSync(journal,torn);
+ const store=createSnapshotStorage(path,{protectExisting:true,deferWrites:true});
+ await assert.rejects(store.stat(),{code:'SNAPSHOT_RECOVERY_REQUIRED',reason:'no-valid-commit'});
+ await assert.rejects(store.writeText('{"generation":0}'),{code:'SNAPSHOT_RECOVERY_REQUIRED'});
+ assert.throws(()=>store.flushSync(),{code:'SNAPSHOT_RECOVERY_REQUIRED'});
+ assert.equal(readFileSync(path,'utf8'),stale);
+ assert.equal(readFileSync(journal,'utf8'),torn);
+});
+
+test('a staged default save cannot replace history that appears before the first flush',async t=>{
+ const path=fresh(t),journal=join(path+'.snapshots','commits.jsonl');
+ const writer=createSnapshotStorage(path,{protectExisting:true,deferWrites:true});
+ assert.equal(await writer.stat(),undefined);
+ await writer.writeText('staged default');
+ await createSnapshotStorage(path).writeText('reappeared history');
+ const before=readFileSync(journal);
+ await assert.rejects(writer.flush(),{code:'SNAPSHOT_RECOVERY_REQUIRED',reason:'existing-save-appeared'});
+ assert.throws(()=>writer.flushSync(),{code:'SNAPSHOT_RECOVERY_REQUIRED'});
+ assert.deepEqual(readFileSync(journal),before);
+ writer.reload();
+ assert.equal(await writer.readText(),'reappeared history');
+});
 
 test('flushSync includes the latest writeText call even before its promise is awaited',async t=>{
  const path=fresh(t),storage=createSnapshotStorage(path,{deferWrites:true});

@@ -4,7 +4,7 @@ import {createCardGamesArt} from './card-games-art.mjs';
 import {createCardGameService} from './voice-games/game-service.mjs';
 import {createNativeVoiceGamesFacade} from './voice-games/native-facade.mjs';
 import {createNativeSocialFacade} from './buddy-plugin-services/native-social-facade.mjs';
-import {createSocialAccounts} from './buddy-plugin-services/social-accounts.mjs';
+import {createSocialAccounts,SocialAccountStorageError} from './buddy-plugin-services/social-accounts.mjs';
 import {createSocialTransport} from './buddy-plugin-services/social-transport.mjs';
 import {createFfmpegComponentManager} from './media-components/ffmpeg-manager.mjs';
 import {FFMPEG_COMPONENT_DESCRIPTOR} from './media-components/ffmpeg-descriptor.mjs';
@@ -40,6 +40,20 @@ import {assertPluginTreeNoLinks} from './plugin-archive.mjs';
 import {prepareTaskToolBackend,taskToolModelScope} from './dsh-platform/task-tool-runtime.mjs';
 
 const error=(message,code)=>Object.assign(Error(message),{code});
+const socialPackageNames=new Set(Object.values(SOCIAL_LOGIN_PLUGINS));
+
+function describeSocialStorageFailure(failure){
+  const cause=failure.cause;
+  const sqliteCode=Number.isInteger(cause?.errcode)?cause.errcode:undefined;
+  return {
+    state:'unavailable',code:failure.code,database:failure.database,stage:failure.stage,
+    diagnostic:{
+      code:typeof cause?.code==='string'&&/^[A-Z0-9_]{1,80}$/.test(cause.code)?cause.code:undefined,
+      sqliteCode,
+      sqliteMessage:sqliteCode!==undefined&&typeof cause.errstr==='string'?cause.errstr.slice(0,200):undefined,
+    },
+  };
+}
 // Host preparation owns a separate admission lane; it never runs inside a native job.
 export function createHostDependencyCoordinator({describe,prepare,busy=()=>false,onUpdate=()=>{}}={}){
  const plans=new Map(),finished=new Map();let active=null,closed=false,current={state:'idle',phase:'idle'};
@@ -90,59 +104,83 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
   // Pages report open/closed/failed; plugin-embed.mjs listens so a closed separate window can come back to the main window.
   const clientEvents=new EventEmitter(),embedScope=new AsyncLocalStorage();
   const clientHost=createDshClientHost({BrowserWindow,session,openExternal,audit,onState:event=>{audit({type:'plugin-client',...event});clientEvents.emit('state',{kind:'community',...event});},appearance:pageAppearance});
+  let socialAccounts=null,socialStorage=null;
+  try{
+    socialAccounts=createSocialAccounts({dataRoot,crypto});
+  }catch(cause){
+    if(!(cause instanceof SocialAccountStorageError))throw cause;
+    socialStorage=describeSocialStorageFailure(cause);
+    try{audit({type:'social-storage-unavailable',...socialStorage});}catch{ /* The data volume may also be unavailable to the audit log. */ }
+  }
+  function requireSocialStorage(){
+    if(socialStorage)throw error('社交账号库无法读取，QQ 与 B 站的账号功能已暂停。恢复资料访问后请重启 AI 酱。',socialStorage.code);
+  }
+  const socialStorageSnapshot=()=>socialStorage?{socialStorage:structuredClone(socialStorage)}:{};
   const workModelBroker=createModelReferenceBroker({getProvider});
-  const socialServices=Object.fromEntries(SOCIAL_METHODS.map(method=>[method,{capability:method,handler:request=>{if(method==='models.request'&&request.context.contextKind!=='social')return workModelBroker.request(request.context,request.payload,{signal:request.signal,check:request.check});const handler=getSocialHost()?.services?.[method]?.handler;if(!handler)throw error('社交宿主尚未就绪','BUDDY_SERVICE_UNAVAILABLE');return handler(request);}}]));
+  const socialServices=Object.fromEntries(SOCIAL_METHODS.map(method=>[method,{capability:method,handler:request=>{if(method==='models.request'&&request.context.contextKind!=='social')return workModelBroker.request(request.context,request.payload,{signal:request.signal,check:request.check});requireSocialStorage();const handler=getSocialHost()?.services?.[method]?.handler;if(!handler)throw error('社交宿主尚未就绪','BUDDY_SERVICE_UNAVAILABLE');return handler(request);}}]));
   const bridge=createBuddyPluginServices({getGame,getProvider,hostServices:{...hostServices,...socialServices},
-    resolveContext:async spec=>{if(spec.contextKind==='social'){const host=getSocialHost();if(!host)throw error('社交宿主尚未就绪','BUDDY_SERVICE_UNAVAILABLE');return host.resolveContext(spec);}const game=getGame();if(!game?.pluginScope)throw error('角色服务尚未就绪','BUDDY_SERVICE_UNAVAILABLE');return {...spec,...await game.pluginScope(spec.characterId,spec.personaId),connectionRefs:(spec.connectionRefs??[]).filter(id=>getProvider()?.state?.profiles.some(p=>p.id===id))};},
+    resolveContext:async spec=>{if(spec.contextKind==='social'){requireSocialStorage();const host=getSocialHost();if(!host)throw error('社交宿主尚未就绪','BUDDY_SERVICE_UNAVAILABLE');return host.resolveContext(spec);}const game=getGame();if(!game?.pluginScope)throw error('角色服务尚未就绪','BUDDY_SERVICE_UNAVAILABLE');return {...spec,...await game.pluginScope(spec.characterId,spec.personaId),connectionRefs:(spec.connectionRefs??[]).filter(id=>getProvider()?.state?.profiles.some(p=>p.id===id))};},
     onEvidence:async value=>{await mkdir(join(dataRoot,'plugin-evidence'),{recursive:true});await appendFile(join(dataRoot,'plugin-evidence','events.jsonl'),JSON.stringify(value)+'\n');},
     onUsage,onNotification,
     registerPage:async value=>{const {id}=value.descriptor;if(pages.has(id))throw error('页面已经注册','BUDDY_REGISTRATION_DUPLICATE');pages.set(id,value);onUpdate(platform?.snapshot());return()=>{pages.delete(id);onUpdate(platform?.snapshot());};},
     registerLifecycle:async value=>{const {id}=value.descriptor;if(lifecycles.has(id))throw error('生命周期已经注册','BUDDY_REGISTRATION_DUPLICATE');lifecycles.set(id,value);return()=>lifecycles.delete(id);},
   });
-  const socialAccounts=createSocialAccounts({dataRoot,crypto}),socialTransport=createSocialTransport({network,fetchImpl:network?.fetch,dataRoot,accounts:socialAccounts}),socialRecords=new Map();
+  // The package records also serve voice/games and are needed without social storage.
+  const socialRecords=new Map();
   // A scan request from a plugin page waits here until the main window takes it (social-login-ack), at most two minutes.
   let loginRequest=null;const pendingLogin=()=>loginRequest&&Date.now()-loginRequest.at<120000?{requestedPlatform:loginRequest.platform,requestId:loginRequest.requestId,requestedAt:loginRequest.at}:{requestedPlatform:null,requestId:null};
-  // B7: the last check of each account (a finished scan counts as one), kept across restarts; no credentials, only time and result.
-  const checksPath=join(dataRoot,'social-account-checks.json');let accountChecks={};try{const raw=JSON.parse(await readFile(checksPath,'utf8'));if(raw&&typeof raw==='object'&&!Array.isArray(raw))for(const [ref,row]of Object.entries(raw))if(typeof ref==='string'&&ref.length<=200&&Number.isFinite(row?.at)&&typeof row.ok==='boolean')accountChecks[ref]={at:row.at,ok:row.ok,...(typeof row.code==='string'&&/^[A-Z0-9_]{1,80}$/.test(row.code)?{code:row.code}:{})};}catch{}
-  let checksTail=Promise.resolve();const recordCheck=(ref,ok,code=null)=>{if(typeof ref!=='string'||!ref)return;accountChecks={...accountChecks,[ref]:{at:Date.now(),ok,...(code&&/^[A-Z0-9_]{1,80}$/.test(code)?{code}:{})}};const value=JSON.stringify(accountChecks);checksTail=checksTail.then(()=>writeFile(checksPath,value)).catch(()=>{});};
-  const loginsSeen=new Set();
-  // C-4: open plugin pages re-read their accounts after a login, a removal or a change of account
-  let accountsTimer=null;socialAccounts.subscribe(()=>{if(closed||accountsTimer)return;accountsTimer=setTimeout(()=>{accountsTimer=null;if(closed)return;void clientHost.notify('ai-buddy:social-accounts-changed').catch(()=>{});void workClientHost?.notify('ai-buddy:social-accounts-changed').catch(()=>{});},250);accountsTimer.unref?.();});
-  const qqLogin=qqLoginFactory({network,fetchImpl:network?.fetch,dataRoot,build,accounts:socialAccounts,onState:event=>{
-    if(event?.type==='guard-not-assigned'||event?.type==='guard-stop-failed'||event?.type==='qq-runtime-exit'||event?.type==='process-inspection'&&event.stage==='guard-admission'&&!event.ok){
-      const code=/^[A-Z0-9_]{1,80}$/.test(event.code??'')?event.code:undefined;
-      const guardStage=['spawn','before-assignment','assigned','receipt-persist','receipt-publish','receipt-committed'].includes(event.guardStage)?event.guardStage:undefined;
-      try{audit({type:'qq-connector',phase:event.type,code,guardStage});}catch{ /* Diagnostic writes do not change process custody. */ }
-    }
-    onUpdate(platform?.snapshot());
-  }});
-  const socialLogin=createSocialLogin({accounts:socialAccounts,drivers:{bilibili:createBilibiliLoginDriver({BrowserWindow,session}),qq:qqLogin},onUpdate:()=>{try{for(const row of socialLogin.snapshot().states)if(row.phase==='connected'&&row.account?.ref&&row.attemptId&&!loginsSeen.has(row.attemptId)){loginsSeen.add(row.attemptId);recordCheck(row.account.ref,true);}}catch{}onUpdate(platform?.snapshot());}});
-  const biliVision=createBiliVision({fetchImpl:network?.fetch,directory:join(dataRoot,'social-core','bili-vision-v1'),renderSheet:renderBiliSheet,analyzeFrames:analyzeBiliFrames,acquireMedia:createBiliMedia({fetchImpl:network?.fetch,resolveVerifiedExecutable:options=>ffmpegManager.resolveVerifiedExecutable(options),workerPath:join(build,'bili-full-media-worker.mjs'),tools:join(build,'bili-media'),tempRoot:join(dataRoot,'social-core','bili-media-temp'),playback:(request)=>biliPlayback(request,socialAccounts),emitDiagnostic:value=>audit({type:'bili-full-media',...value})})});
-  const socialBroker=createSocialPluginBroker({dataRoot,automaticWorkAllowed,accounts:socialAccounts,transport:socialTransport,biliVision,requireBiliMedia:async({signal}={})=>{try{return await ffmpegManager.resolveVerifiedExecutable({signal});}catch(cause){try{await onNotification({kind:'host-component-required',component:'ffmpeg',code:cause.code,title:'需要准备B站视频组件',page:'plugins'});}catch{}throw cause;}},onReadingOpen:async value=>{await onReadingOpen(value);await clientHost.notify('ai-buddy:bili-reading-open',{activityId:value.activityId});},verifyBilibiliAccount:(ref,options)=>socialLogin.check(ref,options),bridge,getR95:()=>getGame()?.r95,getProvider,onSetup:async({packageName,action,payload={},signal,check=async()=>{}})=>{
-    const platformName=Object.keys(SOCIAL_LOGIN_PLUGINS).find(key=>SOCIAL_LOGIN_PLUGINS[key]===packageName);if(!platformName)throw error('不支持此账号入口','SOCIAL_LOGIN_PLATFORM_INVALID');
-    if(action==='open'){loginRequest={platform:platformName,requestId:randomUUID(),at:Date.now()};onUpdate(platform?.snapshot());try{openSocialSetup({platform:platformName,requestId:loginRequest.requestId,at:loginRequest.at});}catch(cause){audit({type:'social-setup-open-failed',code:cause?.code??'SOCIAL_SETUP_OPEN_FAILED'});}return {opened:true,platform:platformName};}
-    const account=socialAccounts.forPlugin(packageName);
-    if(action==='contacts'&&platformName==='qq')return qqLogin.contacts(account.ref);
-    if(action==='ensure'&&platformName==='qq')return qqLogin.ensureIfManaged(account.ref,payload);
-    if(action==='complete'){await check();signal?.throwIfAborted();if(platformName==='qq')await qqLogin.setAutoResume(account.ref,payload.autoResume===true,payload.scope,{signal,check});await check();signal?.throwIfAborted();socialAccounts.approveActivities(account.ref);return {saved:true};}
-    throw error('不支持此连接操作','SOCIAL_LOGIN_ACTION_INVALID');
-  },onEvent:(identity,event)=>{if(automaticWorkAllowed())socialFacade.emit(identity,event);},onBubble:value=>onNotification({...value,kind:'social-activity'})});
-  const socialFacade=createNativeSocialFacade({dataRoot,features:['social-login-v1',...socialBroker.features()],contract:{hash:NATIVE_SOCIAL_CONTRACT_HASH,methods:NATIVE_SOCIAL_CONTRACT.methods},handlers:socialBroker.handlers,contextProvider:socialBroker.contextProvider,
-    resolveGrant:identity=>{const row=socialRecords.get(identity.pluginId),grant=bridge.grants.get(identity.pluginId);return row&&grant?{...row,...grant}:null;},
-    authorizeUI:request=>currentBackend?.verifySocialUI(request)??false});
+  async function startSocialServices(){
+    const socialTransport=createSocialTransport({network,fetchImpl:network?.fetch,dataRoot,accounts:socialAccounts});
+    // B7: the last check of each account (a finished scan counts as one), kept across restarts; no credentials, only time and result.
+    const checksPath=join(dataRoot,'social-account-checks.json');let accountChecks={};try{const raw=JSON.parse(await readFile(checksPath,'utf8'));if(raw&&typeof raw==='object'&&!Array.isArray(raw))for(const [ref,row]of Object.entries(raw))if(typeof ref==='string'&&ref.length<=200&&Number.isFinite(row?.at)&&typeof row.ok==='boolean')accountChecks[ref]={at:row.at,ok:row.ok,...(typeof row.code==='string'&&/^[A-Z0-9_]{1,80}$/.test(row.code)?{code:row.code}:{})};}catch{}
+    let checksTail=Promise.resolve();const recordCheck=(ref,ok,code=null)=>{if(typeof ref!=='string'||!ref)return;accountChecks={...accountChecks,[ref]:{at:Date.now(),ok,...(code&&/^[A-Z0-9_]{1,80}$/.test(code)?{code}:{})}};const value=JSON.stringify(accountChecks);checksTail=checksTail.then(()=>writeFile(checksPath,value)).catch(()=>{});};
+    const loginsSeen=new Set();
+    // C-4: open plugin pages re-read their accounts after a login, a removal or a change of account
+    let accountsTimer=null;socialAccounts.subscribe(()=>{if(closed||accountsTimer)return;accountsTimer=setTimeout(()=>{accountsTimer=null;if(closed)return;void clientHost.notify('ai-buddy:social-accounts-changed').catch(()=>{});void workClientHost?.notify('ai-buddy:social-accounts-changed').catch(()=>{});},250);accountsTimer.unref?.();});
+    const qqLogin=qqLoginFactory({network,fetchImpl:network?.fetch,dataRoot,build,accounts:socialAccounts,onState:event=>{
+      if(event?.type==='guard-not-assigned'||event?.type==='guard-stop-failed'||event?.type==='qq-runtime-exit'||event?.type==='process-inspection'&&event.stage==='guard-admission'&&!event.ok){
+        const code=/^[A-Z0-9_]{1,80}$/.test(event.code??'')?event.code:undefined;
+        const guardStage=['spawn','before-assignment','assigned','receipt-persist','receipt-publish','receipt-committed'].includes(event.guardStage)?event.guardStage:undefined;
+        try{audit({type:'qq-connector',phase:event.type,code,guardStage});}catch{ /* Diagnostic writes do not change process custody. */ }
+      }
+      onUpdate(platform?.snapshot());
+    }});
+    const socialLogin=createSocialLogin({accounts:socialAccounts,drivers:{bilibili:createBilibiliLoginDriver({BrowserWindow,session}),qq:qqLogin},onUpdate:()=>{try{for(const row of socialLogin.snapshot().states)if(row.phase==='connected'&&row.account?.ref&&row.attemptId&&!loginsSeen.has(row.attemptId)){loginsSeen.add(row.attemptId);recordCheck(row.account.ref,true);}}catch{}onUpdate(platform?.snapshot());}});
+    const biliVision=createBiliVision({fetchImpl:network?.fetch,directory:join(dataRoot,'social-core','bili-vision-v1'),renderSheet:renderBiliSheet,analyzeFrames:analyzeBiliFrames,acquireMedia:createBiliMedia({fetchImpl:network?.fetch,resolveVerifiedExecutable:options=>ffmpegManager.resolveVerifiedExecutable(options),workerPath:join(build,'bili-full-media-worker.mjs'),tools:join(build,'bili-media'),tempRoot:join(dataRoot,'social-core','bili-media-temp'),playback:(request)=>biliPlayback(request,socialAccounts),emitDiagnostic:value=>audit({type:'bili-full-media',...value})})});
+    const socialBroker=createSocialPluginBroker({dataRoot,automaticWorkAllowed,accounts:socialAccounts,transport:socialTransport,biliVision,requireBiliMedia:async({signal}={})=>{try{return await ffmpegManager.resolveVerifiedExecutable({signal});}catch(cause){try{await onNotification({kind:'host-component-required',component:'ffmpeg',code:cause.code,title:'需要准备B站视频组件',page:'plugins'});}catch{}throw cause;}},onReadingOpen:async value=>{await onReadingOpen(value);await clientHost.notify('ai-buddy:bili-reading-open',{activityId:value.activityId});},verifyBilibiliAccount:(ref,options)=>socialLogin.check(ref,options),bridge,getR95:()=>getGame()?.r95,getProvider,onSetup:async({packageName,action,payload={},signal,check=async()=>{}})=>{
+      const platformName=Object.keys(SOCIAL_LOGIN_PLUGINS).find(key=>SOCIAL_LOGIN_PLUGINS[key]===packageName);if(!platformName)throw error('不支持此账号入口','SOCIAL_LOGIN_PLATFORM_INVALID');
+      if(action==='open'){loginRequest={platform:platformName,requestId:randomUUID(),at:Date.now()};onUpdate(platform?.snapshot());try{openSocialSetup({platform:platformName,requestId:loginRequest.requestId,at:loginRequest.at});}catch(cause){audit({type:'social-setup-open-failed',code:cause?.code??'SOCIAL_SETUP_OPEN_FAILED'});}return {opened:true,platform:platformName};}
+      const account=socialAccounts.forPlugin(packageName);
+      if(action==='contacts'&&platformName==='qq')return qqLogin.contacts(account.ref);
+      if(action==='ensure'&&platformName==='qq')return qqLogin.ensureIfManaged(account.ref,payload);
+      if(action==='complete'){await check();signal?.throwIfAborted();if(platformName==='qq')await qqLogin.setAutoResume(account.ref,payload.autoResume===true,payload.scope,{signal,check});await check();signal?.throwIfAborted();socialAccounts.approveActivities(account.ref);return {saved:true};}
+      throw error('不支持此连接操作','SOCIAL_LOGIN_ACTION_INVALID');
+    },onEvent:(identity,event)=>{if(automaticWorkAllowed())socialFacade.emit(identity,event);},onBubble:value=>onNotification({...value,kind:'social-activity'})});
+    const socialFacade=createNativeSocialFacade({dataRoot,features:['social-login-v1',...socialBroker.features()],contract:{hash:NATIVE_SOCIAL_CONTRACT_HASH,methods:NATIVE_SOCIAL_CONTRACT.methods},handlers:socialBroker.handlers,contextProvider:socialBroker.contextProvider,
+      resolveGrant:identity=>{const row=socialRecords.get(identity.pluginId),grant=bridge.grants.get(identity.pluginId);return row&&grant?{...row,...grant}:null;},
+      authorizeUI:request=>currentBackend?.verifySocialUI(request)??false});
+    const socialDispatch = socialFacade.dispatch;
+    const newSocialWork = new Set(['activity.lease','connections.open','proactive.offer','owner.work.propose','owner.work.approve']);
+    socialFacade.dispatch = (request, ...rest) => {
+      const operation = request?.payload?.operation;
+      const createsWork = newSocialWork.has(request?.method) || request?.method === 'connections.request' &&
+        ['video.fullReading.confirm','video.fullReading.continue','video.storyboard.continue','qq.memory.retry'].includes(operation);
+      return createsWork ? admitMutation(() => socialDispatch(request, ...rest)) : socialDispatch(request, ...rest);
+    };
+    const socialTick=setInterval(()=>{if(!automaticWorkAllowed())return;for(const record of socialRecords.values())if(record.enabled)socialFacade.emit(record,{type:'tick',at:Date.now()});},10000);socialTick.unref?.();
+    return {
+      socialFacade,socialBroker,biliVision,socialTransport,socialLogin,qqLogin,recordCheck,
+      accountChecks:()=>structuredClone(accountChecks),
+      stopTimers(){clearInterval(socialTick);clearTimeout(accountsTimer);},
+    };
+  }
+  const social=socialAccounts?await startSocialServices():null;
+  const socialFacade=social?.socialFacade??{open:requireSocialStorage,dispatch:requireSocialStorage};
   const cardGames=createCardGameService({getGame,getProvider,onCommittedSpeech:voice?.cardEvent,onSpeechPresentation:voice?.cardPresentation,onSpeechError:error=>audit({type:'card-voice',code:error.code??'VOICE_CARD_FAILED'})});
   const voiceGamesFacade=createNativeVoiceGamesFacade({dataRoot,games:cardGames,onAudioSettings:voice?.audioSettings,art:createCardGamesArt({build,dataRoot,getGame}),resolveGrant:identity=>{if(localCard?.owns(identity.pluginId))return localCard.grant(identity);const row=socialRecords.get(identity.pluginId),grant=bridge.grants.get(identity.pluginId);return row?{...row,...grant}:null;},authorizeUI:request=>localCard?.owns(request.identity?.pluginId)?localCard.verifyUI(request):currentBackend?.verifySocialUI(request)??false});
-  const socialDispatch = socialFacade.dispatch, gameDispatch = voiceGamesFacade.dispatch;
-  const newSocialWork = new Set(['activity.lease','connections.open','proactive.offer','owner.work.propose','owner.work.approve']);
-  socialFacade.dispatch = (request, ...rest) => {
-    const operation = request?.payload?.operation;
-    const createsWork = newSocialWork.has(request?.method) || request?.method === 'connections.request' &&
-      ['video.fullReading.confirm','video.fullReading.continue','video.storyboard.continue','qq.memory.retry'].includes(operation);
-    return createsWork ? admitMutation(() => socialDispatch(request, ...rest)) : socialDispatch(request, ...rest);
-  };
+  const gameDispatch=voiceGamesFacade.dispatch;
   const newGameWork = new Set(['games.table.create','games.table.next','games.table.action','games.table.resume','games.table.seats','games.table.topup','games.model.request','games.chat.send','games.replay.review']);
   voiceGamesFacade.dispatch = (request, ...rest) => newGameWork.has(request?.method) ? admitMutation(() => gameDispatch(request, ...rest)) : gameDispatch(request, ...rest);
-  const socialTick=setInterval(()=>{if(!automaticWorkAllowed())return;for(const record of socialRecords.values())if(record.enabled)socialFacade.emit(record,{type:'tick',at:Date.now()});},10000);socialTick.unref?.();
   function assertComponentSelection(generation){
     if(closed)throw error('插件平台已关闭','PLUGIN_CLOSED');
     if(componentChanging||generation!==componentGeneration)throw error('运行组件忙碌，不能切换','DSH_COMPONENT_BUSY');
@@ -175,7 +213,7 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
       // Both authorities revoke synchronously before any login/owned-child wait.
       // Cleanup may fail, but no old grant or context survives that failure.
       const cleanup=[bridge.revokePlugin(id),voiceGamesFacade.revoke(id)];try{cleanup.push(Promise.resolve(getSocialHost()?.revokePlugin(id)));}catch(cause){cleanup.push(Promise.reject(cause));}
-      for(const [name,packageName]of Object.entries(SOCIAL_LOGIN_PLUGINS))if(record.packageName===packageName)cleanup.push(socialLogin.disconnect(name));
+      if(social)for(const [name,packageName]of Object.entries(SOCIAL_LOGIN_PLUGINS))if(record.packageName===packageName)cleanup.push(social.socialLogin.disconnect(name));
       const failures=(await Promise.allSettled(cleanup)).filter(row=>row.status==='rejected').map(row=>row.reason);if(failures.length===1)throw failures[0];if(failures.length)throw Object.assign(new AggregateError(failures,'Plugin authority cleanup failed'),{code:'PLUGIN_CLEANUP_FAILED'});
       if(socialRecords.get(id)===selected)grantStates.set(id,state);return;
     }
@@ -298,9 +336,16 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
     finally{inflight--;}
   }
   const voiceSnapshot=()=>voiceAuthority?{voicePackages:voiceStatus(),voiceRuntime:voice.snapshot?.()??null}:{};
+  function installedClient(packageKey){
+    const record=community.snapshot().dsh.installed.find(value=>value.packageKey===packageKey);
+    if(socialPackageNames.has(record?.packageName))requireSocialStorage();
+    return record;
+  }
   const action = request => mutationActions.has(request?.action) ? admitMutation(() => dispatchAction(request)) : dispatchAction(request);
   async function dispatchAction(request){
     const operation=request?.action;
+    if(socialStorage&&operation==='social-login-status')return {states:[],...pendingLogin(),...socialStorageSnapshot()};
+    if(typeof operation==='string'&&operation.startsWith('social-'))requireSocialStorage();
     if(localCard?.owns(request?.packageKey)){
       if(operation==='dsh-enable')return localCard.enable();
       if(operation==='dsh-disable')return localCard.disable();
@@ -310,23 +355,42 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
       }
       if(operation==='dsh-rollback'||operation==='dsh-uninstall')throw error('随本机构建提供的插件可以停用','LOCAL_CARD_GAMES_MANAGED');
     }
-    if(operation==='dsh-open-client'&&community.snapshot().dsh.installed.find(record=>record.packageKey===request.packageKey)?.packageName==='@ai-buddy/work-collaboration'){
-      if(request.external!==undefined&&typeof request.external!=='boolean')throw error('打开方式必须是明确选择','WORK_CLIENT_DENIED');
-      if(request.external===true)throw error('工作与协作需要在AI Buddy的受控工作窗口中打开','WORK_CLIENT_CONTROLLED_ONLY');
-      if(typeof workClientOpener!=='function')throw error('工作插件入口尚未准备完成','WORK_CLIENT_UNAVAILABLE');return workClientOpener();
+    if(operation==='dsh-open-client'){
+      const record=installedClient(request.packageKey);
+      if(record?.packageName==='@ai-buddy/work-collaboration'){
+        if(request.external!==undefined&&typeof request.external!=='boolean')throw error('打开方式必须是明确选择','WORK_CLIENT_DENIED');
+        if(request.external===true)throw error('工作与协作需要在AI Buddy的受控工作窗口中打开','WORK_CLIENT_CONTROLLED_ONLY');
+        if(typeof workClientOpener!=='function')throw error('工作插件入口尚未准备完成','WORK_CLIENT_UNAVAILABLE');
+        return workClientOpener();
+      }
+      if(request.external!==true&&!embedScope.getStore()&&PANEL_PLUGIN.test(record?.packageName??'')){
+        return embedScope.run({surface:null,panel:record.packageName},()=>community.action(request));
+      }
     }
-    if(operation==='dsh-open-client'&&request.external!==true&&!embedScope.getStore()){const record=community.snapshot().dsh.installed.find(value=>value.packageKey===request.packageKey);if(record&&record.packageName!=='@ai-buddy/work-collaboration'&&PANEL_PLUGIN.test(record.packageName??''))return embedScope.run({surface:null,panel:record.packageName},()=>community.action(request));}
-    if(operation==='social-accounts-list')return {accounts:socialAccounts.list(),checks:structuredClone(accountChecks)};
+    if(operation==='social-accounts-list')return {accounts:socialAccounts.list(),checks:social.accountChecks()};
     if(operation==='social-accounts-save')return {account:socialAccounts.save(request.account)};
     if(operation==='social-accounts-check')return checkSocialAccountDraft(request.account,{accounts:socialAccounts});
-    if(operation==='social-login-status')return {...socialLogin.snapshot(),...pendingLogin(),component:qqLogin.componentInfo()};
+    if(operation==='social-login-status')return {...social.socialLogin.snapshot(),...pendingLogin(),component:social.qqLogin.componentInfo()};
     if(operation==='social-login-ack'){if(typeof request.requestId!=='string'||request.requestId.length>100)throw error('登录请求无效','SOCIAL_LOGIN_REQUEST_INVALID');if(loginRequest?.requestId===request.requestId)loginRequest=null;return {acknowledged:true};}
-    if(operation==='social-login-start')return socialLogin.start(request.platform,{...(request.expectedAccountId!==undefined?{expectedAccountId:request.expectedAccountId}:{}),...(request.official!==undefined?{official:request.official}:{}),...(request.retryAttemptId!==undefined?{retryAttemptId:request.retryAttemptId}:{})});
-    if(operation==='social-login-cancel')return socialLogin.cancel(request.platform);
-    if(operation==='social-login-refresh')return socialLogin.refresh(request.platform);
-    if(operation==='social-login-check'){try{const value=await socialLogin.check(request.ref);recordCheck(request.ref,true);return value;}catch(cause){if(socialAccounts.get(request.ref)&&cause?.code!=='SOCIAL_LOGIN_BUSY')recordCheck(request.ref,false,typeof cause?.code==='string'?cause.code:'SOCIAL_LOGIN_FAILED');throw cause;}}
-    if(operation==='social-login-disconnect'){const account=socialAccounts.get(request.ref);if(!account)throw error('账号不存在','SOCIAL_ACCOUNT_UNKNOWN');await socialLogin.disconnect(account.platform);return {account:socialAccounts.save({...account,enabled:false})};}
-    if(operation==='social-account-remove'){const account=socialAccounts.get(request.ref);if(!account)throw error('账号不存在','SOCIAL_ACCOUNT_UNKNOWN');if(account.enabled)await socialLogin.disconnect(account.platform);return socialAccounts.remove(account.ref);}
+    if(operation==='social-login-start')return social.socialLogin.start(request.platform,{...(request.expectedAccountId!==undefined?{expectedAccountId:request.expectedAccountId}:{}),...(request.official!==undefined?{official:request.official}:{}),...(request.retryAttemptId!==undefined?{retryAttemptId:request.retryAttemptId}:{})});
+    if(operation==='social-login-cancel')return social.socialLogin.cancel(request.platform);
+    if(operation==='social-login-refresh')return social.socialLogin.refresh(request.platform);
+    if(operation==='social-login-check'){
+      try{
+        const value=await social.socialLogin.check(request.ref);
+        social.recordCheck(request.ref,true);
+        return value;
+      }catch(cause){
+        if(cause?.code!=='SOCIAL_LOGIN_BUSY'){
+          try{
+            if(socialAccounts.get(request.ref))social.recordCheck(request.ref,false,cause?.code??'SOCIAL_LOGIN_FAILED');
+          }catch{ /* Keep the original check failure if the account can no longer be read. */ }
+        }
+        throw cause;
+      }
+    }
+    if(operation==='social-login-disconnect'){const account=socialAccounts.get(request.ref);if(!account)throw error('账号不存在','SOCIAL_ACCOUNT_UNKNOWN');await social.socialLogin.disconnect(account.platform);return {account:socialAccounts.save({...account,enabled:false})};}
+    if(operation==='social-account-remove'){const account=socialAccounts.get(request.ref);if(!account)throw error('账号不存在','SOCIAL_ACCOUNT_UNKNOWN');if(account.enabled)await social.socialLogin.disconnect(account.platform);return socialAccounts.remove(account.ref);}
     if(operation==='host-dependency-open-link'){if(!['dsh','ffmpeg'].includes(request.component)||!['source','notice'].includes(request.kind))throw error('Invalid host component link','HOST_DEPENDENCY_INVALID');const descriptor=request.component==='ffmpeg'?FFMPEG_COMPONENT_DESCRIPTOR:assertPublicDshComponentDescriptor(JSON.parse(await readFile(join(build,'dsh-component.json'),'utf8'))),url=request.kind==='notice'?(request.component==='ffmpeg'?descriptor.licenseUrl:'https://github.com/deepseek-ai/DeepSeek-Harness'):(descriptor.url??descriptor.archive?.url);await openExternal(url);return {opened:true};}
     if(operation==='host-dependency-cancel')return dependencyCoordinator.cancel({operationId:request.operationId});
     if(operation==='bili-component-status')return ffmpegManager.status();
@@ -341,14 +405,14 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
     // Fresh/cold preparation has no runtime or grant to revoke. Started backends
     // and verified/enabled grants still require the existing generation reset.
     if(operation==='dsh-component-install'){if(dependencyCoordinator.active())throw error('Host dependency preparation is running','HOST_DEPENDENCY_BUSY');return installDshComponent({planId:request.planId,official:request.official===true});}
-    const result=await community.action(request),extra={...voiceSnapshot(),hostDependencies:dependencyCoordinator.snapshot(),mediaComponents:{ffmpeg:ffmpegManager.snapshot()},dshComponent:dshComponentState};return result?.snapshot?{...result,snapshot:{...withLocalCard(result.snapshot),...extra}}:operation==='community-status'?{...withLocalCard(result),...extra}:result;
+    const result=await community.action(request),extra={...voiceSnapshot(),...socialStorageSnapshot(),hostDependencies:dependencyCoordinator.snapshot(),mediaComponents:{ffmpeg:ffmpegManager.snapshot()},dshComponent:dshComponentState};return result?.snapshot?{...result,snapshot:{...withLocalCard(result.snapshot),...extra}}:operation==='community-status'?{...withLocalCard(result),...extra}:result;
   }
   // Main-window embedding (plugin-embed.mjs): same community open path, only the page's surface differs.
   const openClientEmbedded = options => admitMutation(() => openClient(options));
   async function openClient({packageKey,surface}){
     if(typeof surface!=='function')throw error('嵌入页面需要宿主提供的显示面','PLUGIN_EMBED_DENIED');
     if(localCard?.owns(packageKey))return localCard.open(surface);
-    const record=community.snapshot().dsh.installed.find(value=>value.packageKey===packageKey);
+    const record=installedClient(packageKey);
     const target=EMBED_TARGETS[embedTargetFor(record?.packageName)];
     if(!target||target.kind==='work')throw error('插件页面不能使用此嵌入入口','PLUGIN_EMBED_DENIED');
     return embedScope.run({surface},()=>community.action({action:'dsh-open-client',packageKey}));
@@ -356,30 +420,34 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
   platform={...community,action,bridge,cardGames,voiceGamesFacade,openClientEmbedded,
     installBundledCardGames(){if(!localCard)throw error('本构建未附带一起玩牌','LOCAL_CARD_GAMES_UNAVAILABLE');return localCard.install();},
     bundledCardGamesStatus:()=>localCard?.status()??{available:false},
-    activateInstalled:packageKey=>admitMutation(()=>localCard?.owns(packageKey)?localCard.activate():community.activateInstalled(packageKey)),onClientState:listener=>{clientEvents.on('state',listener);return()=>clientEvents.off('state',listener);},socialAccounts,dshBackend,componentManager,ffmpegManager,dependencyCoordinator,clientHost,runtimeDescriptor,createIsolatedWorkBackend,releaseIsolatedWorkBackend,createTaskToolBackend,openWorkClient,setWorkClientOpener:opener=>{if(typeof opener!=='function')throw TypeError('Work client opener must be host supplied');workClientOpener=opener;},invalidateRuntime:async value=>{runtimeDescriptors.clear();invalidateDshComponentVerification();await localCard?.invalidate();return community.invalidateRuntime(value);},
+    activateInstalled:packageKey=>admitMutation(()=>{
+      if(localCard?.owns(packageKey))return localCard.activate();
+      installedClient(packageKey);
+      return community.activateInstalled(packageKey);
+    }),onClientState:listener=>{clientEvents.on('state',listener);return()=>clientEvents.off('state',listener);},socialAccounts,dshBackend,componentManager,ffmpegManager,dependencyCoordinator,clientHost,runtimeDescriptor,createIsolatedWorkBackend,releaseIsolatedWorkBackend,createTaskToolBackend,openWorkClient,setWorkClientOpener:opener=>{if(typeof opener!=='function')throw TypeError('Work client opener must be host supplied');workClientOpener=opener;},invalidateRuntime:async value=>{runtimeDescriptors.clear();invalidateDshComponentVerification();await localCard?.invalidate();return community.invalidateRuntime(value);},
     // Host-only read ports. These are not renderer action names or plugin RPCs.
     voicePackageStatus:voiceStatus,
     async resolveVoicePackage(id,options){if(!voiceAuthority)throw error('语音宿主未启用','VOICE_HOST_UNAVAILABLE');return voiceAuthority.resolveVoicePackage(id,options);},
     async resolveVoicePresetPackage(id,options){if(!voiceAuthority)throw error('语音宿主未启用','VOICE_HOST_UNAVAILABLE');return voiceAuthority.resolveVoicePresetPackage(id,options);},
     resolveDshInstalled:packageKey=>community.resolveDshInstalled(packageKey),
     resolveTrustedSource:sourceId=>community.resolveTrustedSource(sourceId),
-    snapshot:()=>({...withLocalCard(community.snapshot()),...voiceSnapshot(),hostDependencies:dependencyCoordinator.snapshot(),mediaComponents:{ffmpeg:ffmpegManager.snapshot()},dshComponent:dshComponentState,platform:{version:'buddy-bridge-v1',activeCalls:inflight,activeTaskToolRuntimes:taskToolBackends.size,registeredPages:[...pages.values()].map(v=>({pluginId:v.pluginId,id:v.descriptor.id,title:v.descriptor.title??v.descriptor.id})),nativeClients:[...clientHost.snapshot(),...cardClientHost.snapshot()],workClients:workClientHost?.snapshot()??[]}}),
-    async issueSocialContext({pluginId,eventRef,permissionScope}){if(!getSocialHost())throw error('社交宿主尚未就绪','BUDDY_SERVICE_UNAVAILABLE');return bridge.issueContext({contextKind:'social',pluginId,eventRef,permissionScope});},
+    snapshot:()=>({...withLocalCard(community.snapshot()),...voiceSnapshot(),...socialStorageSnapshot(),hostDependencies:dependencyCoordinator.snapshot(),mediaComponents:{ffmpeg:ffmpegManager.snapshot()},dshComponent:dshComponentState,platform:{version:'buddy-bridge-v1',activeCalls:inflight,activeTaskToolRuntimes:taskToolBackends.size,registeredPages:[...pages.values()].map(v=>({pluginId:v.pluginId,id:v.descriptor.id,title:v.descriptor.title??v.descriptor.id})),nativeClients:[...clientHost.snapshot(),...cardClientHost.snapshot()],workClients:workClientHost?.snapshot()??[]}}),
+    async issueSocialContext({pluginId,eventRef,permissionScope}){requireSocialStorage();if(!getSocialHost())throw error('社交宿主尚未就绪','BUDDY_SERVICE_UNAVAILABLE');return bridge.issueContext({contextKind:'social',pluginId,eventRef,permissionScope});},
     async issueToolContext({pluginId,characterId,personaId,workspace,taskId,sessionId=randomUUID(),permissionScope=['tools.list','tools.invoke'],connectionRefs=[],planState='planning',readOnlyToolNames=[],approvedPlanRevision=null}){return bridge.issueContext({pluginId,characterId,personaId,workspace,taskId,sessionId,permissionScope,connectionRefs,planState,readOnlyToolNames,approvedPlanRevision});},
     async issueActiveToolContext({pluginId,characterId,personaId,workspace,taskId,sessionId=randomUUID(),permissionScope=['tools.list','tools.invoke'],connectionRefs=[],planState='execution',readOnlyToolNames=[],approvedPlanRevision=null},lease){return bridge.issueActiveContext({pluginId,characterId,personaId,workspace,taskId,sessionId,permissionScope,connectionRefs,planState,readOnlyToolNames,approvedPlanRevision},lease);},
     async exportTools(bindings){const exporter=await createDshMcpExport({bindings,onAudit:event=>audit({type:'mcp-tool',...event})});exports.set(exporter.sessionId,exporter);return exporter;},
-    busy:()=>admittedMutations>0||socialLogin.cleanupInProgress()||community.maintenanceBusy()||legacyManager[PLUGIN_MAINTENANCE_BUSY]?.()||dependencyCoordinator.preparing()||componentChanging||inflight>0||taskToolBackends.size>0||localCard?.busy()||bridge.busy(),
+    busy:()=>admittedMutations>0||social?.socialLogin.cleanupInProgress()||community.maintenanceBusy()||legacyManager[PLUGIN_MAINTENANCE_BUSY]?.()||dependencyCoordinator.preparing()||componentChanging||inflight>0||taskToolBackends.size>0||localCard?.busy()||bridge.busy(),
     // Theme or language changed: open plugin pages pick it up without reloading.
     async refreshAppearance(){await Promise.allSettled([clientHost.refreshAppearance(),cardClientHost.refreshAppearance(),workClientHost?.refreshAppearance()]);},
     async configureNetwork(){await legacyManager.configureNetwork?.();for(const backend of new Set([currentBackend,...[...workBackends.values()].map(row=>row.backend),...taskToolBackends]))await backend?.configureNetwork?.();},
     close(){
       if(platformClosePromise)return platformClosePromise;
       if(!closed){
-        closed=true;clearInterval(socialTick);clearTimeout(accountsTimer);
+        closed=true;social?.stopTimers();
         remainingCloseSteps=[['voice-authority',()=>voiceAuthority?.close()],['host-dependencies',()=>dependencyCoordinator.close()],['ffmpeg',()=>ffmpegManager.close()],['dsh-component',()=>componentManager.close()],
           ...[...exports].map(([key,value])=>['export:'+key,async()=>{await value.close();exports.delete(key);}]),...[...taskToolBackends].map((value,index)=>['task-tool:'+index,()=>value.close()]),
           ['work-preparations',()=>Promise.allSettled([...workPreparations.values()])],['work-client',()=>workClientHost?.close()],...[...workBackends].map(([key,value])=>['work-backend:'+key,async()=>{await value.backend.close();workBackends.delete(key);}]),
-          ['community',()=>community.close()],['local-card',()=>localCard?.close()],['card-client',()=>cardClientHost.close()],['voice-games',()=>voiceGamesFacade.close()],['social-facade',()=>socialFacade.close()],['social-broker',()=>socialBroker.close()],['bili-vision',()=>biliVision.close()],['social-transport',()=>socialTransport.close()],['social-login',()=>socialLogin.close()],['social-accounts',()=>socialAccounts.close()],['client',()=>clientHost.close()],['bridge',()=>bridge.close()]];
+          ['community',()=>community.close()],['local-card',()=>localCard?.close()],['card-client',()=>cardClientHost.close()],['voice-games',()=>voiceGamesFacade.close()],['social-facade',()=>social?.socialFacade.close()],['social-broker',()=>social?.socialBroker.close()],['bili-vision',()=>social?.biliVision.close()],['social-transport',()=>social?.socialTransport.close()],['social-login',()=>social?.socialLogin.close()],['social-accounts',()=>socialAccounts?.close()],['client',()=>clientHost.close()],['bridge',()=>bridge.close()]];
       }
       platformClosePromise=Promise.resolve().then(async()=>{
         const failures=[],unfinished=[];

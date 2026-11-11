@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,readFileSync,readdirSync,existsSync,cpSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,readFileSync,readdirSync,existsSync,cpSync,mkdirSync,writeFileSync,rmSync,renameSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join,resolve,sep} from 'node:path';
+import {dirname,join,resolve,sep} from 'node:path';
 import {openCompanionStore} from '../src/companion-store.mjs';
 import {createNativeGlobalStorage,createNativeWorkspaceStorage} from '../src/adapted/game-core.ts';
 import {createSnapshotStorage,readJson} from '../src/storage.mjs';
@@ -36,6 +36,63 @@ const provider={enabled:false,currentSelection:()=>({provider:'fixture',model:'f
 const globalPath=root=>join(root,'galgame/storages/dsh-whale-galgame/global.json');
 const companionPath=root=>join(root,'galgame/companion.json');
 const until=async fn=>{for(let i=0;i<1000;i++){if(await fn())return;await new Promise(resolve=>setTimeout(resolve,5));}throw Error('fixture timeout');};
+
+test('companion does not initialize a default save when its committed snapshot fails verification',async t=>{
+ const root=mkdtempSync(join(tmpdir(),'buddy-companion-recovery-'));
+ t.after(()=>rmSync(root,{recursive:true,force:true}));
+ const path=companionPath(root),store=await openCompanionStore(root);
+ await store.mutate(state=>{state.settings.allowUserMessageEdit=true;});
+ await store.flush();
+ const journal=join(path+'.snapshots','commits.jsonl'),before=readFileSync(journal);
+ const {file}=JSON.parse(before.toString().trim());
+ const snapshot=join(path+'.snapshots',file);
+ writeFileSync(snapshot,'damaged companion snapshot');
+ await assert.rejects(async()=>{const reopened=await openCompanionStore(root);await reopened.flush();},{code:'SNAPSHOT_RECOVERY_REQUIRED'});
+ assert.deepEqual(readFileSync(journal),before);
+ assert.equal(readFileSync(snapshot,'utf8'),'damaged companion snapshot');
+ assert.equal(readdirSync(path+'.snapshots').length,2);
+});
+
+test('Galgame does not create a replacement global save when the journal is missing but snapshots remain',async t=>{
+ const root=mkdtempSync(join(tmpdir(),'buddy-global-recovery-'));
+ t.after(()=>rmSync(root,{recursive:true,force:true}));
+ const make=()=>createGalgame({dataRoot:root,provider,model:'fixture',deferredSaveRegistry:createDeferredSaves()});
+ const game=await make();
+ await game.action('pet-set',{enabled:false});
+ await game.close();
+ const directory=globalPath(root)+'.snapshots',journal=join(directory,'commits.jsonl');
+ const backup=join(root,'held-global-journal');
+ renameSync(journal,backup);
+ const before=readdirSync(directory);
+ assert.ok(before.length);
+ await assert.rejects(async()=>{const reopened=await make();await reopened.close();},error=>error.cause?.code==='SNAPSHOT_RECOVERY_REQUIRED');
+ assert.deepEqual(readdirSync(directory),before);
+ renameSync(backup,journal);
+ const reopened=await make();
+ try{assert.equal((await reopened.action('settings-get')).petEnabled,false);}finally{await reopened.close();}
+});
+
+test('Galgame reads original values from valid legacy JSON when no snapshot history exists',async t=>{
+ const source=mkdtempSync(join(tmpdir(),'buddy-legacy-save-source-'));
+ const target=mkdtempSync(join(tmpdir(),'buddy-legacy-save-target-'));
+ t.after(()=>{rmSync(source,{recursive:true,force:true});rmSync(target,{recursive:true,force:true});});
+ const make=dataRoot=>createGalgame({dataRoot,provider,model:'fixture',deferredSaveRegistry:createDeferredSaves()});
+ const initial=await make(source);
+ await initial.action('pet-set',{enabled:false});
+ await initial.action('companion-character-save',{id:'deepseek',name:'Legacy save fixture'});
+ await initial.close();
+ const saved=[companionPath,globalPath];
+ const original=await Promise.all(saved.map(path=>createSnapshotStorage(path(source)).readText()));
+ for(const [index,path] of saved.entries()){
+  const file=path(target);mkdirSync(dirname(file),{recursive:true});writeFileSync(file,original[index]);
+ }
+ const game=await make(target);
+ try{
+  assert.equal((await game.action('settings-get')).petEnabled,false);
+  assert.equal((await inspectSnapshot(companionPath(target))).cards.deepseek.name,'Legacy save fixture');
+ }finally{await game.close();}
+ assert.deepEqual(saved.map(path=>readFileSync(path(target),'utf8')),original);
+});
 
 ownedTest('close persists both archives, releases registration and a later close adds no snapshot',async()=>{
  const root=temp(),registry=createDeferredSaves(),make=()=>createGalgame({dataRoot:root,provider,model:'fixture',deferredSaveRegistry:registry});

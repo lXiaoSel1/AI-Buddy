@@ -4,8 +4,8 @@ import {Icon} from './ui-icons.mjs';
 import {StatusPill,Menu,Segmented,Switch} from './ui-controls.mjs';
 import {Dialog} from './ui-dialog.mjs';
 import {pluginResult,pluginErrorText} from './plugin-center-helpers.mjs';
-import {useSocialLogin,SocialLoginDialog,ACTIVE_LOGIN,loginStageLabel,bilibiliLoginHint} from './social-login-ui.mjs';
-import {socialLoginErrorText} from './social-login-errors.mjs';
+import {useSocialLogin,SocialLoginDialog,SocialStorageNotice,ACTIVE_LOGIN,loginStageLabel,bilibiliLoginHint} from './social-login-ui.mjs';
+import {SOCIAL_STORAGE_UNAVAILABLE,socialLoginErrorText} from './social-login-errors.mjs';
 
 const h=React.createElement;
 // B8: a new advanced connection starts on QQ (it is mostly for a self-run OneBot service).
@@ -32,23 +32,27 @@ export function socialAccountSaveNotice({pluginId,checked,en=false}){
  if(pluginId==='@ai-buddy/bilibili-companion'&&checked?.checked!==true)return tr('连接已保存，尚未验证登录。请扫码或提供 Cookie 完成验证；保存不代表能观看。','Connection saved; login is not yet verified. Scan or provide a cookie to verify. Saving does not mean you can watch.');
  return checked?.checked?tr('已检查并保存，连接正常。','Checked and saved; the connection works.'):tr('已保存，没有检查。','Saved without a check.');
 }
-export function SocialAccounts({api,onOpenPlugin,openLogin}){
+export function SocialAccounts({api,onOpenPlugin,openLogin,socialStorage}){
  const en=locale()==='en',t=(zh,english)=>en?english:zh;
  const [accounts,setAccounts]=useState([]),[checks,setChecks]=useState({}),[installed,setInstalled]=useState([]),[form,setForm]=useState(null),[credential,setCredential]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[dialog,setDialog]=useState(null),[menu,setMenu]=useState(null),[confirm,setConfirm]=useState(null),[advanced,setAdvanced]=useState(false),[checkFailed,setCheckFailed]=useState(false);
  const alive=useRef(false),running=useRef(false);
+ const [storageFailed,setStorageFailed]=useState(false);
  async function call(request){return pluginResult(await api.action(request));}
  const listed=v=>{if(!alive.current)return;setAccounts(v.accounts);setChecks(v.checks??{});};
- const reload=()=>call({action:'social-accounts-list'}).then(listed,e=>alive.current&&setError(pluginErrorText(e)));
- useEffect(()=>{alive.current=true;void reload();return()=>{alive.current=false;};},[api]);
+ const reload=()=>call({action:'social-accounts-list'}).then(listed,e=>{if(alive.current){if(e.code===SOCIAL_STORAGE_UNAVAILABLE)setStorageFailed(true);else setError(pluginErrorText(e));}});
+ useEffect(()=>{alive.current=true;if(socialStorage?.state!=='unavailable')void reload();return()=>{alive.current=false;};},[api,socialStorage?.state]);
  // which plugin uses each account (B7)
  useEffect(()=>{let live=true;const take=value=>{if(live&&Array.isArray(value?.dsh?.installed))setInstalled(value.dsh.installed);};call({action:'community-status'}).then(take,()=>{});const off=api?.onUpdate?.(take);return()=>{live=false;off?.();};},[api]);
  const login=useSocialLogin(api,()=>void reload());
+ const storage=socialStorage?.state==='unavailable'?socialStorage:login.snapshot?.socialStorage;
+ const unavailable=storage?.state==='unavailable'||storageFailed;
  // B3: 「启用并扫码登录」 on an install page opens the scan dialog for that platform here.
- useEffect(()=>{if(['bilibili','qq'].includes(openLogin?.platform))setDialog(openLogin.platform);},[openLogin?.at]);
+ useEffect(()=>{if(!unavailable&&['bilibili','qq'].includes(openLogin?.platform))setDialog(openLogin.platform);},[openLogin?.at,unavailable]);
  // A plugin page's scan request is shown by the main window over that page (dashboard.mjs), not here: this tab
  // used to pop the dialog again on every later visit. A login still running reopens its dialog.
  // (not while the main window's own scan dialog for a plugin page is already showing that login)
- useEffect(()=>{if(!dialog&&!globalThis.document?.querySelector?.('dialog[data-social-login][open]'))for(const [platform] of PLATFORMS)if(ACTIVE_LOGIN.includes(login.stateOf(platform).phase)&&login.stateOf(platform).phase!=='cleaning-up'){setDialog(platform);break;}},[login.snapshot]);
+ useEffect(()=>{if(!unavailable&&!dialog&&!globalThis.document?.querySelector?.('dialog[data-social-login][open]'))for(const [platform] of PLATFORMS)if(ACTIVE_LOGIN.includes(login.stateOf(platform).phase)&&login.stateOf(platform).phase!=='cleaning-up'){setDialog(platform);break;}},[login.snapshot,unavailable]);
+ if(unavailable)return h('div',{className:'ext-col','data-social-accounts':true},h(SocialStorageNotice,{storage}));
  function edit(value){setForm({...value});setCredential('');setNotice('');setError('');setAdvanced(true);}
  async function accountAction(action,account){if(running.current||!account?.ref)return;running.current=true;setBusy(true);setError('');try{await call({action,ref:account.ref});const next=await call({action:'social-accounts-list'});if(alive.current){listed(next);if(form?.ref===account.ref)setForm(next.accounts.find(a=>a.ref===account.ref)??null);setNotice(action==='social-login-check'?t('账号和连接检查通过。','Account and connection verified.'):t('操作已完成。已有聊天记录保留。','Done. Existing conversation records are preserved.'));}}catch(cause){if(alive.current)setError(pluginErrorText(cause));if(action==='social-login-check')void reload();}finally{running.current=false;if(alive.current){setBusy(false);setConfirm(null);}}}
  // B8 「检查并保存」: the connection is checked first (OneBot answers as that bot / the cookie is that account) and saved only

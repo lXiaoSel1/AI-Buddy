@@ -36,6 +36,15 @@ test('B3 install page: real package size, no raw capability ids in the rows, and
   assert.equal(formatBytes(8.7e6), '8.7 MB'); assert.equal(formatBytes(44e3), '44 KB');
 });
 
+test('an account storage fault does not offer account setup from an installed social plugin',()=>{
+  setLocale('zh-CN');
+  const packageName='@ai-buddy/qq-connect',record={packageKey:'k',packageName,grantedCapabilities:[],enabled:true};
+  const markup=page({plan:null,stage:'installed',record,packageName,storageNotice:'暂时无法读取社交账号。'});
+  assert.match(markup,/暂时无法读取社交账号/);
+  assert.doesNotMatch(markup,/<button[^>]*>[^<]*(?:扫码登录 QQ|启用并扫码登录)<\/button>/);
+  assert.match(installedSituation(record,{accounts:[],socialStorage:{state:'unavailable'}}),/账号连接暂不可用/);
+});
+
 test('B5 upgrade page lists only the new permissions; what was granted before stays ticked in a fold', () => {
   setLocale('zh-CN');
   const markup = page({plan: plan('@ai-buddy/bilibili-companion', ['social.context.read', 'ui.bubble'], {addedCapabilities: ['ui.bubble'], priorDataSchemaVersion: 1, priorGrantedCapabilities: ['social.context.read']}), granted: ['social.context.read']});

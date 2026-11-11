@@ -1,12 +1,94 @@
 import {DatabaseSync} from 'node:sqlite';
-import {mkdirSync} from 'node:fs';
-import {join} from 'node:path';
+import {lstatSync,mkdirSync,statSync} from 'node:fs';
+import {dirname,join} from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {assertR95DatabaseCompatible} from '../r95-data-compatibility.mjs';
+import {checkR95DatabaseCompatibility} from '../r95-data-compatibility.mjs';
+import {SOCIAL_ACCOUNTS_DATABASE,SOCIAL_STORAGE_UNAVAILABLE} from './social-contract.mjs';
 
 const error=(code,message=code)=>Object.assign(Error(message),{code});
 const plugins=Object.freeze({'@ai-buddy/bilibili-companion':'bilibili','@ai-buddy/qq-connect':'qq'});
 const clean=value=>typeof value==='string'&&value.length<=300&&!/[\x00-\x1f]/.test(value)&&value.trim();
+const accountWriter='r95-social-accounts-v1';
+
+export class SocialAccountStorageError extends Error{
+  constructor(stage,cause){
+    super(cause?.message??'Social account storage is unavailable',{cause});
+    this.code=SOCIAL_STORAGE_UNAVAILABLE;
+    this.database=SOCIAL_ACCOUNTS_DATABASE;
+    this.stage=stage;
+  }
+}
+
+function accountFileEntry(path){
+  try{return lstatSync(path);}catch(cause){if(cause.code!=='ENOENT')throw cause;return null;}
+}
+
+function inspectAccountFile(path){
+  const entry=accountFileEntry(path);
+  if(entry){
+    const target=entry.isSymbolicLink()?statSync(path):entry;
+    if(!target.isFile())throw error('SOCIAL_ACCOUNT_FILE_INVALID','Social account storage path is not a regular file');
+    return true;
+  }
+  if(accountFileEntry(path+'-wal')||accountFileEntry(path+'-shm'))throw error('SOCIAL_ACCOUNT_MAIN_FILE_MISSING','Social account database is missing but its WAL or SHM remains');
+  return false;
+}
+
+function checkStoredAccounts(db,hasSchemaMarker){
+  const entry=db.prepare("SELECT type FROM sqlite_master WHERE name='accounts' COLLATE NOCASE AND type IN ('table','view')").get();
+  const schemaError=()=>error('SOCIAL_ACCOUNT_SCHEMA_INVALID','The saved social account table has an invalid schema');
+  if(!entry){
+    if(hasSchemaMarker)throw schemaError();
+    return;
+  }
+  if(entry.type!=='table')throw schemaError();
+  const columns=db.prepare('PRAGMA table_info(accounts)').all();
+  const expected=['ref','body','secret'];
+  if(columns.length!==expected.length||columns.some((column,index)=>column.name.toLowerCase()!==expected[index]||column.pk!==Number(index===0)))throw schemaError();
+  const invalid=db.prepare(`
+    SELECT 1 FROM accounts
+    WHERE CASE WHEN typeof(body)='text' AND json_valid(body) THEN json_type(body)<>'object' ELSE 1 END
+    LIMIT 1
+  `).get();
+  if(invalid)throw error('SOCIAL_ACCOUNT_BODY_INVALID','The social account database contains an invalid saved account');
+}
+
+function openAccountDatabase(dataRoot){
+  const path=join(dataRoot,SOCIAL_ACCOUNTS_DATABASE);
+  let stage='inspect',db;
+  try{
+    if(inspectAccountFile(path)){
+      stage='readonly-open';
+      db=new DatabaseSync(path,{readOnly:true});
+      const compatibility=checkR95DatabaseCompatibility(db,{writer:accountWriter,onStage:value=>{stage=value;}});
+      const hasLegacyMetadata=db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata'").get();
+      const legacyVersion=hasLegacyMetadata?db.prepare("SELECT value FROM metadata WHERE key='schemaVersion'").get()?.value:undefined;
+      if(hasLegacyMetadata&&legacyVersion!=='1')throw error('SOCIAL_ACCOUNT_SCHEMA_UNSUPPORTED');
+      checkStoredAccounts(db,compatibility.schema===1||legacyVersion==='1');
+      stage='readonly-close';
+      db.close();
+      db=undefined;
+      stage='inspect';
+      if(!inspectAccountFile(path))throw error('SOCIAL_ACCOUNT_MAIN_FILE_MISSING','Social account database disappeared during startup');
+    }
+    stage='writer-open';
+    mkdirSync(dirname(path),{recursive:true});
+    db=new DatabaseSync(path);
+    stage='initialize';
+    db.exec('PRAGMA synchronous=FULL; BEGIN IMMEDIATE;');
+    db.exec(`CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT); INSERT OR IGNORE INTO meta VALUES('schemaVersion','1'); INSERT OR IGNORE INTO meta VALUES('minimumWriter','"${accountWriter}"');`);
+    db.exec("CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL); INSERT OR IGNORE INTO metadata VALUES('schemaVersion','1'); CREATE TABLE IF NOT EXISTS accounts(ref TEXT PRIMARY KEY,body TEXT NOT NULL,secret BLOB);");
+    if(db.prepare("SELECT value FROM metadata WHERE key='schemaVersion'").get()?.value!=='1')throw error('SOCIAL_ACCOUNT_SCHEMA_UNSUPPORTED');
+    db.exec('COMMIT');
+    stage='writer-configure';
+    db.exec('PRAGMA journal_mode=WAL;');
+    return db;
+  }catch(cause){
+    try{db?.close();}catch{/* Keep the original storage error if cleanup also fails. */}
+    throw new SocialAccountStorageError(stage,cause);
+  }
+}
+
 export function localEndpoint(value,schemes){
   let url;try{url=new URL(value);}catch{throw error('SOCIAL_ENDPOINT_INVALID');}
   if(!schemes.includes(url.protocol)||!['127.0.0.1','[::1]','localhost'].includes(url.hostname)||url.username||url.password||url.search||url.hash)throw error('SOCIAL_ENDPOINT_DENIED','QQ connection must use an explicitly configured local endpoint');
@@ -15,15 +97,7 @@ export function localEndpoint(value,schemes){
 /** Account credentials are written only by the trusted APP entry. Plugins see
  * opaque references and labels; no password, cookie or secret reaches DSH. */
 export function createSocialAccounts({dataRoot,crypto}={}){
-  const directory=join(dataRoot,'social-core');mkdirSync(directory,{recursive:true});
-  const path=join(directory,'accounts-v1.sqlite');
-  assertR95DatabaseCompatible(path,{writer:'r95-social-accounts-v1'});
-  const db=new DatabaseSync(path);
-  // Check the initial integration schema before opening any writer transaction.
-  if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata'").get()&&db.prepare("SELECT value FROM metadata WHERE key='schemaVersion'").get()?.value!=='1'){db.close();throw error('SOCIAL_ACCOUNT_SCHEMA_UNSUPPORTED');}
-  db.exec(`CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT); INSERT OR IGNORE INTO meta VALUES('schemaVersion','1'); INSERT OR IGNORE INTO meta VALUES('minimumWriter','"r95-social-accounts-v1"');`);
-  db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL); INSERT OR IGNORE INTO metadata VALUES('schemaVersion','1'); CREATE TABLE IF NOT EXISTS accounts(ref TEXT PRIMARY KEY,body TEXT NOT NULL,secret BLOB);");
-  if(db.prepare("SELECT value FROM metadata WHERE key='schemaVersion'").get().value!=='1'){db.close();throw error('SOCIAL_ACCOUNT_SCHEMA_UNSUPPORTED');}
+  const db=openAccountDatabase(dataRoot);
   const listeners=new Set();let closed=false,closeError;
   const check=()=>{if(closed)throw error('SOCIAL_ACCOUNTS_CLOSED');};
   function list(){check();return db.prepare('SELECT body FROM accounts ORDER BY ref').all().map(row=>JSON.parse(row.body));}

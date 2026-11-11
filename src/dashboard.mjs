@@ -23,7 +23,7 @@ import {pluginResult} from './plugin-center-helpers.mjs';
 import {petCharacterName} from './pet-characters.mjs';
 import {EmbedBar,EmbedArea,useEmbedState,embedView,embedName,embedPill,startEmbedCover} from './plugin-embed-page.mjs';
 import {EMBED_TARGETS,embedCapable,embedTargetFor,embedSlotKind,pluginPageEntries} from './plugin-embed-targets.mjs';
-import {SocialLoginRequest} from './social-login-ui.mjs';
+import {SocialLoginRequest,SocialStorageNotice} from './social-login-ui.mjs';
 import {createSocialLoginRequests} from './social-login-requests.mjs';
 import {PageBoundary} from './page-boundary.mjs';
 import {useGalgameUnread} from './chat-r95-ui.mjs';
@@ -72,9 +72,10 @@ const OFFICIAL_PLUGIN_NAMES={'@ai-buddy/qq-connect':'QQ连接','@ai-buddy/bilibi
 const pluginDisplayName=record=>OFFICIAL_PLUGIN_NAMES[record.packageName]?t(OFFICIAL_PLUGIN_NAMES[record.packageName]):record.displayName??record.name??record.packageName;
 // A2: what each installed plugin is doing now: account connection for QQ / Bilibili, running tasks for Work, and its latest activity today.
 const SOCIAL_STATUS={'@ai-buddy/qq-connect':{on:'已连接 · 只回复允许的人',setup:'已连接 · 还没完成设置',none:'还没连接账号'},'@ai-buddy/bilibili-companion':{on:'已连接 · 可以发评论',setup:'已连接 · 还没完成设置',none:'还没连接账号'}};
-function pluginStatusRow(record,{accounts=null,activity=null,work=null,now=Date.now()}={}){
+function pluginStatusRow(record,{accounts=null,accountsUnavailable=false,activity=null,work=null,now=Date.now()}={}){
  if(!record.enabled)return ['off',t('已停用')];if(record.runtimeFailure||record.runtimeState==='failed')return ['warn',t('加载失败')];
  const loading=!record.runtimeVerified,social=SOCIAL_STATUS[record.packageName];let dot=loading?'busy':'ok',text=t('运行中');
+ if(social&&accountsUnavailable)return ['warn',locale()==='en'?'Account connection unavailable':'账号连接暂不可用'];
  if(social&&Array.isArray(accounts)){const account=accounts.find(row=>row.pluginId===record.packageName&&row.enabled);text=t(account?account.activityApprovalRequired?social.setup:social.on:social.none);if(account?.activityApprovalRequired||!account&&record.packageName==='@ai-buddy/qq-connect')dot='warn';}
  else if(record.packageName==='@ai-buddy/work-collaboration'&&work){text=work.jobs?t('{n} 个任务进行中').replace('{n}',work.jobs):t('没有进行中的任务');if(work.jobs&&!loading)dot='busy';}
  const recent=activity?.[record.pluginId];if(recent?.title&&new Date(recent.at).toDateString()===new Date(now).toDateString())text+=' · '+t('最近：{title}').replace('{title}',recent.title);
@@ -82,9 +83,9 @@ function pluginStatusRow(record,{accounts=null,activity=null,work=null,now=Date.
 }
 const EMBED_FOOT={waiting:{any:'插件正在处理另一项操作，空闲后会自动重试。'},run:{any:'在独立沙盒里运行'},start:{any:'等 DSH 后台准备好'},off:{bilibili:'停用期间不观看、不发评论',qq:'停用期间不回复消息',any:'停用期间不会运行'},err:{any:'DSH 后台没有响应'},none:{any:'重新安装后接着用原来的记录'},popped:{any:'在单独窗口里运行'},unsupported:{any:'更新到 2.0.1 后可以放进主窗口'}};
 // Sidebar footer (approved design A2): one honest line per page instead of a fixed "zero model calls".
-function SidebarStatus({page,status,character,settings,chat,onPage,activity,voice}){
+function SidebarStatus({page,status,character,settings,chat,onPage,activity,voice,accountsUnavailable}){
  const [open,setOpen]=useState(false),[plugins,setPlugins]=useState(null),[accounts,setAccounts]=useState(null),box=useRef(null);
- useEffect(()=>{if(!open)return;let alive=true;window.whale.plugins.action({action:'community-status'}).then(value=>{if(alive)setPlugins(pluginResult(value)?.dsh?.installed??[]);},()=>alive&&setPlugins([]));window.whale.plugins.action({action:'social-accounts-list'}).then(value=>{if(alive)setAccounts(pluginResult(value)?.accounts??[]);},()=>{});const away=e=>{if(!box.current?.contains(e.target))setOpen(false);},key=e=>{if(e.key==='Escape')setOpen(false);};document.addEventListener('pointerdown',away);document.addEventListener('keydown',key);return()=>{alive=false;document.removeEventListener('pointerdown',away);document.removeEventListener('keydown',key);};},[open]);
+ useEffect(()=>{if(!open)return;let alive=true;window.whale.plugins.action({action:'community-status'}).then(value=>{if(alive)setPlugins(pluginResult(value)?.dsh?.installed??[]);},()=>alive&&setPlugins([]));if(!accountsUnavailable)window.whale.plugins.action({action:'social-accounts-list'}).then(value=>{if(alive)setAccounts(pluginResult(value)?.accounts??[]);}).catch(()=>{});const away=e=>{if(!box.current?.contains(e.target))setOpen(false);},key=e=>{if(e.key==='Escape')setOpen(false);};document.addEventListener('pointerdown',away);document.addEventListener('keydown',key);return()=>{alive=false;document.removeEventListener('pointerdown',away);document.removeEventListener('keydown',key);};},[open,accountsUnavailable]);
  let name=character;try{name=petCharacterName(character);}catch{}
  const connections=settings?.modelConnections,active=connections?.profiles?.find(p=>p.id===connections.activeId);
  let tone='ok',line,sub;
@@ -100,7 +101,7 @@ function SidebarStatus({page,status,character,settings,chat,onPage,activity,voic
  const row=(dot,label,value,key)=>h('div',{className:'side-status-row',key,title:label+' · '+value},h('span',null,h('span',{className:'offline-dot '+dot}),label),h('small',null,value));
  return h('div',{className:'side-status',ref:box},
   open&&h('div',{className:'side-status-pop',role:'dialog','aria-label':t('现在在做什么')},h('b',null,t('现在在做什么')),row('ok',t('本机监控'),t('运行中 · 不调用模型'),'monitor'),row(chat?.enabled?'ok':'off',t('联网聊天'),chat?.enabled?t('开'):t('关'),'chat'),
-   plugins===null?h('small',{role:'status'},t('正在读取插件状态…')):plugins.map(record=>{const [dot,label]=pluginStatusRow(record,{accounts,activity,work:status.work});return row(dot,pluginDisplayName(record),label,record.packageKey);}),
+    plugins===null?h('small',{role:'status'},t('正在读取插件状态…')):plugins.map(record=>{const [dot,label]=pluginStatusRow(record,{accounts,accountsUnavailable,activity,work:status.work});return row(dot,pluginDisplayName(record),label,record.packageKey);}),
    h('button',{type:'button',className:'ui-btn ghost sm',onClick:()=>{setOpen(false);onPage('plugins');}},t('打开扩展中心'))),
   h('button',{type:'button',className:'sidebar-bottom','aria-expanded':open,'aria-label':line+' · '+sub+' · '+t('查看现在在做什么'),title:line+'\n'+sub,onClick:()=>setOpen(value=>!value)},h('b',null,h('span',{className:'offline-dot '+tone}),h('span',{className:'side-status-line'},line)),h('small',null,sub)));
 }
@@ -132,8 +133,14 @@ function App(){
  const toVoice=packageId=>{setVoiceTab(packageId??voice.snapshot?.state?.selectedPackageId??null);setPage('voice');setChosen(null);};
  // Approved design C8: while she has an unread line, Galgame in the sidebar shows a dot; hover says who and how many.
  const unread=useGalgameUnread(),navDot=id=>id==='galgame'&&!settings?.safeMode?unread:null;
- const [pluginRecords,setPluginRecords]=useState([]);
- useEffect(()=>{let alive=true;window.whale.plugins.action({action:'community-status'}).then(value=>{if(alive)setPluginRecords(pluginResult(value)?.dsh?.installed??[]);},()=>{});const off=window.whale.plugins.onUpdate(value=>{const list=value?.dsh?.installed;if(Array.isArray(list))setPluginRecords(list);});return()=>{alive=false;off?.();};},[]);
+ const [pluginRecords,setPluginRecords]=useState([]),[socialStorage,setSocialStorage]=useState(null);
+ useEffect(()=>{
+  let alive=true;
+  const take=value=>{if(!alive||!value?.dsh)return;setPluginRecords(value.dsh.installed??[]);setSocialStorage(value.socialStorage??null);};
+  window.whale.plugins.action({action:'community-status'}).then(value=>take(pluginResult(value))).catch(()=>{});
+  const off=window.whale.plugins.onUpdate(take);
+  return()=>{alive=false;off?.();};
+ },[]);
  useEffect(()=>startEmbedCover(),[]);
  // A2: each plugin's latest activity today (the same notices the desktop pet shows), for the footer status card
  const [pluginActivity,setPluginActivity]=useState({});
@@ -152,7 +159,9 @@ function App(){
  const embedStates={community:useEmbedState('community'),work:useEmbedState('work'),card:useEmbedState('card')},embedStateOf=target=>embedStates[embedSlotKind(target,recordOf(target))],viewOf=target=>embedView(target,recordOf(target),embedStateOf(target));
  const pluginTargetForPage=id=>Object.keys(EMBED_TARGETS).find(target=>EMBED_TARGETS[target].kind!=='work'&&EMBED_TARGETS[target].page===id);
  const pluginTarget=pluginTargetForPage(page);
- const embedTarget=pluginTarget??(page==='agent-tasks'&&!settings?.safeMode&&shellStatus.work?.ready?'work':null);
+ const accountsUnavailable=socialStorage?.state==='unavailable';
+ const blockedSocialTarget=accountsUnavailable&&['bilibili','qq'].includes(pluginTarget);
+ const embedTarget=blockedSocialTarget?null:pluginTarget??(page==='agent-tasks'&&!settings?.safeMode&&shellStatus.work?.ready?'work':null);
  const logPath=settings?.dataRoot?String(settings.dataRoot).replace(/[\\/]+$/,'')+'\\runtime-audit.jsonl':null;
  const embedArea=target=>h(EmbedArea,{key:target,target,record:recordOf(target),view:viewOf(target),state:embedStateOf(target),onCommunity:toCommunity,onStatus:reportStatus,logPath});
  // Plugin group (approved design G1): installed, enabled plugins that have their own page, between Companion and System.
@@ -161,7 +170,7 @@ function App(){
  if(pluginNav.length)navGroups.splice(2,0,[nav('插件','Plugins'),pluginNav]);
  // a plugin version that cannot sit in the main window yet keeps opening its own window
  const goTo=id=>{if(id.startsWith('ext:')){const record=pluginRecords.find(value=>value.packageKey===id.slice(4));if(record)void window.whale.plugins.action({action:'dsh-open-client',packageKey:record.packageKey}).catch(()=>{});return;}
-  const target=pluginTargetForPage(id),record=target&&recordOf(target);if(record&&!embedCapable(target,record.exactVersion)){void window.whale.plugins.action({action:'dsh-open-client',packageKey:record.packageKey}).catch(()=>{});return;}setPage(id);setChosen(null);};
+  const target=pluginTargetForPage(id),record=target&&recordOf(target);if(record&&!embedCapable(target,record.exactVersion)&&!(accountsUnavailable&&['bilibili','qq'].includes(target))){void window.whale.plugins.action({action:'dsh-open-client',packageKey:record.packageKey}).catch(()=>{});return;}setPage(id);setChosen(null);};
  // The sidebar avatar, title-bar icon and overview portrait follow the current desktop pet.
  const pet=settings?.effectivePetCharacter||settings?.petCharacterId||'deepseek',head='./'+themeAsset(pet,'head.webp');
  let content;
@@ -173,6 +182,7 @@ function App(){
  else if(page==='api')content=h(ApiSettings,{view:settings,tab:apiTab,onTab:setApiTab});
   else if(page==='agent-tasks')content=settings?.safeMode?h(SafeModePage,{settings,onPage:setPage,time}):h(WorkTasks,{face:head,onStatus:reportStatus,onCommunity:toCommunity,renderEmbedded:()=>embedArea('work')});
  else if(['r95-shop','r95-inventory','r95-social'].includes(page))content=settings?.safeMode?h(SafeModePage,{settings,onPage:setPage,time}):h(R95CorePage,{page:page.slice(4),language:settings?.preferences.language,onPage:setPage,onStatus:reportStatus,timeZone:settings?.preferences.statisticsTimeZone||settings?.preferences.displayTimeZone});
+ else if(blockedSocialTarget)content=h('div',{className:'ws-page'},h('h2',{className:'ws-ptitle'},embedName(pluginTarget)),h(SocialStorageNotice,{storage:socialStorage}));
  else if(pluginTarget)content=embedArea(pluginTarget);
  else if(page==='plugins')content=h(PluginCenter,{onManage:()=>manage('model'),onStatus:reportStatus,onPage:setPage,onVoicePage:toVoice,intent:communityIntent});
  else if(page==='actions')content=h(ActionGallery,{settings});
@@ -182,7 +192,7 @@ function App(){
  return h(React.Fragment,null,h('div',{className:'window-titlebar'},h('span',{className:'titlebar-face'},h('img',{src:settings?head:'./'+APP_ICON_PNG,alt:'',draggable:false})),h('span',{className:'titlebar-title'},localizedTitle())),h('div',{className:'layout'+(actionsPage?' actions-page':'')+(galgamePage?' galgame-page':'')+(embedTarget?' embed-page':'')},
    h('aside',null,h('div',{className:'brand'},h('div',{className:'brand-mark'},h('span',{className:'brand-face'},h('img',{src:head,alt:'',width:40,height:40}))),h('div',null,h('strong',null,settings?.preferences.language==='en'?'AI Buddy':'AI 酱'),h('small',null,'AI Buddy'))),
      h('nav',{className:'nav-groups','aria-label':t('主导航')},...navGroups.flatMap(([title,items])=>[h('p',{key:'g-'+title,className:'nav-h'},title),...items.map(([id,icon,name])=>h('button',{key:id,className:navOn(id)?'active':'','aria-current':navOn(id)?'page':undefined,title:navDot(id)?.title??name,onClick:()=>goTo(id)},id==='voice'?VoiceIcon(icon,{size:18}):Icon(icon,{size:18}),h('span',{className:'nav-l'},name),navDot(id)&&h('i',{className:'nav-dot',role:'img','aria-label':navDot(id).title,'data-nav-unread':navDot(id).count})))])),
-     !actionsPage&&h(SidebarStatus,{page,status:shellStatus,character:galgamePage?character:pet,settings,chat,onPage:setPage,activity:pluginActivity,voice:voice.snapshot})),
+      !actionsPage&&h(SidebarStatus,{page,status:shellStatus,character:galgamePage?character:pet,settings,chat,onPage:setPage,activity:pluginActivity,voice:voice.snapshot,accountsUnavailable})),
    h('main',null,!actionsPage&&embedTarget&&h(EmbedBar,{target:embedTarget,record:recordOf(embedTarget),view:viewOf(embedTarget),onCommunity:toCommunity}),voicePage&&h(VoicePluginHeader,{snapshot:voice.snapshot,selectedPackageId:voiceTab??voice.snapshot?.state?.selectedPackageId,onSelectPackage:setVoiceTab,onPlugins:packageName=>toCommunity({tab:'installed',packageName}),onChat:()=>setPage('galgame')}),!actionsPage&&!embedTarget&&!voicePage&&h('header',null,h('span',null,t("你的本地工作空间")),h('div',null,h(StatusPill,{tone:data?.indexing?'busy':'ok','data-live-pill':true},data?.indexing?(data.indexPhase==='checking'?t("核对新增记录…"):t("整理历史记录…")):t("监控中")),h('span',{className:'header-date'},data?.today||''))),
      h('div',{className:'content'},settings?.safeMode&&!['safe-mode','galgame'].includes(page)&&h('div',{className:'index-banner safe-mode-banner',role:'status'},h('span',null,t("陪伴功能已停用（安全模式），桌宠和用量监控照常可用。")),h('button',{onClick:()=>setPage('safe-mode')},t("查看原因"))),!hideDiagnostics&&data?.indexing&&h('div',{className:'index-banner'},(data.indexPhase==='checking'?t("正在核对新增记录 · 已检查 "):t("正在建立本地历史索引 · 已读取 "))+(data.progress?.scanned||0)+' / '+(data.progress?.total||'—')+t(" 个文件。完成前用量为部分结果。")),
        page==='tokens'&&data?.missingRequests>0&&h('p',{className:'settings-note'},data.missingRequests+t(" 条请求缺少完整用量，合计为已记录部分。")),!hideDiagnostics&&!data&&h('p',null,t("正在读取本地记录…")),h(PageBoundary,{page},content),

@@ -119,7 +119,10 @@ export function R95OwnerBindingForm({view,onAction,accountsApi=globalThis.window
  const options=view?.ownerWorkOptions??{},projects=options.projects??[],members=(options.members??[]).filter(row=>!row.projectId||row.projectId===form.projectId),ready=projects.length>0&&members.length>0;
  const personas=view?.personas??[],qq=(accounts??[]).filter(row=>row.platform==='qq'||row.pluginId==='@ai-buddy/qq-connect'),known=qq.some(row=>row.accountId===form.accountBindingId);
  useEffect(()=>{let alive=true;if(typeof accountsApi?.action!=='function'){setAccountsError(true);return;}
-  const read=()=>Promise.resolve(accountsApi.action({action:'social-accounts-list'})).then(result=>{if(result?.error||!Array.isArray(result?.accounts))throw Error('accounts');if(alive){setAccounts(result.accounts);setAccountsError(false);}},()=>{if(alive)setAccountsError(true);});
+  const read=()=>Promise.resolve().then(()=>accountsApi.action({action:'social-accounts-list'})).then(result=>{
+   if(result?.error||!Array.isArray(result?.accounts))throw Error('accounts');
+   if(alive){setAccounts(result.accounts);setAccountsError(false);}
+  }).catch(()=>{if(alive)setAccountsError(true);});
   void read();globalThis.window?.addEventListener?.('ai-buddy:social-accounts-changed',read);return()=>{alive=false;globalThis.window?.removeEventListener?.('ai-buddy:social-accounts-changed',read);};},[accountsApi]);
  useEffect(()=>{let alive=true;const account=form.accountBindingId;if(!known){setContacts({account:null,rows:[],loading:false,error:false});return;}setContacts({account,rows:[],loading:true,error:false});
   Promise.resolve().then(()=>onAction('owner-contacts',{accountBindingId:account})).then(result=>{if(alive)setContacts({account,rows:Array.isArray(result?.contacts)?result.contacts:[],loading:false,error:false});},()=>{if(alive)setContacts({account,rows:[],loading:false,error:true});});return()=>{alive=false;};},[form.accountBindingId,known]);

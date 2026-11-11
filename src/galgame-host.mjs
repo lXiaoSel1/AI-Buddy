@@ -13,7 +13,7 @@ import {deferredSaves} from './deferred-saves.mjs';
 
 export async function createGalgame({dataRoot,provider,model,cg=null,resources=null,getLanguage=()=> 'zh-CN',getReplyStyle=()=> 'natural',onCharacter=()=>{},onPetVisibility=()=>{},onChatCommitted=()=>{},onOutput=()=>{},onCgUpdated=()=>{},onActivity=()=>{},audit=()=>{},imageConverter=null,automaticWorkAllowed=()=>true,workBridge=null,r95Options={},voice=null,deferredSaveRegistry=deferredSaves}) {
   const media=createMediaStore(dataRoot),drafts=createDraftStore(dataRoot,{onError:error=>audit({type:'draft-store-error',message:String(error?.message??error)})});
-  const companionStore=await openCompanionStore(dataRoot,{media,deferredSaveRegistry});
+  const companionStore=await openCompanionStore(dataRoot,{media,deferredSaveRegistry,audit});
   let engine;const effects=[];
   try{
   const languageContext=new AsyncLocalStorage();
@@ -26,6 +26,7 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
   bus.on('galgame/chat-committed',onChatCommitted);
   bus.on('galgame/cg-updated',onCgUpdated);
   const ctx={deferredSaveRegistry,deferredSaveScope:resolve(dataRoot),llm:provider,cg,resources,writePortableImages:files=>writePortableImages(dataRoot,cg?.imageCodec,files),companionCards:Object.values(companionStore.state.cards).map(card=>({...card,effective:effectiveCard(card)})),language:()=>languageContext.getStore()||getLanguage(),replyStyle:getReplyStyle,emit:(event,value)=>bus.emit(event,value),dshHomePath:(...parts)=>join(dataRoot,'galgame',...parts),inject:(_,fn)=>fn(scope),on:(event,fn)=>bus.on(event,fn),effect:fn=>{const cleanup=fn();if(typeof cleanup==='function')effects.push(cleanup);}};
+  ctx.snapshotAudit=audit;
   // Work-token counter: a few bytes rewritten atomically at most every 2 s,
   // instead of a full global save per token delta.
   const ledgerPath=join(dataRoot,'galgame','storages','dsh-whale-galgame','work-tokens.json');

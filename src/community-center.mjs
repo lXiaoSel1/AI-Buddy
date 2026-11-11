@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { PluginCenter, PluginInstallPlanDialog } from "./plugin-center.mjs";
 import { InstalledVoicePluginRow } from "./community-installed-voice.mjs";
 import { SocialAccounts } from "./social-accounts-ui.mjs";
+import { SOCIAL_STORAGE_UNAVAILABLE, socialLoginErrorText } from "./social-login-errors.mjs";
 import { pluginErrorText, pluginResult,pluginIsIncompatible,pluginCompatibilityText,pluginUpdateAvailable } from "./plugin-center-helpers.mjs";
 import { locale, t as coreT } from "./i18n.mjs";
 import { communityMessages, communityErrorText, communityCount } from "./community/messages.mjs";
@@ -65,11 +66,12 @@ export function CommunityInstallationStatus({ record, compact = false }) {
 // A load failure in one plain sentence (B4); the code and native message stay in 技术详情.
 export const failureReason = (failure) => communityErrorText(failure?.code) ?? t("加载没有成功，原因写在技术详情里。");
 /** The one line under an installed plugin (B4): what it is doing now, from data the host already has. */
-export function installedSituation(record, { jobs = null, accounts = null } = {}) {
+export function installedSituation(record, { jobs = null, accounts = null, socialStorage = null } = {}) {
   if(pluginIsIncompatible(record))return pluginCompatibilityText(record);
   const permissions = tn("{n} 项权限",record.grantedCapabilities?.length ?? 0);
   if (record.runtimeFailure || record.runtimeState === "failed") return failureReason(record.runtimeFailure);
   if (!record.enabled) return t("停用期间不会运行，记录和设置都保留") + " · " + permissions;
+  if (SOCIAL_LOGIN[record.packageName] && socialStorage?.state === 'unavailable') return L('账号连接暂不可用', 'Account connection unavailable') + ' · ' + permissions;
   if (record.packageName === WORK && jobs != null) return (jobs ? tn("{n} 个任务进行中",jobs) : t("没有进行中的任务")) + " · " + permissions;
   if (SOCIAL_LOGIN[record.packageName] && accounts) { const account = accounts.find((value) => value.pluginId === record.packageName && value.enabled); return (account ? t("已连接「{name}」").replace("{name}", account.label) : t("还没有连接账号")) + " · " + permissions; }
   return permissions;
@@ -193,6 +195,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
   // there yet, or a host without page navigation, keeps the plugin's own window.
   function openPage(record) {
     if(pluginIsIncompatible(record))return;
+    if (SOCIAL_LOGIN[record.packageName] && state?.socialStorage?.state === 'unavailable') { setInstallFor(null); setTab('accounts'); return; }
     if (isVoiceEnginePackage(record?.packageName)) { if(onVoicePage)onVoicePage(record.packageName);else onPage?.("voice"); return; }
     const target = embedTargetFor(record.packageName);
     if (target && onPage && embedCapable(target, record.exactVersion)) { onPage(EMBED_TARGETS[target].page); return; }
@@ -273,10 +276,10 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
     if (tab !== "installed" || !api) return;
     let live = true;
     void workApi?.status?.().then((value) => live && setWorkStatus(value), () => {});
-    void call({ action: "social-accounts-list" }).then((value) => live && setAccounts(value?.accounts ?? null), () => {});
+    if (state?.socialStorage?.state !== 'unavailable') void call({ action: "social-accounts-list" }).then((value) => live && setAccounts(value?.accounts ?? null), () => {});
     void call({ action: "search", query: "", kind: "installed", page: 1, pageSize: 50 }).then((value) => live && setLegacyInstalled(Array.isArray(value?.items) ? value.items.filter(row => row.current && row.manifest?.id !== VOICE_SHARED_PACKAGE) : []), () => {});
     return () => { live = false; };
-  }, [tab, revision, api]);
+  }, [tab, revision, api, state?.socialStorage?.state]);
   // The sidebar footer (A2) shows how many plugins are installed and whether updates were found.
   useEffect(() => {
     if (state) onStatus?.({ plugins: { installed: (state.dsh?.installed?.length ?? 0) + (state.voicePackages?.filter(row=>row.installed).length ?? 0), updates: updates == null ? null : updates.length } });
@@ -521,10 +524,11 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
   function installedRow(record) {
     const label = runtimeLabel(record), open = menuFor === record.packageKey, policy = state?.community?.updatePolicies?.[record.packageKey] ?? "manual", update = updates?.find((value) => value.packageKey === record.packageKey), job = jobFor(record.packageName), working = job && ["queued", "running"].includes(job.state);
     const incompatible=pluginIsIncompatible(record);
+    const accountsUnavailable=SOCIAL_LOGIN[record.packageName] && state?.socialStorage?.state === 'unavailable';
     const items = [
       { label: t("更新方式：手动更新"), icon: "sliders", checked: policy === "manual", onSelect: () => void run(() => call({ action: "community-set-update-policy", packageKey: record.packageKey, policy: "manual" })) },
       { label: L("更新方式：自动更新兼容补丁", "Update policy: automatic compatible patches"), icon: "sliders", checked: policy === "auto", onSelect: () => void run(() => call({ action: "community-set-update-policy", packageKey: record.packageKey, policy: "auto" })) },
-      { label: t("在浏览器打开"), icon: "external", disabled: !record.enabled||incompatible, onSelect: () => {if(!incompatible)void run(() => call({ action: "dsh-open-client", packageKey: record.packageKey, external: true }));} },
+      { label: t("在浏览器打开"), icon: "external", disabled: !record.enabled||incompatible||accountsUnavailable, onSelect: () => {if(!incompatible&&!accountsUnavailable)void run(() => call({ action: "dsh-open-client", packageKey: record.packageKey, external: true }));} },
       "separator",
       record.previous && { label: t("回退到上一个版本…"), icon: "retry", onSelect: () => setConfirm({ kind: "rollback", record }) },
       { label: t("卸载（保留数据）…"), icon: "close", danger: true, onSelect: () => setConfirm({ kind: "uninstall", record }) }
@@ -533,7 +537,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
       h(PluginLogo, { packageName: record.packageName, size: 44 }),
       h("div", { className: "ext-ir-main" },
         h("div", { className: "ext-row" }, h("b", null, pluginName(record.packageName)), h("span", { className: "ext-cap" }, record.exactVersion), record.localBundled && h("span", { className: "ext-cap" }, L("本地随附", "Bundled locally")), working&&!incompatible ? h(StatusPill, { tone: "busy" }, t(job.operation === "install" ? "正在安装" : "正在维护")) : h(CommunityInstallationStatus, { record, compact: true }), update?.to && h("button", { type: "button", className: "ws-tag ext-tagbtn", onClick: () => setTab("updates") }, t("有更新 {v}").replace("{v}", update.to))),
-        h("small", { className: "ext-cap", "data-installed-situation": true }, installedSituation(record, { jobs: workStatus ? (workStatus.jobs ?? []).length : null, accounts })),
+        h("small", { className: "ext-cap", "data-installed-situation": true }, installedSituation(record, { jobs: workStatus ? (workStatus.jobs ?? []).length : null, accounts, socialStorage: state?.socialStorage })),
         incompatible&&!update?.to&&h('small',{className:'ext-cap'},t('等插件更新后才能继续用')),
         label === "加载失败" && record.runtimeFailure && h("details", { className: "ext-tech" }, h("summary", null, t("技术详情")), h("code", null, record.runtimeFailure.code + "\n" + record.runtimeFailure.message))),
       h("div", { className: "ext-row" },
@@ -579,12 +583,13 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
   if (installFor) {
     const record = installRecord, job = installFor.submitted ? jobFor(installFor.packageName) : null, failedJob = job?.error ? { ...job, error: { ...job.error, text: communityErrorText(job.error.code) ?? job.error.message } } : job;
     const stage = record && installFor.submitted ? "installed" : installFor.submitted ? "installing" : installStage({ plan, runtimeNeeded: componentNeeded || !!componentWorking, job: null, record: null, unavailable: installFor.unavailable });
-    const loginNext = (packageName) => { setInstallFor(null); setTab("accounts"); if (SOCIAL_LOGIN[packageName] && officialSourceId(installFor.sourceId)) setLoginRequest({ platform: SOCIAL_LOGIN[packageName], at: Date.now() }); };
+    const storageNotice = SOCIAL_LOGIN[installFor.packageName] && state?.socialStorage?.state === 'unavailable' ? socialLoginErrorText(SOCIAL_STORAGE_UNAVAILABLE, locale()==='en') : '';
+    const loginNext = (packageName) => { setInstallFor(null); setTab("accounts"); if (!storageNotice && SOCIAL_LOGIN[packageName] && officialSourceId(installFor.sourceId)) setLoginRequest({ platform: SOCIAL_LOGIN[packageName], at: Date.now() }); };
     return h("div", { className: "ws-page ext-page community-center", "data-community-center": true },
       error && stage !== "runtime" && h("div", { role: "alert", className: "ui-alert warn" }, Icon("alert", { size: 16 }), h("div", null, error)),
       notice && h("div", { role: "status", className: "ui-note" }, Icon("info", { size: 16 }), h("div", null, notice)),
       plan?.hostComponents&&hostDependencyCard,
-      h(InstallPage, { work: installFor.work, source: installFor.sourceId ? sourceOf(installFor.sourceId) : null, official: installFor.sourceId ? officialSourceId(installFor.sourceId) : false, plan, planError:error, requestedVersion:installFor.version, granted: installFor.submitted ? installFor.granted ?? granted : granted, onGrant: setGranted, keepsEnabled: communityUpgradeKeepsEnabled(plan, granted), stage, runtime: runtimeCard, job: failedJob, record, busy, engines, catalogOnline: !!state?.community?.configured,
+      h(InstallPage, { work: installFor.work, source: installFor.sourceId ? sourceOf(installFor.sourceId) : null, official: installFor.sourceId ? officialSourceId(installFor.sourceId) : false, plan, planError:error, requestedVersion:installFor.version, granted: installFor.submitted ? installFor.granted ?? granted : granted, onGrant: setGranted, keepsEnabled: communityUpgradeKeepsEnabled(plan, granted), stage, runtime: runtimeCard, job: failedJob, record, busy, engines, catalogOnline: !!state?.community?.configured, storageNotice,
         onBack: () => { setInstallFor(null); setPlan(null); setNotice(""); },
         onInstall: () => void run(install),
         onCancelPlan: () => { setPlan(null); setInstallFor(null); },
@@ -644,7 +649,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
         onRetry: retryJob,
         onReview: reviewJob }); }))
         : h("p", { className: "ext-cap" }, t("还没有维护记录。"))),
-    tab === "accounts" && h("section", { className: "ext-col", id: "ext-tab-accounts", role: "tabpanel" }, h(SocialAccounts, { api, openLogin: loginRequest, onOpenPlugin: (packageName) => { const record = installedRecord(packageName); if (record?.enabled) openPage(record); else setTab("installed"); } })),
+    tab === "accounts" && h("section", { className: "ext-col", id: "ext-tab-accounts", role: "tabpanel" }, h(SocialAccounts, { api, openLogin: loginRequest, socialStorage: state?.socialStorage, onOpenPlugin: (packageName) => { const record = installedRecord(packageName); if (record?.enabled) openPage(record); else setTab("installed"); } })),
     tab === "sources" && h("section", { className: "ext-col", id: "ext-tab-sources", role: "tabpanel" }, h(PluginCenter, { api, onManage, embedded: true, extras: sourcesExtras })),
     catalogForm, offlineDialog, legacyUpdateDialog,
     detail && h(WorkDetail, { key: detail.work.key, detail, source: sourceOf(detail.work.sourceId), official: officialSourceId(detail.work.sourceId), busy, candidates: reviewCandidates, installed: installedRecord(detail.work.packageName, detail.work.sourceId), draft: reviewDraft, reviewStatus,

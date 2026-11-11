@@ -37,8 +37,8 @@ export const progress=(value={})=>({level:Math.max(1,Math.floor(Number(value.lev
 export const cap=level=>30+(Math.max(1,level)-1)*15;
 export function advanceProgress(value,delta){const next=progress(value);next.affection=Math.max(0,next.affection+delta);const levels=[];while(next.affection>=cap(next.level)){next.affection-=cap(next.level);next.level++;levels.push(next.level);}return {...next,levels};}
 function initial(){return {schema:1,migrated:false,activeCharacterId:'deepseek',activePersonaId:DEFAULT_PERSONA_ID,activeConversationId:null,activeGroupId:null,cards:{},personas:{[DEFAULT_PERSONA_ID]:{id:DEFAULT_PERSONA_ID,name:'默认身份',nickname:'你',createdAt:Date.now(),relationships:{}}},relationships:{},conversations:{},groups:{},touchQuotas:{},events:{},draftCards:{},settings:{allowUserMessageEdit:false}};}
-export async function openCompanionStore(dataRoot,{media=null,deferredSaveRegistry=null}={}){
- const target=join(dataRoot,'galgame','companion.json'),scope=resolve(dataRoot),disk=createSnapshotStorage(target,{deferWrites:true});let state=await readJson(disk,null);if(!state)state=initial();assertR95CompanionCompatible(state);
+export async function openCompanionStore(dataRoot,{media=null,deferredSaveRegistry=null,audit}={}){
+ const target=join(dataRoot,'galgame','companion.json'),scope=resolve(dataRoot),disk=createSnapshotStorage(target,{deferWrites:true,protectExisting:true,onAudit:audit});let state=await readJson(disk);if(state===undefined)state=initial();assertR95CompanionCompatible(state);
  if(state.schema===1){state={...state,schema:2,minimumWriter:'r95-social-core-v1',requiredCapabilities:['social-core-state-v1'],r95Migration:{from:1,to:2,at:Date.now(),minimumWriterCapability:'social-core-v1'}};await disk.writeText(JSON.stringify(state));}
  // One serialization per change (B4): the body is compared without the revision,
  // which is then written first.

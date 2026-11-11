@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, readSync, openSync, writeSync, fsyncSync, closeSync, statSync, existsSync, writeFileSync, renameSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, readSync, openSync, writeSync, fsyncSync, closeSync, lstatSync, statSync, existsSync, writeFileSync, renameSync } from 'node:fs';
 import { readFile, readdir, unlink, open, stat as statAsync } from 'node:fs/promises';
 import { dirname, basename, join, resolve } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -22,6 +22,13 @@ export function parseCommits(text){
   for(const line of text.split('\n')){if(!line.trim())continue;try{const c=JSON.parse(line);if(typeof c.file==='string'&&basename(c.file)===c.file&&typeof c.sha256==='string'){commits.push(c);continue;}}catch{}torn++;}
   return {commits,torn};
 }
+export function isSnapshotCommit(value){
+  const file=value?.file;
+  return typeof file==='string'&&!!file&&file!=='.'&&file!=='..'&&!/[\\/:\0]/.test(file)&&basename(file)===file&&typeof value.sha256==='string'&&/^[a-f0-9]{64}$/.test(value.sha256);
+}
+export function hasSnapshotHistory(entries){
+  return entries.some(entry=>{const name=entry.toLowerCase();return name.endsWith('.json')||name==='commits.jsonl'||name.startsWith('commits.jsonl.');});
+}
 export function retentionState(root){
   if(existsSync(join(root,ARCHIVED))){
     try{const marker=JSON.parse(readFileSync(join(root,ARCHIVED),'utf8')),protectedFiles=Array.isArray(marker.protectedFiles)?marker.protectedFiles.filter(file=>typeof file==='string'&&file.length>0&&file!=='.'&&file!=='..'&&basename(file)===file&&!file.includes('\\')&&!file.includes('/')):[];if(protectedFiles.length)return {archived:true,protectedFiles};}catch{}
@@ -34,42 +41,97 @@ async function yieldEvery(n){if(n%100===0)await new Promise(r=>setImmediate(r));
 // Snapshot file names start with the ISO time they were written (":" replaced by "-").
 const nameTime=name=>Date.parse(name.slice(0,24).replace(/T(\d\d)-(\d\d)-/,'T$1:$2:'));
 
-export function createSnapshotStorage(logicalPath, {retainText=true, compactReceipt=false, retention=true, deferWrites=false, onAudit}={}) {
+export function createSnapshotStorage(logicalPath, {retainText=true, compactReceipt=false, retention=true, deferWrites=false, protectExisting=false, onAudit}={}) {
   const root = resolve(dirname(logicalPath), basename(logicalPath) + '.snapshots');
   const journal = join(root, 'commits.jsonl');
   let cached = null, pending = null, loaded = false, tail = Promise.resolve(), preexisting = false, newestAtLoad = 0, bytesAtLoad = 0, published = 0, journalGeneration = 0;
+  let observedAbsent=false, creationConflict;
   function fileHash(path) {
     const fd=openSync(path,'r'),buffer=Buffer.allocUnsafe(256*1024),hash=createHash('sha256');
     try {let n;while((n=readSync(fd,buffer,0,buffer.length,null)))hash.update(buffer.subarray(0,n));return hash.digest('hex');}finally{closeSync(fd);}
   }
+  function recovery(reason) {
+    return Object.assign(Error('现有存档无法校验，原文件已保留。请从有效存档副本恢复。'),{code:'SNAPSHOT_RECOVERY_REQUIRED',reason});
+  }
+  function readPayload(path) {
+    if(!retainText)return {sha256:fileHash(path),size:statSync(path).size};
+    const bytes=readFileSync(path);
+    return {content:bytes.toString('utf8'),sha256:createHash('sha256').update(bytes).digest('hex'),size:bytes.length};
+  }
+  function existingInfo(path) {
+    try {return lstatSync(path);} catch(error) {if(error.code==='ENOENT')return null;throw error;}
+  }
+  function readLegacy() {
+    if(existingInfo(root)){
+      let entries;
+      try {entries=readdirSync(root);} catch(error) {if(error.code==='ENOENT')throw recovery('snapshot-directory-unavailable');throw error;}
+      if(hasSnapshotHistory(entries))throw recovery('journal-missing');
+    }
+    const info=existingInfo(logicalPath);
+    if(!info)return null;
+    if(!info.isFile())throw recovery('legacy-not-a-file');
+    let payload;
+    try {payload=readPayload(logicalPath);} catch(error) {if(error.code==='ENOENT')throw recovery('legacy-disappeared');throw error;}
+    return {...payload,version:'legacy-'+payload.sha256,path:logicalPath};
+  }
   function load() {
+    if(creationConflict)throw creationConflict;
     if (loaded) return;
-    loaded = true;
-    try {
-      const text = readFileSync(journal, 'utf8'), lines = text.split('\n');
-      preexisting = true; bytesAtLoad = Buffer.byteLength(text, 'utf8');
-      for (let n = lines.length - 1; n >= 0; n--) {
-        try {
-          const commit = JSON.parse(lines[n]);
-          if (basename(commit.file) !== commit.file) continue;
-          newestAtLoad ||= Date.parse(commit.timestamp) || 0;
-          const path=join(root,commit.file),content=retainText?readFileSync(path,'utf8'):undefined;
-          if ((retainText?createHash('sha256').update(content).digest('hex'):fileHash(path)) !== commit.sha256) continue;
-          cached = { content, sha256:commit.sha256, version: commit.file, size: statSync(path).size }; break;
-        } catch { /* Ignore unfinished journal entries; retention removes them later. */ }
+    let text;
+    try {text=readFileSync(journal,'utf8');} catch(error) {
+      if(error.code!=='ENOENT')throw error;
+      if(protectExisting){cached=readLegacy();if(!cached)observedAbsent=true;}
+      loaded=true;
+      return;
+    }
+    const lines=text.split('\n');
+    let latestTime=0, skipped=0, selected=null, recoveredAt;
+    for(let n=lines.length-1;n>=0;n--){
+      if(!lines[n].trim())continue;
+      let commit;
+      try {commit=JSON.parse(lines[n]);} catch {skipped++;continue;}
+      if(!isSnapshotCommit(commit)){skipped++;continue;}
+      const {file}=commit;
+      const timestamp=typeof commit.timestamp==='string'?Date.parse(commit.timestamp):NaN;
+      latestTime ||= timestamp||0;
+      const path=join(root,file);
+      try {
+        const payload=readPayload(path);
+        if(payload.sha256!==commit.sha256){skipped++;continue;}
+        selected={...payload,version:file,path};
+        if(Number.isFinite(timestamp))recoveredAt=commit.timestamp;
+        break;
+      } catch(error) {
+        // Only a missing payload or a failed checksum proves that a newer
+        // commit is unavailable for recovery. An I/O error can be temporary.
+        if(protectExisting&&error.code!=='ENOENT')throw error;
+        skipped++;
       }
-      if (preexisting && !newestAtLoad) newestAtLoad = Date.now();
-    } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    }
+    if(protectExisting&&!selected)throw recovery('no-valid-commit');
+    cached=selected;
+    preexisting=true;newestAtLoad=latestTime||Date.now();bytesAtLoad=Buffer.byteLength(text,'utf8');
+    loaded=true;
+    if(protectExisting&&skipped){
+      try {onAudit?.({type:'snapshot-fallback',target:logicalPath,skipped,version:selected.version,recoveredAt});} catch {}
+    }
   }
   async function stat() { load(); const current=pending||cached;return current ? { type: 'file', version: current.version, size: current.size } : undefined; }
   async function readText() {
     load();
     if (pending) return pending.content;
     if (!cached) { const e = new Error('No committed snapshot'); e.code = 'ENOENT'; throw e; }
-    return retainText?cached.content:readFileSync(join(root,cached.version),'utf8');
+    return retainText?cached.content:readFileSync(cached.path,'utf8');
   }
   function publish(content, expected) {
-    load();
+    // A staged first save may outlive the observation that the directory was
+    // empty. Never append that default state over history that reappeared.
+    if(observedAbsent)loaded=false;
+    try {load();} catch(error) {
+      if(observedAbsent&&error.code==='SNAPSHOT_RECOVERY_REQUIRED')creationConflict=error;
+      throw error;
+    }
+    if(observedAbsent&&cached){creationConflict=recovery('existing-save-appeared');throw creationConflict;}
     if (expected?.kind === 'createIfAbsent' && cached) { const e = new Error('Snapshot already exists'); e.code = 'FS_NOT_OBSERVED'; throw e; }
     if (expected?.kind === 'replaceIfVersion' && cached?.version !== expected.version) { const e = new Error('Snapshot version changed'); e.code = 'FS_STALE_VERSION'; throw e; }
     const digest=createHash('sha256').update(content).digest('hex'),size=Buffer.byteLength(content,'utf8');
@@ -82,11 +144,12 @@ export function createSnapshotStorage(logicalPath, {retainText=true, compactRece
     const log = openSync(journal,'a');
     journalGeneration++;
     try { measureDesktopDiagnostic('snapshot-journal',()=>{writeSync(log,'\n' + JSON.stringify(record) + '\n',null,'utf8');fsyncSync(log);}); } finally { closeSync(log); }
-    const operation=cached?'update':'create',previous=compactReceipt?undefined:cached?(retainText?cached.content:readFileSync(join(root,cached.version),'utf8')):null;
-    cached = { content:retainText?content:undefined, sha256:digest, version:file, size };
+    const operation=cached?'update':'create',previous=compactReceipt?undefined:currentText(cached);
+    cached = { content:retainText?content:undefined, sha256:digest, version:file, size, path:join(root,file) };
+    observedAbsent=false;
     return compactReceipt?{operation,version:file}:{ operation, version:file, before:previous, after:content };
   }
-  function currentText(current) { return current?(current===pending||retainText?current.content:readFileSync(join(root,current.version),'utf8')):null; }
+  function currentText(current) { return current?(current===pending||retainText?current.content:readFileSync(current.path,'utf8')):null; }
   function deferredReceipt(operation,current,before,after) {
     // A receipt retained by a caller follows its accepted version when that
     // version is published; superseded pending versions remain stale.
@@ -132,7 +195,7 @@ export function createSnapshotStorage(logicalPath, {retainText=true, compactRece
   // Reload intentionally discards pending state so it cannot undo an import.
   function reload() {
     journalGeneration++;
-    cached=null;pending=null;loaded=false;preexisting=false;newestAtLoad=0;bytesAtLoad=0;
+    cached=null;pending=null;loaded=false;preexisting=false;newestAtLoad=0;bytesAtLoad=0;observedAbsent=false;creationConflict=undefined;
     load();return cached?{type:'file',version:cached.version,size:cached.size}:undefined;
   }
   // First retention pass on a store that already had commits records where the

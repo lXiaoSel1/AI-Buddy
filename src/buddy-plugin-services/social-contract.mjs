@@ -1,4 +1,6 @@
 export const SOCIAL_CONTRACT_VERSION='social-contract-v1';
+export const SOCIAL_STORAGE_UNAVAILABLE='SOCIAL_STORAGE_UNAVAILABLE';
+export const SOCIAL_ACCOUNTS_DATABASE='social-core/accounts-v1.sqlite';
 export const SOCIAL_METHODS=Object.freeze(['social.context.read','models.request','activity.lease','activity.check','activity.finish','experience.append','proactive.offer','search.native','owner.work.propose','owner.work.read','owner.work.approve','owner.work.cancel']);
 export const SOCIAL_CAPABILITIES=Object.freeze([...SOCIAL_METHODS,'connections.request','connections.open','connections.events','connections.close','ui.bubble','proactive.claim','tools.list','tools.invoke','notifications.publish','ui.registerPage','lifecycle.register']);
 export const SOCIAL_IDENTITY_FIELDS=Object.freeze(['contextKind','channel','conversationId','accountBindingId','actorId','bindingGeneration','activityGeneration','visibilityScope']);

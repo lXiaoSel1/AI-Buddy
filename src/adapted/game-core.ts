@@ -3520,7 +3520,7 @@ export function apply(
     if (!globalStorage) {
       if (typeof dshHomePath !== 'function') throw new Error('whale-galgame DSH home path unavailable')
       const absolute = dshHomePath(...GLOBAL_SAVE_SEGMENTS)
-      globalStorage = createNativeGlobalStorage(absolute, internals.nativeGlobalIo || DEFAULT_NATIVE_GLOBAL_IO)
+      globalStorage = createNativeGlobalStorage(absolute, internals.nativeGlobalIo || DEFAULT_NATIVE_GLOBAL_IO, { protectExisting: true, onAudit: ctx.snapshotAudit })
       releaseDeferredSave = deferredSaveRegistry?.register('engine', {
         target: absolute, scope: deferredSaveScope, drain: drainDeferredSave,
         flushSync: flushGlobalSync,
@@ -4370,6 +4370,7 @@ export function apply(
     let current = err
     for (let depth = 0; current && depth < 5; depth += 1) {
       const code = String(current.code || '').toUpperCase()
+      if (code === 'SNAPSHOT_RECOVERY_REQUIRED') return false
       if (code === 'ENOENT' || code === 'ENOTDIR'
         || code === 'FS_NOT_FOUND' || code === 'FS_NOT_DIRECTORY') return true
       current = current.cause
