@@ -118,7 +118,7 @@ if(existsSync(componentDescriptor))copyFileSync(componentDescriptor,join(out,'ds
 mkdirSync(join(out,'dsh-platform'),{recursive:true});
 for(const file of ['native-bridge-host.mjs','inert-bootstrap.mjs'])copyFileSync(join(root,'src','dsh-platform',file),join(out,'dsh-platform',file));
 mkdirSync(join(out,'social-login-assets'),{recursive:true});
-for(const file of ['native-path-guard.cjs','NAPCAT-LICENSE.txt','QRCODE-LICENSE.txt'])copyFileSync(join(root,'src','social-login-assets',file),join(out,'social-login-assets',file));
+for(const file of ['native-path-guard.cjs','qq-launch-gate.cjs','NAPCAT-LICENSE.txt','QRCODE-LICENSE.txt'])copyFileSync(join(root,'src','social-login-assets',file),join(out,'social-login-assets',file));
 writeFileSync(join(out,'package.json'),JSON.stringify({name:'ai-buddy',productName:'AI Buddy',version:JSON.parse(readFileSync(join(root,'package.json'),'utf8')).version,animationProfile:JSON.parse(readFileSync(join(source,'package.json'),'utf8')).animationProfile,main:'main.cjs'}));
 if(upstreamMedia)stageUpstreamMediaBuild(root,out);
 const mediaKit=mediaArg('--bili-media-tools=');

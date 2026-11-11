@@ -9,7 +9,7 @@ import {createManagedProcessSupervisor} from '../src/managed-process-supervisor.
 
 // Controlled OS inventory/Job Object transport contracts. The separate Windows
 // fixture verifies these behaviours with real owned processes and the pinned exe.
-async function fixture(t,{tamper,exitCode=0,replyDelay=0,holdReceipt=false}={}){
+async function fixture(t,{tamper,exitCode=0,replyDelay=0,holdReceipt=false,terminalStage}={}){
   const directory=await mkdtemp(join(tmpdir(),'core14-guard-contract-')),guardPath=join(directory,'guard.bytes'),statePath=join(directory,'state.json');
   await writeFile(guardPath,'controlled guard image, not executable');
   const runtime=1000001,runA=1000002,runB=1000003;
@@ -24,7 +24,7 @@ async function fixture(t,{tamper,exitCode=0,replyDelay=0,holdReceipt=false}={}){
       setTimeout(()=>{child.stdout.emit('data',Buffer.from(JSON.stringify({requestId:line.trim().slice(7),activeProcesses:child.active})+'\n'));callback?.();},replyDelay);
       return true;
     },end(){assert.equal(this.writableEnded,false,'guard pipe may only close once');this.writableEnded=true;child.ends++;
-      void delay(replyDelay).then(async()=>{remove(rootPid);child.active=0;const receipt={schemaVersion:1,guardId:args[5],ownerPid:Number(args[0]),ownerCreationTime:args[1],rootPid,rootCreationTime:args[3],activeProcesses:0};child.writeReceipt=()=>writeFile(args[4],JSON.stringify(tamper?tamper(receipt):receipt));if(!holdReceipt)await child.writeReceipt();remove(child.pid);child.exitCode=exitCode;child.emit('exit',exitCode,null);});
+      void delay(replyDelay).then(async()=>{remove(rootPid);child.active=0;const receipt={schemaVersion:1,guardId:args[5],ownerPid:Number(args[0]),ownerCreationTime:args[1],rootPid,rootCreationTime:args[3],activeProcesses:0};child.writeReceipt=(path=args[4])=>writeFile(path,JSON.stringify(tamper?tamper(receipt):receipt));if(holdReceipt!==true&&holdReceipt!==rootPid)await child.writeReceipt();remove(child.pid);child.exitCode=exitCode;child.emit('exit',exitCode,null);if(terminalStage)child.stdout.emit('data',Buffer.from(JSON.stringify({...receipt,ready:false,guardStage:terminalStage})+'\n'));child.emit('close',exitCode,null);});
     }});
     children.set(rootPid,child);
     queueMicrotask(()=>child.stdout.emit('data',Buffer.from(JSON.stringify({ready:true,ownerPid:process.pid,rootPid,killOnOwnerExit:true,breakawayAllowed:false})+'\n')));
@@ -98,6 +98,49 @@ test('runtime release can recheck a temporarily unavailable receipt without clos
   const proof=await release();
   assert.equal(proof.stopped,true);assert.equal(proof.pid,f.runtime);
   assert.deepEqual(await release(),proof);assert.equal(child.ends,1);
+});
+
+test('global close retires independent guards and only retries the one missing its receipt',async t=>{
+  const f=await fixture(t,{holdReceipt:1000001});
+  await f.supervisor.registerRoot({runtimeId:'other',pid:f.runA});
+  const blocked=f.children.get(f.runtime),independent=f.children.get(f.runA);
+  await assert.rejects(f.supervisor.close(),{code:'ENOENT'});
+  assert.equal(blocked.ends,1);
+  assert.equal(independent.ends,1);
+  assert.equal(f.supervisor.snapshot().osGuards,1);
+  assert.equal((await f.supervisor.releaseRoot({runtimeId:'other'})).stopped,true);
+  await assert.rejects(f.supervisor.registerRoot({runtimeId:'another',pid:f.runB}),{code:'WORK_PROCESS_ADMISSION_CLOSED'});
+  await blocked.writeReceipt();
+  await Promise.all([f.supervisor.close(),f.supervisor.close()]);
+  assert.equal((await f.supervisor.releaseRoot({runtimeId:'native'})).stopped,true);
+  assert.equal(blocked.ends,1);
+  assert.equal(independent.ends,1);
+  assert.equal(f.supervisor.snapshot().osGuards,0);
+});
+
+test('a QQ zero-observed native failure can recheck only an exact final stop receipt',async t=>{
+  const f=await fixture(t,{exitCode:1,holdReceipt:1000002,terminalStage:'receipt-persist'});
+  const runtimeId='qq:receipt-recheck';
+  await f.supervisor.registerRoot({runtimeId,pid:f.runA});
+  const child=f.children.get(f.runA),release=()=>f.supervisor.releaseRoot({runtimeId});
+  const expected={code:'WORK_PROCESS_STOP_UNCONFIRMED',guardStage:'receipt-persist'};
+  await assert.rejects(release(),expected);
+  await child.writeReceipt(child.args[4]+'.pending');
+  await assert.rejects(release(),expected);
+  await child.writeReceipt();
+  const proof=await release();
+  assert.equal(proof.stopped,true);
+  assert.equal(proof.osActiveProcesses,0);
+  assert.equal(child.ends,1);
+  assert.deepEqual(await release(),proof);
+});
+
+test('unverified shutdown and non-QQ paths still reject a nonzero guard exit with a final file',async t=>{
+  for(const [runtimeId,terminalStage] of [['qq:stop-unverified','assigned'],['work-runtime','receipt-committed']]){
+    const f=await fixture(t,{exitCode:1,terminalStage});
+    await f.supervisor.registerRoot({runtimeId,pid:f.runA});
+    await assert.rejects(f.supervisor.releaseRoot({runtimeId}),{code:'WORK_PROCESS_STOP_UNCONFIRMED',guardStage:terminalStage});
+  }
 });
 
 test('successful new-born admission invalidates only that runtime prior release receipt',async t=>{

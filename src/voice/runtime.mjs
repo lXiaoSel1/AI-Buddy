@@ -175,9 +175,10 @@ function makeWorker({ kind, assets, supervisor, drainTimeoutMs }) {
     await supervisor.registerRoot({ runtimeId, pid: process.pid });
     admitted = true;
     const response = await result('initialize', {
-      // Keep the spawn cwd conventional for upstream relative paths and chdir().
-      // Workers add this root to sys.path, so engine imports need its extended form.
-      root: pythonFilePath(assets.root),
+      // GPT-SoVITS changes cwd to root and appends forward-slash paths to
+      // getcwd() for speaker imports and vocoder weights. Windows extended
+      // paths cannot use those separators. Keep explicit asset/cache paths extended.
+      root: kind === 'gpt' ? assets.root : pythonFilePath(assets.root),
       assetRoot: pythonFilePath(assets.assetRoot),
       cacheRoot: pythonFilePath(assets.cacheRoot),
     }, signal, 240000);

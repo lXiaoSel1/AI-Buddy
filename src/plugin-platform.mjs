@@ -73,7 +73,7 @@ export function createHostDependencyCoordinator({describe,prepare,busy=()=>false
 /** Application composition only. Work business is supplied by its enabled plugin. */
 export async function createPluginPlatform({root,build,dataRoot,legacyManager,voice,network,voiceTestFingerprint,getGame,getProvider,getSocialHost=()=>null,crypto,BrowserWindow,session,ipcMain,pluginClientPreloadPath,openExternal,openSocialSetup=()=>{},renderBiliSheet,analyzeBiliFrames,onReadingOpen=async()=>{},chooseComponentArchive,componentWorkerFactory,ffmpegWorkerFactory,ffmpegBundledNotices=join(build,'media-notices','ffmpeg'),ffmpegManagerFactory=createFfmpegComponentManager,qqLoginFactory=createQqLoginRuntime,runtimeLockPath,resolveToolScope,hostServices={},busy=()=>false,automaticWorkAllowed=()=>true,maintenanceAdmission=()=>true,onUpdate=()=>{},onUsage=()=>{},onNotification=()=>{},audit=()=>{},pageAppearance=()=>null}){
   const pages=new Map(),lifecycles=new Map(),grantStates=new Map(),exports=new Map(),nativeEvents=new EventEmitter(),workBackends=new Map(),workPreparations=new Map(),workReleases=new Map(),releasedWorkBackends=new WeakMap(),taskToolBackends=new Set(),runtimeDescriptors=new Map();let communityCalls=0,currentBackend=null,currentLock=null,selectedComponentLock=null,componentChecked=false,componentChanging=false,componentGeneration=0,inflight=0,closed=false,platform,workClientHost,workClientOpener,localCard;
-  const restoreOptions={...arguments[0]};let platformClosePromise=null,platformRestorePromise=null,failedCloseSteps=[];
+  const restoreOptions={...arguments[0]};let platformClosePromise=null,platformRestorePromise=null,remainingCloseSteps=[];
   let admittedMutations = 0;
   const mutationActions = new Set(['install','install-offline','install-update','enable','disable','rollback','uninstall','sources-add','sources-disable','sources-remove',
     'dsh-install','dsh-enable','dsh-disable','dsh-rollback','dsh-uninstall','dsh-open-client','dsh-component-install','bili-component-prepare',
@@ -108,7 +108,14 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
   const loginsSeen=new Set();
   // C-4: open plugin pages re-read their accounts after a login, a removal or a change of account
   let accountsTimer=null;socialAccounts.subscribe(()=>{if(closed||accountsTimer)return;accountsTimer=setTimeout(()=>{accountsTimer=null;if(closed)return;void clientHost.notify('ai-buddy:social-accounts-changed').catch(()=>{});void workClientHost?.notify('ai-buddy:social-accounts-changed').catch(()=>{});},250);accountsTimer.unref?.();});
-  const qqLogin=qqLoginFactory({network,fetchImpl:network?.fetch,dataRoot,build,accounts:socialAccounts,onState:()=>onUpdate(platform?.snapshot())});
+  const qqLogin=qqLoginFactory({network,fetchImpl:network?.fetch,dataRoot,build,accounts:socialAccounts,onState:event=>{
+    if(event?.type==='guard-not-assigned'||event?.type==='guard-stop-failed'||event?.type==='qq-runtime-exit'||event?.type==='process-inspection'&&event.stage==='guard-admission'&&!event.ok){
+      const code=/^[A-Z0-9_]{1,80}$/.test(event.code??'')?event.code:undefined;
+      const guardStage=['spawn','before-assignment','assigned','receipt-persist','receipt-committed'].includes(event.guardStage)?event.guardStage:undefined;
+      try{audit({type:'qq-connector',phase:event.type,code,guardStage});}catch{ /* Diagnostic writes do not change process custody. */ }
+    }
+    onUpdate(platform?.snapshot());
+  }});
   const socialLogin=createSocialLogin({accounts:socialAccounts,drivers:{bilibili:createBilibiliLoginDriver({BrowserWindow,session}),qq:qqLogin},onUpdate:()=>{try{for(const row of socialLogin.snapshot().states)if(row.phase==='connected'&&row.account?.ref&&row.attemptId&&!loginsSeen.has(row.attemptId)){loginsSeen.add(row.attemptId);recordCheck(row.account.ref,true);}}catch{}onUpdate(platform?.snapshot());}});
   const biliVision=createBiliVision({fetchImpl:network?.fetch,directory:join(dataRoot,'social-core','bili-vision-v1'),renderSheet:renderBiliSheet,analyzeFrames:analyzeBiliFrames,acquireMedia:createBiliMedia({fetchImpl:network?.fetch,resolveVerifiedExecutable:options=>ffmpegManager.resolveVerifiedExecutable(options),workerPath:join(build,'bili-full-media-worker.mjs'),tools:join(build,'bili-media'),tempRoot:join(dataRoot,'social-core','bili-media-temp'),playback:(request)=>biliPlayback(request,socialAccounts),emitDiagnostic:value=>audit({type:'bili-full-media',...value})})});
   const socialBroker=createSocialPluginBroker({dataRoot,automaticWorkAllowed,accounts:socialAccounts,transport:socialTransport,biliVision,requireBiliMedia:async({signal}={})=>{try{return await ffmpegManager.resolveVerifiedExecutable({signal});}catch(cause){try{await onNotification({kind:'host-component-required',component:'ffmpeg',code:cause.code,title:'需要准备B站视频组件',page:'plugins'});}catch{}throw cause;}},onReadingOpen:async value=>{await onReadingOpen(value);await clientHost.notify('ai-buddy:bili-reading-open',{activityId:value.activityId});},verifyBilibiliAccount:(ref,options)=>socialLogin.check(ref,options),bridge,getR95:()=>getGame()?.r95,getProvider,onSetup:async({packageName,action,payload={},signal,check=async()=>{}})=>{
@@ -366,23 +373,30 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
     async refreshAppearance(){await Promise.allSettled([clientHost.refreshAppearance(),cardClientHost.refreshAppearance(),workClientHost?.refreshAppearance()]);},
     async configureNetwork(){await legacyManager.configureNetwork?.();for(const backend of new Set([currentBackend,...[...workBackends.values()].map(row=>row.backend),...taskToolBackends]))await backend?.configureNetwork?.();},
     close(){
-      if(platformClosePromise)return platformClosePromise;closed=true;clearInterval(socialTick);clearTimeout(accountsTimer);
-      const steps=[['voice-authority',()=>voiceAuthority?.close()],['host-dependencies',()=>dependencyCoordinator.close()],['ffmpeg',()=>ffmpegManager.close()],['dsh-component',()=>componentManager.close()],
-        ...[...exports].map(([key,value])=>['export:'+key,async()=>{await value.close();exports.delete(key);}]),...[...taskToolBackends].map((value,index)=>['task-tool:'+index,()=>value.close()]),
-        ['work-preparations',()=>Promise.allSettled([...workPreparations.values()])],['work-client',()=>workClientHost?.close()],...[...workBackends].map(([key,value])=>['work-backend:'+key,async()=>{await value.backend.close();workBackends.delete(key);}]),
-        ['community',()=>community.close()],['local-card',()=>localCard?.close()],['card-client',()=>cardClientHost.close()],['voice-games',()=>voiceGamesFacade.close()],['social-facade',()=>socialFacade.close()],['social-broker',()=>socialBroker.close()],['bili-vision',()=>biliVision.close()],['social-transport',()=>socialTransport.close()],['social-login',()=>socialLogin.close()],['social-accounts',()=>socialAccounts.close()],['client',()=>clientHost.close()],['bridge',()=>bridge.close()]];
-      platformClosePromise=(async()=>{const failures=[];failedCloseSteps=[];for(const[name,run]of steps)try{await run();}catch(cause){failedCloseSteps.push({name,run});failures.push(Object.assign(cause,{closeStep:name}));}if(failures.length)throw Object.assign(new AggregateError(failures,'Plugin platform did not close completely'),{code:'PLUGIN_CLOSE_FAILED',failedSteps:failedCloseSteps.map(row=>row.name)});})();return platformClosePromise;
+      if(platformClosePromise)return platformClosePromise;
+      if(!closed){
+        closed=true;clearInterval(socialTick);clearTimeout(accountsTimer);
+        remainingCloseSteps=[['voice-authority',()=>voiceAuthority?.close()],['host-dependencies',()=>dependencyCoordinator.close()],['ffmpeg',()=>ffmpegManager.close()],['dsh-component',()=>componentManager.close()],
+          ...[...exports].map(([key,value])=>['export:'+key,async()=>{await value.close();exports.delete(key);}]),...[...taskToolBackends].map((value,index)=>['task-tool:'+index,()=>value.close()]),
+          ['work-preparations',()=>Promise.allSettled([...workPreparations.values()])],['work-client',()=>workClientHost?.close()],...[...workBackends].map(([key,value])=>['work-backend:'+key,async()=>{await value.backend.close();workBackends.delete(key);}]),
+          ['community',()=>community.close()],['local-card',()=>localCard?.close()],['card-client',()=>cardClientHost.close()],['voice-games',()=>voiceGamesFacade.close()],['social-facade',()=>socialFacade.close()],['social-broker',()=>socialBroker.close()],['bili-vision',()=>biliVision.close()],['social-transport',()=>socialTransport.close()],['social-login',()=>socialLogin.close()],['social-accounts',()=>socialAccounts.close()],['client',()=>clientHost.close()],['bridge',()=>bridge.close()]];
+      }
+      platformClosePromise=Promise.resolve().then(async()=>{
+        const failures=[],unfinished=[];
+        for(const[name,run]of remainingCloseSteps)try{await run();}catch(cause){unfinished.push([name,run]);failures.push(Object.assign(cause,{closeStep:name}));}
+        remainingCloseSteps=unfinished;
+        if(failures.length)throw Object.assign(new AggregateError(failures,'Plugin platform did not close completely'),{code:'PLUGIN_CLOSE_FAILED',failedSteps:unfinished.map(([name])=>name)});
+      }).catch(cause=>{platformClosePromise=null;throw cause;});
+      return platformClosePromise;
     },
     restoreAfterCloseFailure(){
       if(platformRestorePromise)return platformRestorePromise;
       platformRestorePromise=(async()=>{
-        try{await platformClosePromise;}catch{}
         if(!closed)throw error('Close must be attempted before restoring','PLUGIN_RESTORE_INVALID');
         if(typeof legacyManager.reopen!=='function')throw error('Maintenance facade cannot be recreated','PLUGIN_RESTORE_UNSUPPORTED');
+        try{await platformClosePromise;}catch{}
+        try{await platform.close();}catch(cause){throw Object.assign(new AggregateError(cause.errors??[cause],'Old plugin resources have not confirmed shutdown'),{code:'PLUGIN_RESTORE_FAILED',failedSteps:cause.failedSteps});}
         await legacyManager.reopen();
-        const failures=[];for(const{name,run}of failedCloseSteps)try{await run();}catch(cause){failures.push(Object.assign(cause,{closeStep:name}));}
-        if(failures.length)throw Object.assign(new AggregateError(failures,'Old plugin resources have not confirmed shutdown'),{code:'PLUGIN_RESTORE_FAILED'});
-        if(!legacyManager.snapshot().service?.usable)await legacyManager.reopen();
         const restored=await createPluginPlatform(restoreOptions);if(workClientOpener)restored.setWorkClientOpener(workClientOpener);return restored;
       })().catch(cause=>{platformRestorePromise=null;throw cause;});return platformRestorePromise;
     },

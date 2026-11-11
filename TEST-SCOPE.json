@@ -229,6 +229,7 @@
     "test/main-profile-diagnostic.test.mjs",
     "test/managed-process-admission.test.mjs",
     "test/managed-process-inspection.test.mjs",
+    "test/managed-process-native-qq.test.mjs",
     "test/managed-process-retirement.test.mjs",
     "test/managed-source-registration.test.mjs",
     "test/meal-dialogue.test.mjs",

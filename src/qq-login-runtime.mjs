@@ -1,6 +1,7 @@
 import {spawn} from 'node:child_process';
-import {mkdir,writeFile,readFile,lstat,rm,readdir} from 'node:fs/promises';
-import {join,resolve} from 'node:path';
+import {renameSync} from 'node:fs';
+import {mkdir,mkdtemp,writeFile,readFile,lstat,readdir,unlink,rmdir} from 'node:fs/promises';
+import {join} from 'node:path';
 import {randomBytes,randomUUID,createHash} from 'node:crypto';
 import net from 'node:net';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -14,6 +15,7 @@ import {inspectQqCache} from './qq-owned-cache.mjs';
 import {createManagedProcessSupervisor} from './managed-process-supervisor.mjs';
 
 const fail=code=>Object.assign(Error(code),{code});
+const atStage=(error,qqStage,fallback)=>Object.assign(Error(fallback,{cause:error}),{code:error?.code??fallback,qqStage});
 const privateKeys={USERPROFILE:'h',HOME:'h',APPDATA:'h/a',LOCALAPPDATA:'h/l',TEMP:'t',TMP:'t'};
 const port=()=>new Promise((resolve,reject)=>{const server=net.createServer();server.once('error',reject);server.listen(0,'127.0.0.1',()=>{const value=server.address().port;server.close(()=>resolve(value));});});
 async function bounded(promise,ms,code){let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(fail(code)),ms);})]);}finally{clearTimeout(timer);}}
@@ -22,7 +24,7 @@ export function qrImage(url){let parsed;try{parsed=new URL(url);}catch{throw fai
 // Reusing one name would let WebSocket replace HTTP before either is opened.
 export function qqNetworkConfig(httpPort,wsPort,token){return {network:{httpServers:[{name:'ai-buddy-http',enable:true,host:'127.0.0.1',port:httpPort,token,enableCors:false,enableWebsocket:false,messagePostFormat:'array',debug:false}],websocketServers:[{name:'ai-buddy-websocket',enable:true,host:'127.0.0.1',port:wsPort,token,messagePostFormat:'array',debug:false,reportSelfMessage:false,enableForcePushEvent:false}],httpClients:[],websocketClients:[],plugins:[]},enableLocalFile2Url:false};}
 export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onState=()=>{},supervisor=null,network,fetchImpl=network?.fetch??globalThis.fetch,childEnvironment=()=>({}),spawnImpl=spawn,listenerInspector=assertOwnedListener,stopTimeoutMs=8000}={}){
- const root=join(dataRoot,'social-login'),profiles=join(root,'qq'),runs=new Map(),restores=new Map(),pending=new Set(),resumeGenerations=new Map(),lifetime=new AbortController(),exits=[];let closed=false,db=null,opening=null;
+ const root=join(dataRoot,'social-login'),profiles=join(root,'qq'),runs=new Map(),profileClaims=new Map(),restores=new Map(),pending=new Set(),resumeGenerations=new Map(),lifetime=new AbortController(),exits=[];let closed=false,db=null,opening=null,closing=null,shutdownComplete=false;
  component??=createQqComponent({directory:join(dataRoot,'plugin-runtimes','qq-components'),descriptor,network,fetchImpl});
  supervisor??=createManagedProcessSupervisor({guardPath:join(build,'managed-process-guard.exe'),statePath:join(root,'processes.json'),onState});
  async function database(){if(closed)throw fail('SOCIAL_LOGIN_CLOSED');if(db)return db;if(!opening)opening=(async()=>{await mkdir(root,{recursive:true});const next=new DatabaseSync(join(root,'onboarding-v1.sqlite'));try{next.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS bindings(ref TEXT PRIMARY KEY,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)");db=next;return db;}catch(cause){next.close();throw cause;}})().catch(cause=>{opening=null;throw cause;});return opening;}
@@ -43,16 +45,45 @@ export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onS
   const socket=new WebSocket(`ws://127.0.0.1:${row.wsPort}/?access_token=${row.accessToken}`);
   try{await bounded(new Promise((yes,no)=>{socket.addEventListener('open',yes,{once:true});socket.addEventListener('error',()=>no(fail('QQ_ONEBOT_NOT_READY')),{once:true});}),6000,'QQ_ONEBOT_NOT_READY');}finally{socket.close();}
  }
+ function releaseProfile(resourceId,attemptId){
+  if(profileClaims.get(resourceId)===attemptId)profileClaims.delete(resourceId);
+ }
+ async function removeLaunchGate(gate){
+  for(const path of [gate.path,gate.pending])await unlink(path).catch(()=>{});
+  await rmdir(gate.directory).catch(()=>{});
+ }
  async function stopRow(row){
   if(!row)return;if(row.stopping)return row.stopping;
-  row.stopping=(async()=>{
-   row.abort.abort();clearInterval(row.cacheTimer);await row.admission?.catch(()=>{});let forced=false;
-   if(!row.exit)try{if(!row.child.connected)throw fail('QQ_COMPONENT_STOP_PENDING');await new Promise((yes,no)=>row.child.send({type:'shutdown'},error=>error?no(error):yes()));await bounded(row.exited,stopTimeoutMs,'QQ_COMPONENT_STOP_PENDING');}catch{forced=true;}
-   if(row.guardReady){await supervisor.releaseRoot({runtimeId:row.runtimeId});await bounded(row.exited,stopTimeoutMs,'QQ_COMPONENT_STOP_PENDING');}
-   else if(!row.exit){row.child.kill();await bounded(row.exited,stopTimeoutMs,'QQ_COMPONENT_STOP_PENDING');throw fail('QQ_COMPONENT_STOP_UNCONFIRMED');}
-   if(!row.guardReady)throw fail('QQ_COMPONENT_STOP_UNCONFIRMED');
-   runs.delete(row.attemptId);try{await inspectQqCache(row.profile,{prune:true});}catch{row.cacheWarning=true;}onState();if(!forced&&row.exit.code!==0)throw fail('QQ_COMPONENT_EXIT_FAILED');
-  })();
+  row.stopping=Promise.resolve().then(async()=>{
+   row.abort.abort();
+   clearInterval(row.cacheTimer);
+   await row.admission?.catch(()=>{});
+   const allowUnassigned=!row.grantAttempted;
+   if(!row.exit&&allowUnassigned){
+    // Only this ChildProcess can be stopped here. No NapCat code was released.
+    if(Number.isInteger(row.child.pid))row.child.kill();
+   }else if(!row.exit&&row.child.connected){
+    try{
+     await bounded(new Promise((yes,no)=>row.child.send({type:'shutdown'},error=>error?no(error):yes())),stopTimeoutMs,'QQ_COMPONENT_STOP_PENDING');
+     await bounded(row.exited,stopTimeoutMs,'QQ_COMPONENT_STOP_PENDING');
+    }catch{ /* The Job still owns shutdown if graceful IPC failed. */ }
+   }
+   let proof;
+   try{proof=await supervisor.releaseRoot({runtimeId:row.runtimeId,allowUnassigned});}
+   catch(error){
+    if(error?.guardStage==='receipt-persist')throw Object.assign(fail('QQ_COMPONENT_STOP_RECEIPT_WRITE_FAILED'),{cause:error,qqStage:'receipt-write'});
+    throw atStage(error,'guard-stop','QQ_COMPONENT_STOP_UNCONFIRMED');
+   }
+   if(proof?.stopped!==true||(proof.osActiveProcesses!==0&&!(allowUnassigned&&proof.unassigned===true)))throw fail('QQ_COMPONENT_STOP_UNCONFIRMED');
+   try{await bounded(row.exited,stopTimeoutMs,'QQ_COMPONENT_STOP_PENDING');}
+   catch(error){throw atStage(error,'process-exit','QQ_COMPONENT_STOP_PENDING');}
+   await removeLaunchGate(row.gate);
+   await inspectQqCache(row.profile,{prune:true}).catch(()=>{row.cacheWarning=true;});
+   runs.delete(row.attemptId);
+   releaseProfile(row.resourceId,row.attemptId);
+   if(row.grantAttempted&&row.exit.code>0&&row.exit.code!==137)onState({type:'qq-runtime-exit',code:'QQ_COMPONENT_EXIT_FAILED'});
+   onState();
+  });
   try{await row.stopping;}catch(cause){row.stopping=null;throw cause;}
  }
  async function launch({attemptId,signal,update=()=>{},saved=null,official=false}){
@@ -61,7 +92,12 @@ export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onS
   const runtime=await component.ensure({signal,onProgress:update,official:official===true});signal.throwIfAborted();
   const store=await database();let resourceId=saved?.resourceId;
   if(!resourceId){resourceId=store.prepare("SELECT value FROM metadata WHERE key='pendingProfile'").get()?.value??randomUUID();if(accounts.list().some(account=>account.managedProfileId===resourceId))resourceId=randomUUID();if(!/^[a-f0-9-]{36}$/.test(resourceId))throw fail('QQ_PRIVATE_PROFILE_REQUIRED');store.prepare("INSERT INTO metadata VALUES('pendingProfile',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(resourceId);}
-  if([...runs.values()].some(row=>row.resourceId===resourceId&&!row.exit))throw fail('SOCIAL_LOGIN_BUSY');
+  if(profileClaims.has(resourceId))throw fail('SOCIAL_LOGIN_BUSY');
+  profileClaims.set(resourceId,attemptId);
+  try{return await launchProfile({attemptId,signal,runtime,resourceId,saved});}
+  finally{if(!runs.has(attemptId))releaseProfile(resourceId,attemptId);}
+ }
+ async function launchProfile({attemptId,signal,runtime,resourceId,saved}){
   const profile=componentChild(profiles,resourceId);await mkdir(profile,{recursive:true});
   if((await lstat(profile)).isSymbolicLink())throw fail('QQ_COMPONENT_LINK_DENIED');
   await inspectQqCache(profile,{prune:true});
@@ -80,15 +116,42 @@ export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onS
   Object.assign(env,{AI_BUDDY_QQ_PRIVATE_HOME:env.HOME,NAPCAT_WORKDIR:work,NAPCAT_WORKER_PROCESS:'1',NAPCAT_DISABLE_PIPE:'1',NAPCAT_DISABLE_TIME_SYNC:'1',NAPCAT_WRAPPER_PATH:join(runtime,'wrapper.node'),NAPCAT_QQ_PACKAGE_INFO_PATH:join(runtime,'package.json'),NAPCAT_QQ_VERSION_CONFIG_PATH:join(runtime,'config.json')});
   Object.assign(env,await childEnvironment({env:{...env},purpose:'qq-runtime',signal}));
   signal.throwIfAborted();
-  const child=spawnImpl(join(runtime,'node.exe'),['--require',join(build,'social-login-assets/native-path-guard.cjs'),join(runtime,'index.js')],{cwd:runtime,env,windowsHide:true,stdio:['ignore','ignore','ignore','ipc']});
-  const row={attemptId,runtimeId:'qq:'+attemptId,guardReady:false,resourceId,profile,child,webPort,httpPort,wsPort,accessToken,abort:new AbortController(),exit:null};runs.set(attemptId,row);
+  const gateDirectory=await mkdtemp(join(root,'qq-launch-'));
+  const gate={directory:gateDirectory,path:join(gateDirectory,'permit'),pending:join(gateDirectory,'permit.pending')};
+  const permit=randomBytes(32).toString('hex');
+  Object.assign(env,{AI_BUDDY_QQ_LAUNCH_FILE:gate.path,AI_BUDDY_QQ_LAUNCH_TOKEN:permit});
+  let child;
+  try{
+   signal.throwIfAborted();
+   child=spawnImpl(join(runtime,'node.exe'),['--require',join(build,'social-login-assets/qq-launch-gate.cjs'),join(runtime,'index.js')],{cwd:runtime,env,windowsHide:true,stdio:['ignore','ignore','ignore','ipc']});
+  }catch(error){await removeLaunchGate(gate);throw error;}
+  const row={attemptId,runtimeId:'qq:'+attemptId,grantAttempted:false,resourceId,profile,child,webPort,httpPort,wsPort,accessToken,abort:new AbortController(),exit:null,gate};runs.set(attemptId,row);
   row.cacheTimer=setInterval(()=>{if(row.cacheChecking||row.stopping||row.exit)return;row.cacheChecking=true;void inspectQqCache(profile).then(value=>{if(value.overLimit){row.cacheLimit=true;return stopRow(row);}}).catch(()=>{row.cacheLimit=true;return stopRow(row).catch(()=>{});}).finally(()=>{row.cacheChecking=false;});},30000);row.cacheTimer.unref?.();
-  row.exited=new Promise(resolve=>{child.once('error',()=>{row.exit={code:-1};resolve(row.exit);});child.once('exit',(code,signal)=>{row.exit={code,signal};exits.push({pid:child.pid,code,signal,at:Date.now()});if(exits.length>20)exits.shift();resolve(row.exit);onState();});});
-  row.admission=supervisor.registerRoot({runtimeId:row.runtimeId,pid:child.pid}).then(()=>{row.guardReady=true;});await row.admission;
+  row.exited=new Promise(resolve=>{
+   child.on('error',()=>{if(!Number.isInteger(child.pid)){row.exit={code:-1};resolve(row.exit);}});
+   child.once('exit',(code,signal)=>{row.exit={code,signal};exits.push({pid:child.pid,code,signal,at:Date.now()});if(exits.length>20)exits.shift();resolve(row.exit);onState();});
+  });
   child.on('message',message=>{if(message?.type==='restart'){row.restartRequested=true;onState();}});
   const combined=AbortSignal.any([signal,row.abort.signal]);row.signal=combined;
+  row.admission=(async()=>{
+   if(!Number.isInteger(child.pid)){await row.exited;throw fail('QQ_COMPONENT_EXITED');}
+   let admission;
+   try{admission=await supervisor.registerRoot({runtimeId:row.runtimeId,pid:child.pid});}
+   catch(error){throw atStage(error,'guard-admission','WORK_PROCESS_GUARD_FAILED');}
+   combined.throwIfAborted();
+   if(row.exit)throw fail('QQ_COMPONENT_EXITED');
+   await writeFile(gate.pending,permit,{flag:'wx'});
+   combined.throwIfAborted();
+   try{supervisor.rootCustody?.({runtimeId:row.runtimeId,pid:child.pid,creationTime:admission?.creationTime});}
+   catch(error){throw atStage(error,'guard-admission','WORK_PROCESS_GUARD_FAILED');}
+   // A rename error can race publication. Once attempted, require the real Job proof.
+   row.grantAttempted=true;
+   try{renameSync(gate.pending,gate.path);}
+   catch{throw fail('QQ_COMPONENT_LAUNCH_GATE_FAILED');}
+  })();
+  await row.admission;
   for(let n=0;n<40;n++){
-   combined.throwIfAborted();if(row.exit)throw fail(row.exit.code===78?'QQ_PRIVATE_PROFILE_REQUIRED':'QQ_COMPONENT_EXITED');
+   combined.throwIfAborted();if(row.exit)throw fail(row.exit.code===78?'QQ_PRIVATE_PROFILE_REQUIRED':row.exit.code===71?'QQ_COMPONENT_LAUNCH_GATE_EXPIRED':row.exit.code===72?'QQ_COMPONENT_LAUNCH_GATE_FAILED':'QQ_COMPONENT_EXITED');
    try{await listenerInspector(child.pid,[webPort]);row.credential=(await api(row,'auth/login',{hash:createHash('sha256').update(token+'.napcat').digest('hex')},false)).Credential;if(row.credential)return row;}catch(cause){if(cause.code==='QQ_LISTENER_OWNER_MISMATCH')throw cause;}
    await delay(1000,undefined,{signal:combined});
   }
@@ -136,9 +199,23 @@ export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onS
  }
  async function ensureAccount(ref){
   if(closed)throw fail('SOCIAL_LOGIN_CLOSED');const account=accounts.get(ref),saved=await binding(ref);if(!account?.enabled||!saved||saved.accountId!==account.accountId)throw fail('QQ_MANAGED_ACCOUNT_REQUIRED');
-  const live=[...runs.values()].find(row=>row.resourceId===saved.resourceId&&!row.exit);if(live)return live;
+  const existing=[...runs.values()].find(row=>row.resourceId===saved.resourceId);
+  if(existing?.accountId===saved.accountId&&!existing.exit&&!existing.abort.signal.aborted)return existing;
   if(restores.has(ref))return restores.get(ref);
-  const restoring=(async()=>{const controller=new AbortController(),attemptId=randomUUID();const result=await start({attemptId,signal:controller.signal,saved,expectedAccountId:account.accountId,restore:true});if(closed||accounts.get(ref)?.generation!==account.generation){await stopRow(runs.get(attemptId));throw fail('SOCIAL_ACCOUNT_CHANGED');}accounts.commitLogin({...result,pluginId:account.pluginId},{requireConfirmation:account.activityApprovalRequired===true});return runs.get(attemptId);})();restores.set(ref,restoring);try{return await restoring;}finally{restores.delete(ref);}
+  const restoring=(async()=>{
+   if(existing?.exit||existing?.abort.signal.aborted)await stopRow(existing);
+   unchanged(account);
+   const controller=new AbortController(),attemptId=randomUUID();
+   const result=await start({attemptId,signal:controller.signal,saved,expectedAccountId:account.accountId,restore:true});
+   if(closed||accounts.get(ref)?.generation!==account.generation){
+    await stopRow(runs.get(attemptId));
+    throw fail('SOCIAL_ACCOUNT_CHANGED');
+   }
+   accounts.commitLogin({...result,pluginId:account.pluginId},{requireConfirmation:account.activityApprovalRequired===true});
+   return runs.get(attemptId);
+  })();
+  restores.set(ref,restoring);
+  try{return await restoring;}finally{restores.delete(ref);}
  }
  async function connection(ref){const saved=await binding(ref);if(saved?.resourceId)await ensureAccount(ref);const account=accounts.get(ref);if(!account?.enabled||account.platform!=='qq')throw fail('SOCIAL_ACCOUNT_REQUIRED');return {account,session:manualQqSession(account,accounts.secret(ref))};}
  function unchanged(account){if(closed||accounts.get(account.ref)?.generation!==account.generation)throw fail('SOCIAL_ACCOUNT_CHANGED');}
@@ -150,6 +227,21 @@ export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onS
   stop:async({attemptId}={})=>{for(const row of [...runs.values()])if(!attemptId||row.attemptId===attemptId)await stopRow(row);},
   discard:async result=>stopRow(runs.get(result?.attemptId)),
   async setAutoResume(ref,enabled,scope,{signal,check=async()=>{}}={}){const account=accounts.get(ref);if(closed||!account?.enabled||account.platform!=='qq'||typeof enabled!=='boolean'||!scope||['characterId','lifeId','operationId'].some(key=>typeof scope[key]!=='string'||!scope[key]))throw fail('QQ_AUTOSTART_INVALID');const generation=(resumeGenerations.get(ref)??0)+1;resumeGenerations.set(ref,generation);const valid=()=>{signal?.throwIfAborted();if(closed||resumeGenerations.get(ref)!==generation||accounts.get(ref)?.generation!==account.generation)throw fail('SOCIAL_ACCOUNT_CHANGED');};await check();valid();const value=await binding(ref)??{ref,accountId:account.accountId,resourceId:null},databaseHandle=await database();await check();valid();databaseHandle.prepare('INSERT INTO bindings VALUES(?,?) ON CONFLICT(ref) DO UPDATE SET body=excluded.body').run(ref,JSON.stringify({...value,autoResume:enabled,scope:Object.fromEntries(['characterId','lifeId','operationId'].map(key=>[key,scope[key]]))}));},
-  async close(){closed=true;lifetime.abort();const stopped=await Promise.allSettled([...runs.values()].map(stopRow));await Promise.allSettled([...restores.values(),...pending]);const guarded=await Promise.allSettled([supervisor.close()]);await opening?.catch(()=>{});db?.close();db=null;const errors=[...stopped,...guarded].filter(row=>row.status==='rejected').map(row=>row.reason);if(errors.length)throw new AggregateError(errors,'QQ component shutdown failed');},
+  async close(){
+   if(shutdownComplete)return;
+   if(closing)return closing;
+   closed=true;lifetime.abort();
+   closing=Promise.resolve().then(async()=>{
+    await Promise.allSettled([...restores.values(),...pending]);
+    const stopped=await Promise.allSettled([...runs.values()].map(stopRow));
+    const guarded=await Promise.allSettled([supervisor.close()]);
+    await opening?.catch(()=>{});
+    db?.close();db=null;
+    const errors=[...stopped,...guarded].filter(row=>row.status==='rejected').map(row=>row.reason);
+    if(errors.length)throw new AggregateError(errors,'QQ component shutdown failed');
+    shutdownComplete=true;
+   }).finally(()=>{closing=null;});
+   return closing;
+  },
  };
 }

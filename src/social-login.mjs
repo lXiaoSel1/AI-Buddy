@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto';
 
 const fail=code=>Object.assign(Error(code),{code});
 const safeCode=(cause,fallback)=>typeof cause?.code==='string'&&/^[A-Z0-9_]{1,80}$/.test(cause.code)?cause.code:fallback;
+const safeQqStage=cause=>['guard-admission','guard-stop','receipt-write','process-exit'].includes(cause?.qqStage)?cause.qqStage:undefined;
 export const SOCIAL_LOGIN_PLUGINS=Object.freeze({bilibili:'@ai-buddy/bilibili-companion',qq:'@ai-buddy/qq-connect'});
 const active=new Set(['preparing','waiting-qr','waiting-confirmation','verifying','cleaning-up']);
 function preparationDiagnostic(cause){
@@ -11,7 +12,7 @@ function preparationDiagnostic(cause){
 // Only this coordinator may commit a verified identity. A cancelled driver can
 // finish late, but never creates or replaces a managed account.
 export function createSocialLogin({accounts,drivers,onUpdate=()=>{},now=Date.now}={}){
- const rows=new Map();let closed=false,requestedPlatform=null,requestId=null;
+ const rows=new Map(),unclosedDrivers=new Set(Object.values(drivers));let closed=false,closePromise=null,requestedPlatform=null,requestId=null;
  function valid(platform){if(!Object.hasOwn(SOCIAL_LOGIN_PLUGINS,platform))throw fail('SOCIAL_LOGIN_PLATFORM_INVALID');if(closed)throw fail('SOCIAL_LOGIN_CLOSED');}
  function status(platform){valid(platform);const row=rows.get(platform);return row?structuredClone({...row.public,...(row.rescan?{rescanPending:true}:{})}):{platform,phase:'not-connected'};}
  function notify(){try{onUpdate();}catch{ /* A closing window cannot interrupt login or cleanup. */ }}
@@ -25,7 +26,7 @@ export function createSocialLogin({accounts,drivers,onUpdate=()=>{},now=Date.now
    try{await drivers[row.platform].stop?.({attemptId:row.public.attemptId});row.draining=false;}
    catch(cause){
     row.rescan=false;
-    if(!closed)publish(row,{phase:'failed',errorCode:'SOCIAL_LOGIN_STOP_PENDING',startErrorCode:row.startErrorCode,cleanupErrorCode:safeCode(cause,'SOCIAL_LOGIN_FAILED')});
+    if(!closed)publish(row,{phase:'failed',errorCode:'SOCIAL_LOGIN_STOP_PENDING',startErrorCode:row.startErrorCode,startStage:row.startStage,cleanupErrorCode:safeCode(cause,'SOCIAL_LOGIN_FAILED'),cleanupStage:safeQqStage(cause)});
     throw fail('SOCIAL_LOGIN_STOP_PENDING');
    }finally{row.cleanup=null;}
   });
@@ -88,11 +89,11 @@ export function createSocialLogin({accounts,drivers,onUpdate=()=>{},now=Date.now
   }).catch(async cause=>{
    if(!current(row))return;
    const original=cause?.loginCause??cause,errorCode=safeCode(original,'SOCIAL_LOGIN_FAILED');
-   row.startErrorCode=errorCode;
+   row.startErrorCode=errorCode;row.startStage=safeQqStage(original);
    try{await stopAttempt(row);}catch{return;}
    if(current(row)){
     const host=original?.host??original?.details?.host;
-    publish(row,{phase:errorCode==='SOCIAL_LOGIN_EXPIRED'?'needs-login':errorCode==='SOCIAL_LOGIN_CANCELLED'?'cancelled':'failed',errorCode,...preparationDiagnostic(original),retryOfficial:platform==='qq'&&!official&&errorCode==='NETWORK_MIRROR_MISMATCH'&&original?.retryOfficial===true,...typeof host==='string'&&/^[a-zA-Z0-9.-]{1,253}$/.test(host)?{errorHost:host}:{}});
+    publish(row,{phase:errorCode==='SOCIAL_LOGIN_EXPIRED'?'needs-login':errorCode==='SOCIAL_LOGIN_CANCELLED'?'cancelled':'failed',errorCode,startStage:row.startStage,...preparationDiagnostic(original),retryOfficial:platform==='qq'&&!official&&errorCode==='NETWORK_MIRROR_MISMATCH'&&original?.retryOfficial===true,...typeof host==='string'&&/^[a-zA-Z0-9.-]{1,253}$/.test(host)?{errorHost:host}:{}});
    }
   });
   return status(platform);
@@ -111,6 +112,21 @@ export function createSocialLogin({accounts,drivers,onUpdate=()=>{},now=Date.now
   async disconnect(platform){await cancel(platform);await drivers[platform].stop?.();return status(platform);},
   request(platform){valid(platform);requestedPlatform=platform;requestId=randomUUID();notify();return {opened:true,platform};},
   snapshot(){return {requestedPlatform,requestId,states:Object.keys(SOCIAL_LOGIN_PLUGINS).map(status)};},
-  async close(){if(closed)return;closed=true;for(const row of rows.values())row.abort.abort();await Promise.all(Object.values(drivers).map(driver=>driver.close?.()??driver.stop?.()));},
+   close(){
+    if(closePromise)return closePromise;
+    const firstClose=!closed;
+    closed=true;
+    closePromise=Promise.resolve().then(async()=>{
+     if(firstClose)for(const row of rows.values())row.abort.abort();
+     const results=await Promise.allSettled([...unclosedDrivers].map(async driver=>{
+      if(typeof driver.close==='function')await driver.close();
+      else await driver.stop?.();
+      unclosedDrivers.delete(driver);
+     }));
+     const failures=results.filter(result=>result.status==='rejected').map(result=>result.reason);
+     if(failures.length)throw Object.assign(new AggregateError(failures,'Social login did not close completely'),{code:'SOCIAL_LOGIN_CLOSE_FAILED'});
+    }).catch(cause=>{closePromise=null;throw cause;});
+    return closePromise;
+   },
  };
 }

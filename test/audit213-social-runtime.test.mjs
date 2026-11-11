@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,writeFile,readFile} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,copyFile} from 'node:fs/promises';
+import {existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL,fileURLToPath} from 'node:url';
@@ -42,13 +43,26 @@ test('C10: future message produces a visible clock warning without weakening fre
 for(const mode of ['ipc-disconnect','ignore-shutdown'])test('C8: exact owned process is stopped after '+mode+'; same executable sibling stays alive',{timeout:30000},async()=>{
  const directory=await mkdtemp(join(tmpdir(),'audit213-qq-process-')),runtime=join(directory,'runtime');await mkdir(runtime);
  buildManagedProcessGuard(H,directory);
+ const assetDirectory=join(directory,'social-login-assets'),enteredPath=join(directory,'path-check-ran');
+ await mkdir(assetDirectory);
+ await copyFile(join(H,'src','social-login-assets','qq-launch-gate.cjs'),join(assetDirectory,'qq-launch-gate.cjs'));
+ await writeFile(join(assetDirectory,'native-path-guard.cjs'),`require('node:assert/strict').equal(process.env.AI_BUDDY_QQ_LAUNCH_TOKEN,undefined);require('node:fs').writeFileSync(${JSON.stringify(enteredPath)},'entered');`);
  const script=join(directory,'fixture.mjs');await writeFile(script,`import http from 'node:http';import {readFileSync} from 'node:fs';import {join} from 'node:path';const config=JSON.parse(readFileSync(join(process.env.NAPCAT_WORKDIR,'config','webui.json')));const server=http.createServer((req,res)=>{res.setHeader('connection','close');res.end(JSON.stringify({code:0,data:req.url.endsWith('auth/login')?{Credential:'fixture'}:{isLogin:false,isOffline:false}}));});server.listen(config.port,'127.0.0.1',()=>{if(process.argv[2]==='ipc-disconnect')process.disconnect();});process.on('message',()=>{});setInterval(()=>{},1000);`);
- const original=childProcess.spawn,children=[];let spawned;const started=new Promise(resolve=>spawned=resolve);
- childProcess.spawn=function(command,args,options){if(String(command).endsWith('node.exe')){const child=original(process.execPath,[script,mode],{...options,env:{...options.env,ELECTRON_RUN_AS_NODE:'1'}});children.push(child);spawned(child);return child;}return original(command,args,options);};syncBuiltinESMExports();
- const sibling=original(process.execPath,['-e','setInterval(()=>{},1000)'],{windowsHide:true,env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},stdio:'ignore'});
+ const original=childProcess.spawn,childNode=process.env.BUDDY_QQ_TEST_NODE??process.execPath,children=[];let spawned;const started=new Promise(resolve=>spawned=resolve);
+ childProcess.spawn=function(command,args,options){if(String(command).endsWith('node.exe')){const child=original(childNode,[...args.slice(0,-1),script,mode],{...options,env:{...options.env,ELECTRON_RUN_AS_NODE:'1'}});children.push(child);spawned(child);return child;}return original(command,args,options);};syncBuiltinESMExports();
+ const sibling=original(childNode,['-e','setInterval(()=>{},1000)'],{windowsHide:true,env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},stdio:'ignore'});
  let ready;const admitted=new Promise(resolve=>ready=resolve);
- const driver=createQqLoginRuntime({dataRoot:directory,build:directory,accounts:{get:()=>null,list:()=>[]},component:{ensure:async()=>runtime,info:()=>({})},stopTimeoutMs:30,onState:event=>{if(event?.type==='guard-ready')ready();}});
+ const driver=createQqLoginRuntime({dataRoot:directory,build:directory,accounts:{get:()=>null,list:()=>[]},component:{ensure:async()=>runtime,info:()=>({})},stopTimeoutMs:30,onState:event=>{if(event?.type==='guard-ready')ready(existsSync(enteredPath));}});
  const starting=driver.start({attemptId:'fixture-owned-'+mode,signal:new AbortController().signal});starting.catch(()=>{});
- try{const owned=await started;if(!process.env.AUDIT213_BASELINE)await admitted;await new Promise(r=>setTimeout(r,1000));await driver.stop();assert.ok(owned.exitCode!==null||owned.signalCode!==null);assert.equal(sibling.exitCode,null);await assert.rejects(starting);}
+ try{
+  const owned=await started;
+  if(!process.env.AUDIT213_BASELINE)assert.equal(await admitted,false,'the NapCat path preloader must wait until the Windows guard is ready');
+  for(let n=0;n<100&&!existsSync(enteredPath);n++)await new Promise(r=>setTimeout(r,20));
+  assert.equal(await readFile(enteredPath,'utf8'),'entered');
+  await driver.stop();
+  assert.ok(owned.exitCode!==null||owned.signalCode!==null);
+  assert.equal(sibling.exitCode,null);
+  await assert.rejects(starting);
+ }
  finally{childProcess.spawn=original;syncBuiltinESMExports();for(const child of children)if(child.exitCode===null)child.kill();sibling.kill();await Promise.allSettled([starting,driver.close()]);}
 });

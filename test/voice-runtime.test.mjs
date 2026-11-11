@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createVoiceRuntime} from '../src/voice/runtime.mjs';
 
-async function fixture(t, {initializeDelay=0,checkInitializePaths=false,drainTimeoutMs} = {}) {
+async function fixture(t, {initializeDelay=0,expectedInitializeRoot,drainTimeoutMs} = {}) {
   const {join} = await import('node:path');
   const {tmpdir} = await import('node:os');
   const {mkdtemp, rm, writeFile} = await import('node:fs/promises');
@@ -14,10 +14,11 @@ import {win32} from 'node:path';
 const send = row => process.stdout.write(JSON.stringify(row) + '\\n');
 for await (const line of createInterface({input:process.stdin})) {
   const request = JSON.parse(line);
-  if(request.op==='initialize'&&${checkInitializePaths}){
+  if(request.op==='initialize'&&${Boolean(expectedInitializeRoot)}){
     const cwd=process.cwd(),expected=process.platform==='win32'?win32.toNamespacedPath(cwd):cwd;
-    if(request.root!==expected||request.assetRoot!==expected||request.cacheRoot!==expected||cwd.startsWith(String.fromCharCode(92,92,63,92))){
-      send({id:request.id,type:'error',code:'VOICE_FIXTURE_PATHS',message:JSON.stringify({cwd,request,expected})});continue;
+    const expectedRoot=${expectedInitializeRoot === 'ordinary'}?cwd:expected;
+    if(request.root!==expectedRoot||request.assetRoot!==expected||request.cacheRoot!==expected||cwd.startsWith(String.fromCharCode(92,92,63,92))){
+      send({id:request.id,type:'error',code:'VOICE_FIXTURE_PATHS',message:JSON.stringify({cwd,request,expectedRoot})});continue;
     }
   }
   if (request.op === 'speak') {
@@ -92,10 +93,15 @@ test('prepare reports selected TTS ready only after its real initialize response
 });
 
 test('the launched worker receives extended import root and asset paths while retaining an ordinary cwd',async t=>{
-  const {runtime}=await fixture(t,{checkInitializePaths:true});
+  const {runtime}=await fixture(t,{expectedInitializeRoot:'extended'});
   assert.equal((await runtime.prepare({engine:'breeze'})).ready,true);
 });
 
+
+test('Windows GPT receives an ordinary root with extended weight and cache paths',{skip:process.platform!=='win32'},async t=>{
+  const {runtime} = await fixture(t,{expectedInitializeRoot:'ordinary'});
+  assert.equal((await runtime.prepare({engine:'gpt'})).ready,true);
+});
 
 test('Live preparation initializes only the selected TTS plus shared ASR', async t => {
   const {runtime,admitted}=await fixture(t,{initializeDelay:20});

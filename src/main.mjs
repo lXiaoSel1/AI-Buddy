@@ -677,11 +677,17 @@ control.on('error',error=>{
   if(control.listening)audit({type:'control-error',message:error.message});
 });
 
-let shuttingDown=false;const closedServiceSteps=new Set();
-async function shutdown(forUpdate=false) {
-  if(quitting||shuttingDown)return;
+let shuttingDown=false,shutdownInFlight;const closedServiceSteps=new Set();
+function shutdown(forUpdate=false) {
+  if(shutdownInFlight)return shutdownInFlight;
+  if(quitting)return Promise.resolve();
+  shuttingDown=true;
+  shutdownInFlight=Promise.resolve().then(()=>performShutdown(forUpdate)).finally(()=>{shuttingDown=false;shutdownInFlight=null;});
+  return shutdownInFlight;
+}
+async function performShutdown(forUpdate) {
   forUpdate ||= updateReservation.committed();
-  shuttingDown=true;let phase='preparing';
+  let phase='preparing';
   const steps=[
     ['daily-cg',()=>dailyCgScheduler?.stopAndDrain()],['rewards',()=>rewardTail],['agents',()=>agents?.close()],
     ['plugin-pages',()=>{pluginClientStateOff?.();pluginClientStateOff=null;pluginEmbed?.close();},false],['voice',()=>voiceHost?.close()],['plugin-usage',()=>pluginUsage?.close()],
@@ -696,7 +702,14 @@ async function shutdown(forUpdate=false) {
       if(agents?.busy()){const choice=await dialog.showMessageBox(panel??pet,{type:'question',title:'工作与协作',message:'仍有工作任务正在运行。',buttons:['完成后退出','停止并保存后退出','返回'],defaultId:2,cancelId:2});if(choice.response===2)return false;await agents.prepareExit(choice.response===0?'finish':'stop-save');}
       quitting=true;monitorProfile.cancel();mainProfile.cancel();closePetFullscreen();applyPetVisibility(false);closedServiceSteps.add('prepare');
     }
-    quitting=true;phase='plugins';if(!closedServiceSteps.has('plugins')){await closePluginServices({voice:voiceHost,platform:plugins,attach:replacement=>attachPluginRuntime(replacement)});closedServiceSteps.add('plugins');}
+    quitting=true;phase='plugins';
+    if(!closedServiceSteps.has('plugins')){
+      if(!closedServiceSteps.has('plugin-voice-quiesce')){
+        await voiceHost?.quiesce();closedServiceSteps.add('plugin-voice-quiesce');
+      }
+      await closePluginServices({platform:plugins,attach:replacement=>attachPluginRuntime(replacement),restoreOnFailure:!shutdownRecoveryFailed});
+      closedServiceSteps.add('plugins');
+    }
     phase='closing';await closeAppServices(steps,closedServiceSteps);return true;
   };
   const finish=async(reopen=false)=>{
@@ -709,10 +722,16 @@ async function shutdown(forUpdate=false) {
   try{if(await close())await finish();}
   catch(error){
     blocked(error);
-    if(shutdownRecoveryFailed&&!forUpdate)await recoverAppShutdown({error,retry:close,finish:()=>finish(true),completed:closedServiceSteps,steps,showMessageBox:options=>dialog.showMessageBox(panel??pet,options),onFailure:blocked,t});
+    if(shutdownRecoveryFailed&&!forUpdate){
+      const resume=phase==='plugins'&&error.failedSteps?.includes('social-login')?async()=>{
+        const replacement=await plugins.restoreAfterCloseFailure();
+        await attachPluginRuntime(replacement);
+        shutdownRecoveryFailed=false;closedServiceSteps.clear();
+      }:undefined;
+      await recoverAppShutdown({error,retry:close,finish:()=>finish(true),resume,completed:closedServiceSteps,steps,showMessageBox:options=>dialog.showMessageBox(panel??pet,options),onFailure:cause=>blocked(resume&&phase==='plugins'?Object.assign(cause,{shutdownRecovery:'failed'}):cause),t});
+    }
     else{if(!shutdownRecoveryFailed)closedServiceSteps.clear();await dialog.showMessageBox(panel??pet,{type:'error',title:t('退出未完成'),message:t(shutdownRecoveryFailed?'部分服务已经停止。重新打开后就能继续用。':error.shutdownRecovery==='restored'?'扩展服务已恢复，已停止的活动不会自动重新开始。':'当前活动尚未停止，请稍后重试退出。'),detail:shutdownFailureDetail(error,t,phase==='preparing'?'prepare':'plugins'),buttons:[t('返回')]});}
   }
-  finally{shuttingDown=false;}
 }
 app.on('before-quit',event=>{event.preventDefault();if(!quitting)void shutdown();});
 function flushSessionEndSync(){try{deferredSaves.flushSyncAll({scope:dataRoot});}catch(error){audit({type:'session-end-save-error',code:error.code,message:error.message});}}

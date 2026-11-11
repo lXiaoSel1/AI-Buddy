@@ -142,3 +142,23 @@ test('C14 platform close aggregates failure and rebuilds every closed service be
  assert.notEqual(restored,f.platform);assert.notEqual(restored.componentManager,f.platform.componentManager);assert.notEqual(restored.clientHost,f.platform.clientHost);assert.equal(restored.snapshot().service.usable,true);assert.equal(reopened,1);await restored.close();
  f.platform.close=async()=>{};
 });
+
+test('plug-in recovery stays blocked until the failed QQ driver confirms its close',async t=>{
+ let canStop=false,qqCloses=0,qqDrivers=0,reopened=0;
+ const f=await fixture(t,{qqLoginFactory:()=>{
+  qqDrivers++;
+  return {componentInfo:()=>null,async close(){qqCloses++;if(!canStop)throw Object.assign(Error('Injected stop proof unavailable'),{code:'WORK_PROCESS_STOP_UNCONFIRMED'});}};
+ }});
+ f.legacy.reopen=async()=>{reopened++;};
+ try{
+  await assert.rejects(f.platform.close(),error=>error.code==='PLUGIN_CLOSE_FAILED'&&error.failedSteps.includes('social-login'));
+  await assert.rejects(f.platform.restoreAfterCloseFailure(),{code:'PLUGIN_RESTORE_FAILED'});
+  assert.equal(qqDrivers,1);
+  assert.equal(reopened,0);
+  assert.equal(qqCloses,2);
+  canStop=true;
+  await f.platform.close();
+  assert.equal(qqCloses,3);
+  assert.equal(qqDrivers,1);
+ }finally{canStop=true;}
+});

@@ -72,14 +72,47 @@ internal static class ManagedProcessGuard {
     else{uint[] ids=new uint[1024];uint used;for(;;){if(!EnumProcesses(ids,(uint)(ids.Length*4),out used))throw new Exception("EnumProcesses failed "+Marshal.GetLastWin32Error());if(used<ids.Length*4)break;if(ids.Length>=1048576)throw new Exception("Process inventory exceeds limit");ids=new uint[ids.Length*2];}var seen=new HashSet<uint>();for(int index=0;index<used/4;index++)if(seen.Add(ids[index])){string row=ProcessRow(ids[index]);if(row!=null)rows.Add(row);}}
     Console.WriteLine("["+string.Join(",",rows.ToArray())+"]");return 0;
   }
+  static void RetryReceiptIo(Action operation) {
+    int[] delays={50,150,350};
+    for(int attempt=0;;attempt++) {
+      try {operation();return;}
+      catch(IOException error) {
+        int win32=error.HResult&0xffff;
+        if((win32!=32&&win32!=33)||attempt==delays.Length)throw;
+        System.Threading.Thread.Sleep(delays[attempt]);
+      }
+    }
+  }
+  static void WriteStopReceipt(string path,string receipt) {
+    RetryReceiptIo(()=>Directory.CreateDirectory(Path.GetDirectoryName(path)));
+    string pending=path+".pending";
+    byte[] bytes=new UTF8Encoding(false).GetBytes(receipt);
+    FileStream output=null;
+    RetryReceiptIo(()=>{output=new FileStream(pending,FileMode.CreateNew,FileAccess.Write,FileShare.None);});
+    using(output) {
+      RetryReceiptIo(()=>{
+        output.Position=0;
+        output.SetLength(0);
+        output.Write(bytes,0,bytes.Length);
+        output.Flush(true);
+      });
+    }
+    // If a scanner briefly holds this file, retry publishing the same flushed proof.
+    RetryReceiptIo(()=>File.Move(pending,path));
+  }
   static int Main(string[] args) {
     IntPtr job=IntPtr.Zero,memory=IntPtr.Zero;
+    int ownerPid=0,rootPid=0;
+    long ownerTicks=0,rootTicks=0;
+    Guid guardId=Guid.Empty;
+    string guardStage="before-assignment";
     try {
       if(args.Length>0&&args[0]=="--snapshot")return Snapshot(args);
       if(args.Length>0&&args[0]=="--validation-access")return ValidationAccess(args);
       if(args.Length!=6)throw new Exception("Expected owner/runtime identities and a private stop receipt");
-      int ownerPid=int.Parse(args[0]),rootPid=int.Parse(args[2]);
-      long ownerTicks=long.Parse(args[1]),rootTicks=long.Parse(args[3]);
+      ownerPid=int.Parse(args[0]);rootPid=int.Parse(args[2]);
+      ownerTicks=long.Parse(args[1]);rootTicks=long.Parse(args[3]);
+      if(!Guid.TryParse(args[5],out guardId))throw new Exception("Invalid private guard identity");
       using(var owner=Process.GetProcessById(ownerPid))using(var root=Process.GetProcessById(rootPid)) {
         if(owner.StartTime.ToUniversalTime().Ticks!=ownerTicks||root.StartTime.ToUniversalTime().Ticks!=rootTicks)throw new Exception("Process identity changed");
         job=CreateJobObject(IntPtr.Zero,null);if(job==IntPtr.Zero)throw new Exception("CreateJobObject failed "+Marshal.GetLastWin32Error());
@@ -87,6 +120,7 @@ internal static class ManagedProcessGuard {
         int size=Marshal.SizeOf(typeof(Limits));memory=Marshal.AllocHGlobal(size);Marshal.StructureToPtr(limits,memory,false);
         if(!SetInformationJobObject(job,9,memory,(uint)size))throw new Exception("SetInformationJobObject failed "+Marshal.GetLastWin32Error());
         if(!AssignProcessToJobObject(job,root.Handle))throw new Exception("AssignProcessToJobObject failed "+Marshal.GetLastWin32Error());
+        guardStage="assigned";
         Console.WriteLine("{\"ready\":true,\"ownerPid\":"+ownerPid+",\"rootPid\":"+rootPid+",\"killOnOwnerExit\":true,\"breakawayAllowed\":false}");Console.Out.Flush();
         Task<string> line=Console.In.ReadLineAsync();string trigger="owner-exited";
         while(!owner.HasExited&&owner.StartTime.ToUniversalTime().Ticks==ownerTicks) {
@@ -94,14 +128,17 @@ internal static class ManagedProcessGuard {
         }
         if(!TerminateJobObject(job,137))throw new Exception("TerminateJobObject failed "+Marshal.GetLastWin32Error());
         for(;;){Accounting state;if(!QueryInformationJobObject(job,1,out state,(uint)Marshal.SizeOf(typeof(Accounting)),IntPtr.Zero))throw new Exception("Job stop proof unavailable");if(state.Active==0)break;System.Threading.Thread.Sleep(50);}
-        Guid guardId;if(!Guid.TryParse(args[5],out guardId))throw new Exception("Invalid private guard identity");
+        guardStage="receipt-persist";
         string receipt="{\"schemaVersion\":1,\"guardId\":\""+guardId.ToString()+"\",\"ownerPid\":"+ownerPid+",\"ownerCreationTime\":\""+ownerTicks+"\",\"rootPid\":"+rootPid+",\"rootCreationTime\":\""+rootTicks+"\",\"activeProcesses\":0,\"trigger\":\""+trigger+"\",\"stoppedAt\":\""+DateTime.UtcNow.ToString("o")+"\"}";
-        string receiptPath=Path.GetFullPath(args[4]);Directory.CreateDirectory(Path.GetDirectoryName(receiptPath));string pending=receiptPath+".pending";
-        using(var proof=new FileStream(pending,FileMode.CreateNew,FileAccess.Write,FileShare.None)){byte[] bytes=new UTF8Encoding(false).GetBytes(receipt);proof.Write(bytes,0,bytes.Length);proof.Flush(true);}File.Move(pending,receiptPath);
+        WriteStopReceipt(Path.GetFullPath(args[4]),receipt);
+        guardStage="receipt-committed";
       }
       CloseHandle(job);job=IntPtr.Zero;
-      Console.WriteLine("{\"closed\":true}");return 0;
-    }catch(Exception error){Console.WriteLine("{\"ready\":false,\"error\":\""+error.Message.Replace("\\","\\\\").Replace("\"","\\\"")+"\"}");return 1;}
+      try{Console.WriteLine("{\"closed\":true}");}catch(IOException){}return 0;
+    }catch(Exception error){
+      try{Console.WriteLine("{\"ready\":false,\"guardStage\":"+Json(guardStage)+",\"guardId\":"+Json(guardId.ToString())+",\"ownerPid\":"+ownerPid+",\"ownerCreationTime\":"+Json(ownerTicks.ToString())+",\"rootPid\":"+rootPid+",\"rootCreationTime\":"+Json(rootTicks.ToString())+",\"error\":"+Json(error.Message)+"}");}catch(IOException){}
+      return 1;
+    }
     finally {if(memory!=IntPtr.Zero)Marshal.FreeHGlobal(memory);if(job!=IntPtr.Zero)CloseHandle(job);}
   }
 }

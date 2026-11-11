@@ -35,6 +35,7 @@ test('QQ rescan exposes startup and cleanup errors, then waits for the original 
   supervisor:{async registerRoot(){},async releaseRoot({runtimeId}){
    releases.push(runtimeId);
    if(!cleanupAvailable)throw Object.assign(Error('private receipt path'),{code:'EBUSY'});
+   return {stopped:true,osActiveProcesses:0};
   },async close(){}},
   async listenerInspector(){if(spawned.length===1)throw Object.assign(Error('private listener detail'),{code:'QQ_LISTENER_OWNER_MISMATCH'});},
   async fetchImpl(url){
@@ -62,4 +63,140 @@ test('QQ rescan exposes startup and cleanup errors, then waits for the original 
   assert.notEqual(waiting.attemptId,initial.attemptId);assert.ok(waiting.qr);
   assert.equal(spawned.length,2);assert.deepEqual(releases,Array(3).fill(`qq:${initial.attemptId}`));
  }finally{cleanupAvailable=true;await login.close();}
+});
+
+test('a confirmed pre-admission failure releases the inert attempt and permits a new QR',async t=>{
+ const directory=await root(t),children=[];
+ const accounts={list:()=>[],commitLogin:()=>assert.fail('No account is confirmed')};
+ const driver=createQqLoginRuntime({dataRoot:directory,build:directory,accounts,component:{ensure:async()=>directory},
+  spawnImpl(_node,_args,{env}){
+   const child=Object.assign(new EventEmitter(),{pid:1000000+children.length,connected:true,env});
+   child.kill=()=>{child.connected=false;child.emit('exit',0,null);return true;};
+   child.send=(_message,callback)=>{callback();child.kill();};
+   children.push(child);return child;
+  },
+  supervisor:{
+   async registerRoot(){if(children.length===1)throw Object.assign(Error('no job was assigned'),{code:'WORK_PROCESS_GUARD_FAILED'});},
+   async releaseRoot({runtimeId,allowUnassigned}){
+    if(children.length===1){
+     assert.equal(allowUnassigned,true);
+     await assert.rejects(readFile(children[0].env.AI_BUDDY_QQ_LAUNCH_FILE),{code:'ENOENT'});
+     return {stopped:true,unassigned:true,runtimeId};
+    }
+    assert.equal(allowUnassigned,false);
+    return {stopped:true,osActiveProcesses:0,runtimeId};
+   },
+   async close(){},
+  },
+  async listenerInspector(){
+   const {AI_BUDDY_QQ_LAUNCH_FILE:file,AI_BUDDY_QQ_LAUNCH_TOKEN:token}=children.at(-1).env;
+   assert.equal(await readFile(file,'utf8'),token);
+  },
+  async fetchImpl(url){
+   const auth=new URL(url).pathname==='/api/auth/login';
+   return Response.json({code:0,data:auth?{Credential:'fixture'}:{isLogin:false,qrcodeurl:'https://qq.com/fixture'}});
+  },
+ });
+ const login=createSocialLogin({accounts,drivers:{qq:driver}});
+ const wait=async phase=>{
+  for(let n=0;n<200;n++){
+   const state=login.status('qq');
+   if(state.phase===phase&&(!phase.startsWith('waiting')||state.qr))return state;
+   await new Promise(resolve=>setTimeout(resolve,10));
+  }
+  assert.fail(`Timed out waiting for ${phase}`);
+ };
+ try{
+  const first=login.start('qq');
+  assert.equal((await wait('failed')).errorCode,'WORK_PROCESS_GUARD_FAILED');
+  assert.equal(driver.diagnostics().active.length,0);
+  login.start('qq');
+  const second=await wait('waiting-qr');
+  assert.notEqual(second.attemptId,first.attemptId);
+  await login.cancel('qq');
+  assert.equal(driver.diagnostics().active.length,0);
+ }finally{await login.close().catch(()=>{});}
+});
+
+test('cancelling while process admission is pending leaves the NapCat entry blocked',async t=>{
+ const directory=await root(t),accounts={list:()=>[]};
+ let entered,release,gateFile,allowUnassigned;
+ const registering=new Promise(resolve=>entered=resolve);
+ const admit=new Promise(resolve=>release=resolve);
+ const driver=createQqLoginRuntime({dataRoot:directory,build:directory,accounts,component:{ensure:async()=>directory},
+  spawnImpl(_node,_args,{env}){
+   gateFile=env.AI_BUDDY_QQ_LAUNCH_FILE;
+   const child=Object.assign(new EventEmitter(),{pid:1000001,connected:true});
+   child.kill=()=>{child.connected=false;child.emit('exit',0,null);return true;};
+   return child;
+  },
+  supervisor:{
+   async registerRoot(){entered();await admit;},
+   async releaseRoot(options){
+    allowUnassigned=options.allowUnassigned;
+    await assert.rejects(readFile(gateFile),{code:'ENOENT'});
+    return {stopped:true,osActiveProcesses:0};
+   },
+   async close(){},
+  },
+  async listenerInspector(){assert.fail('cancelled startup must not reach listener checks');},
+  async fetchImpl(){assert.fail('cancelled startup must not reach NapCat');},
+ });
+ const attemptId='cancel-during-registration';
+ const starting=driver.start({attemptId,signal:new AbortController().signal});
+ const rejected=assert.rejects(starting,{name:'AbortError'});
+ try{
+  await registering;
+  const stopping=driver.stop({attemptId});
+  await new Promise(resolve=>setImmediate(resolve));
+  release();
+  await Promise.all([stopping,rejected]);
+  assert.equal(allowUnassigned,true);
+  assert.equal(driver.diagnostics().active.length,0);
+ }finally{release();await driver.close();}
+});
+
+test('a saved QQ profile can reconnect after its dead root and Windows Job are confirmed stopped',async t=>{
+ const directory=await root(t),children=[],commits=[];
+ let confirmed=false;
+ const account={ref:'saved',accountId:'123',platform:'qq',enabled:true,generation:1,managedProfileId:'8323c240-510f-4c46-983c-dfa7758f11fb'};
+ const accounts={get:()=>account,list:()=>[account],commitLogin:result=>commits.push(result.resourceId)};
+ const originalWebSocket=globalThis.WebSocket;
+ globalThis.WebSocket=class extends EventTarget{
+  constructor(){super();queueMicrotask(()=>this.dispatchEvent(new Event('open')));}
+  close(){}
+ };
+ const driver=createQqLoginRuntime({dataRoot:directory,build:directory,accounts,component:{ensure:async()=>directory},
+  spawnImpl(){
+   const child=Object.assign(new EventEmitter(),{pid:1000000+children.length,connected:true});
+   child.exit=()=>{child.connected=false;child.emit('exit',0,null);};
+   child.send=(_message,callback)=>{callback();child.exit();};
+   children.push(child);return child;
+  },
+  supervisor:{
+   async registerRoot(){},
+   async releaseRoot(){
+    if(!confirmed)throw Object.assign(Error('Original Job still owns descendants'),{code:'WORK_PROCESS_STOP_UNCONFIRMED'});
+    return {stopped:true,osActiveProcesses:0};
+   },
+   async close(){},
+  },
+  async listenerInspector(){},
+  async fetchImpl(url){
+   const path=new URL(url).pathname;
+   if(path==='/get_login_info')return Response.json({status:'ok',retcode:0,data:{user_id:123,nickname:'Fixture'}});
+   const data=path==='/api/auth/login'?{Credential:'fixture'}:path.endsWith('GetQQLoginInfo')?{uin:123,online:true}:{isLogin:true,coreReady:true};
+   return Response.json({code:0,data});
+  },
+ });
+ try{
+  await driver.ensureAccount(account.ref);
+  children[0].exit();
+  await assert.rejects(driver.ensureAccount(account.ref),{code:'WORK_PROCESS_STOP_UNCONFIRMED'});
+  assert.equal(children.length,1);
+  confirmed=true;
+  await driver.ensureAccount(account.ref);
+  assert.equal(children.length,2);
+  assert.deepEqual(commits,[account.managedProfileId,account.managedProfileId]);
+ }finally{confirmed=true;await driver.close();globalThis.WebSocket=originalWebSocket;}
 });

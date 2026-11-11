@@ -7,6 +7,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {createPluginUsageRecorder} from '../src/plugin-usage-recorder.mjs';
 import {createSocialAccounts} from '../src/buddy-plugin-services/social-accounts.mjs';
 import {createSocialTransport} from '../src/buddy-plugin-services/social-transport.mjs';
+import {createSocialLogin} from '../src/social-login.mjs';
 import {createFeedingService} from '../src/companion-feeding.mjs';
 import {createCompanionService} from '../src/companion-service.mjs';
 import {openCompanionStore} from '../src/companion-store.mjs';
@@ -24,6 +25,22 @@ test('unconfirmed old process shutdown remains a failed recovery without reopeni
  const {closePluginServices}=await load();let attached=false;
  await assert.rejects(closePluginServices({voice:{quiesce:async()=>{}},platform:{close:async()=>{throw Error('close failed');},restoreAfterCloseFailure:async()=>{throw Object.assign(Error('old process still alive'),{code:'PLUGIN_RESTORE_FAILED'});}},attach:()=>{attached=true;}}),error=>error.code==='PLUGIN_SHUTDOWN_RECOVERY_FAILED'&&error.shutdownRecovery==='failed'&&error.errors.length===2);
  assert.equal(attached,false);
+});
+test('concurrent social shutdown waits for both drivers and retries only the failed one',async()=>{
+ const entered=deferred(),release=deferred();let qqCloses=0,biliCloses=0;
+ const login=createSocialLogin({drivers:{
+  qq:{async close(){qqCloses++;if(qqCloses===1)throw Error('Injected QQ stop proof failure');}},
+  bilibili:{async close(){biliCloses++;entered.resolve();await release.promise;}},
+ }});
+ const closing=login.close(),parallel=login.close();
+ const failed=Promise.all([assert.rejects(closing,{code:'SOCIAL_LOGIN_CLOSE_FAILED'}),assert.rejects(parallel,{code:'SOCIAL_LOGIN_CLOSE_FAILED'})]);
+ let settled=false;void failed.then(()=>{settled=true;},()=>{settled=true;});
+ await entered.promise;await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(settled,false);assert.throws(()=>login.start('qq'),{code:'SOCIAL_LOGIN_CLOSED'});
+ release.resolve();await failed;
+ assert.deepEqual([qqCloses,biliCloses],[1,1]);
+ await login.close();await login.close();
+ assert.deepEqual([qqCloses,biliCloses],[2,1]);
 });
 test('voice quiesce failure never closes the platform and successful shutdown never rebuilds it',async()=>{
  const {closePluginServices}=await load();let closes=0,restores=0;
@@ -47,13 +64,13 @@ test('later shutdown failures are aggregated without skipping saves and complete
 
 // Run the production main-process shutdown wiring with only its service/Electron
 // boundaries supplied by the fixture. No app startup, account or model is used.
-async function shutdownFixture({failures={},responses=[0],forUpdate=false}={}){
- const main=await readFile(new URL('../src/main.mjs',import.meta.url),'utf8'),source=main.slice(main.indexOf('let shuttingDown=false;'),main.indexOf('function flushSessionEndSync()')),events=[],dialogs=[],attempts={},hooks={};
- const run=name=>async()=>{events.push(name);attempts[name]=(attempts[name]??0)+1;if(attempts[name]<=(failures[name]??0))throw Object.assign(Error('Sensitive account/prompt details must stay out of the dialog'),{code:'FIXTURE_CLOSE_FAILED'});};
+async function shutdownFixture({failures={},failureDetails={},responses=[0],forUpdate=false}={}){
+ const main=await readFile(new URL('../src/main.mjs',import.meta.url),'utf8'),source=main.slice(main.indexOf('let shuttingDown=false'),main.indexOf('function flushSessionEndSync()')),events=[],dialogs=[],attempts={},hooks={};
+ const run=name=>async()=>{events.push(name);attempts[name]=(attempts[name]??0)+1;if(attempts[name]<=(failures[name]??0))throw Object.assign(Error('Sensitive account/prompt details must stay out of the dialog'),{code:'FIXTURE_CLOSE_FAILED',...failureDetails[name]});};
  const context={...await load(),quitting:false,shutdownRecoveryFailed:false,dataRoot:'isolated-shutdown-fixture',panel:null,pet:null,t:value=>value,audit:()=>{},
   deferredSaves:{flushAll:run('save'),stop:()=>events.push('deferred-stop')},agents:{busy:()=>false,close:run('agents')},
   updateReservation:{committed:()=>forUpdate,reopenAfterFailedShutdown:()=>events.push('update-reopen')},monitorProfile:{cancel:()=>{}},mainProfile:{cancel:()=>{}},closePetFullscreen:()=>{},applyPetVisibility:()=>{},syncPetFullscreenObserver:()=>{},
-  voiceHost:{quiesce:run('quiesce'),close:run('voice')},plugins:{close:run('plugins')},attachPluginRuntime:()=>{},dailyCgScheduler:{stopAndDrain:run('daily-cg')},rewardTail:Promise.resolve(),
+  voiceHost:{quiesce:run('quiesce'),close:run('voice')},plugins:{close:run('plugins'),restoreAfterCloseFailure:run('plugins-restore')},attachPluginRuntime:()=>events.push('plugins-attach'),dailyCgScheduler:{stopAndDrain:run('daily-cg')},rewardTail:Promise.resolve(),
   pluginClientStateOff:null,pluginEmbed:{close:run('plugin-pages')},pluginUsage:{close:run('plugin-usage')},petDiagnostics:{dispose:()=>{}},dataImport:{close:()=>{}},buttonObserver:{close:run('buttons')},trajectoryWindow:null,quotas:{close:()=>{}},
   settingsTail:Promise.resolve(),settingsWriteTail:Promise.resolve(),provider:{close:()=>{}},cg:{close:run('cg')},game:{flushWorkLedger:run('work-ledger'),close:run('game')},workSourceRegistry:{flush:run('work-sources')},worker:null,
   appUpdates:{close:()=>events.push('app-updates')},network:{close:run('network')},control:{close:()=>events.push('control-close')},
@@ -71,6 +88,63 @@ test('exit and reopen retries the failed step once and preserves successful shut
  assert.deepEqual(fixture.dialogs[0].buttons,['退出并重新打开','稍后']);
  assert.equal(fixture.attempts.buttons,2);for(const name of ['save','quiesce','plugins','agents','voice','plugin-usage','cg','work-ledger','game','work-sources','network'])assert.equal(fixture.attempts[name],1,name);
  assert.deepEqual(fixture.events.slice(-4),['control-close','deferred-stop','relaunch','exit']);
+});
+
+const socialCloseFailure={plugins:{code:'PLUGIN_CLOSE_FAILED',failedSteps:['social-login']}};
+
+test('exit and reopen retries the original plug-in shutdown after a QQ cleanup failure',async()=>{
+ const fixture=await shutdownFixture({failures:{plugins:1},failureDetails:socialCloseFailure});await fixture.shutdown();
+ assert.deepEqual(fixture.dialogs[0].buttons,['退出并重新打开','核对并返回','稍后']);
+ assert.equal(fixture.attempts.plugins,2);
+ assert.equal(fixture.attempts.quiesce,1);
+ assert.ok(!fixture.events.includes('plugins-restore'));
+ assert.ok(!fixture.events.includes('plugins-attach'));
+ assert.deepEqual(fixture.events.slice(-4),['control-close','deferred-stop','relaunch','exit']);
+});
+
+test('overlapping exit requests share the result and close each service once',async()=>{
+ const fixture=await shutdownFixture();
+ const first=fixture.shutdown(),second=fixture.shutdown();
+ assert.equal(first,second);
+ await Promise.all([first,second]);
+ assert.equal(fixture.attempts.plugins,1);
+ assert.equal(fixture.events.filter(event=>event==='exit').length,1);
+});
+
+test('check and return attaches only a successfully restored platform without exiting',async()=>{
+ const fixture=await shutdownFixture({failures:{plugins:1},failureDetails:socialCloseFailure,responses:[1]});
+ await fixture.shutdown();
+ assert.equal(fixture.attempts['plugins-restore'],1);
+ assert.ok(fixture.events.indexOf('plugins-attach')>fixture.events.indexOf('plugins-restore'));
+ assert.ok(!fixture.events.includes('exit'));
+ assert.equal(fixture.state().shutdownRecoveryFailed,false);
+});
+
+test('check and return leaves shutdown fenced if original cleanup is still unconfirmed',async()=>{
+ const fixture=await shutdownFixture({failures:{plugins:1,'plugins-restore':1},failureDetails:socialCloseFailure,responses:[1,0]});
+ await fixture.shutdown();
+ assert.equal(fixture.attempts['plugins-restore'],1);
+ assert.ok(!fixture.events.includes('plugins-attach'));
+ assert.equal(fixture.state().shutdownRecoveryFailed,true);
+});
+
+test('persistent QQ cleanup cannot force a reopen or run later closing steps',async()=>{
+ const fixture=await shutdownFixture({failures:{plugins:Infinity},failureDetails:socialCloseFailure,responses:[0,0]});await fixture.shutdown();
+ assert.equal(fixture.attempts.plugins,2);
+ assert.deepEqual(fixture.dialogs[1].buttons,['稍后']);
+ for(const name of ['plugins-restore','plugins-attach','daily-cg','relaunch','exit'])assert.ok(!fixture.events.includes(name),name);
+});
+
+test('maintenance quit waits for QQ cleanup and does not relaunch the current build',async()=>{
+ const fixture=await shutdownFixture({failures:{plugins:1},failureDetails:socialCloseFailure,forUpdate:true});await fixture.shutdown();
+ assert.deepEqual(fixture.dialogs[0].buttons,['返回']);
+ assert.ok(!fixture.events.includes('update-reopen'));
+ assert.ok(!fixture.events.includes('exit'));
+ await fixture.shutdown();
+ assert.equal(fixture.attempts.plugins,2);
+ assert.equal(fixture.attempts.quiesce,1);
+ for(const name of ['plugins-restore','plugins-attach','relaunch'])assert.ok(!fixture.events.includes(name),name);
+ assert.equal(fixture.events.at(-1),'exit');
 });
 
 test('a repeated non-saving cleanup failure offers reopen only after every save completed',async()=>{

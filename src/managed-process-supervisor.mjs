@@ -30,13 +30,15 @@ async function fileHash(path){const hash=createHash('sha256');for await(const ch
 function descends(pid,ancestor,rows){const index=new Map(rows.map(r=>[r.pid,r])),seen=new Set();let row=index.get(pid);while(row&&!seen.has(row.pid)){if(row.pid===ancestor)return true;seen.add(row.pid);const parent=index.get(row.parentPid);if(parent&&/^\d+$/.test(parent.creationTime??'')&&/^\d+$/.test(row.creationTime??'')&&BigInt(parent.creationTime)>BigInt(row.creationTime))return false;row=parent;}return false;}
 /** Pure process ownership and OS job supervision, without any work engine. */
 export function createManagedProcessSupervisor({guardPath,statePath,inspect,spawnImpl=spawn,onState=()=>{}}={}){
-  const roots=new Map(),records=new Map(),guards=new Map(),releasedRoots=new Map();let loaded=false,loading,closed=false,closing,admissionEpoch=0,mutationTail=Promise.resolve();
+  const roots=new Map(),records=new Map(),guards=new Map(),releasedRoots=new Map();let loaded=false,loading,closed=false,closeRequested=false,closing,admissionEpoch=0,mutationTail=Promise.resolve();
   function beginAdmission(){const epoch=admissionEpoch;checkAdmission(epoch);return epoch;}
-  function checkAdmission(epoch){if(closed||closing||epoch!==admissionEpoch)throw fail('Process admission was fenced by supervisor shutdown','WORK_PROCESS_ADMISSION_CLOSED');}
+  function checkAdmission(epoch){if(closeRequested||epoch!==admissionEpoch)throw fail('Process admission was fenced by supervisor shutdown','WORK_PROCESS_ADMISSION_CLOSED');}
+  const qqRuntime=runtimeId=>typeof runtimeId==='string'&&runtimeId.startsWith('qq:');
+  function checkRootAdmission(runtimeId){if(qqRuntime(runtimeId)&&releasedRoots.has(runtimeId))throw fail('This QQ attempt has already ended','WORK_PROCESS_ADMISSION_CLOSED');}
   function mutate(operation){const result=mutationTail.then(operation,operation);mutationTail=result.catch(()=>{});return result;}
   function reusableGuard(key){const value=guards.get(key);if(value&&(value.admitting||value.admissionError||value.proof?.ready!==true||value.retirement||value.child.exitCode!=null||value.child.stdin.destroyed||value.child.stdin.writableEnded))throw fail('OS guard is unverified, failed, admitting, retiring or closed; a fresh ownership proof is required','WORK_PROCESS_GUARD_UNAVAILABLE');return value;}
   const inspectImpl=inspect??(pid=>windowsGuardProcessSnapshot(guardPath,pid));let ownerIdentity;
-  async function timed(stage,pid,operation){const startedAt=Date.now(),start=performance.now();try{const value=await operation();onState({type:'process-inspection',stage,...pid==null?{}:{pid},mode:inspect?'injected':'native-guard',startedAt,finishedAt:Date.now(),durationMs:performance.now()-start,ok:true,...Array.isArray(value)?{rowCount:value.length}:{}});return value;}catch(error){onState({type:'process-inspection',stage,...pid==null?{}:{pid},mode:inspect?'injected':'native-guard',startedAt,finishedAt:Date.now(),durationMs:performance.now()-start,ok:false,code:error.code??'WORK_PROCESS_INSPECT_FAILED'});throw error;}}
+  async function timed(stage,pid,operation){const startedAt=Date.now(),start=performance.now();try{const value=await operation();onState({type:'process-inspection',stage,...pid==null?{}:{pid},mode:inspect?'injected':'native-guard',startedAt,finishedAt:Date.now(),durationMs:performance.now()-start,ok:true,...Array.isArray(value)?{rowCount:value.length}:{}});return value;}catch(error){onState({type:'process-inspection',stage,...pid==null?{}:{pid},mode:inspect?'injected':'native-guard',startedAt,finishedAt:Date.now(),durationMs:performance.now()-start,ok:false,code:error.code??'WORK_PROCESS_INSPECT_FAILED',...(error.guardStage?{guardStage:error.guardStage}:{})});throw error;}}
   const inspectNow=(pid=null)=>timed(pid==null?'inventory':'identity',pid,()=>inspectImpl(pid));
   function insideProofPath(path){const rel=relative(join(dirname(statePath),'guard-receipts'),resolve(path));return !!rel&&!isAbsolute(rel)&&rel!=='..'&&!rel.startsWith('..'+sep)&&/^[a-f0-9-]{36}\.json$/.test(rel);}
   async function load(){if(loaded)return;if(loading)return loading;loading=(async()=>{try{const raw=JSON.parse(await readFile(statePath,'utf8'));for(const row of raw.records??[])records.set(row.id,row);}catch(e){if(e.code!=='ENOENT')throw e;}loaded=true;})();try{await loading;}finally{loading=null;}}
@@ -49,6 +51,11 @@ export function createManagedProcessSupervisor({guardPath,statePath,inspect,spaw
   function currentOwner(){if(!ownerIdentity){ownerIdentity=timed('owner-birth',process.pid,async()=>{const value=await identity(process.pid);if(!value)throw fail('Application owner identity is unavailable');return value;});ownerIdentity.catch(()=>{ownerIdentity=null;});}return ownerIdentity;}
   async function confirmTarget(row){const actual=await identity(row.pid);if(!actual||actual.creationTime!==row.creationTime||actual.parentPid!==row.parentPid)throw fail('Process identity changed while verifying its ancestry');return actual;}
   async function ownerMatches(rows){const owner=await currentOwner(),current=rows.find(row=>row.pid===process.pid);if(!owner||current?.creationTime!==owner.creationTime)throw fail('Application owner identity changed');return owner;}
+  function guardFailureStage(message,proof){
+    if(!message||!['before-assignment','assigned','receipt-persist','receipt-committed'].includes(message.guardStage))return null;
+    const exact=['guardId','ownerPid','ownerCreationTime','rootPid','rootCreationTime'].every(field=>message[field]===proof[field]);
+    return exact?message.guardStage:null;
+  }
   async function guard(key,row,epoch){
     checkAdmission(epoch);const previous=reusableGuard(key);if(previous){if(previous.identity.pid!==row.pid||previous.identity.creationTime!==row.creationTime)throw fail('Managed process identity changed');return previous.proof;}
     const owner=await currentOwner();if(!owner)throw fail('Application owner identity is unavailable');
@@ -58,15 +65,18 @@ export function createManagedProcessSupervisor({guardPath,statePath,inspect,spaw
     // epoch synchronously, then waits for this mutation to publish its guard.
     checkAdmission(epoch);
     const child=spawnImpl(guardPath,[String(process.pid),owner.creationTime,String(row.pid),row.creationTime,receiptPath,guardId],{windowsHide:true,env:systemEnv(),stdio:['pipe','pipe','pipe']});
-    const exited=new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',(code,signal)=>resolve({code,signal}));}),requests=new Map();let tail='',readyResolve,readyReject;
+    const exited=new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',(code,signal)=>resolve({code,signal}));});
+    const drained=new Promise(resolve=>child.once('close',(code,signal)=>resolve({code,signal})));
+    const requests=new Map();let tail='',readyResolve,readyReject;
     const ready=new Promise((resolve,reject)=>{readyResolve=resolve;readyReject=reject;});
     const timer=setTimeout(()=>readyReject(fail('Process guard did not become ready','WORK_PROCESS_GUARD_FAILED')),15000);
-    child.once('error',e=>{clearTimeout(timer);readyReject(e);});
-    child.stdout.on('data',b=>{tail+=b.toString();let at;while((at=tail.indexOf('\n'))>=0){const line=tail.slice(0,at);tail=tail.slice(at+1);try{const value=JSON.parse(line);if(value.requestId){const pending=requests.get(value.requestId);if(pending){requests.delete(value.requestId);clearTimeout(pending.timer);pending.resolve(value);}}else if(value.ready===true){clearTimeout(timer);readyResolve({...value,guardPid:child.pid});}else if(value.ready===false){clearTimeout(timer);readyReject(fail(value.error??'Process guard failed','WORK_PROCESS_GUARD_FAILED'));}}catch(e){readyReject(e);}}});
+    const admissionStart=performance.now(),value={child,drained,identity:row,proof:{guardId,receiptPath,ownerPid:process.pid,ownerCreationTime:owner.creationTime,rootPid:row.pid,rootCreationTime:row.creationTime,guardPid:child.pid,guardExePath,guardExeSha256},requests,admitting:true};
+    child.once('error',e=>{if(child.pid==null)value.spawnFailed=true;clearTimeout(timer);readyReject(e);});
+    child.stdout.on('data',b=>{tail+=b.toString();let at;while((at=tail.indexOf('\n'))>=0){const line=tail.slice(0,at);tail=tail.slice(at+1);try{const message=JSON.parse(line);if(message.requestId){const pending=requests.get(message.requestId);if(pending){requests.delete(message.requestId);clearTimeout(pending.timer);pending.resolve(message);}}else if(message.ready===true){value.reportedReady=true;clearTimeout(timer);readyResolve({...message,guardPid:child.pid});}else if(message.ready===false){value.guardStage=guardFailureStage(message,value.proof);clearTimeout(timer);const error=fail(message.error??'Process guard failed','WORK_PROCESS_GUARD_FAILED');if(value.guardStage)error.guardStage=value.guardStage;readyReject(error);}}catch(e){readyReject(e);}}});
     const rejectQueries=error=>{for(const value of requests.values()){clearTimeout(value.timer);value.reject(error);}requests.clear();};
     child.stdin.on?.('error',error=>rejectQueries(error));
-    exited.then(()=>{clearTimeout(timer);readyReject(fail('Process guard exited before readiness','WORK_PROCESS_GUARD_FAILED'));rejectQueries(fail('Process guard exited during query','WORK_PROCESS_GUARD_FAILED'));},error=>{clearTimeout(timer);readyReject(error);rejectQueries(error);});
-    const admissionStart=performance.now(),value={child,exited,identity:row,proof:{guardId,receiptPath,ownerPid:process.pid,ownerCreationTime:owner.creationTime,rootPid:row.pid,rootCreationTime:row.creationTime,guardPid:child.pid,guardExePath,guardExeSha256},requests,admitting:true};
+    exited.then(()=>rejectQueries(fail('Process guard exited during query','WORK_PROCESS_GUARD_FAILED')),rejectQueries);
+    void drained.then(()=>{clearTimeout(timer);readyReject(fail('Process guard exited before readiness','WORK_PROCESS_GUARD_FAILED'));});
     // Even failed readiness leaves a known child for close() to stop/prove;
     // never allow an in-flight native spawn to disappear from supervision.
     guards.set(key,value);
@@ -95,9 +105,11 @@ export function createManagedProcessSupervisor({guardPath,statePath,inspect,spaw
     owned.query=request.then(reply=>{if(!Number.isSafeInteger(reply.activeProcesses)||reply.activeProcesses<0)throw fail('OS guard returned an invalid active process count','WORK_PROCESS_STOP_UNCONFIRMED');return reply;}).finally(()=>{owned.query=null;});
     return owned.query;
   }
-  function retireGuard(key,owned){
+  function retireGuard(key,owned,{allowUnassigned=false}={}){
+    const newlyAllowed=allowUnassigned&&!owned.allowUnassigned;
+    if(allowUnassigned)owned.allowUnassigned=true;
     const retryReceipt=owned.retryStopReceipt;
-    if(owned.retirement&&!retryReceipt)return owned.retirement;
+    if(owned.retirement&&!retryReceipt&&!newlyAllowed)return owned.retirement;
     owned.retryStopReceipt=false;
     // Publish the shared promise before yielding. New queries join retirement;
     // pending queries drain before the single close command ends the pipe.
@@ -105,40 +117,66 @@ export function createManagedProcessSupervisor({guardPath,statePath,inspect,spaw
       if(!retryReceipt){
         if(owned.query)await owned.query.catch(()=>{});
         if(owned.child.exitCode==null&&!owned.child.stdin.destroyed&&!owned.child.stdin.writableEnded)owned.child.stdin.end('close\n');
-        const exit=await owned.exited;
-        if(exit.code!==0)throw fail('OS guard could not confirm shutdown','WORK_PROCESS_STOP_UNCONFIRMED');
       }
-      let receipt;
-      try{receipt=await stopReceipt(owned.proof,owned.identity);}
+      const exit=await owned.drained;
+      const verifiedQqZero=exit.code===1&&key.startsWith('runtime:qq:')&&['receipt-persist','receipt-committed'].includes(owned.guardStage);
+      let receipt=null;
+      try{
+        if(exit.code===0||verifiedQqZero)receipt=await stopReceipt(owned.proof,owned.identity);
+        else{
+          const neverAssigned=!owned.reportedReady&&(owned.spawnFailed||(exit.code===1&&owned.guardStage==='before-assignment'));
+          if(!owned.allowUnassigned||!neverAssigned||await fileHash(owned.proof.guardExePath)!==owned.proof.guardExeSha256){
+            const error=fail('OS guard could not confirm shutdown','WORK_PROCESS_STOP_UNCONFIRMED');
+            if(owned.guardStage)error.guardStage=owned.guardStage;
+            throw error;
+          }
+        }
+      }
       catch(cause){
         // Keep custody revoked. A later release may reread the same proof
         // after a filesystem error, without reopening the guard's control pipe.
         owned.retryStopReceipt=['ENOENT','EACCES','EPERM','EBUSY'].includes(cause?.code);
-        throw cause;
+        const error=verifiedQqZero?Object.assign(fail('The QQ guard observed zero processes but its final receipt could not be verified','WORK_PROCESS_STOP_UNCONFIRMED'),{guardStage:owned.guardStage,cause}):cause;
+        onState({type:'guard-stop-failed',key,code:error.code??'WORK_PROCESS_STOP_UNCONFIRMED',...(error.guardStage?{guardStage:error.guardStage}:{})});
+        throw error;
       }
       if(guards.get(key)===owned)guards.delete(key);
-      onState({type:'guard-retired',key,guardId:owned.proof.guardId,guardPid:owned.proof.guardPid,receiptPath:owned.proof.receiptPath,activeProcesses:0});
+      if(receipt)onState({type:'guard-retired',key,guardId:owned.proof.guardId,guardPid:owned.proof.guardPid,receiptPath:owned.proof.receiptPath,activeProcesses:0});
+      else onState({type:'guard-not-assigned',key,guardStage:owned.spawnFailed?'spawn':'before-assignment'});
       return receipt;
     });
     return owned.retirement;
   }
   async function registerRoot({runtimeId,pid}){
-    const epoch=beginAdmission();await load();checkAdmission(epoch);if(typeof runtimeId!=='string'||!integer(pid)||pid===process.pid)throw fail('Invalid managed native runtime');
+    const epoch=beginAdmission();await load();checkAdmission(epoch);if(typeof runtimeId!=='string'||!integer(pid)||pid===process.pid)throw fail('Invalid managed native runtime');checkRootAdmission(runtimeId);
     reusableGuard('runtime:'+runtimeId);
     const rows=await inspectNow(),row=rows.find(r=>r.pid===pid);await ownerMatches(rows);if(!row||!descends(pid,process.pid,rows))throw fail('Runtime is not owned by this application');
-    checkAdmission(epoch);return mutate(async()=>{checkAdmission(epoch);reusableGuard('runtime:'+runtimeId);
+    checkAdmission(epoch);return mutate(async()=>{checkAdmission(epoch);checkRootAdmission(runtimeId);reusableGuard('runtime:'+runtimeId);
       const fresh=await inspectNow(),current=fresh.find(r=>r.pid===pid);await ownerMatches(fresh);checkAdmission(epoch);
       if(!current||current.creationTime!==row.creationTime||!descends(pid,process.pid,fresh))throw fail('Runtime identity changed before admission');
       const actual=await confirmTarget(current);checkAdmission(epoch);const proof=await guard('runtime:'+runtimeId,actual,epoch);checkAdmission(epoch);
       roots.set(runtimeId,actual);releasedRoots.delete(runtimeId);return {...actual,...proof,runtimeId};
     });
   }
-  async function releaseRoot({runtimeId}={}){
+  function rememberRootRelease(runtimeId,owned,receipt){
+    const result={released:true,runtimeId,stopped:true};
+    if(owned)result.pid=owned.identity.pid;
+    if(receipt)Object.assign(result,{osActiveProcesses:0,guardId:owned.proof.guardId,receiptPath:owned.proof.receiptPath});
+    else result.unassigned=true;
+    roots.delete(runtimeId);
+    releasedRoots.set(runtimeId,result);
+    return structuredClone(result);
+  }
+  async function releaseRoot({runtimeId,allowUnassigned=false}={}){
     return mutate(async()=>{
-    if(releasedRoots.has(runtimeId))return structuredClone(releasedRoots.get(runtimeId));
-    const root=roots.get(runtimeId),key='runtime:'+runtimeId,owned=guards.get(key);if(!root||!owned||owned.identity.creationTime!==root.creationTime)throw fail('Native runtime has no current OS ownership guard','WORK_PROCESS_STOP_UNCONFIRMED');
-    await retireGuard(key,owned);const proof=owned.proof;
-    const result={released:true,runtimeId,pid:root.pid,stopped:true,osActiveProcesses:0,guardId:proof.guardId,receiptPath:proof.receiptPath};if(roots.get(runtimeId)===root){roots.delete(runtimeId);releasedRoots.set(runtimeId,result);}return structuredClone(result);
+      const root=roots.get(runtimeId),key='runtime:'+runtimeId,owned=guards.get(key);
+      const inertQq=allowUnassigned===true&&qqRuntime(runtimeId);
+      const previous=releasedRoots.get(runtimeId);
+      if(previous&&(!previous.unassigned||inertQq))return structuredClone(previous);
+      if(!root&&!owned&&inertQq)return rememberRootRelease(runtimeId,null,null);
+      if(!owned||(!root&&!inertQq)||(root&&(owned.identity.pid!==root.pid||owned.identity.creationTime!==root.creationTime)))throw fail('Native runtime has no current OS ownership guard','WORK_PROCESS_STOP_UNCONFIRMED');
+      const receipt=await retireGuard(key,owned,{allowUnassigned:inertQq&&!root});
+      return rememberRootRelease(runtimeId,owned,receipt);
     });
   }
   async function register(spec){
@@ -189,7 +227,30 @@ export function createManagedProcessSupervisor({guardPath,statePath,inspect,spaw
     await load();for(const row of records.values())if((!spec.jobId||row.jobId===spec.jobId)&&(!spec.runId||row.runId===spec.runId)&&(!spec.runtimeId||row.nativeHostInstanceId===spec.runtimeId)){const key='run:'+row.id,guarded=guards.get(key);if(guarded)await retireGuard(key,guarded);else{const current=await identity(row.pid);if(current&&current.creationTime===row.creationTime)throw fail('A live process has no current OS ownership handle; manual inspection is required','WORK_PROCESS_STOP_UNCONFIRMED');}}
     const proof=await awaitStopped(spec);if(!proof.stopped)throw fail('Owned processes have not stopped','WORK_PROCESS_STOP_UNCONFIRMED');await persist();return proof;
   }
-  async function close(){if(closed)return;if(closing)return closing;admissionEpoch++;closing=mutate(async()=>{await load();for(const[key,value]of guards)await retireGuard(key,value);roots.clear();closed=true;});return closing;}
+  async function close(){
+    if(closed)return;
+    if(closing)return closing;
+    closeRequested=true;
+    admissionEpoch++;
+    closing=mutate(async()=>{
+      await load();
+      const failures=[];
+      for(const [key,owned] of guards){
+        try{
+          const receipt=await retireGuard(key,owned);
+          if(key.startsWith('runtime:')){
+            const runtimeId=key.slice('runtime:'.length);
+            if(roots.has(runtimeId)||qqRuntime(runtimeId))rememberRootRelease(runtimeId,owned,receipt);
+          }
+        }catch(error){failures.push(error);}
+      }
+      if(failures.length===1)throw failures[0];
+      if(failures.length>1)throw Object.assign(new AggregateError(failures,'OS guards could not all confirm shutdown'),{code:'WORK_PROCESS_STOP_UNCONFIRMED'});
+      roots.clear();
+      closed=true;
+    }).finally(()=>{closing=null;});
+    return closing;
+  }
   async function inspectOwned({runtimeId,pid}={}){await load();if(closed||!integer(pid))throw fail('Invalid owned process inspection');const root=roots.get(runtimeId);if(!root||pid===root.pid)throw fail('Native runtime is not currently owned');const direct=guards.get('runtime:'+runtimeId),task=[...records.values()].find(row=>row.kind==='task-tool-host'&&row.nativeHostInstanceId===runtimeId&&row.pid===root.pid&&row.creationTime===root.creationTime),owned=direct??(task&&guards.get('run:'+task.id));if(!owned||owned.child.exitCode!==null||owned.identity.creationTime!==root.creationTime)throw fail('Native runtime OS guard is unavailable','WORK_PROCESS_STOP_UNCONFIRMED');const rows=await inspectNow(),current=rows.find(row=>row.pid===root.pid),target=rows.find(row=>row.pid===pid);if(!target||current?.creationTime!==root.creationTime||!descends(pid,root.pid,rows))throw fail('Process is not a current owned runtime descendant');const actual=await confirmTarget(target);return {...actual,exeSha256:await timed('target-image-hash',pid,()=>fileHash(actual.exeRealPath))};}
   return {registerRoot,releaseRoot,registerTaskRoot,register,inspectOwned,status,awaitStopped,stopOwned,close,identity,rootCustody,snapshot:()=>({managedRuntimes:roots.size,registeredProcesses:records.size,osGuards:guards.size,inspectionMode:inspect?'injected':'native-guard'})};
 }
