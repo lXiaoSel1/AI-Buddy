@@ -61,7 +61,7 @@ test('Windows guard separates never-assigned from failure to persist a zero-proc
   assert.equal((await assigned.closed)[0],1);
   await runtime.closed;
   const terminal=assigned.messages.at(-1);
-  assert.equal(terminal.guardStage,'receipt-persist');
+  assert.equal(terminal.guardStage,'receipt-publish');
   assert.equal(terminal.guardId,assigned.guardId);
   assert.equal(terminal.rootCreationTime,target.creationTime);
   assert.equal(await readFile(receiptPath,'utf8'),'occupied');

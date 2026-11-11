@@ -24,7 +24,7 @@ export function qrImage(url){let parsed;try{parsed=new URL(url);}catch{throw fai
 // Reusing one name would let WebSocket replace HTTP before either is opened.
 export function qqNetworkConfig(httpPort,wsPort,token){return {network:{httpServers:[{name:'ai-buddy-http',enable:true,host:'127.0.0.1',port:httpPort,token,enableCors:false,enableWebsocket:false,messagePostFormat:'array',debug:false}],websocketServers:[{name:'ai-buddy-websocket',enable:true,host:'127.0.0.1',port:wsPort,token,messagePostFormat:'array',debug:false,reportSelfMessage:false,enableForcePushEvent:false}],httpClients:[],websocketClients:[],plugins:[]},enableLocalFile2Url:false};}
 export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onState=()=>{},supervisor=null,network,fetchImpl=network?.fetch??globalThis.fetch,childEnvironment=()=>({}),spawnImpl=spawn,listenerInspector=assertOwnedListener,stopTimeoutMs=8000}={}){
- const root=join(dataRoot,'social-login'),profiles=join(root,'qq'),runs=new Map(),profileClaims=new Map(),restores=new Map(),pending=new Set(),resumeGenerations=new Map(),lifetime=new AbortController(),exits=[];let closed=false,db=null,opening=null,closing=null,shutdownComplete=false;
+ const root=join(dataRoot,'social-login'),profiles=join(root,'qq'),runs=new Map(),preparations=new Map(),profileClaims=new Map(),restores=new Map(),pending=new Set(),resumeGenerations=new Map(),lifetime=new AbortController(),exits=[];let closed=false,db=null,opening=null,closing=null,shutdownComplete=false;
  component??=createQqComponent({directory:join(dataRoot,'plugin-runtimes','qq-components'),descriptor,network,fetchImpl});
  supervisor??=createManagedProcessSupervisor({guardPath:join(build,'managed-process-guard.exe'),statePath:join(root,'processes.json'),onState});
  async function database(){if(closed)throw fail('SOCIAL_LOGIN_CLOSED');if(db)return db;if(!opening)opening=(async()=>{await mkdir(root,{recursive:true});const next=new DatabaseSync(join(root,'onboarding-v1.sqlite'));try{next.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS bindings(ref TEXT PRIMARY KEY,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)");db=next;return db;}catch(cause){next.close();throw cause;}})().catch(cause=>{opening=null;throw cause;});return opening;}
@@ -71,7 +71,7 @@ export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onS
    let proof;
    try{proof=await supervisor.releaseRoot({runtimeId:row.runtimeId,allowUnassigned});}
    catch(error){
-    if(error?.guardStage==='receipt-persist')throw Object.assign(fail('QQ_COMPONENT_STOP_RECEIPT_WRITE_FAILED'),{cause:error,qqStage:'receipt-write'});
+    if(['receipt-persist','receipt-publish'].includes(error?.guardStage))throw Object.assign(fail('QQ_COMPONENT_STOP_RECEIPT_WRITE_FAILED'),{cause:error,qqStage:'receipt-write'});
     throw atStage(error,'guard-stop','QQ_COMPONENT_STOP_UNCONFIRMED');
    }
    if(proof?.stopped!==true||(proof.osActiveProcesses!==0&&!(allowUnassigned&&proof.unassigned===true)))throw fail('QQ_COMPONENT_STOP_UNCONFIRMED');
@@ -86,11 +86,11 @@ export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onS
   });
   try{await row.stopping;}catch(cause){row.stopping=null;throw cause;}
  }
- async function launch({attemptId,signal,update=()=>{},saved=null,official=false}){
+ async function prepareLaunch({attemptId,signal,update=()=>{},saved=null,official=false}){
   if(closed)throw fail('SOCIAL_LOGIN_CLOSED');
-  signal=AbortSignal.any([signal,lifetime.signal]);
+  signal.throwIfAborted();
   const runtime=await component.ensure({signal,onProgress:update,official:official===true});signal.throwIfAborted();
-  const store=await database();let resourceId=saved?.resourceId;
+  const store=await database();signal.throwIfAborted();let resourceId=saved?.resourceId;
   if(!resourceId){resourceId=store.prepare("SELECT value FROM metadata WHERE key='pendingProfile'").get()?.value??randomUUID();if(accounts.list().some(account=>account.managedProfileId===resourceId))resourceId=randomUUID();if(!/^[a-f0-9-]{36}$/.test(resourceId))throw fail('QQ_PRIVATE_PROFILE_REQUIRED');store.prepare("INSERT INTO metadata VALUES('pendingProfile',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(resourceId);}
   if(profileClaims.has(resourceId))throw fail('SOCIAL_LOGIN_BUSY');
   profileClaims.set(resourceId,attemptId);
@@ -149,11 +149,14 @@ export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onS
    try{renameSync(gate.pending,gate.path);}
    catch{throw fail('QQ_COMPONENT_LAUNCH_GATE_FAILED');}
   })();
+  return {row,token};
+ }
+ async function waitForCredential(row,token){
   await row.admission;
   for(let n=0;n<40;n++){
-   combined.throwIfAborted();if(row.exit)throw fail(row.exit.code===78?'QQ_PRIVATE_PROFILE_REQUIRED':row.exit.code===71?'QQ_COMPONENT_LAUNCH_GATE_EXPIRED':row.exit.code===72?'QQ_COMPONENT_LAUNCH_GATE_FAILED':'QQ_COMPONENT_EXITED');
-   try{await listenerInspector(child.pid,[webPort]);row.credential=(await api(row,'auth/login',{hash:createHash('sha256').update(token+'.napcat').digest('hex')},false)).Credential;if(row.credential)return row;}catch(cause){if(cause.code==='QQ_LISTENER_OWNER_MISMATCH')throw cause;}
-   await delay(1000,undefined,{signal:combined});
+   row.signal.throwIfAborted();if(row.exit)throw fail(row.exit.code===78?'QQ_PRIVATE_PROFILE_REQUIRED':row.exit.code===71?'QQ_COMPONENT_LAUNCH_GATE_EXPIRED':row.exit.code===72?'QQ_COMPONENT_LAUNCH_GATE_FAILED':'QQ_COMPONENT_EXITED');
+   try{await listenerInspector(row.child.pid,[row.webPort]);row.credential=(await api(row,'auth/login',{hash:createHash('sha256').update(token+'.napcat').digest('hex')},false)).Credential;if(row.credential)return;}catch(cause){if(cause.code==='QQ_LISTENER_OWNER_MISMATCH')throw cause;}
+   await delay(1000,undefined,{signal:row.signal});
   }
   throw fail('QQ_COMPONENT_START_TIMEOUT');
  }
@@ -178,9 +181,19 @@ export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onS
   throw fail('SOCIAL_LOGIN_EXPIRED');
  }
  async function start(options){
+  const {attemptId}=options;
+  if(preparations.has(attemptId)||runs.has(attemptId))throw fail('SOCIAL_LOGIN_BUSY');
+  const abort=new AbortController(),signal=AbortSignal.any([options.signal,lifetime.signal,abort.signal]);
+  const ready=Promise.resolve().then(()=>prepareLaunch({...options,signal})).finally(()=>preparations.delete(attemptId));
+  preparations.set(attemptId,{abort,ready});
   let row;
   const operation=(async()=>{
-   try{row=await launch(options);return await awaitOnline(row,{...options,signal:row.signal});}
+   try{
+    const prepared=await ready;
+    row=prepared.row;
+    await waitForCredential(row,prepared.token);
+    return await awaitOnline(row,{...options,signal:row.signal});
+   }
    catch(cause){
     try{await stopRow(row??runs.get(options.attemptId));}
     catch(cleanup){throw Object.assign(Error('QQ connection cleanup failed',{cause:cleanup}),{code:cleanup?.code,loginCause:cause});}
@@ -224,7 +237,13 @@ export function createQqLoginRuntime({dataRoot,build,accounts,component=null,onS
   async check(input){const {account,session}=await connection(input.ref);await session.verify();await session.socket();unchanged(account);return {connected:true,generation:account.generation};},
   diagnostics:()=>({active:[...runs.values()].map(row=>({pid:row.child.pid,resourceId:row.resourceId,exited:!!row.exit})),exits:structuredClone(exits)}),
   refresh:async({attemptId})=>{const row=runs.get(attemptId);if(!row)throw fail('SOCIAL_LOGIN_NOT_PENDING');await api(row,'QQLogin/RefreshQRcode');},
-  stop:async({attemptId}={})=>{for(const row of [...runs.values()])if(!attemptId||row.attemptId===attemptId)await stopRow(row);},
+   async stop({attemptId}={}){
+    const stoppingPreparations=[...preparations].filter(([id])=>!attemptId||id===attemptId).map(([,preparation])=>preparation);
+    for(const preparation of stoppingPreparations)preparation.abort.abort();
+    // A preparation settles when it releases its profile claim or publishes a row for stopRow.
+    if(stoppingPreparations.length)await Promise.allSettled(stoppingPreparations.map(preparation=>preparation.ready));
+    for(const row of [...runs.values()])if(!attemptId||row.attemptId===attemptId)await stopRow(row);
+   },
   discard:async result=>stopRow(runs.get(result?.attemptId)),
   async setAutoResume(ref,enabled,scope,{signal,check=async()=>{}}={}){const account=accounts.get(ref);if(closed||!account?.enabled||account.platform!=='qq'||typeof enabled!=='boolean'||!scope||['characterId','lifeId','operationId'].some(key=>typeof scope[key]!=='string'||!scope[key]))throw fail('QQ_AUTOSTART_INVALID');const generation=(resumeGenerations.get(ref)??0)+1;resumeGenerations.set(ref,generation);const valid=()=>{signal?.throwIfAborted();if(closed||resumeGenerations.get(ref)!==generation||accounts.get(ref)?.generation!==account.generation)throw fail('SOCIAL_ACCOUNT_CHANGED');};await check();valid();const value=await binding(ref)??{ref,accountId:account.accountId,resourceId:null},databaseHandle=await database();await check();valid();databaseHandle.prepare('INSERT INTO bindings VALUES(?,?) ON CONFLICT(ref) DO UPDATE SET body=excluded.body').run(ref,JSON.stringify({...value,autoResume:enabled,scope:Object.fromEntries(['characterId','lifeId','operationId'].map(key=>[key,scope[key]]))}));},
   async close(){

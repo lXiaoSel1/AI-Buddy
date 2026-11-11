@@ -83,7 +83,7 @@ internal static class ManagedProcessGuard {
       }
     }
   }
-  static void WriteStopReceipt(string path,string receipt) {
+  static string FlushStopReceipt(string path,string receipt) {
     RetryReceiptIo(()=>Directory.CreateDirectory(Path.GetDirectoryName(path)));
     string pending=path+".pending";
     byte[] bytes=new UTF8Encoding(false).GetBytes(receipt);
@@ -97,8 +97,7 @@ internal static class ManagedProcessGuard {
         output.Flush(true);
       });
     }
-    // If a scanner briefly holds this file, retry publishing the same flushed proof.
-    RetryReceiptIo(()=>File.Move(pending,path));
+    return pending;
   }
   static int Main(string[] args) {
     IntPtr job=IntPtr.Zero,memory=IntPtr.Zero;
@@ -130,7 +129,10 @@ internal static class ManagedProcessGuard {
         for(;;){Accounting state;if(!QueryInformationJobObject(job,1,out state,(uint)Marshal.SizeOf(typeof(Accounting)),IntPtr.Zero))throw new Exception("Job stop proof unavailable");if(state.Active==0)break;System.Threading.Thread.Sleep(50);}
         guardStage="receipt-persist";
         string receipt="{\"schemaVersion\":1,\"guardId\":\""+guardId.ToString()+"\",\"ownerPid\":"+ownerPid+",\"ownerCreationTime\":\""+ownerTicks+"\",\"rootPid\":"+rootPid+",\"rootCreationTime\":\""+rootTicks+"\",\"activeProcesses\":0,\"trigger\":\""+trigger+"\",\"stoppedAt\":\""+DateTime.UtcNow.ToString("o")+"\"}";
-        WriteStopReceipt(Path.GetFullPath(args[4]),receipt);
+        string path=Path.GetFullPath(args[4]),pending=FlushStopReceipt(path,receipt);
+        guardStage="receipt-publish";
+        // A publication failure leaves the complete, flushed proof available for retry.
+        RetryReceiptIo(()=>File.Move(pending,path));
         guardStage="receipt-committed";
       }
       CloseHandle(job);job=IntPtr.Zero;

@@ -1,6 +1,6 @@
 import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {readFile,mkdir,realpath,writeFile} from 'node:fs/promises';
+import {readFile,mkdir,realpath,writeFile,link,lstat} from 'node:fs/promises';
 import {createReadStream} from 'node:fs';
 import {createHash,randomUUID} from 'node:crypto';
 import {join,dirname,relative,resolve,isAbsolute,sep} from 'node:path';
@@ -52,7 +52,7 @@ export function createManagedProcessSupervisor({guardPath,statePath,inspect,spaw
   async function confirmTarget(row){const actual=await identity(row.pid);if(!actual||actual.creationTime!==row.creationTime||actual.parentPid!==row.parentPid)throw fail('Process identity changed while verifying its ancestry');return actual;}
   async function ownerMatches(rows){const owner=await currentOwner(),current=rows.find(row=>row.pid===process.pid);if(!owner||current?.creationTime!==owner.creationTime)throw fail('Application owner identity changed');return owner;}
   function guardFailureStage(message,proof){
-    if(!message||!['before-assignment','assigned','receipt-persist','receipt-committed'].includes(message.guardStage))return null;
+    if(!message||!['before-assignment','assigned','receipt-persist','receipt-publish','receipt-committed'].includes(message.guardStage))return null;
     const exact=['guardId','ownerPid','ownerCreationTime','rootPid','rootCreationTime'].every(field=>message[field]===proof[field]);
     return exact?message.guardStage:null;
   }
@@ -86,11 +86,20 @@ export function createManagedProcessSupervisor({guardPath,statePath,inspect,spaw
       const proof={...rawProof,...value.proof,guardCreationTime:helper.creationTime};value.proof=proof;value.admitting=false;onState({type:'guard-ready',key,admissionDurationMs:performance.now()-admissionStart,...proof});return proof;
     }catch(error){value.admitting=false;value.admissionError=error;throw error;}
   }
-  async function stopReceipt(proof,row){
+  async function stopReceipt(proof,row,{pending=false}={}){
     if(!proof?.guardId||!proof.receiptPath||!insideProofPath(proof.receiptPath))throw fail('Missing durable OS guard stop receipt','WORK_PROCESS_STOP_UNCONFIRMED');
-    const receipt=JSON.parse(await readFile(proof.receiptPath,'utf8'));
+    const path=pending?proof.receiptPath+'.pending':proof.receiptPath;
+    if(pending&&!(await lstat(path)).isFile())throw fail('The pending OS guard receipt is not a regular file','WORK_PROCESS_STOP_UNCONFIRMED');
+    const receipt=JSON.parse(await readFile(path,'utf8'));
     if(receipt.schemaVersion!==1||receipt.guardId!==proof.guardId||receipt.ownerPid!==proof.ownerPid||receipt.ownerCreationTime!==proof.ownerCreationTime||receipt.rootPid!==row.pid||receipt.rootCreationTime!==row.creationTime||receipt.activeProcesses!==0||await fileHash(proof.guardExePath)!==proof.guardExeSha256)throw fail('OS guard stop receipt does not match its guarded identity','WORK_PROCESS_STOP_UNCONFIRMED');
     return receipt;
+  }
+  async function publishQqStopReceipt(proof,row){
+    try{return await stopReceipt(proof,row);}catch(error){if(error.code!=='ENOENT')throw error;}
+    await stopReceipt(proof,row,{pending:true});
+    // This installs the flushed bytes atomically without replacing another proof.
+    try{await link(proof.receiptPath+'.pending',proof.receiptPath);}catch(error){if(error.code!=='EEXIST')throw error;}
+    return stopReceipt(proof,row);
   }
   function queryGuard(owned){
     if(owned.retirement)return owned.retirement.then(receipt=>({activeProcesses:0,receipt}));
@@ -119,10 +128,12 @@ export function createManagedProcessSupervisor({guardPath,statePath,inspect,spaw
         if(owned.child.exitCode==null&&!owned.child.stdin.destroyed&&!owned.child.stdin.writableEnded)owned.child.stdin.end('close\n');
       }
       const exit=await owned.drained;
-      const verifiedQqZero=exit.code===1&&key.startsWith('runtime:qq:')&&['receipt-persist','receipt-committed'].includes(owned.guardStage);
+      const verifiedQqZero=exit.code===1&&key.startsWith('runtime:qq:')&&['receipt-persist','receipt-publish','receipt-committed'].includes(owned.guardStage);
+      const recoverPublication=verifiedQqZero&&owned.guardStage==='receipt-publish';
       let receipt=null;
       try{
-        if(exit.code===0||verifiedQqZero)receipt=await stopReceipt(owned.proof,owned.identity);
+        if(recoverPublication)receipt=await publishQqStopReceipt(owned.proof,owned.identity);
+        else if(exit.code===0||verifiedQqZero)receipt=await stopReceipt(owned.proof,owned.identity);
         else{
           const neverAssigned=!owned.reportedReady&&(owned.spawnFailed||(exit.code===1&&owned.guardStage==='before-assignment'));
           if(!owned.allowUnassigned||!neverAssigned||await fileHash(owned.proof.guardExePath)!==owned.proof.guardExeSha256){
@@ -135,7 +146,7 @@ export function createManagedProcessSupervisor({guardPath,statePath,inspect,spaw
       catch(cause){
         // Keep custody revoked. A later release may reread the same proof
         // after a filesystem error, without reopening the guard's control pipe.
-        owned.retryStopReceipt=['ENOENT','EACCES','EPERM','EBUSY'].includes(cause?.code);
+        owned.retryStopReceipt=recoverPublication||['ENOENT','EACCES','EPERM','EBUSY'].includes(cause?.code);
         const error=verifiedQqZero?Object.assign(fail('The QQ guard observed zero processes but its final receipt could not be verified','WORK_PROCESS_STOP_UNCONFIRMED'),{guardStage:owned.guardStage,cause}):cause;
         onState({type:'guard-stop-failed',key,code:error.code??'WORK_PROCESS_STOP_UNCONFIRMED',...(error.guardStage?{guardStage:error.guardStage}:{})});
         throw error;

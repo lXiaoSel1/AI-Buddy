@@ -118,6 +118,38 @@ test('a confirmed pre-admission failure releases the inert attempt and permits a
  }finally{await login.close().catch(()=>{});}
 });
 
+test('cancelling QQ before spawn drains profile setup so immediate rescan can start',{timeout:8000},async t=>{
+ const directory=await root(t),accounts={list:()=>[]};
+ const entered=Promise.withResolvers(),release=Promise.withResolvers(),spawned=Promise.withResolvers();
+ let preparations=0;
+ const driver=createQqLoginRuntime({dataRoot:directory,build:directory,accounts,component:{ensure:async()=>directory},
+  async childEnvironment(){
+   if(++preparations===1){entered.resolve();await release.promise;}
+   return {};
+  },
+  spawnImpl(){
+   spawned.resolve();
+   throw Object.assign(Error('fixture stops at the process boundary'),{code:'FIXTURE_SPAWN'});
+  },
+  supervisor:{async registerRoot(){assert.fail('fixture must not start a native process');},async close(){}},
+ });
+ const login=createSocialLogin({accounts,drivers:{qq:driver}});
+ try{
+  const first=login.start('qq');
+  await entered.promise;
+  const cancelling=login.cancel('qq');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(login.status('qq').phase,'cleaning-up');
+  release.resolve();
+  assert.equal((await cancelling).phase,'cancelled');
+  assert.equal(driver.diagnostics().active.length,0);
+  const rescan=login.start('qq');
+  assert.notEqual(rescan.attemptId,first.attemptId);
+  await spawned.promise;
+  assert.equal(preparations,2);
+ }finally{release.resolve();await login.close();}
+});
+
 test('cancelling while process admission is pending leaves the NapCat entry blocked',async t=>{
  const directory=await root(t),accounts={list:()=>[]};
  let entered,release,gateFile,allowUnassigned;

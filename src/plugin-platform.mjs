@@ -111,7 +111,7 @@ export async function createPluginPlatform({root,build,dataRoot,legacyManager,vo
   const qqLogin=qqLoginFactory({network,fetchImpl:network?.fetch,dataRoot,build,accounts:socialAccounts,onState:event=>{
     if(event?.type==='guard-not-assigned'||event?.type==='guard-stop-failed'||event?.type==='qq-runtime-exit'||event?.type==='process-inspection'&&event.stage==='guard-admission'&&!event.ok){
       const code=/^[A-Z0-9_]{1,80}$/.test(event.code??'')?event.code:undefined;
-      const guardStage=['spawn','before-assignment','assigned','receipt-persist','receipt-committed'].includes(event.guardStage)?event.guardStage:undefined;
+      const guardStage=['spawn','before-assignment','assigned','receipt-persist','receipt-publish','receipt-committed'].includes(event.guardStage)?event.guardStage:undefined;
       try{audit({type:'qq-connector',phase:event.type,code,guardStage});}catch{ /* Diagnostic writes do not change process custody. */ }
     }
     onUpdate(platform?.snapshot());

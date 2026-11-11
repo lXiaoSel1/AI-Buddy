@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
-import {mkdtemp,writeFile,readFile,mkdir,readdir,rm} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile,mkdir,readdir,rm,unlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,basename,resolve,sep} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -133,6 +133,25 @@ test('a QQ zero-observed native failure can recheck only an exact final stop rec
   assert.equal(proof.osActiveProcesses,0);
   assert.equal(child.ends,1);
   assert.deepEqual(await release(),proof);
+});
+
+test('QQ cleanup can publish a fully flushed receipt after its native publication failed',async t=>{
+  const f=await fixture(t,{exitCode:1,holdReceipt:1000002,terminalStage:'receipt-publish'});
+  const runtimeId='qq:publication-retry';
+  await f.supervisor.registerRoot({runtimeId,pid:f.runA});
+  const child=f.children.get(f.runA),release=()=>f.supervisor.releaseRoot({runtimeId});
+  await assert.rejects(release(),{code:'WORK_PROCESS_STOP_UNCONFIRMED'});
+  await child.writeReceipt(child.args[4]+'.pending');
+  await writeFile(child.args[4],'blocked by another writer',{flag:'wx'});
+  await assert.rejects(release(),{code:'WORK_PROCESS_STOP_UNCONFIRMED',guardStage:'receipt-publish'});
+  assert.equal(await readFile(child.args[4],'utf8'),'blocked by another writer');
+  await unlink(child.args[4]);
+  const proof=await release();
+  assert.equal(proof.stopped,true);
+  assert.equal(proof.osActiveProcesses,0);
+  assert.equal(JSON.parse(await readFile(proof.receiptPath,'utf8')).guardId,proof.guardId);
+  assert.deepEqual(await release(),proof);
+  assert.equal(child.ends,1);
 });
 
 test('unverified shutdown and non-QQ paths still reject a nonzero guard exit with a final file',async t=>{
