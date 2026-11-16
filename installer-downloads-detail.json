@@ -1,9 +1,9 @@
 {
-  "total": 1361,
+  "total": 1368,
   "releases": [
     {
       "tag": "v2.0.17",
-      "downloads": 102
+      "downloads": 108
     },
     {
       "tag": "v2.0.16",
@@ -71,7 +71,7 @@
     },
     {
       "tag": "installer-v2.0.3-r1",
-      "downloads": 117
+      "downloads": 118
     },
     {
       "tag": "v1.9.2",
