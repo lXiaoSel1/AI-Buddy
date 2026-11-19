@@ -39,6 +39,18 @@ test('the Auto chip shows round n / total or 未开启, and its panel links to S
  assert.match(render(AutoChip,{view:r95({auto:auto()}),onAction:noop,nameOf}),/round 2 \/ 6/);setLocale('zh-CN');
 });
 
+test('the Auto chip distinguishes an ended session from one that has never started',()=>{
+ const ended=r95({auto:auto({status:'ended',pending:null})});
+ const markup=view=>render(AutoChip,{view,onAction:noop,nameOf});
+ setLocale('zh-CN');
+ try{
+  assert.match(markup(ended),/class="r95-chip-st">已结束</);
+  assert.match(markup(r95()),/class="r95-chip-st">未开始</);
+  setLocale('en');
+  assert.match(markup(ended),/class="r95-chip-st">Ended</);
+ }finally{setLocale('zh-CN');}
+});
+
 test('the Auto strip says who is talking, round n / total, who is next and that your message waits (C6 / C9)',()=>{
  setLocale('zh-CN');const html=render(AutoRoundStrip,{view:r95({auto:auto()}),onAction:noop,nameOf,busy:true,speaker:'Claude',queued:2});
  assert.match(html,/<b>Claude<\/b> 正在说/);assert.match(html,/Auto · 第 2 \/ 6 轮 · 下一位 DeepSeek/);assert.match(html,/data-r95-queued-user="2"[^>]*>你的消息排在她后面/);assert.match(html,/暂停/);assert.match(html,/停止/);
@@ -69,7 +81,7 @@ test('sources: a footer chip that opens a popover with the first few, cited firs
 test('her line shows kind and time, reply options, waits for presentation before it can be read, and notes the pet (C8)',()=>{
  setLocale('zh-CN');const at=new Date(2026,9,29,21,40).getTime(),line={messageId:'s1',text:'主人还在加班吗？',status:'awaiting-presentation',mode:'proactive',at};
  const html=render(ChatSpeechLines,{view:{lines:[line,{...line,messageId:'s2'},{messageId:'old',text:'读过了',status:'read'}]},onAction:()=>{throw Error('SSR must not acknowledge');},inDialog:true});
- assert.match(html,/主动来找你 · 21:40/);assert.match(html,/还有 1 句/);assert.match(html,/data-speech-option="reply"[^>]*><kbd aria-hidden="true">1<\/kbd><span>回她/);assert.match(html,/disabled=""[^>]*title="台词完整显示出来以后才能点"[^>]*><kbd aria-hidden="true">2<\/kbd><span>知道了/);assert.doesNotMatch(html,/读过了|data-r95-speech="s2"/);
+ assert.match(html,/主动来找你 · 21:40/);assert.match(html,/还有 1 句/);assert.match(html,/data-speech-option="reply"[^>]*disabled=""[^>]*><kbd aria-hidden="true">1<\/kbd><span>回她/);assert.match(html,/disabled=""[^>]*title="台词完整显示出来以后才能点"[^>]*><kbd aria-hidden="true">2<\/kbd><span>知道了/);assert.doesNotMatch(html,/读过了|data-r95-speech="s2"/);
  assert.doesNotMatch(render(ChatSpeechLines,{view:{lines:[{...line,status:'presented'}]},onAction:noop}),/disabled/);
  notePetLine('s1');assert.match(render(ChatSpeechLines,{view:{lines:[line]},onAction:noop}),/桌宠上也说了这一句，在哪边回应都算读过/);
  const dream=render(ChatSpeechLines,{view:{lines:[{...line,messageId:'d',mode:'dream'}]},onAction:noop});assert.match(dream,/梦话/);assert.doesNotMatch(dream,/回她|接一句/);assert.match(dream,/收起/);
@@ -106,14 +118,15 @@ test('Full text names the paragraphs, the time and a stop; it reads the kept par
  assert.match(gal,/root\.style\.setProperty\('--gx-stage-h'/);assert.match(gal,/root\.style\.setProperty\('--gx-dlg-rest'/);assert.match(gal,/root\.style\.setProperty\('--gx-pop-room'/);
 });
 
-test('private Galgame: toolbar in the approved order with More, thinking / paragraph / stop in the footer, reply reads her line (C6 / C8 / C9)',async()=>{
- const gal=await read('src/adapted/galgame-client.ts'),tools=gal.slice(gal.indexOf("'aria-label': t(\"Galgame 工具\")"),gal.indexOf('function stage()'));
- const at=label=>{const i=tools.indexOf(label);assert.ok(i>=0,label);return i;};
- assert.ok(at('t("背景图")')<at('t("角色立绘")')&&at('t("角色立绘")')<at('t("管理角色")')&&at('t("管理角色")')<at("t('我的身份')")&&at("t('我的身份')")<at('t("对话历史")')&&at('t("对话历史")')<at('t("CG 图鉴")')&&at('t("CG 图鉴")')<at('t("桌宠")')&&at('t("桌宠")')<at('React.createElement(MoodChip')&&at('React.createElement(MoodChip')<at("t('群聊')"));
- assert.match(tools,/toolsCollapsed \? \[React\.createElement\(MoreMenu/);assert.match(gal,/'data-fit': toolsCollapsed \? 'more' : 'full'/);assert.doesNotMatch(gal,/R95Toolbar|NativeSearchSources|R95SpeechLines/);
+test('private Galgame: three glass corners, grouped actions and collapse input preserve reply behavior',async()=>{
+ const gal=await read('src/adapted/galgame-client.ts'),top=gal.slice(gal.indexOf('function topbar('),gal.indexOf('function stage()'));
+ assert.match(top,/GlassCorner\('tl'[\s\S]*openPicker\('character'[\s\S]*GlassCorner\('tr'[\s\S]*'data-galgame-menu'[\s\S]*GlassCorner\('br'[\s\S]*停止回复[\s\S]*React.createElement\(MoodChip[\s\S]*GlassHideButton/);
+ const menu=top.slice(top.indexOf("stageUi.menu&&React.createElement('div'"));
+ const at=label=>{const i=menu.indexOf(label);assert.ok(i>=0,label);return i;};
+ assert.ok(at('背景图')<at('角色立绘')&&at('角色立绘')<at('管理角色')&&at('管理角色')<at('我的身份')&&at('我的身份')<at('对话历史')&&at('对话历史')<at('CG 图鉴')&&at('CG 图鉴')<at('桌宠')&&at('桌宠')<at('群聊')&&at('群聊')<at('设置'));
+ assert.match(gal,/React.createElement\(GalgameInput,\{open:stageUi.inputOpen/);assert.match(gal,/data-galgame-restore/);
  assert.match(gal,/fill\(t\('\{name\} 正在想…'\), \{ name: s\.name \}\)/);assert.match(gal,/fill\(t\('第 \{n\} 段 · 正在说'\)/);assert.match(gal,/React\.createElement\('div', \{ className: 'gx-foot' \}, footStatus, React\.createElement\(MessageSources/);
- // the stopped note moved out of the line into the footer; Stop reply sits in the footer row
- assert.doesNotMatch(gal,/className:'gx-stopped'/);assert.match(gal,/stopButton,\s*\n?\s*fullText \?/);
+ assert.doesNotMatch(gal,/className:'gx-stopped'/);assert.match(gal,/classic\?stopButton:null/);
  assert.match(gal,/say\(\{ text: t \}, t, shownSpeech\.current\?\.status === 'presented' \? shownSpeech\.current : null\)/);assert.match(gal,/if \(answered\?\.messageId\) void r95ClientRef\.current\('speech-read'/);
  assert.match(gal,/if \(page === 'galgame-reply'\)/);assert.equal(normalizeDashboardPage('galgame-reply'),'galgame');
  assert.match(gal,/if\(event\?\.type==='social\.updated'\)\{if\(event\.petMessageId\)notePetLine\(event\.petMessageId\)/);
@@ -122,7 +135,7 @@ test('private Galgame: toolbar in the approved order with More, thinking / parag
 test('group: mood, Auto and one Web control in the toolbar; the box keeps only the dialogue, the strip and Jump in (C6 / C9)',()=>{
  setLocale('zh-CN');const state={activeGroupId:'g',groups:[{id:'g',name:'G',memberIds:['claude','deepseek'],personaId:'default'}],characters:[{id:'claude',name:'Claude'},{id:'deepseek',name:'DeepSeek'}],personas:[],groupMessages:[],groupRuntime:{status:'generating',queue:['claude'],streaming:{text:'partial'},queuedUserMessages:1},r95:r95({auto:auto()})};
  const head=render(GroupHeader,{state,request(){},onBrowse(){},chat:{enabled:true},onToggleChat(){},r95Action:noop,onOpenSocial(){}});
- assert.match(head,/role="toolbar"[^>]*>.*data-chat-toolbar="group".*心情 · 平静.*data-r95-auto-menu="true".*第 2 \/ 6 轮/);assert.match(head,/data-galgame-net="true"[^>]*><button[^>]*aria-label="联网"/);assert.doesNotMatch(head,/联网群聊/);
+ assert.match(head,/role="toolbar"[^>]*>.*class="corner br".*data-r95-auto-menu="true".*第 2 \/ 6 轮.*心情 · 平静/);assert.match(head,/data-galgame-net="true"[^>]*><button[^>]*aria-label="联网"/);assert.doesNotMatch(head,/联网群聊/);
  assert.match(render(GroupHeader,{state:{...state,r95:undefined},request(){},onBrowse(){},chat:{enabled:true},onToggleChat(){}}),/data-group-net="true"[^>]*>.*联网群聊/,'without the r95 view the old switch stays');
  const box=render(CompanionGroupDialogue,{state,request:async()=>({}),chat:{enabled:true}});
  assert.doesNotMatch(box,/data-r95-toolbar|data-chat-toolbar|data-r95-auto-menu/);assert.match(box,/data-auto-strip="g"/);assert.match(box,/下一位 DeepSeek/);assert.match(box,/你的消息排在她后面/);assert.match(box,/placeholder="插一句…（Auto 进行中也可以说话）"/);assert.match(box,/插话<\/button>/);assert.doesNotMatch(box,/data-group-round/,'while Auto runs the strip replaces the manual round row');

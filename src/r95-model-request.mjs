@@ -53,11 +53,11 @@ function historyMessages(rows){
 /** Core-only structured request. The owner persists originals and validates
  * life/cancellation in withOrigin; ModelRouter remains the sole transport,
  * native-search observer and actual-use accounting owner. */
-export async function runR95Model({provider,card,scope,system,input,memory,memoryArgs={},signal,withOrigin,withMemoryContext=(_metadata,fn)=>fn(),checkCurrent,parseOutput,activityKind='chat',originId,hostImages=null,beforeModelSubmit=null,onModelLifecycle=null,presentationInstructions=''}={}){
+export async function runR95Model({provider,card,scope,system,input,memory,memoryArgs={},signal,withOrigin,withMemoryContext=(_metadata,fn)=>fn(),checkCurrent,parseOutput,activityKind='chat',originId,hostImages=null,beforeModelSubmit=null,onModelLifecycle=null,presentationInstructions='',clockPrompt=null,singleSubmission=false}={}){
  if(!provider||typeof provider.stream!=='function'||typeof withOrigin!=='function')throw failure('本体模型请求入口尚未就绪','R95_MODEL_UNAVAILABLE');
  if(typeof presentationInstructions!=='string')throw failure('表达指令必须由宿主提供','R95_SYSTEM_INVALID');
   if(typeof system!=='string')throw failure('本体系统指令必须由宿主提供','R95_SYSTEM_INVALID');
- if(checkCurrent!=null&&typeof checkCurrent!=='function'||parseOutput!=null&&typeof parseOutput!=='function'||beforeModelSubmit!=null&&typeof beforeModelSubmit!=='function'||onModelLifecycle!=null&&typeof onModelLifecycle!=='function')throw failure('请求检查及结果解析仅接受宿主私有函数','R95_HOST_CALLBACK_INVALID');
+ if(checkCurrent!=null&&typeof checkCurrent!=='function'||parseOutput!=null&&typeof parseOutput!=='function'||beforeModelSubmit!=null&&typeof beforeModelSubmit!=='function'||onModelLifecycle!=null&&typeof onModelLifecycle!=='function'||clockPrompt!=null&&typeof clockPrompt!=='function')throw failure('请求检查及结果解析仅接受宿主私有函数','R95_HOST_CALLBACK_INVALID');
  const frozenCard=copy(card),frozenScope=copy(scope),binding=copy(card?.modelBinding??null);
  if(!frozenCard?.id||frozenCard.id!==frozenScope?.characterId)throw failure('角色请求归属无效','R95_SCOPE_INVALID');
  let query;try{query=JSON.stringify(input);}catch{throw failure('结构化请求不能序列化；原始数据未修改','R95_INPUT_INVALID');}if(typeof query!=='string')throw failure('结构化请求为空','R95_INPUT_INVALID');
@@ -75,7 +75,7 @@ export async function runR95Model({provider,card,scope,system,input,memory,memor
  const selected=profile?{provider:profile.id,model:profile.model,reasoningEffort:profileEffort(profile)}:dedicated?{provider:binding.connectionId,model:route?.model,reasoningEffort:null}:{...copy(provider.currentSelection?.()??{}),reasoningEffort:profileEffort(provider.selected?.())};
  if(!selected.provider||!selected.model)throw failure('无法冻结实际聊天连接及模型','R95_CONNECTION_UNAVAILABLE');
  const capacity=frozenCapacity(provider,binding,profile),setting=provider.outputLimit?.()??8192,reserve=outputReserve(setting,profile,capacity),expected=connectionState(profile);
- const systemTokens=inputCost([system,presentationInstructions].filter(Boolean).join('\n'),[],profile,selected);
+ const systemTokens=inputCost([system,clockPrompt?.(),presentationInstructions].filter(Boolean).join('\n'),[],profile,selected);
  if(systemTokens+reserve+64>=capacity.tokens)throw Object.assign(capacityError(capacity),{capacity:copy(capacity)});
  if(memoryArgs.queryInHistory===true)throw failure('本次结构化输入尚未在记忆历史中，不能省略','R95_MEMORY_INVALID');
  return withOrigin(frozenScope,activityKind,async activityOriginId=>{
@@ -88,9 +88,11 @@ export async function runR95Model({provider,card,scope,system,input,memory,memor
   const queryText=knowledge&&Object.hasOwn(knowledge,'queryText')?knowledge.queryText:query;
   if(typeof queryText!=='string'||!queryText.trim())throw failure('记忆压缩后的当前输入无效；不重新提交未压缩原文','R95_MEMORY_INVALID');
   if(knowledge?.text!=null&&typeof knowledge.text!=='string')throw failure('记忆正文格式无效','R95_MEMORY_INVALID');
-  const finalSystem=[system,knowledge?.text,presentationInstructions].filter(value=>value!=null&&value!=='').join('\n'),messages=[...historyMessages(knowledge?.messages),{role:'user',content:[{type:'text',text:queryText},...(images??[])]}];
-  const contextTokens=Math.min(capacity.tokens,validTokens(knowledge?.capacity?.tokens)?knowledge.capacity.tokens:capacity.tokens),requestCost=inputCost(finalSystem,messages,profile,selected);
-  if(requestCost+reserve+64>contextTokens)throw Object.assign(capacityError(capacity),{capacity:{...copy(capacity),tokens:contextTokens,estimatedInputTokens:requestCost,reserveTokens:reserve}});
+  const systemWithClock=clock=>[system,clock,knowledge?.text,presentationInstructions].filter(value=>value!=null&&value!=='').join('\n');
+  const initialClock=clockPrompt?.(),initialSystem=systemWithClock(initialClock),messages=[...historyMessages(knowledge?.messages),{role:'user',content:[{type:'text',text:queryText},...(images??[])]}];
+  const contextTokens=Math.min(capacity.tokens,validTokens(knowledge?.capacity?.tokens)?knowledge.capacity.tokens:capacity.tokens);
+  const checkCapacity=text=>{const requestCost=inputCost(text,messages,profile,selected);if(requestCost+reserve+64>contextTokens)throw Object.assign(capacityError(capacity),{capacity:{...copy(capacity),tokens:contextTokens,estimatedInputTokens:requestCost,reserveTokens:reserve}});};
+  checkCapacity(initialSystem);
   const run=async()=>{
    await current();if(provider.enabled===false)throw failure('联网聊天关闭','R95_MODEL_DISABLED');
    const selectionNow=provider.currentSelection?.(),live=provider.selected?.();
@@ -107,7 +109,9 @@ export async function runR95Model({provider,card,scope,system,input,memory,memor
     // Unknown injected providers retain the conservative claim-before-stream
     // contract. Only an instrumented transport can assert definite not-sent.
     if(beforeModelSubmit&&!boundary.beforeModelSubmit){await beforeModelSubmit();await current();}
-    for await(const chunk of provider.stream({provider:selected.provider,model:selected.model,reasoningEffort:selected.reasoningEffort,system:finalSystem,messages,purpose:typeof requestInput?.kind==='string'?requestInput.kind:'social',activityOriginId,scope:copy(frozenScope),signal,userLimit:true,maxTokens:reserve,...(images||beforeModelSubmit?{singleSubmission:true}:{}),...boundary})){
+    const currentClock=clockPrompt?.(),finalSystem=currentClock===initialClock?initialSystem:systemWithClock(currentClock);
+    if(finalSystem!==initialSystem)checkCapacity(finalSystem);
+    for await(const chunk of provider.stream({provider:selected.provider,model:selected.model,reasoningEffort:selected.reasoningEffort,system:finalSystem,messages,purpose:typeof requestInput?.kind==='string'?requestInput.kind:'social',activityOriginId,scope:copy(frozenScope),signal,userLimit:true,maxTokens:reserve,...(singleSubmission||images||beforeModelSubmit?{singleSubmission:true}:{}),...boundary})){
      if(typeof parseOutput==='function'){let part;try{part=copy(chunk);partsBytes+=Buffer.byteLength(JSON.stringify(part),'utf8');}catch{throw failure('模型事件不能安全复制','R95_EVENT_INVALID');}if(partsBytes>16*1024*1024)throw failure('模型事件总量过大','R95_RESPONSE_TOO_LARGE');parts.push(part);}
      if(chunk.type==='text-delta'){output+=chunk.text??'';if(Buffer.byteLength(output,'utf8')>1024*1024)throw failure('模型回复过长','R95_RESPONSE_TOO_LARGE');}
      if(chunk.type==='finish'&&['error','aborted','length'].includes(chunk.reason?.kind))throw failure(chunk.reason?.failure?.message??(chunk.reason?.kind==='length'?'结构化模型回复被截断':'模型请求失败或取消'),chunk.reason?.kind==='length'?'MODEL_OUTPUT_TRUNCATED':'R95_MODEL_FAILED');

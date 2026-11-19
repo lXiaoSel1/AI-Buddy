@@ -4,6 +4,7 @@ import {join,dirname} from 'node:path';
 import {writeAtomic} from '../atomic-write.mjs';
 import {assertPluginTreeNoLinks} from '../plugin-archive.mjs';
 import {cloudVoiceReady} from './cloud-readiness.mjs';
+import {createMiniMaxOperations,miniMaxBaseUrls,miniMaxJsonBody,parseMiniMaxJson} from './cloud-providers/minimax-account.mjs';
 
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const fail=(code,message)=>Object.assign(Error(message),{code});
@@ -41,44 +42,18 @@ export function createMiniMaxVoiceProvider({fetchImpl=globalThis.fetch}={}){
     signal?.throwIfAborted();
     const bounded=AbortSignal.any([...(signal?[signal]:[]),AbortSignal.timeout(120000)]);
     let response;
-    try{response=await fetchImpl((ctx.connection.provider==='minimax-global'?'https://api.minimax.io':'https://api.minimax.cn')+path,
-      {method:'POST',headers:{Authorization:'Bearer '+ctx.connection.key,...(!form?{'Content-Type':'application/json'}:{})},body:form?body:JSON.stringify(body).replace(/("file_id":)"([0-9]{1,30})"/g,'$1$2'),signal:bounded,redirect:'error'});}
+    try{response=await fetchImpl((ctx.connection.provider==='minimax-global'?miniMaxBaseUrls['minimax-global']:miniMaxBaseUrls['minimax-cn'])+path,
+      {method:'POST',headers:{Authorization:'Bearer '+ctx.connection.key,...(!form?{'Content-Type':'application/json'}:{})},body:form?body:miniMaxJsonBody(body),signal:bounded,redirect:'error'});}
     catch(error){if(signal?.aborted)throw signal.reason;throw fail('CLOUD_CONNECTION','MiniMax 连接中断；已提交的请求需先核对结果');}
     if(!response.ok)throw fail('CLOUD_HTTP_'+response.status,response.status===401?'MiniMax API Key 无效或已过期，请更新云配音配置':'MiniMax 请求失败，请检查连接或账户权限');
     const text=await response.text();
     if(text.length>12*1024*1024)throw fail('CLOUD_PROTOCOL','MiniMax 返回的数据过大');
-    let value;try{value=JSON.parse(text.replace(/("file_id"\s*:\s*)([0-9]{16,})(?=\s*[,}])/g,'$1"$2"'));}catch{throw fail('CLOUD_PROTOCOL','MiniMax 返回的数据无效');}
+    let value;try{value=parseMiniMaxJson(text);}catch{throw fail('CLOUD_PROTOCOL','MiniMax 返回的数据无效');}
     const code=value?.base_resp?.status_code;
     if(code!==0)throw fail('CLOUD_REMOTE_'+(Number.isSafeInteger(code)?code:'UNKNOWN'),code===1002?'MiniMax 请求频率受限，请稍后手动重试':'MiniMax 请求未成功，请检查 Key、余额、实名及音色权限');
     return value;
   }
-  return {
-    async upload(ctx,bytes,options){
-      const body=new FormData();body.set('purpose','voice_clone');body.set('file',new Blob([bytes],{type:'audio/wav'}),'voice-reference.wav');
-      const value=await request(ctx,'/v1/files/upload',body,{...options,form:true});
-      const fileId=value?.file?.file_id;
-      if(!['string','number'].includes(typeof fileId)||!/^[0-9]{1,30}$/.test(String(fileId)))throw fail('CLOUD_PROTOCOL','MiniMax 没有确认上传文件标识');
-      return {fileId};
-    },
-    async clone(ctx,{fileId,voiceId,textValidation},options){
-      const value=await request(ctx,'/v1/voice_clone',{file_id:fileId,voice_id:voiceId,need_noise_reduction:false,need_volume_normalization:false,
-        ...(textValidation?{text_validation:textValidation}:{})},options);
-      return {voiceId};
-    },
-    async activate(ctx,{voiceId},options){
-      const value=await request(ctx,'/v1/t2a_v2',{model:ctx.connection.model,text:'你好。',stream:false,
-        voice_setting:{voice_id:voiceId,speed:1,vol:1,pitch:0},audio_setting:{format:'pcm',sample_rate:32000,channel:1},language_boost:'Chinese'},options);
-      if(value?.data?.status!==2||typeof value.data.audio!=='string'||!value.data.audio.length||!/^([a-fA-F0-9]{2})+$/.test(value.data.audio))throw fail('CLOUD_INCOMPLETE','MiniMax 未确认首次正式合成完成；请先核对音色状态');
-      return {voiceId};
-    },
-    async voices(ctx,options){
-      const value=await request(ctx,'/v1/get_voice',{voice_type:'all'},options),voices=[];
-      for(const category of ['system_voice','voice_cloning','voice_generation']){
-        if(value[category]!=null&&!Array.isArray(value[category]))throw fail('CLOUD_PROTOCOL','MiniMax 音色列表无效');
-        for(const row of value[category]??[])if(validVoice(row?.voice_id))voices.push({voiceId:row.voice_id,name:typeof row.voice_name==='string'?row.voice_name.slice(0,200):typeof row.name==='string'?row.name.slice(0,200):row.voice_id,category});
-      }return voices;
-    },
-  };
+  return createMiniMaxOperations(request,{validVoice,maxVoices:Infinity});
 }
 
 /** Durable, serial preparation. The host supplies all identities and consent. */

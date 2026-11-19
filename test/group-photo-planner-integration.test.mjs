@@ -1,3 +1,4 @@
+import {readCompanionExport} from './support/companion-export-file.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync} from 'node:fs';
@@ -32,7 +33,7 @@ test('A group saves its planner without model calls, survives restart/export/imp
   assert.equal(f.provider.state.activeId,'global');assert.deepEqual(result.companion.characters.map(c=>c.modelBinding),before.characters.map(c=>c.modelBinding));
   assert.equal(result.companion.groups.find(g=>g.id===other.id).photoPlannerBinding,undefined);
   await f.restart();const saved=(await f.game.action('companion-state')).companion.groups.find(g=>g.id===f.group.id);assert.deepEqual(saved.photoPlannerBinding,{enabled:true,connectionId:'cheap'});
-  const exported=(await f.game.action('companion-group-export',{id:f.group.id})).data;
+  const exported=(await readCompanionExport(f.game,'companion-group-export',{id:f.group.id}));
   // A real single-group export restores the preference as a reference, without copying credentials.
   const restored=await createGalgame({dataRoot:mkdtempSync(join(tmpdir(),'buddy-photo-import-')),provider:f.provider,model:'global-model',cg:f.cg});
   try{await restored.action('companion-conversation-import',{data:exported});const groups=(await restored.action('companion-state')).companion.groups;assert.deepEqual(groups[0].photoPlannerBinding,saved.photoPlannerBinding);}finally{await restored.close();}

@@ -13,7 +13,7 @@ async function setup(t,{missing=false}={}){
  const scope=characterId=>({characterId,personaId:'persona',lifeId:'life-'+characterId,operationId:'operation-'+characterId});
  const game={gameEconomy:economy,context:()=>({personaId,characterId:'a'}),hasCharacter:id=>id==='a',pluginScope:characterId=>scope(characterId),viewState:()=>({characters:[{id:'a',name:'A'}]}),gameContext:async()=>({modelBinding:null,character:{name:'A'}}),recordGameFact:async fact=>({recorded:true,eventId:fact.id})};
  const provider={enabled:true,state:{profiles:[profile]},captureConnection:()=>structuredClone(profile),runCaptured:async(_profile,fn)=>fn(),async *stream(){requests++;if(failure)throw failure;yield {type:'text-delta',text:'{"type":"fold","say":"","emotion":"neutral"}'};}};
- const service=createCardGameService({getGame:()=>game,getProvider:()=>provider});service.registerRuleArtifact({module:rules,sha256:'d03d283bdf6c748fcfbdcbcf4eca7f959ca29cbe4ebfbf87f3b53a51d94f16e4'});
+ const service=createCardGameService({getGame:()=>game,getProvider:()=>provider});await service.registerRuleArtifact({module:rules,sha256:'d03d283bdf6c748fcfbdcbcf4eca7f959ca29cbe4ebfbf87f3b53a51d94f16e4'});
  t.after(async()=>{afterCommit=()=>{};beforeCommit=()=>{};personaId='persona';await service.close();db.close();});
  let view;
  if(missing){assert.equal(service.describe().gamesReady,true);const created=economy.create({commandId:'legacy-create',tableId:'legacy-without-binding',type:'texas',players:[{id:'user',kind:'user',personaId:'persona'},{id:'ai-a',kind:'ai',...scope('a')}],buyIn:200});view=await service.invoke('games.table.read',{tableId:created.id});}

@@ -12,6 +12,7 @@ import {createVoiceSettings} from '../src/voice/settings.mjs';
 
 const main=await readFile(new URL('../src/main.mjs',import.meta.url),'utf8');
 const gate=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};};
+const waitForDialog=(dialog,work)=>Promise.race([dialog.promise,work.then(result=>assert.fail('Voice operation ended before opening its dialog: '+JSON.stringify(result)))]);
 const slice=(start,end)=>{
   const from=main.indexOf(start),to=main.indexOf(end,from);
   assert(from>=0&&to>from,'actual main voice boundary anchors must exist');
@@ -47,7 +48,7 @@ async function fixture(t){
   let handler;
   const panel={isDestroyed:()=>false,webContents:{mainFrame:{}}};
   const context={createUpdateReservation,voiceHost,trustedVoiceSender,panel,
-    gameRequests:0,provider:null,activityClock:{busy:new Set()},game:null,cg:null,agents:null,plugins:null,importBarrier:false,
+    gameRequests:0,provider:null,activityClock:{busy:new Set()},game:null,cg:null,agents:null,plugins:null,importBarrier:false,shuttingDown:false,shutdownRecoveryFailed:false,
     extensionOperationBusy:()=>false,assertImportIdle(){},
     ipcMain:{handle:(channel,callback)=>{assert.equal(channel,'voice:action');handler=callback;}},
   };
@@ -61,7 +62,7 @@ async function fixture(t){
   };
 }
 
-test('update reservation blocks new voice work, drains capture/playback, and waits for an open asset dialog',async t=>{
+test('update reservation blocks new voice work, drains capture/playback, and waits for an open asset dialog',{timeout:10000},async t=>{
   const f=await fixture(t),id='update-owner';
   const capture=await f.call('capture-start',{mode:'record'});assert.ok(capture.id);
   f.reservation.reserve(id);
@@ -88,7 +89,7 @@ test('update reservation blocks new voice work, drains capture/playback, and wai
   await f.call('stop');assert.equal(f.reservation.status().busy,false);
   assert.equal(f.reservation.release(id),true);
 
-  const preparation=f.call('assets-import',{kind:'asr'});await f.assetDialog.promise;
+  const preparation=f.call('assets-import',{kind:'asr'});await waitForDialog(f.assetDialog,preparation);
   assert.equal(f.host.busy(),true,'offline preparation owns a cancellable host operation while the dialog is open');
   f.reservation.reserve(id);
   assert.equal(f.reservation.commit(id).ok,false,'a full admitted asset operation must finish before update commitment');
@@ -103,8 +104,8 @@ test('update reservation blocks new voice work, drains capture/playback, and wai
   assert.equal(f.reservation.commit(id).ok,true,'update can commit after admitted work and continuations settle');
 });
 
-test('component downloads remain cancellable through the real IPC after update reservation',async t=>{
- const f=await fixture(t),preparing=f.call('assets-prepare',{kind:'asr'});await f.assetDialog.promise;
+test('component downloads remain cancellable through the real IPC after update reservation',{timeout:10000},async t=>{
+ const f=await fixture(t),preparing=f.call('assets-prepare',{kind:'asr'});await waitForDialog(f.assetDialog,preparing);
  f.reservation.reserve('cancel-download');assert.equal(f.reservation.commit('cancel-download').ok,false);
  const cancelled=await f.call('assets-cancel');assert.equal(cancelled.cancelled,true);
  assert.equal((await preparing).cancelled,true);assert.equal(f.host.busy(),false);

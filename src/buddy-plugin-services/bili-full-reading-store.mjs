@@ -6,10 +6,11 @@ import {writeBiliReadingAtomic} from './bili-reading-storage.mjs';
 const fail=code=>Object.assign(Error(code),{code});
 const need=(v,code)=>{if(!v)throw fail(code);};
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
-const fixedKeys=['schemaVersion','readingMode','readingId','scope','scopeHash','owner','video','parts','availableParts','config','model','sheets','cues','units','planHash','estimatedCalls','createdAt'];
+const fixedKeys=['schemaVersion','readingMode','readingId','scope','scopeHash','owner','video','parts','availableParts','config','model','sheets','cues','units','subtitleNotices','subtitleSourceProofs','descriptionProof','planHash','estimatedCalls','createdAt'];
 const fixedSet=new Set(fixedKeys);
 const duplicateKeys=new Set(['schemaVersion','readingMode','readingId','scopeHash','owner']);
-const folders={'source-plan':'source-plans',request:'requests',receipt:'receipts',note:'notes','frame-map':'frame-maps'};
+const compatibleProofFields=new Set(['subtitleNotices','subtitleSourceProofs','descriptionProof']);
+const folders={'source-plan':'source-plans',request:'requests',receipt:'receipts',validation:'receipt-validations',note:'notes','frame-map':'frame-maps'};
 const version=s=>[s.dev,s.ino,s.size,s.mtimeMs,s.ctimeMs].join(':');
 function freeze(value){if(value&&typeof value==='object'&&!Object.isFrozen(value)){for(const v of Object.values(value))freeze(v);Object.freeze(value);}return value;}
 
@@ -39,10 +40,13 @@ export function createBiliFullReadingStore({directory,onWrite=()=>{},budget={lim
   const bytes=JSON.stringify(value),path=file(row.readingId),size=Buffer.byteLength(bytes),beforeStat=existsSync(path)?lstatSync(path):null;need(!beforeStat||beforeStat.isFile()&&!beforeStat.isSymbolicLink(),'BILI_FULL_CHECKPOINT_INVALID');const before=beforeStat?.size??0;need(budget.used+size-before<=budget.limit,'BILI_FULL_STORAGE_PAUSED');writeBiliReadingAtomic(path,bytes);budget.used+=size-before;onWrite({kind:'checkpoint',readingId:row.readingId,bytes:size});
  }
  function load(id){
-  let checkpoint;try{const path=file(id),stat=lstatSync(path);need(stat.isFile()&&!stat.isSymbolicLink()&&stat.size<=256*1024*1024,'BILI_FULL_CHECKPOINT_INVALID');checkpoint=JSON.parse(readFileSync(path,'utf8'));}catch(error){if(error.code?.startsWith('BILI_'))throw error;throw fail('BILI_VISION_READING_UNAVAILABLE');}
+  const path=file(id);let stat;
+  try{stat=lstatSync(path);}catch(error){throw fail(error.code==='ENOENT'?'BILI_FULL_CHECKPOINT_ABSENT':'BILI_VISION_READING_UNAVAILABLE');}
+  let checkpoint;try{need(stat.isFile()&&!stat.isSymbolicLink()&&stat.size<=256*1024*1024,'BILI_FULL_CHECKPOINT_INVALID');checkpoint=JSON.parse(readFileSync(path,'utf8'));}catch(error){if(error.code?.startsWith('BILI_'))throw error;throw fail('BILI_VISION_READING_UNAVAILABLE');}
   need(checkpoint.readingId===id&&checkpoint.readingMode==='full-v1'&&checkpoint.schemaVersion===1&&typeof checkpoint.sourcePlanHash==='string','BILI_FULL_CHECKPOINT_INVALID');
-  need(Object.keys(checkpoint).every(k=>!fixedSet.has(k)||duplicateKeys.has(k)),'BILI_FULL_CHECKPOINT_INVALID');
   const source=get('source-plan',checkpoint.sourcePlanHash);
+  // R8 did not recognize these fields as immutable and may echo them after a rollback.
+  need(Object.keys(checkpoint).every(k=>!fixedSet.has(k)||duplicateKeys.has(k)||compatibleProofFields.has(k)&&JSON.stringify(checkpoint[k])===JSON.stringify(source[k])),'BILI_FULL_CHECKPOINT_INVALID');
   need(source.schemaVersion===checkpoint.schemaVersion&&source.readingMode===checkpoint.readingMode&&source.readingId===id&&source.scopeHash===checkpoint.scopeHash&&JSON.stringify(source.owner)===JSON.stringify(checkpoint.owner),'BILI_VISION_SCOPE_DENIED');
   return {...source,...checkpoint,units:fullReadingUnits(source,checkpoint)};
  }

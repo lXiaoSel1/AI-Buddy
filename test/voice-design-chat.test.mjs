@@ -29,6 +29,45 @@ test('voice popover reflects off, actual preparation step, actual error and read
  assert.match(pop(snapshot),/role="radiogroup" aria-label="配音插件"/);
 });
 
+for(const mode of ['cold replies','the selected provider when off'])test('voice popover describes '+mode+' in both languages',()=>{
+ const pop=(enabled,phase,ttsProvider)=>renderToStaticMarkup(React.createElement(VoiceChatControls,{
+  snapshot:{...snapshot,state:{...state,preparation:{state:phase},settings:{enabled,packages:{[id]:{ttsProvider}}}}},
+  scope,placement:'top',open:true,galgame:true,
+ }));
+ for(const [language,readAloud,textOnly,cloudBinding] of [
+  ['zh-CN',/她的回复会读出来/,/回复先只显示文字/,/检查 MiniMax 声线绑定/],
+  ['en',/Her replies are read aloud/,/replies appear as text/,/checks the MiniMax voice binding/],
+ ]){
+  setLocale(language);
+  try{
+   if(mode==='cold replies'){
+    const cold=pop(true,'idle','local');
+    assert.match(cold,textOnly);
+    assert.doesNotMatch(cold,readAloud);
+    assert.match(pop(true,'ready','local'),readAloud);
+   }else{
+    const cloudOff=pop(false,'idle','minimax');
+    assert.match(cloudOff,cloudBinding);
+    assert.doesNotMatch(cloudOff,/9\.5 GB/);
+    assert.match(pop(false,'idle','local'),/9\.5 GB/);
+   }
+  }finally{setLocale('zh-CN');}
+ }
+});
+
+test('Galgame local-ready voice popover shows the selected model GPU requirement in both languages',()=>{
+ const pop=(value,galgame=true)=>renderToStaticMarkup(React.createElement(VoiceChatControls,{snapshot:value,scope,placement:'top',open:true,galgame}));
+ for(const [language,note] of [['zh-CN',/Breeze · 需要 9\.5 GB 空闲显存/],['en',/Breeze · Needs 9\.5 GB of free GPU memory/]]){
+  setLocale(language);
+  try{
+   assert.match(pop(snapshot),note);
+   assert.doesNotMatch(pop(snapshot,false),note);
+   const cloud={...snapshot,state:{...state,settings:{...state.settings,packages:{[id]:{ttsProvider:'minimax'}}}}};
+   assert.doesNotMatch(pop(cloud),/9\.5 GB/);
+  }finally{setLocale('zh-CN');}
+ }
+});
+
 test('Live shows four truthful phases and preserves cancelling preparation plus record finish controls',()=>{
  const live=(captureState,presentation)=>renderToStaticMarkup(React.createElement(VoiceChatControls,{snapshot:{...snapshot,captureState,captureMode:'live',state:{...state,live:true}},scope,placement:'replacement',presentation}));
  assert.match(live('listening'),/data-voice-live-phase="you"/);
@@ -63,7 +102,11 @@ test('plugin page follows actual selected and enabled state without claiming oth
   ['idleOther',{...snapshot,state:{...state,selectedPackageId:'ai-buddy.voice-gpt-sovits'}}],
   ['disabled',{...snapshot,state:{...state,packages:[{id,installed:true,usable:true,enabled:false}]}}]
  ])assert.match(page(value),new RegExp('data-voice-plugin-state="'+expected+'"'));
- const ready=page(snapshot);assert.equal((ready.match(/尚未检查/g)??[]).length,10);assert.match(ready,/My recording/);assert.doesNotMatch(ready,/11 个角色都有|22\/22/);
+ const ready=page({...snapshot,profileSelectionsByPackage:{[id]:{state:'ready',selections:[{characterId:'deepseek',profile:state.profile}]}}});
+ assert.equal((ready.match(/还没有声音/g)??[]).length,20,'Ten unconfigured characters each have visible text and a title');
+ assert.match(ready,/My recording/);assert.doesNotMatch(ready,/11 个角色都有|22\/22/);
+ const failed=page({...snapshot,profileSelectionsByPackage:{[id]:{state:'failed',selections:[]}}});
+ assert.equal((failed.match(/尚未检查/g)??[]).length,22,'Eleven unchecked characters each have visible text and a title');
  assert.doesNotMatch(ready,/录音输入|参考音逐字稿/);
  assert.match(ready,/<svg[^>]*width="28"[^>]*height="28"/);
 });
@@ -88,9 +131,18 @@ test('startup cards retain a host supplied preparation reason when no session er
  const pop=renderToStaticMarkup(React.createElement(VoiceChatControls,{snapshot:failed,scope,placement:'top',open:true}));assert.match(pop,/Actual trusted preparation reason/);
 });
 
-test('cold stopped voice is off in both chip and switch and missing local parts retain a route to all settings',()=>{
+test('cold voice is enabled and offers a separate start in both chat controls and missing local parts retain a route to all settings',()=>{
  const cold={...snapshot,state:{...state,preparation:{state:'idle'}}};
- const pop=renderToStaticMarkup(React.createElement(VoiceChatControls,{snapshot:cold,scope,placement:'top',open:true}));assert.match(pop,/Voice off|语音 关/);assert.match(pop,/role="switch" aria-label="语音" aria-checked="false"/);
+ const pop=renderToStaticMarkup(React.createElement(VoiceChatControls,{snapshot:cold,scope,placement:'top',open:true}));assert.match(pop,/class="vx-vst warn"[^>]*>.*未启动/);assert.match(pop,/role="switch" aria-label="语音" aria-checked="true"/);
+ assert.match(pop,/data-voice-chat-start/);
+ const legacy=render('legacy',cold);
+ assert.match(legacy,/role="switch"[^>]*aria-checked="true"/);
+ assert.match(legacy,/data-voice-chat-start/);
+ setLocale('en');
+ try{
+  const en=renderToStaticMarkup(React.createElement(VoiceChatControls,{snapshot:cold,scope,placement:'top',open:true,galgame:true}));
+  assert.match(en,/Not started/);assert.match(en,/Start voice/);assert.match(en,/replies appear as text/);
+ }finally{setLocale('zh-CN');}
  const missing={...snapshot,state:{...state,assets:{asr:{state:'ready'},tts:{state:'missing'}}}};
  const page=renderToStaticMarkup(React.createElement(VoiceSettingsPanel,{snapshot:missing,selectedPackageId:id}));assert.match(page,/data-voice-full-settings="true"/);
 });
@@ -100,4 +152,39 @@ test('group header renders the same voice entry ahead of its network control',as
  const group={id:'g',name:'Group',personaId:'p',memberIds:['deepseek'],mutedIds:[]};
  const html=renderToStaticMarkup(React.createElement(GroupHeader,{state:{activeGroupId:'g',groups:[group],characters:[{id:'deepseek',name:'DeepSeek'}],personas:[{id:'p',nickname:'User'}],groupRuntime:{}},voiceControls:React.createElement('button',{'data-fixture-voice-entry':true},'Voice'),chat:{enabled:true}}));
  assert.match(html,/data-fixture-voice-entry="true"/);assert.ok(html.indexOf('data-fixture-voice-entry')<html.indexOf('data-group-net'));
+});
+
+test('R2 U7 MiniMax chip uses local cloud readiness without showing a speech startup action',()=>{
+ const pop=(cloud,cloudSpeaker,cloudSpeech)=>renderToStaticMarkup(React.createElement(VoiceChatControls,{
+  snapshot:{...snapshot,state:{...state,cloud,...(cloudSpeech?{cloudSpeech}:{}),preparation:{state:'idle'},settings:{enabled:true,packages:{[id]:{ttsProvider:'minimax'}}}},cloudSpeaker},
+  scope,placement:'top',open:true,galgame:true,
+ }));
+ assert.match(pop({state:'ready'},'claude',{characterId:'claude',state:'unbound'}),/未绑定声音/);
+ assert.match(pop({state:'unbound'},'claude',{characterId:'claude',state:'ready'}),/就绪/);
+ const statuses=[[{state:'unavailable',code:'CLOUD_UNAVAILABLE'},'云配音暂不可用','Cloud voice unavailable'],[{state:'ready'},'就绪','Ready'],[{state:'key-missing'},'缺少 Key','Key required'],[{state:'unbound'},'未绑定声音','Voice not linked']];
+ for(const [cloud,zh,en] of statuses)for(const [locale,label] of [['zh-CN',zh],['en',en]]){
+  setLocale(locale);
+  try{const html=pop(cloud);assert.match(html,new RegExp(label));assert.doesNotMatch(html,/data-voice-chat-start|未启动|Not started/);}
+  finally{setLocale('zh-CN');}
+ }
+});
+
+test('R2 U7 cloud settings reach the Key and voice repair controls with ASR missing',()=>{
+ const value={...snapshot,state:{...state,settings:{enabled:true,packages:{[id]:{ttsProvider:'minimax',credentialConfigured:false}}},
+   cloud:{state:'key-missing'},preparation:{state:'idle'},assets:{asr:{state:'missing'},tts:{state:'not-required'}}}};
+ const html=renderToStaticMarkup(React.createElement(VoiceSettingsPanel,{snapshot:value,selectedPackageId:id}));
+ assert.match(html,/data-manage-connections="voice"/);
+ assert.match(html,/data-cloud-open-voices/);
+ assert.match(html,/缺少 Key/);
+ assert.doesNotMatch(html,/未启动/);
+});
+
+test('R2 stale footer suppresses the global reply error but keeps unrelated microphone errors',()=>{
+ const renderAlerts=(patch,presentation)=>renderToStaticMarkup(React.createElement(VoiceChatControls,{
+  snapshot:{...snapshot,...patch},scope,placement:'stage-alerts',reply:{replyId:'current',characterId:scope.characterId},presentation,
+ }));
+ assert.match(renderAlerts({}, {error:'controlled synthesis failure'}),/gx-dub-failure/);
+ assert.equal(renderAlerts({error:'配音失败，回复文字已保留',phase:{requestId:'old',stage:'error'}},{}),'');
+ assert.equal(renderAlerts({error:'controlled synthesis failure',errorReplyId:'old'},{}),'');
+ assert.match(renderAlerts({error:'NotAllowedError: synthetic microphone failure'},{}),/麦克风用不了/);
 });

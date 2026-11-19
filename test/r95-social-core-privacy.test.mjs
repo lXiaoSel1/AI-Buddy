@@ -7,13 +7,23 @@ import {AsyncLocalStorage} from 'node:async_hooks';
 import {ModelRouter} from '../src/model-router.mjs';
 import {createCompanionR95} from '../src/companion-r95.mjs';
 import {createCompanionService} from '../src/companion-service.mjs';
+import {openCompanionStore} from '../src/companion-store.mjs';
 import {createCompanionMemory,appendSocialExperience,socialMemoryScope,socialExperienceHash} from '../src/companion-memory.mjs';
 import {createBuddyPluginServices,createSocialClient} from '../src/buddy-plugin-services/index.mjs';
 import {companionFixture,memoryStore,syntheticEngine,gate} from './support/audit-harness.mjs';
 
 const crypto={isEncryptionAvailable:()=>true,encryptString:value=>Buffer.from(value),decryptString:value=>value.toString()};
-async function fixture(t){
- const dataRoot=mkdtempSync(join(tmpdir(),'r95-social-core-privacy-')),now=1700000000000,store=memoryStore(await companionFixture({now})),requests=[],usages=[],memoryReads=[],contextReads=[],appSpeeches=[],activity=[],metadata=new AsyncLocalStorage(),unblock=[];
+async function fixture(t,{sqlite=false}={}){
+ const dataRoot=mkdtempSync(join(tmpdir(),'r95-social-core-privacy-')),now=1700000000000,state=await companionFixture({now}),requests=[],usages=[],memoryReads=[],contextReads=[],appSpeeches=[],activity=[],metadata=new AsyncLocalStorage(),unblock=[];
+ const store=sqlite?await openCompanionStore(dataRoot):memoryStore(state);
+ if(sqlite)await store.mutate((draft,tx)=>{
+  Object.assign(draft,state);
+  for(const owner of Object.values(draft.conversations)){
+   tx.messages.define('private',owner.id,['conversations',owner.id]);
+   for(const message of owner.messages)tx.messages.append('private',owner.id,message);
+   delete owner.messages;
+  }
+ });
  let core,replyMode='text',memoryGate=null;
  const provider=new ModelRouter({dataRoot,crypto,codex:{defaultModel:'fixture',setEnabled(){}},outputLimit:()=>512,onUsage:value=>usages.push(value),searchPolicy:details=>core?.searchPolicy(details)??false,
   fetchImpl:async(url,options)=>{const body=JSON.parse(options.body),input=JSON.parse(body.input.at(-1).content),kind=input.kind;requests.push({url:String(url),body,input});let text;
@@ -27,12 +37,18 @@ async function fixture(t){
  await provider.ready;
  const profile=await provider.save({kind:'openai',key:'isolated-test-key-not-a-real-credential',name:'isolated dedicated role',baseUrl:'https://api.openai.com/v1',protocol:'responses',model:'gpt-6.1-sol',reasoningEffort:'xhigh',contextTokens:24000,models:[{id:'gpt-6.1-sol',supportedReasoningEfforts:['xhigh'],maxOutputTokens:8192}]});
  const global=await provider.save({kind:'custom',name:'different global',baseUrl:'http://127.0.0.1:3099/v1',protocol:'responses',model:'global-fixture-model'});await provider.activate(global.id);provider.setEnabled(true);
- await store.mutate(state=>{state.cards.claude.modelBinding={enabled:true,connectionId:profile.id};state.conversations.conversation.messages[0].text='APP private secret stays in APP.';});
+ await store.mutate((state,tx)=>{
+  state.cards.claude.modelBinding={enabled:true,connectionId:profile.id};
+  if(tx?.messages){
+   const message=tx.messages.recent('private','conversation',1)[0];
+   tx.messages.update('private','conversation',message.id,row=>{row.text='APP private secret stays in APP.';});
+  }else state.conversations.conversation.messages[0].text='APP private secret stays in APP.';
+ });
  const actualMemory=createCompanionMemory({store,now:()=>now,autoStart:false,getCapacity:()=>({tokens:24000,verified:true}),runModel:async()=>{throw Error('This read-only/small-input fixture must not run a compression model');}});
  const memory={view:async args=>{memoryReads.push(structuredClone(args));return actualMemory.view(args);},context:async args=>{contextReads.push({args:structuredClone(args),metadata:metadata.getStore()});if(memoryGate){memoryGate.entered.resolve();await memoryGate.wait.promise;}return actualMemory.context(args);}};
  core=await createCompanionR95({store,dataRoot,provider,memory,now:()=>now,getContext:()=>({characterId:'claude',personaId:'default',conversationId:'conversation'}),delta:()=>{},getRuntimeState:()=>({sleepPhase:'awake',sleepIntentVersion:1,canPresent:true}),withMemoryContext:(value,fn)=>metadata.run(value,fn),appendSocial:(event,options)=>appendSocialExperience(store,event,options),onSpeech:value=>appSpeeches.push(value),onActivity:value=>activity.push(value)});
  const bridge=createBuddyPluginServices({resolveContext:spec=>core.socialHost.resolveContext(spec),hostServices:core.socialHost.services,now:()=>now});
- t.after(async()=>{for(const fn of unblock)fn();await bridge.close();await core.close();await actualMemory.close();await provider.close();await store.flush();rmSync(dataRoot,{recursive:true,force:true});});
+ t.after(async()=>{for(const fn of unblock)fn();await bridge.close();await core.close();await actualMemory.close();await provider.close();await store.flush();await store.close?.();rmSync(dataRoot,{recursive:true,force:true});});
  async function connect({pluginId='community.qq',channel='qq-private',accountBindingId='account',generation=1,personaId='default',conversationId='qq-owner-conversation',nativeMessageId='message-1'}={}){
   await store.mutate(state=>{state.personas[personaId]??={...structuredClone(state.personas.default),id:personaId};});
   const transport=core.socialHost.registerTransport({pluginId,channel,accountBindingId,generation,verify:async raw=>raw.proof==='isolated-native'?{characterId:'claude',personaId,sessionId:'social-session-'+generation,conversationId,actorId:'transport-actor',nativeMessageId:raw.id,text:'Real isolated transport message',stage:'received',status:'received',occurredAt:now,visibilityScope:'conversation'}:null});
@@ -67,12 +83,12 @@ test('finished lease cannot submit another model/search request, and finishing w
 test('native social search returns actual transport citations only, never URLs merely written by the model',async t=>{
  const f=await fixture(t),c=await f.connect(),lease=await c.client.lease({activityId:'actual-search'});await f.core.action('search-settings',{enabled:true});
  let result=await c.client.search({leaseId:lease.leaseId,query:'A mock query'});assert.deepEqual(result.sources,[]);assert.match(result.text,/invented.example/);
- f.setReplyMode('sources');result=await c.client.search({leaseId:lease.leaseId,query:'A mock query with real tool receipts'});assert.ok(result.sources.length>0);assert.ok(result.sources.every(row=>row.url==='https://example.com/actual-source'));assert.equal(result.sources.some(row=>row.url.includes('invented.example')),false);assert.equal(f.usages.at(-1).purpose,'social-search');assert.ok(f.requests.at(-1).body.tools.some(tool=>/web_search/.test(tool.type)));
+ f.setReplyMode('sources');result=await c.client.search({leaseId:lease.leaseId,query:'A mock query with real tool receipts'});assert.ok(result.sources.length>0);assert.ok(result.sources.every(row=>row.url==='https://example.com/actual-source'));assert.equal(result.sources.some(row=>row.url.includes('invented.example')),false);assert.equal(f.usages.at(-1).purpose,'social-search');assert.equal(f.usages.at(-1).scope.channel,'qq-private');assert.equal(f.usages.at(-1).scope.conversationId,'qq-owner-conversation');assert.ok(!JSON.stringify(f.requests.at(-1).body).includes('qq-owner-conversation'));assert.ok(f.requests.at(-1).body.tools.some(tool=>/web_search/.test(tool.type)));
  const origin=f.usages.at(-1).activityOriginId;assert.equal(f.core.searchPolicy({activityOriginId:origin}),false,'finished request attribution cannot authorize new search');
 });
 
 async function appendUnderstood(f,c,{id='actual-material',understood=true}={}){
- const material=await f.core.socialHost.observeEvidence({pluginId:c.pluginId,eventRef:c.event.eventRef,sourceKind:c.channel==='bilibili'?'bilibili-watch':'qq-inbound',nativeEvidenceId:id,stage:understood?'understood':'material-read',status:'completed',text:'Actually understood '+id,evidenceRefs:[{id:'material-receipt-'+id,sha256:'a'.repeat(64)}]});await c.client.append({eventRef:material.eventRef});return f.store.state.lives.claude.socialExperiences.find(row=>row.eventRef===material.eventRef);
+ const material=await f.core.socialHost.observeEvidence({pluginId:c.pluginId,eventRef:c.event.eventRef,sourceKind:c.channel==='bilibili'?'bilibili-watch':'qq-inbound',nativeEvidenceId:id,stage:understood?'understood':'material-read',status:'completed',text:'Actually understood '+id,evidenceRefs:[{id:'material-receipt-'+id,sha256:'a'.repeat(64)}]});await c.client.append({eventRef:material.eventRef});return f.store.records?(await f.store.records.query('life.socialExperiences','claude',{field:'eventRef',value:material.eventRef,limit:1}))[0]?.value:f.store.state.lives.claude.socialExperiences.find(row=>row.eventRef===material.eventRef);
 }
 
 test('Core grants APP-private memory only verified current-life same-Persona understood Bili scopes',async t=>{
@@ -80,7 +96,7 @@ test('Core grants APP-private memory only verified current-life same-Persona und
  const partial=await f.connect({pluginId:'community.bili.partial',channel:'bilibili',accountBindingId:'partial',conversationId:'watch-partial'});await appendUnderstood(f,partial,{id:'partial',understood:false});
  const other=await f.connect({pluginId:'community.bili.other',channel:'bilibili',accountBindingId:'other',personaId:'other-persona',conversationId:'watch-other-persona'});await appendUnderstood(f,other,{id:'other-persona'});
  await f.store.mutate(state=>{for(const [id,patch]of [['old-life',{lifeId:'historical-life',conversationId:'watch-old-life'}],['bad-hash',{conversationId:'watch-bad-hash'}]]){const row={...structuredClone(good),id,eventRef:id,...patch};row.sourceHash=id==='bad-hash'?'0'.repeat(64):socialExperienceHash(row);state.lives.claude.socialExperiences.push(row);}});
- const appScope=f.core.activeScope(),allowed=f.core.authorizedAppSocialScopes(appScope);assert.deepEqual(allowed,[socialMemoryScope(good)]);assert.equal(allowed.includes(socialMemoryScope(qqSource)),false);assert.deepEqual(f.core.authorizedAppSocialScopes({...appScope,channel:'app-group'}),[]);
+ const appScope=f.core.activeScope(),allowed=await f.core.authorizedAppSocialScopes(appScope);assert.deepEqual(allowed,[socialMemoryScope(good)]);assert.equal(allowed.includes(socialMemoryScope(qqSource)),false);assert.deepEqual(await f.core.authorizedAppSocialScopes({...appScope,channel:'app-group'}),[]);
  await f.core.userInteraction({scope:appScope,eventId:'current-app-chat',kind:'chat',text:'Tell me what you actually watched.'});await f.core.mood.evaluate({scope:appScope,eventIds:['current-app-chat']});
  const read=f.contextReads.at(-1);assert.deepEqual(read.args.authorizedSocialScopes,[socialMemoryScope(good)]);assert.equal(JSON.stringify(f.requests.at(-1).body).includes('Actually understood actual-material'),true);assert.equal(JSON.stringify(f.requests.at(-1).body).includes('Actually understood qq-source'),false);assert.equal(JSON.stringify(f.requests.at(-1).body).includes('Actually understood other-persona'),false);
 });
@@ -109,14 +125,27 @@ for(const outcome of ['sent','unknown'])test(`external sender ${outcome} records
  const sender=f.core.registerSocialDelivery({channel:c.channel,accountBindingId:c.accountBindingId,generation:c.generation,check:scope=>{checks.push(structuredClone(scope));assert.equal(scope.conversationId,c.issued.context.conversationId);},send:value=>{sent.push(value);return outcome==='sent'?{status:'sent',nativeMessageId:'actual-platform-delivery-1'}:{status:'unknown'};}});
  if(outcome==='sent')assert.equal((await f.core.proactive.tick({candidateId:offered.candidate.id})).delivered,true);else await assert.rejects(f.core.proactive.tick({candidateId:offered.candidate.id}),/结果尚未确认/);
  const line=f.store.state.lives.claude.r95.lines.find(row=>row.candidateId===offered.candidate.id);assert.equal(sent.length,1);assert.ok(checks.length>=2);assert.equal(line.status,outcome==='sent'?'sent':'delivery-unknown');assert.equal(line.deliveryState,outcome);assert.notEqual(line.presentationState,'presented');assert.equal(f.appSpeeches.length,0);assert.equal(f.core.view().lines.length,0);
+ assert.doesNotMatch(f.requests.at(-1).body.instructions,/当前本地时间：|Current local time:/,'external QQ requests must not receive the Galgame system clock');
  assert.equal((await f.core.proactive.tick({candidateId:offered.candidate.id})).skipped,outcome==='sent'?'presented':'delivery-unknown');assert.equal(sent.length,1);sender.revoke();await c.client.finish({leaseId:lease.leaseId,status:outcome==='sent'?'completed':'unknown'});
 });
 
 test('Bili share requires appended understood source, projects to matching private life and never fabricates work authority',async t=>{
- const f=await fixture(t),c=await f.connect({pluginId:'community.bili',channel:'bilibili',accountBindingId:'bili',conversationId:'actual-watch'});await c.client.lease({activityId:'bili-share'});await f.core.action('social-settings',{proactive:true});
+ const f=await fixture(t,{sqlite:true}),c=await f.connect({pluginId:'community.bili',channel:'bilibili',accountBindingId:'bili',conversationId:'actual-watch'});await c.client.lease({activityId:'bili-share'});await f.core.action('social-settings',{proactive:true});
  await assert.rejects(c.client.offer({eventRef:c.event.eventRef,kind:'share'}),/真实理解/);assert.equal(f.requests.length,0);const source=await appendUnderstood(f,c),offered=await c.client.offer({eventRef:source.eventRef,kind:'share'});assert.equal(offered.candidate.scope.channel,'app-private');assert.equal(offered.candidate.scope.personaId,'default');assert.equal(offered.candidate.scope.conversationId,'conversation');assert.equal(offered.candidate.scope.lifeId,source.lifeId);
- const evidence=f.store.state.lives.claude.r95.evidence[offered.candidate.eventIds[0]];assert.equal(evidence.sourceRef.eventRef,source.eventRef);assert.equal(evidence.sourceRef.sourceHash,source.sourceHash);assert.equal(evidence.sourceRef.scope.channel,'bilibili');assert.equal(evidence.sourceKind,'bilibili-watch');assert.equal(evidence.taskId,undefined);assert.equal(evidence.workspace,undefined);assert.equal(f.store.state.lives.claude.workExperiences?.length??0,0);assert.equal((await f.core.proactive.tick({candidateId:offered.candidate.id})).delivered,true);assert.equal(f.appSpeeches.length,1);assert.equal(f.appSpeeches[0].scope.channel,'app-private');
+ const evidence=f.store.records.get('life.r95.evidence','claude',offered.candidate.eventIds[0]);assert.equal(evidence.sourceRef.eventRef,source.eventRef);assert.equal(evidence.sourceRef.sourceHash,source.sourceHash);assert.equal(evidence.sourceRef.scope.channel,'bilibili');assert.equal(evidence.sourceKind,'bilibili-watch');assert.equal(evidence.taskId,undefined);assert.equal(evidence.workspace,undefined);assert.equal(f.store.state.lives.claude.workExperiences?.length??0,0);assert.equal((await f.core.proactive.tick({candidateId:offered.candidate.id})).delivered,true);assert.equal(f.appSpeeches.length,1);assert.equal(f.appSpeeches[0].scope.channel,'app-private');
+ assert.match(f.requests.at(-1).body.instructions,/当前本地时间：/,'a share delivered inside Galgame uses the APP clock');
 });
 
  test('only a verified direct bound-owner inbound social message counts as user attention, once',async t=>{const f=await fixture(t),c=await f.connect();f.core.owner.bindOwner({accountBindingId:c.accountBindingId,actorId:'transport-actor',personaId:'default',version:1});assert.equal(f.core.attention.view({scope:c.issued.context}).lastAttentionAt,null);await c.client.append({eventRef:c.event.eventRef});assert.equal(f.core.attention.view({scope:c.issued.context}).lastAttentionAt,1700000000000);const before=Object.keys(f.store.state.lives.claude.r95.attention.events).length;await c.client.append({eventRef:c.event.eventRef});assert.equal(Object.keys(f.store.state.lives.claude.r95.attention.events).length,before);assert.equal(f.store.state.lives.claude.r95.pendingMoodEventIds.length,1);});
  test('an unbound external friend is not counted as owner attention',async t=>{const f=await fixture(t),c=await f.connect();await c.client.append({eventRef:c.event.eventRef});assert.equal(f.core.attention.view({scope:c.issued.context}).lastAttentionAt,null);});
+
+test('R95 mood evaluates a queued SQLite event and removes only its matching scope',async t=>{
+ const f=await fixture(t,{sqlite:true}),scope=f.core.activeScope(),eventId='queued-mood-event';
+ await f.core.userInteraction({scope,eventId,kind:'chat',text:'A real scoped event'});
+ assert.deepEqual(await f.store.pendingMood(scope.characterId,scope),[eventId]);
+ const result=await f.core.evaluatePending(scope);
+ assert.equal(result.unchanged,true);
+ assert.equal(f.requests.filter(row=>row.input.kind==='mood').length,1);
+ assert.equal(f.store.records.get('life.r95.moodEvaluations',scope.characterId,eventId).status,'committed');
+ assert.deepEqual(await f.store.pendingMood(scope.characterId,scope),[]);
+});

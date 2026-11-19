@@ -5,22 +5,32 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createCompanionService} from '../src/companion-service.mjs';
 import {createPresentationState} from '../src/companion-presentation-state.mjs';
+import {openCompanionStore} from '../src/companion-store.mjs';
 import {companionFixture,memoryStore,syntheticEngine} from './support/audit-harness.mjs';
 
 async function until(check){for(let i=0;i<150;i++){if(await check())return;await new Promise(r=>setTimeout(r,5));}throw Error('social voice did not settle');}
-async function fixture(t,{admit}={}){
- const root=await mkdtemp(join(tmpdir(),'r5-social-')),store=memoryStore(await companionFixture()),segments=[],finishes=[];
+async function fixture(t,{admit,sqlite=false}={}){
+ const root=await mkdtemp(join(tmpdir(),'r5-social-')),state=await companionFixture(),segments=[],finishes=[];
+ const store=sqlite?await openCompanionStore(root):memoryStore(state);
+ if(sqlite)await store.mutate((draft,tx)=>{
+  Object.assign(draft,state);
+  for(const owner of Object.values(draft.conversations)){
+   tx.messages.define('private',owner.id,['conversations',owner.id]);
+   for(const message of owner.messages)tx.messages.append('private',owner.id,message);
+   delete owner.messages;
+  }
+ });
  const voice={admit:admit??(()=>({epoch:4,voiceProfileVersion:8})),segment:v=>segments.push(v),finish:v=>finishes.push(v),invalidate:()=>{}};
  const {engine}=syntheticEngine({getStore:()=>store});
  const provider={enabled:true,captureConnection:()=>({id:'fixture',model:'fixture'}),runCaptured:(_,fn)=>fn(),resolveSearchCapability:()=>({supported:false}),async *stream(){yield {type:'text-delta',text:JSON.stringify({speak:true,mode:'awake',text:'看完这个视频，我想起了海边。'})};yield {type:'finish',reason:{kind:'stop'}};}};
  const service=await createCompanionService({store,engine,provider,dataRoot:root,voice,automaticWorkAllowed:()=>false,r95Options:{tickAllowed:()=>false,getRuntimeState:()=>({sleepPhase:'awake',canPresent:true})}});
- t.after(async()=>{await service.close();await rm(root,{recursive:true,force:true});});
+ t.after(async()=>{await service.close();await store.close?.();await rm(root,{recursive:true,force:true});});
  await service.r95.action('social-settings',{proactive:true});
  const scope=service.r95.activeScope();
  await service.r95.userInteraction({scope,eventId:'watched-video',kind:'chat',text:'看完了这部视频。'});
  assert.equal((await service.r95.proactive.tick()).delivered,true);
  const line=service.r95.view().lines[0];assert(line);
- return {service,store,scope,line,segments,finishes};
+ return {root,service,store,scope,line,segments,finishes};
 }
 
 test('real social ACK feeds existing voice conversation once; audio receipt never marks it read or adds a chat reward',async t=>{
@@ -68,4 +78,24 @@ test('audio joins the existing unread barrier without resetting the real text re
  p.beginPresentation(scope,{id:'line'});assert.equal(p.attachAudio(scope,'line'),true);
  p.finishText(scope,'line');assert.equal(p.snapshot(scope).presenting,true);
  p.finishAudio(scope,'line');assert.equal(p.snapshot(scope).presenting,false);assert.equal(p.attachAudio(scope,'line'),false);
+});
+
+test('presented social voice audio receipts survive an actual SQLite close and reopen',async t=>{
+ const f=await fixture(t,{sqlite:true});
+ const args={messageId:f.line.messageId};
+ await f.service.action('companion-r95',{action:'speech-presented',args});
+ await until(()=>f.finishes.some(row=>row.requestId==='social-voice:'+args.messageId));
+ assert.equal(f.segments.length,1);
+ const {envelope}=f.segments[0];
+ await f.service.voiceReceipt({envelope,status:'audioStarted'});
+ await f.service.voiceReceipt({envelope,status:'audioCompleted',playedMs:800});
+ await f.service.close();
+ await f.store.close();
+ const reopened=await openCompanionStore(f.root);
+ try{
+  const row=reopened.records.get('life.r95.lines',f.scope.characterId,args.messageId);
+  assert.equal(row.status,'presented');
+  assert.equal(row.voiceDelivery.state,'completed');
+  assert.deepEqual(row.voicePresentation.map(row=>row.status),['audioStarted','audioCompleted']);
+ }finally{await reopened.close();}
 });

@@ -171,6 +171,7 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
   const [officialRetry,setOfficialRetry]=useState(null),officialFlight=useRef(false);
   const voiceSession=useVoiceSession();
   const [tab, setTab] = useState("community"), [state, setState] = useState(null), [listing, setListing] = useState({ items: [], total: 0, page: 1, pageSize: 24 }), [query, setQuery] = useState(""), [category, setCategory] = useState(""), [sort, setSort] = useState("recommended"), [favoritesOnly, setFavoritesOnly] = useState(false), [page, setPage] = useState(1), [revision, setRevision] = useState(0), [pending, setPending] = useState(0), [error, setError] = useState(""), [notice, setNotice] = useState("");
+  useEffect(()=>tab==='installed'?voiceSession.session.current?.manageComponents?.():undefined,[tab,voiceSession.session]);
   const [detail, setDetail] = useState(null), [author, setAuthor] = useState(null), [plan, setPlan] = useState(null), [granted, setGranted] = useState([]), [sourceId, setSourceId] = useState("official"), [catalogUrl, setCatalogUrl] = useState(""), [reviewUrl, setReviewUrl] = useState(""), [catalogDialog, setCatalogDialog] = useState(false), [reviewDraft, setReviewDraft] = useState(null), [reviewStatus, setReviewStatus] = useState(null);
   const [componentNeeded, setComponentNeeded] = useState(false), [componentWorking, setComponentWorking] = useState(null), [technicalError, setTechnicalError] = useState(null), [pendingAction, setPendingAction] = useState("");
   const [installFor, setInstallFor] = useState(null), [menuFor, setMenuFor] = useState(null), [cardMenu, setCardMenu] = useState(null), [filterMenu, setFilterMenu] = useState(false), [confirm, setConfirm] = useState(null), [loginRequest, setLoginRequest] = useState(null);
@@ -453,6 +454,12 @@ function CommunityCenter({ api = globalThis.window?.whale?.plugins, files = glob
   useEffect(() => {
     if (!intent) return;
     if (intent.tab) setTab(intent.tab);
+    if (intent.category === "voice") {
+      setCategory("voice");
+      setQuery("");
+      setFavoritesOnly(false);
+      setPage(1);
+    }
     if(intent.component==='ffmpeg'){void call({action:'bili-component-status'}).then(()=>refreshState()).catch(cause=>setError(errorText(cause)));setTimeout(()=>document.querySelector('[data-bili-component-repair]')?.scrollIntoView?.({block:'center'}),100);}
     if (!intent.install) return;
     setTab("community");

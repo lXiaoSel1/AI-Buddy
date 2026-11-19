@@ -4,17 +4,22 @@ import {t} from '../i18n.mjs';
 import {visibleCompanionText,visibleInterruptedText} from '../companion-presentation.mjs';
 import {createPrivatePresentation,privatePresentationKey} from '../private-presentation.mjs';
 import {GalgameTitle} from '../galgame-title.mjs';
+import {cleanIpcMessage} from '../ipc-message.mjs';
+import {groupSpeakerState} from '../group-stage.mjs';
 import {GroupHeader} from '../group-header.mjs';
 import {GroupCgCSS} from '../group-cg-ui.mjs';
 import {CgPausedNotice} from '../cg-paused-ui.mjs';
-import {GroupStageCSS} from '../group-stage-ui.mjs';
 import {R95NetButton,createR95ActionClient} from '../r95-core-page.mjs';
-import {ChatR95CSS,MoodChip,MoreMenu,MessageSources,ChatSpeechLines,useToolbarCollapse,unreadLines,notePetLine,sourceView,fill} from '../chat-r95-ui.mjs';
+import {ChatR95CSS,MoodChip,MessageSources,ChatSpeechLines,speechVoiceRequestId,unreadLines,notePetLine,sourceView,fill} from '../chat-r95-ui.mjs';
 import {CompanionDesignCSS} from '../companion-design.mjs';
 import {CgImageViewer,CgImageViewerCSS} from '../cg-image-viewer.mjs';
+import {GalgameCgDetail,GalgameCgDetailCSS,cgPromptSections} from '../galgame-cg-detail.mjs';
 import {FullMessageButton,needsFullView,paragraphCount} from '../full-message-viewer.mjs';
 import {isSpriteVisible} from '../character-display.mjs';
 import {messageEmotion,validEmotion} from '../emotions.mjs'
+import {galgamePresentationSettings} from '../galgame-expressions.mjs';
+import {GALGAME_REDESIGN_STYLE} from '../galgame-redesign-style.mjs';
+import {ExpressionBubble,GalgameChoice,GalgameIcon,GalgameInput,GalgameSentenceText,GalgameSettings,StageDialogueText,GlassButton,GlassCorner,GlassDivider,GlassGroup,GlassHideButton,GlassMenuItem,Ornament,portraitWidth,useGalgameExpressionFx,useGalgameSentence,useGalgameStageScheme,useGalgameStageUi} from '../galgame-redesign.mjs';
 /**
  * dsh-whale-galgame — browser client half.
  * Q版桌宠 is the default form on the main UI; clicking it opens the
@@ -36,11 +41,13 @@ import {Switch} from '../ui-controls.mjs'
 import {themeAsset,THEMES} from '../appearance.mjs'
 import {THEME_PALETTES} from '../theme-palettes.mjs'
 import {GalgameDesignCSS} from '../galgame-design.mjs'
-import {CompanionCSS,CompanionManager,CompanionGroupStage,CompanionGroupDialogue,LifeRecoveryBanner,activeCompanionGroup,companionCharacterName,companionImage,modelErrorText,modelOutputTruncated} from '../companion-ui.mjs'
+import {CompanionCSS,CompanionManager,CompanionGroupStage,CompanionGroupDialogue,LifeRecoveryBanner,activeCompanionGroup,groupCurrentMessage,companionCharacterName,companionImage,modelErrorText,modelOutputTruncated} from '../companion-ui.mjs'
+const FRAMELESS_DIALOGUE_RATIO=0.22
 const WHALE_ART = { ...LEGACY_ART, ...CHARACTER_ART }
 
 const CSS = [
   CgImageViewerCSS,
+  GalgameCgDetailCSS,
   CompanionCSS,
   // ── pet ────────────────────────────────────────────────────────────────
   '.whg-pet{--whg-scale:1.15;--whg-y:0px;position:fixed;right:18px;bottom:124px;width:calc(192px * var(--whg-scale));height:calc(208px * var(--whg-scale));padding:0;border:0;border-radius:18px;background:transparent;cursor:zoom-in;filter:drop-shadow(0 10px 16px rgb(0 0 0 / 36%));transition:width 180ms ease,height 180ms ease,filter 180ms ease;z-index:9999}',
@@ -227,7 +234,6 @@ const CSS = [
   '.whg-gallery-level{color:var(--buddy-accent-text);font:700 11px/1 Consolas,monospace}',
   '.whg-gallery-date{min-width:0;overflow:hidden;color:var(--buddy-muted);font-size:10px;text-overflow:ellipsis;white-space:nowrap}',
   '.whg-gallery-bg{position:absolute;top:8px;right:8px;padding:3px 7px;border:1px solid color-mix(in srgb,var(--buddy-a2) 50%,transparent);border-radius:999px;background:color-mix(in srgb,var(--buddy-bg) 82%,transparent);color:var(--buddy-accent-text);font:700 9px/1.3 Consolas,monospace}',
-  '.whg-gallery-detail{display:flex;min-height:100%;flex-direction:column;gap:14px}',
   '.whg-archive-back{align-self:flex-start;padding:6px 10px;border:0;border-radius:8px;background:color-mix(in srgb,var(--buddy-accent) 10%,transparent);color:var(--buddy-accent-text);cursor:pointer;font-family:inherit}',
   '.whg-gallery-full{display:block;width:100%;max-height:54vh;object-fit:contain;border:1px solid color-mix(in srgb,var(--buddy-a2) 35%,transparent);border-radius:12px;background:var(--buddy-bg)}',
   '.whg-gallery-caption{display:flex;align-items:center;gap:10px;color:var(--buddy-muted);font-size:12px}',
@@ -292,11 +298,11 @@ const CSS = [
   '@media (max-width:900px){.whg-top{gap:6px;padding:10px 12px;flex-wrap:wrap}.whg-title{font-size:14px}.whg-chip{padding:3px 8px}.whg-spacer{display:none}.whg-top-actions{width:100%;justify-content:flex-end}.whg-btn{padding:5px 9px;font-size:12px}.whg-archive{width:min(470px,calc(100% - 12px))}.whg-archive-spine{display:none}}',
   '@media (max-width:560px){.whg-chip-wrap{max-width:calc(50% - 4px)}.whg-chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.whg-picker{position:fixed;top:92px;right:10px;left:10px;width:auto;max-height:55vh}.whg-top-actions{gap:5px;overflow-x:auto;padding-bottom:2px}.whg-archive{width:100%;border-left:0}.whg-archive-head{padding:18px 16px 14px}.whg-archive-body{padding:14px 14px 24px}.whg-gallery{grid-template-columns:1fr}.whg-history-row{grid-template-columns:38px minmax(0,1fr);gap:8px}.whg-archive-title{font-size:21px}.whg-profile-head-fields,.whg-profile-main-fields,.whg-profile-secondary-fields{grid-template-columns:1fr}.whg-profile-section-head{align-items:flex-start;flex-direction:column;gap:3px}.whg-profile-message{flex-basis:100%;text-align:left}.whg-settings-row{grid-template-columns:1fr;gap:8px}.whg-settings-toggle{justify-self:start}.whg-settings-head{padding:13px}.whg-settings-body{margin:0 13px}}',
   '@media (prefers-reduced-motion:reduce){.whg-archive-scrim,.whg-archive{animation:none}.whg-gallery-card:hover{transform:none}}',
-  GroupStageCSS,
   GroupCgCSS,
   GalgameDesignCSS,
   CompanionDesignCSS,
   ChatR95CSS,
+  GALGAME_REDESIGN_STYLE,
 ].join('\n')
 
 // 回她 on the pet opens the window on 'galgame-reply' (an alias of galgame): the reply box gets the cursor (approved design C8).
@@ -307,7 +313,11 @@ if (typeof window !== 'undefined') {
 }
 export function focusGalgameReply(): boolean {
   const box = document.querySelector<HTMLTextAreaElement>('#whg-panel textarea:not(:disabled)')
-  if (!box) return false
+  if (!box) {
+    const trigger=document.querySelector<HTMLButtonElement>('[data-galgame-input-toggle]:not(:disabled)')
+    if(!trigger)return false
+    trigger.click();return true
+  }
   box.focus({ preventScroll: true }); return true
 }
 
@@ -750,12 +760,13 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   const appScope = props.variant === 'tab' ? 'tab' : 'overlay'
   const cacheKey = viewCacheKey(props.sessionId)
   const [viewState, setViewState] = useState<any>(() => ({ key: cacheKey, value: cachedView(cacheKey) }))
+  const [storageMigration,setStorageMigration] = useState<any>(null)
   const s = viewState && viewState.key === cacheKey ? viewState.value : cachedView(cacheKey)
   const setS = (nextOrUpdater: any) => {
     setViewState((previous: any) => {
       const base = previous && previous.key === cacheKey ? previous.value : cachedView(cacheKey)
       const next = typeof nextOrUpdater === 'function' ? nextOrUpdater(base) : nextOrUpdater
-      if (Object.is(next, base)) return previous
+      if (next?.ok===false||Object.is(next, base)) return previous
       if (base?.companion && next?.companion && Number(next.companion.revision) < Number(base.companion.revision)) return previous
       rememberView(cacheKey, next)
       return { key: cacheKey, value: next }
@@ -775,24 +786,14 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   const [companionPanel, setCompanionPanel] = useState<string | null>(null)
   const [groupBrowseRequest,setGroupBrowseRequest] = useState<any>(null)
   const [groupPanelRequest,setGroupPanelRequest] = useState<any>(null)
+  const [groupPhotoRequest,setGroupPhotoRequest] = useState<any>(null)
   const [groupToolbarTarget,setGroupToolbarTarget] = useState<HTMLElement|null>(null)
   const [busy, setBusy] = useState(false)
   const [streamReply,setStreamReply]=useState<any>(null)
   const [text, setText] = useState('')
   const [skitText, setSkitText] = useState('')
-  const [armReset, setArmReset] = useState(false)
   const [pendingChat, setPendingChat] = useState<any>(null)
   const [failedChat, setFailedChat] = useState<any>(null)
-  const resetRef = useRef<HTMLSpanElement | null>(null)
-  // the restart bubble closes on Escape or a click elsewhere
-  useEffect(() => {
-    if (!armReset) return
-    const away = (event: any) => { if (!resetRef.current?.contains(event.target)) setArmReset(false) }
-    const key = (event: any) => { if (event.key === 'Escape') setArmReset(false) }
-    document.addEventListener('pointerdown', away, true)
-    document.addEventListener('keydown', key)
-    return () => { document.removeEventListener('pointerdown', away, true); document.removeEventListener('keydown', key) }
-  }, [armReset])
   const [imgFail, setImgFail] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
   const [settled, setSettled] = useState(false)
@@ -807,6 +808,8 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   const cgMenuRef = useRef<HTMLDivElement>(null)
   const cgMenuTarget = useRef<HTMLElement | null>(null)
   const [cgUndo, setCgUndo] = useState<string | null>(null)
+  const [cgUndoError, setCgUndoError] = useState<string | null>(null)
+  const [cgStageRetryError, setCgStageRetryError] = useState<{id:string; message:string} | null>(null)
   const [galleryItems, setGalleryItems] = useState<any[]>([])
   const [galleryLoading, setGalleryLoading] = useState(false)
   const [galleryError, setGalleryError] = useState<string | null>(null)
@@ -816,7 +819,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   const [rewardCgDetail, setRewardCgDetail] = useState<any>(null)
   const [rewardCgLoading, setRewardCgLoading] = useState(false)
   const [rewardCgError, setRewardCgError] = useState<string | null>(null)
-  const [pickerPanel, setPickerPanel] = useState<'character' | 'chat' | 'background' | 'sprite' | 'skit' | null>(null)
+  const [pickerPanel, setPickerPanel] = useState<'character' | 'chat' | 'model' | 'background' | 'sprite' | 'skit' | null>(null)
   const [skitTopic, setSkitTopic] = useState('')
   const [modelOptions, setModelOptions] = useState<any>(null)
   const [pluginSettings, setPluginSettings] = useState<any>(null)
@@ -849,6 +852,8 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   const archiveReturnFocus = useRef<HTMLElement | null>(null)
   const historyScrollRef = useRef<HTMLDivElement | null>(null)
   const pickerRef = useRef<HTMLDivElement | null>(null)
+  const paperPickerRef = useRef<HTMLDialogElement | null>(null)
+  const menuAnchor = useRef<HTMLButtonElement | null>(null)
   const pickerReturnFocus = useRef<HTMLElement | null>(null)
   const bgFileRef = useRef<HTMLInputElement | null>(null)
   const spriteFileRef = useRef<HTMLInputElement | null>(null)
@@ -903,17 +908,54 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   useEffect(() => () => {
     if (draftConversation.current) void callApi('companion-conversation-update', { id: draftConversation.current, draft: draftText.current }).catch(() => {})
   }, [props.sessionId])
+  const group = activeCompanionGroup(s?.companion)
+  const runtime = s?.companion?.groupRuntime
+  const groupIdentity=groupSpeakerState(runtime??undefined,s?.companion?.groupMessages??undefined)
+  const groupMessage = group ? groupCurrentMessage(s.companion) : null
+  const groupLiveRequestId=runtime?.streaming?.requestId??runtime?.pendingMessage?.requestId??runtime?.pendingMessage?.id
+  const groupRequestId=groupLiveRequestId??groupMessage?.requestId??groupMessage?.id
+  const activeStoredMessage = s?.companion?.messages?.at(-1)
+  const liveReply = streamReply??s?.companion?.streaming
+  const interrupted=activeStoredMessage?.status==='failed'&&activeStoredMessage.requestId===s?.companion?.interruptedReply?.requestId?s.companion.interruptedReply:null
+  const privateReplying=busy&&!!pendingChat
+  const liveText=liveReply?String(liveReply.text??''):!privateReplying?visibleInterruptedText(interrupted,{requestText:activeStoredMessage?.role==='user'?activeStoredMessage.text:''}):''
+  const speech=!group&&!liveText&&!privateReplying?unreadLines(s?.companion?.r95):[]
+  const speechRequestId=speech[0]?speechVoiceRequestId(speech[0]):undefined
+  const privateRequestId=liveReply?.requestId??speechRequestId??activeStoredMessage?.requestId??activeStoredMessage?.occurrenceId??activeStoredMessage?.id
+  const currentSpeaker=group?(runtime?.streaming?.characterId??groupIdentity.activeId??groupMessage?.characterId):s?.current
   const voiceClient = useVoiceClient([s?.current,s?.companion?.activePersonaId,s?.companion?.activeConversationId,s?.companion?.activeGroupId].join(':'),(event:any)=>{
     if(event.scope?.channel==='app-group'){window.dispatchEvent(new CustomEvent('ai-buddy:voice-draft',{detail:event}));return;}
     if(event.scope?.conversationId!==draftConversation.current)return;
     setText((old:string)=>old+(old&&event.text?'\n':'')+event.text);
-  });
+  },{replyId:group?(groupIdentity.running?groupLiveRequestId:groupRequestId):privateRequestId,characterId:currentSpeaker},group?.memberIds);
   const privatePresentation=useRef<any>(null);if(!privatePresentation.current)privatePresentation.current=createPrivatePresentation()
   const privatePresentationInput=useRef<any>(null);privatePresentationInput.current={sessionId:cacheKey,companion:s?.companion,waiting:voiceClient.presentation.requests?.some((row:any)=>row.requestId===s?.companion?.messages?.at(-1)?.requestId),isVisible:()=>!companionPanel&&!document.hidden&&!document.querySelector('dialog[open]'),present:(args:any)=>callApi('companion-private-present',args),apply:(view:any,key:string)=>setS((previous:any)=>privatePresentationKey({sessionId:cacheKey,companion:previous?.companion})===key?view:previous)}
   const refreshPrivatePresentation=()=>{const input=privatePresentationInput.current;privatePresentation.current.update({...input,visible:input.isVisible()})}
   useEffect(()=>{document.addEventListener('visibilitychange',refreshPrivatePresentation);return()=>{document.removeEventListener('visibilitychange',refreshPrivatePresentation);privatePresentation.current.leave()}},[cacheKey])
   useEffect(()=>{refreshPrivatePresentation()})
-  const group = activeCompanionGroup(s?.companion)
+  const openingBackground = typeof document==='undefined' ? undefined : './'+themeAsset(document.documentElement.dataset.theme,'bg.webp')
+  const bgSrc = group
+    ? companionImage(group.background,art)||(group.sceneTemplate!=='plain'?'assets/group-scene/galgame-library.jpg':art('bg-kimi-moonlit-reading-study'))||art('palace-night')
+    : s?.enabled===false||!s ? openingBackground
+    : s.bg==='cg'||s.bg==='custom' ? bgCache.current||undefined : privateBackground(s.bg)
+  const stageScheme = useGalgameStageScheme(bgSrc)
+  const presentationScope = group ? 'group:' + group.id : s?.current
+  const presentationSettings = galgamePresentationSettings(s?.companion?.settings,presentationScope)
+  const classic = presentationSettings.dialogueStyle === 'classic'
+  const stageScope = [s?.current,s?.companion?.activePersonaId,s?.companion?.activeConversationId,group?.id].join(':')
+  const stageUi = useGalgameStageUi(stageScope,{inputNeeded:voiceClient.replacingInput||voiceClient.live,classic})
+  const [presentationPanel,setPresentationPanel] = useState(false)
+  const activeReply = liveReply?.text?liveReply:activeStoredMessage?.role==='assistant'?activeStoredMessage:null
+  const activeVoiceRequest = liveReply?.requestId??(busy&&pendingChat?voiceClient.presentation.requests?.at(-1)?.requestId:activeStoredMessage?.requestId)
+  const activeVoiceLine = voiceDialogueState(voiceClient.presentation,activeVoiceRequest)
+  const privatePlayback=useGalgameSentence(group?null:activeReply,{scope:stageScope,mode:presentationSettings.expressionMode,voiceLine:group?null:activeVoiceLine,fallback:emotionOf()})
+  const privateFx=useGalgameExpressionFx(privatePlayback,presentationSettings.expressionMotion)
+  const groupVoiceLine = voiceDialogueState(voiceClient.presentation,groupRequestId)
+  const groupCharacter = groupVoiceLine?.subtitle?.envelope?.characterId??groupIdentity.activeId??groupIdentity.displayId
+  const groupPlayback = useGalgameSentence(groupMessage?.role==='assistant'&&groupMessage.characterId===groupCharacter?groupMessage:null,{scope:group?.id??'',mode:presentationSettings.expressionMode,voiceLine:groupVoiceLine})
+
+  useEffect(()=>{setPresentationPanel(false)},[stageScope])
+
   useEffect(() => { props.onDisplayMode?.(group ? 'group' : 'private') }, [group?.id, props.onDisplayMode])
   const currentStory = s?.sideStory?.scene
   useEffect(() => {
@@ -925,6 +967,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   }, [cgMenu])
   const [undoLeft, setUndoLeft] = useState(8)
   useEffect(() => {if (!cgUndo) return;setUndoLeft(8);const started=Date.now(),tick=setInterval(()=>setUndoLeft(Math.max(1,8-Math.floor((Date.now()-started)/1000))),250),timer=setTimeout(()=>setCgUndo(null),8000);return()=>{clearTimeout(timer);clearInterval(tick)}},[cgUndo])
+  useEffect(() => {if(!cgUndoError)return;const timer=setTimeout(()=>setCgUndoError(null),8000);return()=>clearTimeout(timer)},[cgUndoError])
   useEffect(()=>{
     setStreamReply(s?.companion?.streaming??null);let timer:any=null,latest:any=null,painted='';
     const off=(window as any).whale?.onOutput((event:any)=>{
@@ -932,20 +975,79 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       if(event?.type==='social.updated'){if(event.petMessageId)notePetLine(event.petMessageId);callApi('view').then((v:any)=>{if(v&&typeof v==='object')setS(v)}).catch(()=>{});return}
       if(event.groupId){if(event.groupId!==s?.companion?.activeGroupId)return;if(event.type==='group.text')setS((old:any)=>({...old,companion:{...old.companion,groupRuntime:{...old.companion.groupRuntime,streaming:event.payload}}}));return}
       if(event.conversationId!==s?.companion?.activeConversationId||event.personaId!==s?.companion?.activePersonaId||event.characterId!==s?.current)return;
-      if(event.type==='text.delta'){const previous=latest?.requestId===event.requestId?latest:s?.companion?.streaming?.requestId===event.requestId?s.companion.streaming:null;latest={...previous,...event,text:(previous?.text??'')+(event.payload.text??'')};if(!timer)timer=setTimeout(()=>{timer=null;setStreamReply({...latest});if(painted!==latest.requestId){painted=latest.requestId;requestAnimationFrame(()=>void callApi('companion-stream-presented',{requestId:latest.requestId}).catch(()=>{}));}},50)}
+      if(event.type==='timing'&&event.payload.name==='queue-entered-model'&&latest?.requestId!==event.requestId){
+        latest={...event,text:''};
+        setStreamReply(latest);
+      }
+      if(event.type==='text.delta'||event.type==='message.snapshot'){const previous=latest?.requestId===event.requestId?latest:s?.companion?.streaming?.requestId===event.requestId?s.companion.streaming:null;latest={...previous,...event,emotion:event.payload.emotion??previous?.emotion,emotionSentences:event.payload.emotionSentences??previous?.emotionSentences,text:event.type==='message.snapshot'?event.payload.text:(previous?.text??'')+(event.payload.text??'')};if(!timer)timer=setTimeout(()=>{timer=null;setStreamReply({...latest});if(painted!==latest.requestId){painted=latest.requestId;requestAnimationFrame(()=>void callApi('companion-stream-presented',{requestId:latest.requestId}).catch(()=>{}));}},50)}
       if(event.type==='request.phase'&&event.payload.phase==='failed'){clearTimeout(timer);timer=null;setStreamReply({...latest,status:'incomplete',error:event.payload.message})}
       if(event.type==='choices.ready'||event.type==='choices.failed'||event.type==='request.phase'&&event.payload.phase==='committed'){clearTimeout(timer);timer=null;latest=null;callApi('view').then((v:any)=>{setS(v);setStreamReply(null)}).catch(()=>{})}
     });return()=>{off?.();clearTimeout(timer)};
   },[s?.current,s?.companion?.activePersonaId,s?.companion?.activeConversationId,s?.companion?.activeGroupId])
   useEffect(()=>{const focus=()=>{if(!replyFocusAt||Date.now()-replyFocusAt>15000)return;requestAnimationFrame(()=>{if(focusGalgameReply())replyFocusAt=0})};focus();window.addEventListener('ai-buddy:galgame-reply',focus);return()=>window.removeEventListener('ai-buddy:galgame-reply',focus)},[!!s,group?.id])
-  // Measured for the stylesheet: stage height and the rest of the dialogue box (one 40% rule, approved design C9),
-  // and the room between the toolbar and the box, so toolbar popovers stop above the name plate (C6).
+  // Measure the dialogue budget, bottom controls and space for toolbar popovers.
   // English labels are longer: when the private toolbar no longer fits on one line, History / CG / Pet go into More (C6).
-  const toolsRef=useRef<any>(null),toolsCollapsed=useToolbarCollapse(toolsRef,[t('对话历史'),s?.companion?.personas?.find((row:any)=>row.id===s?.companion?.activePersonaId)?.name,s?.galleryCount>0,s?.spriteVisibility!=='auto',group?.id,!!s].join('|'))
+  const [speechActions,setSpeechActions]=useState<HTMLDivElement|null>(null)
   const speechOptionsRef=useRef<any>(null),shownSpeech=useRef<any>(null)
   const layoutObserver=useRef<any>(null),observed=useRef<any>({})
-  useEffect(()=>{if(typeof ResizeObserver!=='function')return;let frame=0;const measure=()=>{frame=0;const root=document.getElementById('whg-tab-root');if(!root)return;const panel=root.querySelector<HTMLElement>('#whg-panel'),top=root.querySelector<HTMLElement>('.gx-top'),line=panel?(panel.querySelector<HTMLElement>(':scope>.whg-line-now')??panel.querySelector<HTMLElement>('.r95-speech.in-dlg>p')):null;root.style.setProperty('--gx-stage-h',root.clientHeight+'px');if(panel){const rest=Math.max(0,panel.offsetHeight-(line?.offsetHeight??0));root.style.setProperty('--gx-dlg-rest',rest+'px');root.style.setProperty('--gx-line-room',dialogueLineRoom(root.clientHeight,rest,line?parseFloat(getComputedStyle(line).lineHeight):31)+'px');}if(panel&&top)root.style.setProperty('--gx-pop-room',Math.max(0,Math.round(panel.getBoundingClientRect().top-top.getBoundingClientRect().bottom-28))+'px')};const observer=new ResizeObserver(()=>{if(!frame)frame=requestAnimationFrame(measure)});layoutObserver.current={observer,measure};return()=>{observer.disconnect();if(frame)cancelAnimationFrame(frame);layoutObserver.current=null;observed.current={}}},[])
-  useEffect(()=>{const current=layoutObserver.current;if(!current)return;const root=document.getElementById('whg-tab-root'),panel=root?.querySelector('#whg-panel'),top=root?.querySelector('.gx-top');for(const [key,node] of [['root',root],['panel',panel],['top',top]] as any[])if(node&&observed.current[key]!==node){current.observer.observe(node);observed.current[key]=node}current.measure()})
+  useLayoutEffect(()=>{
+    if(typeof ResizeObserver!=='function')return;
+    let frame=0;
+    const measure=()=>{
+      const {root,panel,top,say,line,composer,tools,choices,primary,history,collapsedInput}=observed.current;
+      if(!root)return;
+      root.style.setProperty('--gx-stage-h',root.clientHeight+'px');
+      const setSize=(property:string,size:number|undefined)=>{
+        if(size===undefined)root.style.removeProperty(property);
+        else root.style.setProperty(property,size+'px');
+      };
+      root.toggleAttribute('data-gx-narrow',root.clientWidth<=550);
+      root.toggleAttribute('data-gx-compact',!!say&&root.clientHeight<=550);
+      root.toggleAttribute('data-gx-short',!!say&&root.clientHeight<=620);
+      setSize('--gx-composer-height',composer?.offsetHeight??collapsedInput?.offsetHeight);
+      setSize('--gx-br-height',tools?.offsetHeight);
+      setSize('--gx-choices-h',choices?.offsetHeight);
+      setSize('--gx-primary-height',primary?.offsetHeight);
+      setSize('--gx-primary-width',primary?.offsetWidth);
+      setSize('--gx-history-width',history?.offsetWidth);
+      setSize('--gx-history-measured-height',history?.offsetHeight);
+      const dialogue=say??panel;
+      if(dialogue){
+        const rest=Math.max(0,dialogue.offsetHeight-(line?.offsetHeight??0));
+        root.style.setProperty('--gx-dlg-rest',rest+'px');
+        if(line||!panel?.matches('.dialogue-shell')){
+          const lineHeight=line?parseFloat(getComputedStyle(line).lineHeight):31;
+          const room=say?Math.min(lineHeight*3,dialogueLineRoom(root.clientHeight,rest,lineHeight,FRAMELESS_DIALOGUE_RATIO)):dialogueLineRoom(root.clientHeight,rest,lineHeight);
+          setSize('--gx-line-room',room);
+          if(say&&line)line.toggleAttribute('data-scroll-more',line.scrollHeight-line.scrollTop>line.clientHeight+1);
+        }else setSize('--gx-line-room',undefined);
+      }
+      if(panel&&top)root.style.setProperty('--gx-pop-room',Math.max(0,Math.round(panel.getBoundingClientRect().top-top.getBoundingClientRect().bottom-28))+'px');
+    };
+    const observer=new ResizeObserver(()=>{
+      if(!frame)frame=requestAnimationFrame(()=>{frame=0;measure();});
+    });
+    layoutObserver.current={observer,measure};
+    return()=>{observer.disconnect();if(frame)cancelAnimationFrame(frame);layoutObserver.current=null;observed.current={}};
+  },[])
+  useLayoutEffect(()=>{
+    const current=layoutObserver.current;if(!current)return;
+    const root=document.getElementById('whg-tab-root'),panel=root?.querySelector('#whg-panel'),top=root?.querySelector('.gx-top');
+    const shell=panel?.matches('.dialogue-shell')?panel:null,say=shell?.querySelector(':scope > .say');
+    const line=shell?say?.querySelector(':scope > .tx'):panel?.querySelector(':scope>.whg-line-now')??panel?.querySelector('.r95-speech.in-dlg>p');
+    const composer=shell?.querySelector('.bottom > :not(.iline,.ihelp)');
+    const tools=root?.querySelector('.corner.br'),collapsedInput=shell?.querySelector('[data-galgame-input-toggle]');
+    const choices=shell?.querySelector(':scope > .choices');
+    const primary=root?.querySelector('.corner.tr > .glass:first-child'),history=root?.querySelector('.corner.tr > .glass:nth-child(2)');
+    for(const [key,node] of Object.entries({root,panel,top,say,line,composer,tools,collapsedInput,choices,primary,history})){
+      const previous=observed.current[key];
+      if(previous===node)continue;
+      if(previous)current.observer.unobserve(previous);
+      if(node)current.observer.observe(node);
+      observed.current[key]=node;
+    }
+    current.measure();
+  })
   useEffect(() => (window as any).whale?.onChatCommitted(() => {
     callApi('view').then((value) => { setS(value); setApiError(null) }).catch(() => {})
   }), [props.sessionId])
@@ -961,11 +1063,42 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     void (window as any).whale?.storyFeedback({messageId:String(currentStory.id)+':'+index,characterId:beat.speaker,emotion:beat.emotion,text:beat.text}).catch(() => {})
   }, [open, props.variant, currentStory?.id, currentStory?.cursor])
 
+  const [viewAttempt,setViewAttempt]=useState(0)
   useEffect(() => {
-    let alive = true
-    callApi('view').then((v) => { if (alive) { setS(v); setApiError(null) } }).catch((e) => { if (alive) setApiError(t("galgame 服务未就绪：") + String(e && e.message ? e.message : e)) })
-    return () => { alive = false }
-  }, [props.sessionId])
+    let alive=true,timer:ReturnType<typeof setTimeout>|undefined
+    const fail=(error:any)=>{
+      if(!alive)return
+      setStorageMigration(null)
+      setApiError(cleanIpcMessage(error?.message??error))
+    }
+    const retry=()=>{timer=setTimeout(()=>void checkMigration(),250)}
+    const checkMigration=async()=>{
+      try{
+        const status=await callApi('companion-storage-status')
+        if(!alive)return
+        if(status?.migrating){setStorageMigration(status);retry()}
+        else await openView()
+      }catch(error){fail(error)}
+    }
+    const openView=async()=>{
+      try{
+        const value=await callApi('view')
+        if(!alive)return
+        if(value?.code==='COMPANION_STORAGE_MIGRATING'){
+          setStorageMigration(value.storage??{migrating:true})
+          setApiError(null)
+          retry()
+          return
+        }
+        if(value?.ok===false)throw Error(value.error||t('Galgame 服务没有就绪'))
+        setS(value)
+        setStorageMigration(null)
+        setApiError(null)
+      }catch(error){fail(error)}
+    }
+    void openView()
+    return()=>{alive=false;clearTimeout(timer)}
+  }, [props.sessionId,viewAttempt])
 
   useEffect(() => () => {
     galleryListRequestSeq.current += 1
@@ -1021,14 +1154,14 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   }, [props.variant])
 
   useEffect(() => {
-    if (s && s.enabled === false) return undefined
+    if (s && s.enabled === false || storageMigration) return undefined
     const id = setInterval(() => {
       callApi('view').then((v) => {
         if (v && typeof v === 'object') setS(v)
       }).catch(() => { /* server transient */ })
     }, 6000)
     return () => clearInterval(id)
-  }, [s && s.enabled, props.sessionId])
+  }, [s && s.enabled, !!storageMigration, props.sessionId])
 
   useEffect(() => {
     if (!s) return undefined
@@ -1232,10 +1365,18 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     }
   }, [archivePanel, gallerySelected, profileLoaded, profileLoading, cgMenu])
 
+  const isPaperPicker = pickerPanel === 'background' || pickerPanel === 'sprite'
+  useLayoutEffect(() => {
+    if (!isPaperPicker || !paperPickerRef.current) return undefined
+    const dialog = paperPickerRef.current
+    dialog.showModal()
+    return () => { if (dialog.open) dialog.close() }
+  }, [pickerPanel])
+
   // The scene clips its contents. Mount pickers outside it, then keep each
   // popup inside the visible scene instead of right-aligning it to a tiny button.
   useLayoutEffect(() => {
-    if (!pickerPanel || !pickerRef.current || !pickerReturnFocus.current) return undefined
+    if (!pickerPanel || pickerPanel === 'model' || isPaperPicker || !pickerRef.current || !pickerReturnFocus.current) return undefined
     const popup = pickerRef.current
     const anchor = pickerReturnFocus.current
     const scene = anchor.closest<HTMLElement>('.whg-root,.whg-root-tab')
@@ -1278,7 +1419,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   }, [pickerPanel])
 
   useEffect(() => {
-    if (!pickerPanel) return undefined
+    if (!pickerPanel || isPaperPicker) return undefined
     const focusFrame = requestAnimationFrame(() => {
       const target = pickerRef.current?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')
         || pickerRef.current?.querySelector<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled)')
@@ -1414,7 +1555,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     })
   }
 
-  function openPicker(kind: 'character' | 'chat' | 'background' | 'sprite' | 'skit', trigger: HTMLElement): void {
+  function openPicker(kind: 'character' | 'chat' | 'model' | 'background' | 'sprite' | 'skit', trigger: HTMLElement): void {
     if (pickerPanel === kind) {
       closePicker(false)
       return
@@ -1429,8 +1570,28 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     if (kind === 'character' || kind === 'chat') loadPickerData()
   }
 
-  function pickerOverlay(content: React.ReactElement | null): React.ReactPortal | null {
+  function pickerOverlay(content: React.ReactElement | null): React.ReactElement | null {
     if (!content) return null
+    if (isPaperPicker) {
+      const background = pickerPanel === 'background'
+      const title = t(background ? '背景图' : '角色立绘')
+      return React.createElement('dialog', {
+        ref: paperPickerRef,
+        className: 'gx-settings-dialog gx-paper-picker-dialog gx-paper-dialog',
+        'aria-label': title,
+        onCancel: (event: any) => { event.preventDefault(); closePicker() },
+        onClick: (event: any) => { if (event.target === paperPickerRef.current) closePicker() },
+      }, React.createElement('section', { className: 'sheet' },
+        React.createElement('header', { className: 'shh' },
+          Ornament(),
+          React.createElement('h4', null, title),
+          React.createElement('span', { className: 'sub' }, background ? 'Background' : 'Portrait'),
+          React.createElement('span', { className: 'crumb' }, s?.name),
+          React.createElement('button', { type: 'button', className: 'x', onClick: () => closePicker() }, t('返回 Esc')),
+        ),
+        React.cloneElement(content, { className: content.props.className + ' gx-picker-paper-body', role: undefined }),
+      ))
+    }
     return createPortal(React.cloneElement(content, {
       className: content.props.className + ' whg-picker-floating',
       style: { position: 'fixed', left: 0, top: 0, right: 'auto', bottom: 'auto', zIndex: 240, visibility: 'hidden' },
@@ -1648,42 +1809,18 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     const t = text
     if (!t.trim()) return
     setText('');r95Input(false)
+    if (!classic) stageUi.closeInput(false)
     // replying to her line counts as reading it (approved design C8); only a line already presented can be read
     say({ text: t }, t, shownSpeech.current?.status === 'presented' ? shownSpeech.current : null)
   }
 
-  // whale-girl emotion sprites: filename = emotion (local asset keys)
-  const EMOTION_ART: Record<string, string> = {
-    cheerful: 'whale-cheerful',
-    shy: 'whale-shy',
-    serious: 'whale-serious',
-    confused: 'whale-confused',
-    angry: 'whale-angry',
-    frightened: 'whale-frightened',
-    exasperated: 'whale-exasperated',
-    starry: 'whale-starry',
-  }
-
-  // detect the emotion: prefer the host's LLM classification, fall back to keywords
+  // Old single-emotion records remain a fallback for the opening and pending state.
   function emotionOf(): string {
     const lines: any[] = (s && s.history) || []
     const committedReply = [...lines].reverse().find(line => line.who === 'heroine')
     if (committedReply?.emotionSource && validEmotion(committedReply.emotion)) return committedReply.emotion
     const lastLine = [...lines].reverse().find(line => line.who === 'user')
     return messageEmotion(lastLine)
-  }
-
-  function moodOf(): string {
-    const lines: any[] = (s && s.history) || []
-    let last: string | null = null
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (lines[i].who === 'heroine') { last = lines[i].text; break }
-    }
-    if (!last) return 'normal'
-    if (/生气|讨厌|哼|笨蛋|不理|走开|过分|烦/.test(last)) return 'angry'
-    if (/喜欢|♪|开心|太棒|幸福|≧▽≦|哈哈|啦～/.test(last)) return 'happy'
-    if (/害羞|才不|呜|脸红|别这样|……/.test(last)) return 'shy'
-    return 'normal'
   }
 
   function lastLine(): any {
@@ -1795,12 +1932,20 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   }
   async function recycleCg(id: string, restore = false): Promise<void> {
     if (busy) return
+    const restoringFromToast = restore && cgUndo === id && archivePanel !== 'gallery'
+    setCgUndoError(null)
     setBusy(true);setCgMenu(null)
     try {
       const result = await callApi(restore ? 'cg-restore' : 'cg-trash',{id})
       assertApiResult(result,t("CG 操作失败"));CG_DATA_CACHE.delete(id);closeGalleryDetail()
-      setS(result.view || await callApi('view'));setCgUndo(restore ? null : id);loadGallery()
-    } catch(error: any) {setGalleryError(error.message || t("CG 操作失败"))}
+      setS(result.view || await callApi('view'));setCgUndo(restore ? null : id)
+      if (restore && archivePanel === 'gallery') loadGallery()
+      else if (!restore) closeArchive()
+    } catch(error: any) {
+      const message=error.message || t("CG 操作失败")
+      if(restoringFromToast) setCgUndoError(message)
+      else setGalleryError(message)
+    }
     finally {setBusy(false)}
   }
 
@@ -1812,6 +1957,22 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       setS(await callApi('view'))
       loadGallery()
     }).catch(error => setGalleryError(String(error.message || t("CG 生成暂时失败")))).finally(() => setBusy(false))
+  }
+
+  async function retryStageCg(id:string): Promise<void> {
+    if (busy) return
+    setBusy(true)
+    setCgStageRetryError(null)
+    try {
+      const result = await callApi('cg-retry', { id })
+      assertApiResult(result, t('CG 生成暂时失败'))
+      setS(await callApi('view'))
+      loadGallery()
+    } catch (error:any) {
+      setCgStageRetryError({id,message:String(error?.message || t('CG 生成暂时失败'))})
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function resumeGalleryCg(item: any): Promise<void> {
@@ -1987,138 +2148,92 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     )
   }
 
-  function backgroundPicker(): React.ReactElement | null {
-    if (pickerPanel !== 'background') return null
-    const backgroundMode = String((s && s.backgroundMode) || (s && (s.bg === 'custom' || s.bg === 'cg') ? s.bg : 'builtin'))
-    const hasSavedBackground = backgroundMode === 'custom' || backgroundMode === 'cg'
-    const builtinOptions = Array.isArray(s && s.builtinBackgroundOptions)
-      ? s.builtinBackgroundOptions.filter((item: any) => item && typeof item.key === 'string' && item.key)
-      : []
-    const currentBuiltin = String(
-      (s && (s.builtinBackgroundKey || s.selectedBuiltinBackground))
-      || (builtinOptions.find((item: any) => item.current === true || item.selected === true) || {}).key
-      || (!hasSavedBackground && s && s.bg ? s.bg : ''),
-    )
-    const currentActual = hasSavedBackground ? bgCache.current : art(s && s.bg)
-    const visiblePreview = backgroundPreview || currentActual
-    const builtinSection = builtinOptions.length > 0
-      ? React.createElement('section', { className: 'whg-bg-builtins', 'aria-label': (s && s.name ? s.name : t("当前角色")) + t("的内置背景") },
-        React.createElement('p', { className: 'gx-sec' }, t("内置背景")),
-        hasSavedBackground
-          ? React.createElement('div', { className: 'whg-bg-override-note' },
-            backgroundMode === 'cg' ? t("特殊 CG 正在覆盖角色背景。选择下方背景会退出 CG 覆盖。") : t("自定义图片正在覆盖角色背景。选择下方背景会退出自定义覆盖。"),
-          )
-          : null,
-        React.createElement('div', { className: 'whg-bg-builtins-grid' },
-          builtinOptions.map((option: any, index: number) => {
-            const key = String(option.key)
-            const label = String(option.label || option.name || (t("内置背景 ") + (index + 1)))
-            const preview = art(key)
-            const selected = key === currentBuiltin
-            const isDefault = option.default === true || option.isDefault === true
-            return React.createElement('button', {
-              'aria-label': label + (isDefault ? t("，角色默认背景") : '') + (selected && hasSavedBackground ? t("，退出覆盖后使用") : ''),
-              'aria-pressed': selected && !hasSavedBackground,
-              className: 'whg-bg-builtin',
-              disabled: pickerLoading,
-              key,
-              onClick: () => applyBuiltinBackground(key),
-              type: 'button',
-            },
-              preview
-                ? React.createElement('img', { alt: '', className: 'whg-bg-builtin-img', draggable: false, src: preview })
-                : React.createElement('div', { className: 'whg-bg-builtin-img whg-bg-builtin-fallback' }, 'BACKGROUND'),
-              React.createElement('span', { className: 'whg-bg-builtin-meta' },
-                React.createElement('span', { className: 'whg-bg-builtin-name' }, t(label)),
-                isDefault ? React.createElement('span', { className: 'whg-bg-builtin-tag' }, t("默认")) : null,
-                selected ? React.createElement('span', { className: 'whg-bg-builtin-tag' }, hasSavedBackground ? t("恢复后") : t("使用中")) : null,
-              ),
-            )
-          }),
-        ),
-      )
-      : null
-    return React.createElement('div', {
-      'aria-label': t("修改 galgame 背景图"),
-      className: 'whg-picker right whg-bg-picker gx-pop gx-pop-wide',
-      id: 'whg-background-picker-' + appScope,
-      ref: pickerRef,
-      role: 'dialog',
-    },
-      React.createElement('div', { className: 'gx-pop-h' }, t("背景图"), React.createElement('small', null, (s && s.name ? s.name : t("当前角色")) + t(" 专用")), React.createElement('span', { className: 'grow' }), React.createElement('span', { className: 'ws-tag' }, backgroundPreview ? t("预览") : backgroundMode === 'cg' ? t("CG 覆盖") : backgroundMode === 'custom' ? t("自定义图片") : t("角色背景"))),
-      React.createElement('div', { className: 'gx-pop-b' },
-      visiblePreview
-        ? React.createElement('div', { className: 'gx-prev' }, React.createElement('img', { className: 'whg-bg-preview', src: visiblePreview, alt: backgroundPreview ? t("待应用背景预览") : t("当前 galgame 背景") }), React.createElement('span', { className: 'ws-tag' }, backgroundPreview ? t("预览") : t("正在使用")))
-        : React.createElement('div', { className: 'whg-bg-empty' }, t("选择一张本地图片后在这里预览")),
-      builtinSection,
-      React.createElement('p', { className: 'gx-hint' }, t("上传的图片和 CG 背景只用在 ") + (s && s.name ? s.name : t("当前角色")) + t(" 身上，换角色不影响别人。支持 PNG、JPG、WebP、AVIF，12 MB 以内。")),
-      pickerError ? React.createElement('div', { className: 'whg-bg-error', role: 'alert' }, pickerError) : null),
-      React.createElement('input', {
-        accept: 'image/png,image/jpeg,image/webp,image/avif',
-        className: 'whg-bg-file',
-        onChange: chooseBackgroundFile,
-        ref: bgFileRef,
-        type: 'file',
-      }),
-      React.createElement('div', { className: 'gx-pop-f' },
-        React.createElement('button', { className: 'ui-btn sm', disabled: pickerLoading, onClick: () => bgFileRef.current?.click(), type: 'button' }, Icon('upload', { size: 14 }), backgroundPreview ? t("重新选择") : t("上传图片")),
-        React.createElement('span', { className: 'grow' }),
-        backgroundPreview
-          ? React.createElement('button', { className: 'ui-btn sm', disabled: pickerLoading, onClick: () => { setBackgroundPreview(null); setBackgroundFileName(''); setPickerError('') }, type: 'button' }, t("取消预览"))
-          : React.createElement('button', { className: 'ui-btn sm', disabled: pickerLoading || !hasSavedBackground, onClick: restoreDefaultBackground, type: 'button' }, t("恢复默认")),
-        backgroundPreview
-          ? React.createElement('button', { className: 'ui-btn sm primary', disabled: pickerLoading, onClick: applyBackgroundUpload, type: 'button' }, pickerLoading ? t("保存中…") : t("应用这张背景"))
-          : null,
-      ),
-    )
+  function privateBackground(key:string): string | undefined {
+    const item=s?.builtinBackgroundOptions?.find((option:any)=>option.key===key)
+    if((item?.default||item?.isDefault)&&THEMES[s.current])return './'+themeAsset(s.current,'bg.webp')
+    return companionImage(key,art)||undefined
   }
 
+  function backgroundPicker(): React.ReactElement | null {
+    if (pickerPanel !== 'background') return null
+    const backgroundMode = String(s?.backgroundMode || (s?.bg==='cg'||s?.bg==='custom'?s.bg:'builtin'))
+    const hasSavedBackground = backgroundMode === 'custom' || backgroundMode === 'cg'
+    const builtinOptions = Array.isArray(s?.builtinBackgroundOptions)
+      ? s.builtinBackgroundOptions.filter((item: any) => item && typeof item.key === 'string' && item.key) : []
+    const currentBuiltin = String(s?.builtinBackgroundKey || s?.selectedBuiltinBackground
+      || builtinOptions.find((item:any)=>item.current||item.selected)?.key || (!hasSavedBackground&&s?.bg) || '')
+    const currentActual = hasSavedBackground ? bgCache.current : privateBackground(s?.bg)
+    const visiblePreview = backgroundPreview || currentActual
+    const name = s?.name||t('当前角色')
+    const cancelPreview = () => {setBackgroundPreview(null);setBackgroundFileName('');setPickerError('')}
+    return React.createElement('div',{
+      'aria-label':t('修改 galgame 背景图'),className:'whg-picker right whg-bg-picker gx-pop gx-pop-wide',
+      id:'whg-background-picker-'+appScope,ref:pickerRef,role:'dialog',
+    },
+      React.createElement('div',{className:'gx-pop-b'},
+        React.createElement('div',{className:'gx-picker-preview-column'},
+          visiblePreview ? React.createElement('div',{className:'gx-prev'},
+            React.createElement('img',{className:'whg-bg-preview',src:visiblePreview,alt:backgroundPreview?t('待应用背景预览'):t('当前 galgame 背景')}),
+            React.createElement('span',{className:'ws-tag'},backgroundPreview?t('预览'):t('正在使用 · 角色背景')))
+            : React.createElement('div',{className:'whg-bg-empty'},t('选择一张本地图片后在这里预览')),
+          backgroundMode==='cg'&&React.createElement('div',{className:'whg-bg-override-note'},t('特殊 CG 正在覆盖角色背景。选择下方背景会退出 CG 覆盖。')),
+          React.createElement('p',{className:'gx-hint'},t('PNG、JPG、WebP、AVIF，12 MB 以内。上传和 CG 背景按角色保存。')),
+          pickerError&&React.createElement('div',{className:'whg-bg-error',role:'alert'},pickerError)),
+        React.createElement('section',{className:'whg-bg-builtins','aria-label':name+t('的内置背景')},
+          React.createElement('p',{className:'gx-sec'},t('内置背景 · {name} 专属').replace('{name}',()=>name)),
+          React.createElement('div',{className:'whg-bg-builtins-grid'},builtinOptions.map((option:any,index:number)=>{
+            const key=String(option.key),label=String(option.label||option.name||t('内置背景 ')+(index+1))
+            const preview=privateBackground(key),selected=key===currentBuiltin,isDefault=option.default===true||option.isDefault===true
+            return React.createElement('button',{
+              'aria-label':label+(isDefault?t('，角色默认背景'):'')+(selected&&hasSavedBackground?t('，退出覆盖后使用'):''),
+              'aria-pressed':selected&&!hasSavedBackground,className:'whg-bg-builtin',disabled:pickerLoading,
+              key,onClick:()=>applyBuiltinBackground(key),type:'button',
+            },
+              preview?React.createElement('img',{alt:'',className:'whg-bg-builtin-img',draggable:false,src:preview})
+                :React.createElement('div',{className:'whg-bg-builtin-img whg-bg-builtin-fallback'},'BACKGROUND'),
+              React.createElement('span',{className:'whg-bg-builtin-meta'},
+                React.createElement('span',{className:'whg-bg-builtin-name'},t(label)),
+                isDefault&&React.createElement('span',{className:'whg-bg-builtin-tag'},t('默认')),
+                selected&&React.createElement('span',{className:'whg-bg-builtin-tag'},hasSavedBackground?t('恢复后'):t('使用中'))))
+          })),
+          React.createElement('div',{className:'gx-picker-actions'},
+            React.createElement('button',{className:'b',disabled:pickerLoading,onClick:()=>bgFileRef.current?.click(),type:'button'},Icon('upload',{size:14}),backgroundPreview?t('重新选择'):t('上传图片')),
+            React.createElement('button',{className:'b',disabled:pickerLoading||!hasSavedBackground,onClick:restoreDefaultBackground,type:'button'},t('恢复默认'))))),
+      React.createElement('input',{accept:'image/png,image/jpeg,image/webp,image/avif',className:'whg-bg-file',onChange:chooseBackgroundFile,ref:bgFileRef,type:'file'}),
+      React.createElement('div',{className:'gx-pop-f'},
+        React.createElement('span',{className:'grow'},t('选择一张本地图片后在这里预览')),
+        React.createElement('button',{className:'b',disabled:pickerLoading||!backgroundPreview,onClick:cancelPreview,type:'button'},t('取消预览')),
+        React.createElement('button',{className:'b pri',disabled:pickerLoading||!backgroundPreview,onClick:applyBackgroundUpload,type:'button'},pickerLoading?t('保存中…'):t('应用到背景'))))
+  }
 
   function spritePicker(): React.ReactElement | null {
     if (pickerPanel !== 'sprite') return null
-    const defaultSprite = art(s && s.sprite)
-    const visiblePreview = spritePreview || customSprite || defaultSprite
-    const hasSavedSprite = !!customSprite || !!(s && (s.hasCustomSprite === true || s.customSprite === true || s.spriteMode === 'custom'))
-    return React.createElement('div', {
-      'aria-label': t("修改") + (s && s.name ? s.name : t("当前角色")) + t("的角色立绘"),
-      className: 'whg-picker right whg-sprite-picker gx-pop',
-      id: 'whg-sprite-picker-' + appScope,
-      ref: pickerRef,
-      role: 'dialog',
+    const visiblePreview = spritePreview || customSprite || art(s?.sprite)
+    const hasSavedSprite = !!customSprite || s?.hasCustomSprite===true || s?.customSprite===true || s?.spriteMode==='custom'
+    const name=s?.name||t('当前角色')
+    return React.createElement('div',{
+      'aria-label':t('修改')+name+t('的角色立绘'),className:'whg-picker right whg-sprite-picker gx-pop',
+      id:'whg-sprite-picker-'+appScope,ref:pickerRef,role:'dialog',
     },
-      React.createElement('div', { className: 'gx-pop-h' }, t("角色立绘"), React.createElement('small', null, s && s.name ? s.name : ''), React.createElement('span', { className: 'grow' }), React.createElement('span', { className: 'ws-tag' }, spritePreview ? t("预览") : hasSavedSprite ? t("自己上传") : t("默认"))),
-      React.createElement('div', { className: 'gx-pop-b' },
-      visiblePreview
-        ? React.createElement('div', { className: 'whg-sprite-preview-shell' },
-          React.createElement('img', {
-            alt: spritePreview ? t("待应用立绘预览") : (s && s.name ? s.name : t("当前角色")) + t("的当前立绘"),
-            className: 'whg-sprite-preview',
-            src: visiblePreview,
-          }),
-        )
-        : React.createElement('div', { className: 'whg-bg-empty' }, t("选择一张本地图片后在这里预览")),
-      React.createElement('p', { className: 'gx-hint' }, t("立绘按角色保存，所有工作区共用。建议用透明背景的竖图，12 MB 以内。")),
-      pickerError ? React.createElement('div', { className: 'whg-bg-error', role: 'alert' }, pickerError) : null),
-      React.createElement('input', {
-        accept: 'image/png,image/jpeg,image/webp,image/avif',
-        className: 'whg-bg-file',
-        onChange: chooseSpriteFile,
-        ref: spriteFileRef,
-        type: 'file',
-      }),
-      React.createElement('div', { className: 'gx-pop-f' },
-        React.createElement('button', { className: 'ui-btn sm', disabled: pickerLoading, onClick: () => spriteFileRef.current?.click(), type: 'button' }, Icon('upload', { size: 14 }), spritePreview ? t("重新选择") : t("上传图片")),
-        React.createElement('span', { className: 'grow' }),
-        spritePreview
-          ? React.createElement('button', { className: 'ui-btn sm primary', disabled: pickerLoading, onClick: applySpriteUpload, type: 'button' }, pickerLoading ? t("保存中…") : t("应用这张立绘"))
-          : React.createElement('button', { className: 'ui-btn sm', disabled: pickerLoading || !hasSavedSprite, onClick: restoreDefaultSprite, type: 'button' }, t("恢复默认")),
-      ),
-    )
+      React.createElement('div',{className:'gx-pop-b'},
+        React.createElement('div',{className:'whg-sprite-preview-shell'},
+          visiblePreview?React.createElement('img',{alt:spritePreview?t('待应用立绘预览'):name+t('的当前立绘'),className:'whg-sprite-preview',src:visiblePreview})
+            :React.createElement('div',{className:'whg-bg-empty'},t('选择一张本地图片后在这里预览'))),
+        React.createElement('div',{className:'gx-picker-description'},
+          React.createElement('span',{className:'ws-tag'},spritePreview?t('预览'):hasSavedSprite?t('自己上传'):t('默认')),
+          React.createElement('p',null,t('立绘按角色保存，所有工作区共用。建议用透明背景的竖图，12 MB 以内。')),
+          React.createElement('p',{className:'sub'},t('支持 PNG、JPG、WebP、AVIF。用了自己上传的立绘后，表情差分和小动作仍然生效，但图只有一张。')),
+          React.createElement('div',{className:'gx-picker-actions'},
+            React.createElement('button',{className:'b',disabled:pickerLoading,onClick:()=>spriteFileRef.current?.click(),type:'button'},Icon('upload',{size:14}),spritePreview?t('重新选择'):t('上传图片')),
+            React.createElement('button',{className:'b',disabled:pickerLoading||!hasSavedSprite,onClick:restoreDefaultSprite,type:'button'},t('恢复默认'))),
+          pickerError&&React.createElement('div',{className:'whg-bg-error',role:'alert'},pickerError))),
+      React.createElement('input',{accept:'image/png,image/jpeg,image/webp,image/avif',className:'whg-bg-file',onChange:chooseSpriteFile,ref:spriteFileRef,type:'file'}),
+      React.createElement('div',{className:'gx-pop-f'},
+        React.createElement('span',{className:'grow'},t('选择一张本地图片后在这里预览')),
+        React.createElement('button',{className:'b pri',disabled:pickerLoading||!spritePreview,onClick:applySpriteUpload,type:'button'},pickerLoading?t('保存中…'):t('应用这张立绘'))))
   }
 
 
-
-  // The CG gallery drawer (its only use since the history and skits panels moved into the companion manager).
   function archiveDrawer(): React.ReactElement | null {
     if (archivePanel !== 'gallery' || !s) return null
     const galleryCount = typeof s.galleryCount === 'number' ? s.galleryCount : galleryItems.length
@@ -2130,31 +2245,32 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     if (gallerySelected) {
       const item = gallerySelected
       const index = galleryItems.findIndex((row: any) => row.id === item.id)
-      title = item.theme?.title || ('Lv.' + (item.level || '?') + ' · ' + nameOf(item))
-      kicker = (galleryTrash ? t("CG 回收站") : t("CG 图鉴")) + (index >= 0 ? ' · ' + t("第 {k} 张 / 共 {n} 张").replace('{k}', String(index + 1)).replace('{n}', String(galleryItems.length)) : '')
-      const notes = [item.referenceNotice, item.theme?.fallbackReason, item.prompt].filter(Boolean)
-      body = React.createElement('div', { className: 'gx-detail whg-gallery-detail' },
-        React.createElement('button', { className: 'gx-back', onClick: closeGalleryDetail, type: 'button' }, Icon('chevron', { size: 14 }), galleryTrash ? t("返回回收站") : t("返回图鉴")),
-        galleryDetailLoading
+      const detailTitle = item.theme?.title || ('Lv.' + (item.level || '?') + ' · ' + nameOf(item))
+      kicker = index >= 0 ? t("第 {k} 张 / 共 {n} 张").replace('{k}', String(index + 1)).replace('{n}', String(galleryItems.length)) : ''
+      const {scene,rules} = cgPromptSections(item.prompt)
+      const notes = [t(item.referenceNotice), scene].filter(Boolean)
+      const composition = rules ? React.createElement('details', { className: 'gx-cg-detail-rules' },
+        React.createElement('summary', null, t("展开固定构图要求")),
+        React.createElement('div', { className: 'gx-cg-detail-description' }, React.createElement('p', null, rules))) : null
+      const image = galleryDetailLoading
           ? React.createElement('div', { className: 'gx-big gx-big-wait', role: 'status' }, React.createElement('span', { className: 'ui-spinner', 'aria-hidden': 'true' }), t("正在读取这张特殊 CG……"))
           : galleryDetailError
             ? React.createElement('div', { className: 'gx-big gx-big-wait err', role: 'alert' }, Icon('alert', { size: 22 }), t("CG 图片读取失败：") + galleryDetailError, React.createElement('button', { className: 'ui-btn sm', onClick: () => openGalleryDetail(item), type: 'button' }, t("重新读取")))
             : item.dataUrl
-              ? React.createElement(CgImageViewer, { src: item.dataUrl, alt: nameOf(item) + t("的特殊CG"), title, subtitle: nameOf(item) + ' · Lv.' + (item.level || '?') + ' · ' + formatCgDate(item.at) })
+              ? React.createElement(CgImageViewer, { galgame:true, src: item.dataUrl, alt: nameOf(item) + t("的特殊CG"), title:detailTitle, subtitle: nameOf(item) + ' · Lv.' + (item.level || '?') + ' · ' + formatCgDate(item.at) })
               : item.status === 'paused'
                 ? React.createElement(CgPausedNotice, { key: item.id, item, onResume: () => resumeGalleryCg(item) })
-                : React.createElement('div', { className: 'gx-big gx-big-wait err', role: 'alert' }, t("这张 CG 暂时无法读取。")),
-        React.createElement('div', { className: 'gx-meta' },
-          React.createElement('b', null, 'Lv.' + (item.level || '?') + (item.theme?.title ? ' · ' + item.theme.title : '')),
-          React.createElement('small', null, [nameOf(item), formatCgDate(item.at), item.theme ? (item.theme.source === 'model' ? t("主题由模型设计") : t("本地主题")) : ''].filter(Boolean).join(' · '))),
-        React.createElement('div', { className: 'gx-acts' },
-          galleryTrash
-            ? React.createElement('button', { className: 'ui-btn sm primary', disabled: busy, onClick: () => recycleCg(item.id, true), type: 'button' }, Icon('undo', { size: 14 }), t("恢复到图鉴"))
+                : React.createElement('div', { className: 'gx-big gx-big-wait err', role: 'alert' }, t("这张 CG 暂时无法读取。"))
+      const reason = item.theme?.fallbackReason
+      const themeSource = item.theme?.source === 'model' ? t("主题由模型设计")
+        : reason ? t("本地主题（{reason}）").replace('{reason}', () => t(reason)) : item.theme ? t("本地主题") : ''
+      const meta = [nameOf(item), 'Lv.' + (item.level || '?'), formatCgDate(item.at), themeSource].filter(Boolean).join(' · ')
+      const actions = galleryTrash
+            ? React.createElement('button', { className: 'b pri', disabled: busy, onClick: () => recycleCg(item.id, true), type: 'button' }, t("恢复到图鉴"))
             : React.createElement(React.Fragment, null,
-              React.createElement('button', { className: 'ui-btn sm', disabled: busy || item.status !== 'ready' || item.savedAsBg === true, onClick: () => saveGalleryBackground(item), type: 'button' }, Icon(item.savedAsBg ? 'check' : 'image', { size: 14 }), item.savedAsBg ? t("已是 Galgame 背景") : t("设为 Galgame 背景")),
-              React.createElement('button', { className: 'ui-btn sm danger', disabled: busy, onClick: () => recycleCg(item.id), type: 'button' }, Icon('trash', { size: 14 }), t("移入回收站")))),
-        notes.length ? React.createElement('details', { className: 'ws-details ws-plain' }, React.createElement('summary', null, Icon('chevron', { size: 16 }), t("画面描述（生成时用的提示词）")), ...notes.map((text: string, i: number) => React.createElement('p', { key: i, className: 'whg-gallery-prompt' }, text))) : null,
-      )
+              React.createElement('button', { className: 'b pri', disabled: busy || item.status !== 'ready' || item.savedAsBg === true, onClick: () => saveGalleryBackground(item), type: 'button' }, item.savedAsBg ? t("已是 Galgame 背景") : t("设为 Galgame 背景")),
+              React.createElement('button', { className: 'b', disabled: busy, onClick: () => recycleCg(item.id), type: 'button' }, t("移入回收站")))
+      body = React.createElement(GalgameCgDetail,{image,heading:detailTitle,meta,descriptionLabel:t("画面描述（生成时用的提示词）"),descriptions:notes,actions},composition)
     } else if (galleryLoading) {
       body = React.createElement('div', { className: 'gx-cg-grid', role: 'status', 'aria-label': t("正在打开图鉴……") }, [0, 1, 2, 3].map(i => React.createElement('span', { key: i, className: 'ui-skel gx-cg-skel' })))
     } else if (galleryError) {
@@ -2183,7 +2299,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     }
     const menuItem = (icon: string, label: string, onSelect: () => void, extra: any = {}) => React.createElement('button', { role: 'menuitem', type: 'button', ...extra, onClick: () => { setCgMenu(null); onSelect() } }, Icon(icon, { size: 16 }), label)
     return React.createElement('div', {
-      className: 'whg-archive-scrim gx-scrim',
+      className: 'whg-archive-scrim gx-paper gx-scrim gx-paper-dialog',
       onMouseDown: (event: any) => { if (event.target === event.currentTarget) closeArchive() },
     },
       React.createElement('aside', {
@@ -2194,18 +2310,15 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
         role: 'dialog',
       },
         React.createElement('header', { className: 'gx-dh' },
-          React.createElement('span', { className: 'kick' }, kicker),
-          React.createElement('h3', { id: 'whg-archive-title-' + appScope }, title),
-          React.createElement('button', { 'aria-label': t("关闭") + (galleryTrash ? t("CG 回收站") : t("CG 图鉴")), className: 'ui-icon-btn gx-dh-x', onClick: closeArchive, ref: archiveCloseRef, type: 'button' }, Icon('close', { size: 18 })),
-          gallerySelected ? null : React.createElement('div', { className: 'gx-dh-row' },
+          React.createElement('div',{className:'gx-paper-caption'},React.createElement('span',{className:'gx-paper-orn','aria-hidden':true}),React.createElement('h3',{id:'whg-archive-title-'+appScope,className:'whg-archive-title'},title),React.createElement('span',{className:'gx-paper-sub'},'Gallery'),React.createElement('span',{className:'kick'},kicker)),
+          React.createElement('button', { 'aria-label': gallerySelected ? t(galleryTrash?'返回回收站':'返回图鉴') : t("关闭") + (galleryTrash ? t("CG 回收站") : t("CG 图鉴")), className: 'gx-dh-x x', onClick: gallerySelected ? closeGalleryDetail : closeArchive, ref: archiveCloseRef, type: 'button' }, gallerySelected ? t(galleryTrash?'返回回收站':'返回图鉴') : t('返回 Esc'))),
+        gallerySelected ? null : React.createElement('div', { className: 'gx-dh-row' },
             React.createElement('div', { className: 'ui-seg sm', role: 'tablist', 'aria-label': t("CG 图鉴") },
               React.createElement('button', { type: 'button', role: 'tab', 'aria-selected': !galleryTrash, 'data-cg-trash-toggle': galleryTrash || undefined, onClick: () => { if (galleryTrash) { closeGalleryDetail(); loadGallery(false) } } }, t("图鉴") + ' ' + galleryCount),
               React.createElement('button', { type: 'button', role: 'tab', 'aria-selected': galleryTrash, 'data-cg-trash-toggle': !galleryTrash || undefined, onClick: () => { if (!galleryTrash) { closeGalleryDetail(); loadGallery(true) } } }, t("回收站") + (galleryTrash ? ' ' + galleryItems.length : ''))),
             React.createElement('span', { className: 'grow' }),
             galleryTrash ? null : React.createElement('button', { className: 'ui-btn sm primary', 'data-cg-generate': true, disabled: busy, onClick: () => s.cgAvailable ? generateGalleryCg() : (window as any).whale?.open('settings'), type: 'button' }, Icon(s.cgAvailable ? 'brush' : 'plug', { size: 14 }), s.cgAvailable ? t("生成纪念 CG") : t("配置 CG 绘图连接"))),
-        ),
         React.createElement('div', { className: 'whg-archive-body gx-db' }, body),
-        cgUndo ? React.createElement('div', { className: 'ui-snackbar gx-snack', role: 'status' }, Icon('trash', { size: 16 }), React.createElement('span', { className: 'grow' }, t("已移入回收站")), React.createElement('button', { onClick: () => recycleCg(cgUndo, true), type: 'button' }, Icon('undo', { size: 14 }), t("撤销")), React.createElement('span', { className: 'gx-snack-left' }, undoLeft + t(" 秒"))) : null,
         cgMenu ? createPortal(React.createElement('div', { className: 'ui-menu gx-cg-menu whg-cg-menu', role: 'menu', 'aria-label': t("CG 操作"), ref: cgMenuRef, style: { position: 'fixed', left: cgMenu.x, top: cgMenu.y } },
           !galleryTrash && cgMenu.item.status === 'ready' ? menuItem('zin', t("查看大图"), () => openGalleryDetail(cgMenu.item)) : null,
           !galleryTrash && cgMenu.item.status === 'ready' ? menuItem('image', cgMenu.item.savedAsBg ? t("已是 Galgame 背景") : t("设为 Galgame 背景"), () => saveGalleryBackground(cgMenu.item), { disabled: busy || cgMenu.item.savedAsBg === true }) : null,
@@ -2225,157 +2338,107 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     const src = headOf(id)
     return React.createElement('span', { className, 'aria-hidden': 'true' }, src ? React.createElement('img', { src, alt: '', draggable: false }) : String(companionCharacterName(s?.companion, id) || id || '?').slice(0, 1))
   }
-  function topbar(showBack: boolean): React.ReactElement {
-    if (group) return React.createElement(GroupHeader, { key:group.id, toolbarRef:setGroupToolbarTarget, state:s.companion, request:companionRequest, resolveArt:art, onBrowse:(characterId:string)=>setGroupBrowseRequest({groupId:group.id,characterId,nonce:Date.now()}), panelRequest:groupPanelRequest,loadCg:(id:string)=>requestCgData(id,props.sessionId), petEnabled:s.petEnabled!==false, onPetToggle:()=>act('pet-set',{enabled:s.petEnabled===false}), chat:props.chat, onToggleChat:props.onToggleChat, r95Action:r95ClientRef.current, onOpenSocial:openSocial, voiceControls:voiceClient.topControls })
-    const characterModel = s.characterModelLabel || s.modelLabel || ''
-    const petEnabled = s.petEnabled !== false
-    const galleryCount = typeof s.galleryCount === 'number' ? s.galleryCount : 0
-    const characterMode = (pluginSettings && pluginSettings.characterMode) || s.characterMode || 'follow'
-    const chatMode = (pluginSettings && pluginSettings.chatMode) || s.chatMode || 'configured'
-    const spriteShown = isSpriteVisible(s.spriteVisibility, s.backgroundMode, props.hideSpriteOnCg !== false)
-    const persona = s?.companion?.personas?.find((row: any) => row.id === s.companion.activePersonaId)?.name
-    const modelText = (() => { const current = s.companion?.characters?.find((c: any) => c.id === s.current); const route = current?.effectiveConnection; return (route?.error ? route.error : route?.model ? route.name + ' · ' + route.model : (s.chatModelLabel || s.lastModel || '')) || t('离线') })()
-    const tool = (icon: string, label: any, extra: any = {}) => React.createElement('button', { type: 'button', ...extra, className: 'gx-tb' + (extra.className ? ' ' + extra.className : '') }, Icon(icon, { size: 15 }), label)
-    const sep = (key: string) => React.createElement('i', { className: 'gx-sep', key, 'aria-hidden': 'true' })
-    return React.createElement('div', { className: 'gx-top' },
-      React.createElement('div', { className: 'gx-row' },
-        React.createElement(GalgameTitle, { key:s.current, characterId:s.current, defaultTitle:t("与") + s.name + t("的galgame"), value:s.companion?.settings?.galgameTitles?.[s.current]||'', request:companionRequest }),
-        React.createElement('div', { className: 'whg-chip-wrap' },
-          React.createElement('button', {
-            'aria-controls': 'whg-character-picker-' + appScope,
-            'aria-expanded': pickerPanel === 'character',
-            'aria-haspopup': 'listbox',
-            className: 'gx-chip' + (pickerPanel === 'character' ? ' open' : ''),
-            onClick: (event: any) => openPicker('character', event.currentTarget),
-            title: t("点击切换出场角色。当前") + (characterMode === 'manual' ? t("已固定") : t("跟随工作区")) + '：' + (characterModel || t("未识别")),
-            type: 'button',
-          }, face(s.current), React.createElement('small', null, t("角色来源")), React.createElement('strong', null, s.name), Icon('chevron', { size: 14 })),
-          pickerOverlay(characterPicker()),
-        ),
-        React.createElement('div', { className: 'whg-chip-wrap' },
-          React.createElement('button', {
-            'aria-controls': s.modelConfigurationCentral ? undefined : 'whg-chat-picker-' + appScope,
-            'aria-expanded': s.modelConfigurationCentral ? undefined : pickerPanel === 'chat',
-            'aria-haspopup': s.modelConfigurationCentral ? undefined : 'listbox',
-            className: 'gx-chip np' + (pickerPanel === 'chat' ? ' open' : ''),
-            onClick: (event: any) => s.modelConfigurationCentral ? (window as any).whale?.open('settings') : openPicker('chat', event.currentTarget),
-            title: s.modelConfigurationCentral ? t("在通用设置里换模型") : t("点击切换 galgame 对话模型。当前模式：") + (chatMode === 'manual' ? t("单独指定") : chatMode === 'main' ? t("跟随工作区") : t("插件默认")),
-            type: 'button',
-          }, React.createElement('i', { className: 'gx-dot' + (props.chat?.enabled ?? (s.chatModelLabel && !s.fallbackUsed) ? '' : ' off'), 'aria-hidden': 'true' }), React.createElement('small', null, t("实际对话")), React.createElement('strong', null, modelText), Icon(s.modelConfigurationCentral ? 'jump' : 'chevron', { size: 14 })),
-          !s.modelConfigurationCentral && pickerOverlay(chatPicker()),
-        ),
-        React.createElement('span', { className: 'gx-grow' }),
-        s.resourcePendingCharacter && validPetCharacter(s.resourcePendingCharacter) ? React.createElement('button',{className:'gx-tb gx-glass',type:'button',onClick:()=> (window as any).whale.resources.manage(s.resourcePendingCharacter)},Icon('download',{size:15}),t('补装角色')+' · '+s.resourcePendingCharacter) : null,
-        s.customCharacter ? React.createElement('span', { className: 'gx-chip np buddy-pet-note' }, t('此角色没有桌宠资源，保留当前桌宠')) : null,
-        voiceClient.topControls,
-        props.chat && s.companion?.r95 ? React.createElement(R95NetButton,{view:s.companion.r95,onAction:r95ClientRef.current,chat:{enabled:!!props.chat.enabled,onToggle:()=>props.onToggleChat?.()}}) : props.chat ? React.createElement('div', { className: 'gx-net', 'data-galgame-net': true }, Icon('globe', { size: 15 }), React.createElement('span', null, t("联网聊天")), React.createElement(Switch, { checked: !!props.chat.enabled, label: t("联网聊天"), onChange: () => props.onToggleChat?.() })) : null,
-      ),
-      React.createElement('div', { ref: toolsRef, className: 'gx-tools', role: 'toolbar', 'aria-label': t("Galgame 工具"), 'data-fit': toolsCollapsed ? 'more' : 'full' },
-        React.createElement('div', { className: 'whg-chip-wrap' },
-          tool('image', t("背景图"), { 'aria-controls': 'whg-background-picker-' + appScope, 'aria-expanded': pickerPanel === 'background', 'aria-haspopup': 'dialog', className: pickerPanel === 'background' ? 'open' : '', onClick: (event: any) => openPicker('background', event.currentTarget) }),
-          pickerOverlay(backgroundPicker()),
-        ),
-        React.createElement('div', { className: 'whg-chip-wrap' },
-          tool('person', t("角色立绘"), { 'aria-controls': 'whg-sprite-picker-' + appScope, 'aria-expanded': pickerPanel === 'sprite', 'aria-haspopup': 'dialog', className: pickerPanel === 'sprite' ? 'open' : '', title: t("为") + (s.name || t("当前角色")) + t("上传本地角色立绘"), onClick: (event: any) => openPicker('sprite', event.currentTarget) }),
-          pickerOverlay(spritePicker()),
-        ),
-        tool('eye', t("立绘"), { 'data-sprite-toggle': true, 'aria-pressed': spriteShown, title: spriteShown ? t("隐藏立绘") : t("显示立绘"), onClick: () => act('sprite-visibility', { characterId: s.current, mode: spriteShown ? 'hide' : 'show' }) }),
-        s.spriteVisibility !== 'auto' && tool('undo', t("恢复自动"), { onClick: () => act('sprite-visibility', { characterId: s.current, mode: 'auto' }) }),
-        sep('s1'),
-        tool('users', t("管理角色"), { 'aria-controls': 'buddy-companion-dialog', 'aria-expanded': companionPanel === 'characters', 'aria-haspopup': 'dialog', title: t("修改") + (s.name || t("当前角色")) + t("的昵称、称呼、问候、性格、语气与 CG 外观描述"), onClick: () => openCompanion('characters') }),
-        tool('idcard', t('我的身份') + (persona ? ' · ' + persona : ''), { title: t('选择和管理我的身份'), 'data-companion-personas': true, onClick: () => openCompanion('personas') }),
-        sep('s2'),
-        // approved design C6: background, portraits | characters, me | history, CG, pet | mood | group
-        ...(toolsCollapsed ? [React.createElement(MoreMenu, { key: 'more', items: [
-          { key: 'history', icon: 'clock', label: t("对话历史"), onClick: () => openCompanion('history') },
-          { key: 'gallery', icon: 'gallery', label: t("CG 图鉴"), count: galleryCount, onClick: (_event: any, anchor: any) => openArchive('gallery', anchor) },
-          { key: 'pet', icon: 'paw', label: t("桌宠"), checked: petEnabled, disabled: busy, title: petEnabled ? t("关闭桌宠，避免与其他悬浮插件冲突") : t("开启可跳转 galgame 的桌宠"), onClick: () => act('pet-set', { enabled: !petEnabled }) }] })] : [
-          tool('clock', t("对话历史"), { key: 'history', 'aria-controls': 'buddy-companion-dialog', 'aria-expanded': companionPanel === 'history', 'aria-haspopup': 'dialog', onClick: () => openCompanion('history') }),
-          tool('gallery', React.createElement(React.Fragment, null, t("CG 图鉴"), galleryCount > 0 ? React.createElement('span', { className: 'gx-cnt' }, galleryCount) : null), { key: 'gallery', 'aria-expanded': archivePanel === 'gallery', className: archivePanel === 'gallery' ? 'open' : '', onClick: (event: any) => openArchive('gallery', event.currentTarget) }),
-          tool('paw', t("桌宠"), { key: 'pet', 'aria-pressed': petEnabled, disabled: busy, title: petEnabled ? t("关闭桌宠，避免与其他悬浮插件冲突") : t("开启可跳转 galgame 的桌宠"), onClick: () => act('pet-set', { enabled: !petEnabled }) })]),
-        sep('s3'),
-        s.companion?.r95 ? React.createElement('div', { 'data-chat-toolbar': 'private', className: 'r95-toolbar' }, React.createElement(MoodChip, { view: s.companion.r95, onAction: r95ClientRef.current, onOpenSocial: openSocial })) : null,
-        sep('s4'),
-        tool('chats', t('群聊'), { 'data-companion-groups': true, onClick: () => openCompanion('groups') }),
-        // restarting clears level and affection, so it asks once in a small bubble
-        React.createElement('span', { className: 'gx-confirm-wrap', ref: resetRef },
-          React.createElement('button', { type: 'button', className: 'gx-tb only', 'aria-label': t("重新开始"), title: t("重新开始（清零等级与好感度）"), 'aria-expanded': armReset, onClick: (e: any) => { e.stopPropagation(); setArmReset(!armReset) } }, Icon('retry', { size: 15 })),
-          armReset ? React.createElement('div', { className: 'gx-confirm', role: 'alertdialog', 'aria-label': t("重新开始") },
-            React.createElement('b', null, t("重新开始？")),
-            React.createElement('span', null, t("等级和好感度会清零，聊天记录保留。")),
-            React.createElement('div', { className: 'gx-confirm-btns' },
-              React.createElement('button', { type: 'button', className: 'ui-btn sm', onClick: () => setArmReset(false) }, t("取消")),
-              React.createElement('button', { type: 'button', className: 'ui-btn sm danger', onClick: () => { setArmReset(false); act('reset') } }, t("重新开始"))),
-          ) : null,
-        ),
-        showBack
-          ? tool('exit', t("返回办公区"), { className: 'back', title: t("回到办公区（角色会继续在桌宠状态陪你）"), onClick: (e: any) => { e.stopPropagation(); setOpen(false) } })
-          : null,
-      ),
-    )
+  const stopReply = () => {void callApi('companion-chat-cancel',{conversationId:s.companion?.activeConversationId}).catch(()=>{})}
+
+  function titleEditor(editLabel?:string): React.ReactElement {
+    return React.createElement(GalgameTitle,{key:s.current,characterId:s.current,galgame:true,defaultTitle:t('与')+s.name+t('的galgame'),editLabel,value:s.companion?.settings?.galgameTitles?.[s.current]||'',request:companionRequest})
   }
 
+  function renderHistoryPortrait(character:any,emotion:string){
+    const src=companionImage(character?.effective?.sprite??character?.sprite,art)
+    return React.createElement(CastPortrait,{member:{...character,name:companionCharacterName(character)},src,normalSrc:src,request:callApi,emotion,align:'top'})
+  }
 
-
-
-
+  function topbar(showBack: boolean): React.ReactElement {
+    if (group) return React.createElement(GroupHeader, {key:group.id,galgame:true,toolbarRef:setGroupToolbarTarget,state:s.companion,request:companionRequest,resolveArt:art,onBrowse:(characterId:string)=>setGroupBrowseRequest({groupId:group.id,characterId,nonce:Date.now()}),panelRequest:groupPanelRequest,loadCg:(id:string)=>requestCgData(id,props.sessionId),petEnabled:s.petEnabled!==false,onPetToggle:()=>act('pet-set',{enabled:s.petEnabled===false}),chat:props.chat,onToggleChat:props.onToggleChat,r95Action:r95ClientRef.current,onOpenSocial:openSocial,voiceControls:voiceClient.topControls,stopReading:voiceClient.stopReading,stageUi,classic,onSettings:()=>setPresentationPanel(true),renderHistoryPortrait,onGroupPhoto:()=>setGroupPhotoRequest({groupId:group.id,nonce:Date.now()})})
+    const characterModel = s.characterModelLabel || s.modelLabel || ''
+    const characterMode = (pluginSettings && pluginSettings.characterMode) || s.characterMode || 'follow'
+    const chatMode = (pluginSettings && pluginSettings.chatMode) || s.chatMode || 'configured'
+    const petEnabled = s.petEnabled !== false
+    const galleryCount = typeof s.galleryCount === 'number' ? s.galleryCount : 0
+    const spriteShown = isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg !== false)
+    const route = s.companion?.characters?.find((c:any)=>c.id===s.current)?.effectiveConnection
+    const modelText = (route?.error ? route.error : route?.model ? route.name+' · '+route.model : s.chatModelLabel||s.lastModel)||t('离线')
+    const online = props.chat?.enabled ?? (s.chatModelLabel&&!s.fallbackUsed)
+    const network = props.chat && s.companion?.r95 ? React.createElement(R95NetButton,{view:s.companion.r95,onAction:r95ClientRef.current,chat:{enabled:!!props.chat.enabled,onToggle:()=>props.onToggleChat?.()}}) : props.chat ? React.createElement('div',{className:'gx-net','data-galgame-net':true},GalgameIcon('globe'),t('联网聊天'),React.createElement(Switch,{checked:!!props.chat.enabled,label:t('联网聊天'),onChange:()=>props.onToggleChat?.()})) : null
+    const runMenu = (action:()=>void) => {stageUi.closeMenu();action()}
+    const cgOpen = (event:any) => openArchive('gallery',event.currentTarget)
+    const reloadResource = s.resourcePendingCharacter && validPetCharacter(s.resourcePendingCharacter) ? GlassButton({onClick:()=> (window as any).whale.resources.manage(s.resourcePendingCharacter)},Icon('download',{size:15}),t('补装角色')+' · '+s.resourcePendingCharacter) : null
+    return React.createElement(React.Fragment,null,
+      GlassCorner('tl',GlassGroup(
+        React.createElement('div',{className:'whg-chip-wrap'},
+          GlassButton({
+            'aria-controls':'whg-character-picker-'+appScope,'aria-expanded':pickerPanel==='character','aria-haspopup':'listbox',
+            onClick:(event:any)=>openPicker('character',event.currentTarget),
+            title:t('点击切换出场角色。当前')+(characterMode==='manual'?t('已固定'):t('跟随工作区'))+'：'+(characterModel||t('未识别')),
+          },face(s.current,'hd'),s.name,GalgameIcon('down')),
+          pickerOverlay(characterPicker())),
+        GlassDivider(),
+        React.createElement('div',{className:'whg-chip-wrap gx-model'},
+          GlassButton({
+            'aria-controls':(s.modelConfigurationCentral?'whg-model-info-':'whg-chat-picker-')+appScope,
+            'aria-expanded':pickerPanel===(s.modelConfigurationCentral?'model':'chat'),
+            'aria-haspopup':s.modelConfigurationCentral?'dialog':'listbox',
+            className:online?'':'mute',
+            onClick:(event:any)=>openPicker(s.modelConfigurationCentral?'model':'chat',event.currentTarget),
+            title:s.modelConfigurationCentral?t('在通用设置里换模型'):t('点击切换 galgame 对话模型。当前模式：')+(chatMode==='manual'?t('单独指定'):chatMode==='main'?t('跟随工作区'):t('插件默认')),
+          },React.createElement('span',{className:'dot'+(online?'':' off'),'aria-hidden':true}),online?modelText:t('离线')),
+          !s.modelConfigurationCentral&&pickerOverlay(chatPicker())),
+        reloadResource)),
+      pickerPanel==='model'&&s.modelConfigurationCentral&&React.createElement('section',{
+        id:'whg-model-info-'+appScope,className:'pop gx-model-info',ref:pickerRef,role:'dialog','aria-label':t('实际对话'),
+      },React.createElement('h5',null,t('实际对话')),
+      React.createElement('div',{className:'row'},React.createElement('span',{className:'dot'+(online?'':' off'),'aria-hidden':true}),React.createElement('span',{className:'grow'},online?modelText:t('离线'))),
+      React.createElement('div',{className:'sub'},t('角色和聊天模型是两个选择。集中配置时，在通用设置里换模型。')),
+      React.createElement('div',{className:'acts'},React.createElement('button',{type:'button',className:'b pri',onClick:()=>{closePicker(false);(window as any).whale?.open('settings')}},t('在通用设置里换模型')))),
+      GlassCorner('tr',
+        GlassGroup(voiceClient.topControls,voiceClient.topControls&&GlassDivider(),network,network&&GlassDivider(),GlassButton({'aria-label':t('菜单'),'aria-expanded':stageUi.menu,'data-galgame-menu':true,ref:menuAnchor,onClick:stageUi.toggleMenu},GalgameIcon('menu'))),
+        GlassGroup(GlassButton({'aria-label':t('对话历史'),title:t('对话历史'),onClick:()=>openCompanion('history')},GalgameIcon('hist')))),
+      GlassCorner('br',GlassGroup(
+        busy&&pendingChat?GlassButton({className:'warn',onClick:stopReply},GalgameIcon('stop'),t('停止回复')):voiceClient.stopReading,
+        (busy&&pendingChat||voiceClient.stopReading)&&GlassDivider(),
+        GlassButton({'aria-label':t('CG 图鉴'),title:t('CG 图鉴'),'aria-expanded':archivePanel==='gallery',onClick:cgOpen},GalgameIcon('image'),galleryCount>0&&React.createElement('span',{className:'badge'},galleryCount)),
+        s.companion?.r95&&GlassDivider(),
+        s.companion?.r95&&React.createElement('div',{'data-chat-toolbar':'private',className:'r95-toolbar'},React.createElement(MoodChip,{galgame:true,view:s.companion.r95,onAction:r95ClientRef.current,onOpenSocial:openSocial})),
+        GlassDivider(),GlassHideButton(stageUi.hide))),
+      stageUi.menu&&React.createElement('div',{className:'menu','aria-label':t('菜单')},
+        React.createElement('div',{className:'mh'},titleEditor()),React.createElement('hr'),
+        GlassMenuItem('image',t('背景图'),(event:any)=>runMenu(()=>openPicker('background',menuAnchor.current||event.currentTarget))),
+        GlassMenuItem('user',t('角色立绘'),(event:any)=>runMenu(()=>openPicker('sprite',menuAnchor.current||event.currentTarget))),
+        GlassMenuItem('eye',spriteShown?t('隐藏立绘'):t('显示立绘'),()=>runMenu(()=>act('sprite-visibility',{characterId:s.current,mode:spriteShown?'hide':'show'})),{'data-sprite-toggle':true,'aria-pressed':spriteShown}),
+        s.spriteVisibility!=='auto'&&GlassMenuItem('eye',t('恢复自动'),()=>runMenu(()=>act('sprite-visibility',{characterId:s.current,mode:'auto'}))),
+        React.createElement('hr'),
+        GlassMenuItem('users',t('管理角色'),()=>runMenu(()=>openCompanion('characters'))),
+        GlassMenuItem('id',t('我的身份'),()=>runMenu(()=>openCompanion('personas')),{'data-companion-personas':true}),
+        GlassMenuItem('hist',t('对话历史'),()=>runMenu(()=>openCompanion('history'))),
+        GlassMenuItem('image',t('CG 图鉴'),(event:any)=>runMenu(()=>openArchive('gallery',menuAnchor.current||event.currentTarget)),{},galleryCount>0?React.createElement('span',{className:'r'},galleryCount):null),
+        React.createElement('hr'),
+        GlassMenuItem('pet',t('桌宠'),()=>runMenu(()=>act('pet-set',{enabled:!petEnabled})),{'aria-pressed':petEnabled,disabled:busy}),
+        GlassMenuItem('users',t('群聊'),()=>runMenu(()=>openCompanion('groups')),{'data-companion-groups':true}),
+        GlassMenuItem('gear',t('设置'),()=>runMenu(()=>setPresentationPanel(true))),
+        showBack&&GlassMenuItem('back',t('返回办公区'),()=>runMenu(()=>setOpen(false)))),
+      pickerOverlay(backgroundPicker()),pickerOverlay(spritePicker()))
+  }
 
   function stage(): React.ReactElement {
-    if (group) return React.createElement(CompanionGroupStage, { toolbarTarget:groupToolbarTarget, browseRequest:groupBrowseRequest, state: s.companion, request: companionRequest, resolveArt: art, renderPortrait: (member: any, src: string, emotion: string) => React.createElement(CastPortrait, { member: {...member, ...(s?.characters?.find((row: any) => row.id === member.id)||{}), name: companionCharacterName(member)}, src: member.id==='deepseek'&&emotion!=='normal'&&!member.hasCustomSprite&&!member.effective?.sprite ? art(EMOTION_ART[emotion])||src : src, normalSrc: src, request: callApi, emotion, align: 'top' }) })
-    if (!isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg !== false)) return React.createElement('div',{className:'whg-stage','data-sprite-hidden':true})
-    if (s.customCharacter && !s.hasCustomSprite && !customSprite) return React.createElement('div', { className: 'whg-stage buddy-text-only-stage' }, React.createElement('div', { className: 'buddy-text-only-card' }, React.createElement('strong', null, s.name), React.createElement('span', null, t('未设置立绘，可以直接聊天'))))
-    const emotion = emotionOf()
-    const mood = emotion
-    let src: string | undefined
-    let useFilter = !s.moodSprites
-    let emoKey = ''
-    if (customSprite) {
-      src = customSprite
-      useFilter = true
-    } else if (s.current === 'deepseek') {
-      emoKey = emotion === 'normal' ? '' : EMOTION_ART[emotion]
-      src = emoKey ? art(emoKey) : art(s.sprite)
-      useFilter = !emoKey
-    } else if (CHARACTER_ART[s.sprite]) {
-      src = art(s.sprite)
-      emoKey = emotion === 'normal' ? '' : emotion
-      useFilter = false
-    } else if (s.moods) {
-      src = art(s.moods[mood]) || art(s.moods.normal)
-      if (!src) src = art(s.sprite)
-    } else {
-      src = companionImage(s.sprite, art) || undefined
-    }
-    const wrap = s.hasCustomSprite&&!customSprite&&!imgFail
-      ? React.createElement('div', {className:'whg-sprite-loading','aria-label':s.name})
-      : (!src || imgFail)
-      ? React.createElement('div', { className: 'whg-sprite-fallback', 'aria-label': s.name }, s.companion?.characters?.find((row: any) => row.id === s.current)?.builtin === false ? String(s.name || '').slice(0, 2) : '🐋')
-      : React.createElement(ExpressionPortrait, {
-        characterId:s.current,
-        normalSrc:art(s.sprite),
-        emotion,
-        custom:!!customSprite,
-        className: 'whg-sprite' + (s.portrait ? ' whg-sprite-portrait' : '') + (customSprite ? ' whg-sprite-custom' : ''),
-        src,
-        spriteKey: customSprite || emoKey ? null : s.sprite,
-        align: 'top',
-        alt: s.name,
-        draggable: false,
-        onError: () => { setImgFail(true) },
-      })
-    const blushOpacity = emoKey
-      ? 0
-      : mood === 'shy' ? 0.55 : mood === 'happy' ? 0.3 : 0
-    return React.createElement('div', { className: 'whg-stage' },
-      React.createElement('div', { className: 'whg-tint', style: { background: 'radial-gradient(closest-side, ' + s.color + '2e, transparent)' } }),
-      React.createElement('div', { className: 'whg-sprite-wrap' + (s.portrait ? ' whg-portrait' : '') + (useFilter ? ' whg-mood-' + mood : '') },
-        wrap,
-        React.createElement('div', {
-          className: 'whg-blush',
-          style: { opacity: blushOpacity },
-        }),
-      ),
-    )
+    if(group)return React.createElement(CompanionGroupStage,{
+      toolbarTarget:groupToolbarTarget,classic,cloudVoiceCharacters:voiceClient.builtinCloud?.characters,browseRequest:groupBrowseRequest,state:s.companion,request:companionRequest,resolveArt:art,playback:{...groupPlayback,characterId:groupCharacter},expressionMotion:presentationSettings.expressionMotion,
+      onMembers:(event:React.MouseEvent<HTMLButtonElement>)=>setGroupPanelRequest({groupId:group.id,panel:'members',trigger:event.currentTarget,nonce:Date.now()}),
+      renderPortrait:(member:any,src:string,emotion:string,nextEmotion:string)=>React.createElement(CastPortrait,{member:{...member,...(s?.characters?.find((row:any)=>row.id===member.id)||{}),name:companionCharacterName(member)},src,normalSrc:src,request:callApi,emotion,nextEmotion,align:'top'}),
+    })
+    if(!isSpriteVisible(s.spriteVisibility,s.backgroundMode,props.hideSpriteOnCg!==false))return React.createElement('div',{'data-sprite-hidden':true})
+    if(s.customCharacter&&!s.hasCustomSprite&&!customSprite)return React.createElement('div',{className:'textcard'},React.createElement('b',null,s.name),React.createElement('span',null,t('未设置立绘，可以直接聊天')))
+    const src = customSprite||companionImage(s.sprite,art)||undefined
+    const portrait = s.hasCustomSprite&&!customSprite&&!imgFail
+      ? React.createElement('div',{className:'whg-sprite-loading','aria-label':s.name})
+      : imgFail
+        ? React.createElement('div',{className:'whg-sprite-fallback','aria-label':s.name},s.customCharacter?String(s.name||'').slice(0,2):'🐋')
+        : React.createElement(ExpressionPortrait,{
+          characterId:s.current,normalSrc:art(s.sprite),emotion:privatePlayback.emotion,nextEmotion:privatePlayback.nextEmotion,custom:!!customSprite,
+          className:customSprite?'whg-sprite-custom':'',src,spriteKey:customSprite?null:s.sprite,align:'top',alt:s.name,onError:()=>setImgFail(true)
+        })
+    return React.createElement(React.Fragment,null,
+      React.createElement('div',{className:'spr'+(privateFx?.action?' m-'+privateFx.action:''),'data-galgame-emotion':privatePlayback.emotion,style:{'--gx-portrait-width-natural':portraitWidth(s.current,864)+'px'} as React.CSSProperties,onAnimationEnd: (event:any)=>{if(event.target===event.currentTarget&&privateFx?.action)event.currentTarget.classList.remove('m-'+privateFx.action)}},portrait,React.createElement(ExpressionBubble,{effect:privateFx})))
   }
 
 
@@ -2395,7 +2458,7 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   }
 
   function dialogue(): React.ReactElement {
-    if (group) return React.createElement(CompanionGroupDialogue, { state: s.companion, request: companionRequest, voiceControls:voiceClient.controls, voiceClient, voiceSubtitle:voiceClient.subtitle, voicePresentation:voiceClient.presentation, chat: props.chat, onToggleChat: props.onToggleChat, onApi: props.onManage, onPhoto: (cgId:string) => setGroupPanelRequest({groupId:group.id,panel:'gallery',cgId,nonce:Date.now()}), onManage: () => setGroupPanelRequest({groupId:group.id,panel:'settings',nonce:Date.now()}) })
+    if (group) return React.createElement(CompanionGroupDialogue, { state: s.companion, galgame:true, request: companionRequest, voiceControls:voiceClient.controls, voiceClient, voiceSubtitle:voiceClient.subtitle, voicePresentation:voiceClient.presentation, playback:groupPlayback, photoRequest:groupPhotoRequest, stageUi, classic, chat: props.chat, onToggleChat: props.onToggleChat, onApi: props.onManage, onPhoto: (cgId:string) => setGroupPanelRequest({groupId:group.id,panel:'gallery',cgId,nonce:Date.now()}), onManage: () => setGroupPanelRequest({groupId:group.id,panel:'settings',nonce:Date.now()}) })
     const last = lastLine()
     const userName = last?.personaSnapshot?.nickname || s.companion?.personas?.find((p: any) => p.id === s.companion.activePersonaId)?.nickname || t("你")
     const plateLabel = last ? (last.who === 'heroine' ? s.name : last.who === 'user' ? userName : t("旁白")) : s.name
@@ -2407,21 +2470,21 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     const choose = (c: any) => { if (c && c.text) say(c.id ? { choiceId: c.id, text: c.text } : { text: c.text }) }
     const showChoices = choiceList.length > 0 && !replying && !offline && !apiError && !voiceClient.speaking && !voiceClient.live
     const choices = showChoices
-      ? React.createElement('div', { className: 'whg-choices gx-choices' },
-        choiceList.map((c: any, i: number) => React.createElement('button', {
+      ? React.createElement('div', { className: classic?'whg-choices gx-choices':'choices'+(stageUi.inputOpen?' up':'') },
+        choiceList.map((c: any, i: number) => React.createElement(GalgameChoice, {
           key: c.id || i,
-          className: 'whg-choice gx-choice',
+          classic, index: i + 1, label: c.text,
           disabled: busy || !c.text,
           onClick: () => choose(c),
-          type: 'button',
-        }, React.createElement('kbd', { 'aria-hidden': 'true' }, i + 1), React.createElement('span', null, c.text))))
+        })))
       : null
     const blocked = busy || offline || voiceClient.speaking
-    const input = voiceClient.replacingInput ? voiceClient.inputReplacement : React.createElement('div', { className: 'whg-input-row gx-say mk-ginput vx-ginput' },
+    const draftSource = voiceClient.draftFromVoice ? React.createElement('small',{className:'gx-draft-source',role:'status'},React.createElement('span',{className:'ws-tag'},t('来自录音')),' · ',t('可以先改再发')) : null
+    const input = voiceClient.replacingInput ? voiceClient.inputReplacement : React.createElement('div', { className: classic?'whg-input-row gx-say mk-ginput vx-ginput':'ibar mk-ginput vx-ginput' },
       voiceClient.inputLeft,
       React.createElement('label', { className: 'gx-ta gx-compact' + (blocked ? ' dis' : '') },
         React.createElement('textarea', {
-          className: 'whg-input', rows: 1, title: t('Enter 发送 · Shift+Enter 换行'), 'aria-label': t('私聊消息'),
+          className: 'whg-input', rows: 1, 'aria-describedby':classic?undefined:'gx-stage-keyboard-hint', title: t('Enter 发送 · Shift+Enter 换行'), 'aria-label': t('私聊消息'),
           value: text,
           placeholder: replying || voiceClient.speaking ? t("等 ") + s.name + t(" 说完…") : offline ? t("开启联网聊天后就能回复") : t("回复 ") + s.name + ' …',
           disabled: blocked,
@@ -2433,15 +2496,16 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
             if (!text && showChoices && /^[1-9]$/.test(e.key) && !e.ctrlKey && !e.altKey && !e.metaKey) { const c = choiceList[Number(e.key) - 1]; if (c) { e.preventDefault(); choose(c) } return }
             if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send() }
           },
-        }), voiceClient.draftFromVoice ? React.createElement('small',null,React.createElement('span',{className:'ws-tag'},t('来自录音')),' · ',t('可以先改再发')) : React.createElement('small',null,t('Enter 发送 · Shift+Enter 换行'))),
+        }), draftSource ? (classic ? draftSource : null) : React.createElement('small',{className:'gx-keyboard-hint'},t('Enter 发送 · Shift+Enter 换行'))),
+      !classic&&draftSource,
       voiceClient.inputRight,
-      React.createElement('button', { className: 'whg-send gx-send', type: 'button', disabled: blocked || !text.trim(), onClick: send },
+      React.createElement('button', { className: classic?'whg-send gx-send':'ib pri gx-send', type: 'button', disabled: blocked || !text.trim(), onClick: send },
         replying ? React.createElement('span', { className: 'ui-spinner', 'aria-hidden': 'true' }) : Icon('send', { size: 15 }),
         replying ? t("回复中") : t("回复")))
     const truncated = apiError ? modelOutputTruncated(apiError) : false
     const alert = apiError
       ? React.createElement('div', { className: 'gx-alert', role: 'alert' }, Icon('alert', { size: 16 }),
-        React.createElement('span', { className: 'grow' }, React.createElement('b', null, truncated ? t("回复被截断") : /人生切换|正在保存或切换/.test(String(apiError)) ? t("角色的人生正在切换") : /缺少联网搜索组件|missing its web search component/i.test(String(apiError)) ? t("联网搜索未就绪") : t("没连上模型")), ' · ', modelErrorText(String(apiError).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''))),
+        React.createElement('span', { className: 'grow' }, React.createElement('b', null, truncated ? t("回复被截断") : /人生切换|正在保存或切换/.test(String(apiError)) ? t("角色的人生正在切换") : /缺少联网搜索组件|missing its web search component/i.test(String(apiError)) ? t("联网搜索未就绪") : t("没连上模型")), ' · ', modelErrorText(cleanIpcMessage(apiError))),
         failedChat && !truncated ? React.createElement('button', { type: 'button', className: 'gx-gbtn', disabled: busy, onClick: () => { setText(''); say(failedChat) } }, Icon('retry', { size: 14 }), t("重试")) : null,
         React.createElement('button', { type: 'button', className: 'gx-gbtn', onClick: () => (window as any).whale?.open?.('settings') }, truncated ? t('打开通用设置') : t("去设置")))
       : s.fallbackUsed
@@ -2452,27 +2516,29 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
             React.createElement('span', { className: 'grow' }, t("联网聊天已关闭，现在只能翻看之前的对话。")),
             props.onToggleChat ? React.createElement('button', { type: 'button', className: 'gx-gbtn pri', onClick: () => props.onToggleChat?.() }, t("开启联网聊天")) : null)
           : null
-    const lastStored=s.companion?.messages?.at(-1),interrupted=lastStored?.status==='failed'&&lastStored.requestId===s.companion?.interruptedReply?.requestId?s.companion.interruptedReply:null;const liveStream=streamReply??s.companion?.streaming,liveText=liveStream?String(liveStream.text??''):!replying?visibleInterruptedText(interrupted,{requestText:lastStored?.role==='user'?lastStored.text:''}):''
+    const lastStored=activeStoredMessage,liveStream=liveReply
     // approved design C9: while the reply streams the footer says which paragraph she is on; after a stop it says the
     // partial text was kept, and Full text opens that kept text (not the line before it).
     const stopped = !!liveText && (streamReply?.status === 'incomplete' || !streamReply && !!interrupted?.text), streaming = !!liveText && !stopped
     const stopError = stopped ? (streamReply?.error || interrupted?.error) : null, stopReason = stopError && !/用户停止回复$/.test(String(stopError)) ? String(stopError) : ''
     // approved design C8: her unread line is shown as her line in the box, with reply options
-    const speech = !liveText && !replying ? unreadLines(s.companion?.r95) : [], speechShown = speech.length > 0
+    const speechShown = speech.length > 0
     shownSpeech.current = speechShown ? speech[0] : null
-    const replyPlate = !!liveText || speechShown, pWho = replyPlate ? 'heroine' : plateWho, pLabel = replyPlate ? s.name : plateLabel, pStyle = replyPlate ? plateVars({ who: 'heroine', characterId: s.current, color: s.color }) : plateStyle
+    const replyPlate = replying || !!liveText || speechShown, pWho = replyPlate ? 'heroine' : plateWho, pLabel = replyPlate ? s.name : plateLabel, pStyle = replyPlate ? plateVars({ who: 'heroine', characterId: s.current, color: s.color }) : plateStyle
     const displayLastText=visibleCompanionText(last?{...last,request:lastStored?.request}:null,{messages:s.companion?.messages??[]})
+    const replyId=liveStream?.requestId??speechRequestId??interrupted?.requestId??privateRequestId
     const voiceRequestId=liveStream?.requestId??(replying?voiceClient.presentation.requests?.at(-1)?.requestId:lastStored?.requestId),voiceLine=voiceDialogueState(voiceClient.presentation,voiceRequestId)
+    const speechVoiceLine=speech[0]?.status!=='awaiting-presentation'&&voiceDialogueState(voiceClient.presentation,speechRequestId)
     const now = voiceLine
       ? React.createElement(VoiceDialogueLine,{className:'whg-line-now heroine',presentation:voiceClient.presentation,requestId:voiceRequestId})
       : speechShown
-      ? React.createElement(ChatSpeechLines, { view: s.companion.r95, onAction: r95ClientRef.current, onReply: () => focusGalgameReply(), inDialog: true, optionsRef: speechOptionsRef })
+      ? React.createElement(ChatSpeechLines, { view: s.companion.r95, onAction: r95ClientRef.current, onReply: () => focusGalgameReply(), inDialog: true, frameless: !classic, optionsRef: speechOptionsRef, stageActions: classic?undefined:speechActions, voicePresentation: classic?undefined:voiceClient.presentation })
       : liveText
-      ? React.createElement('div',{className:'whg-line-now heroine','data-streaming-reply':true,'aria-live':'off','aria-busy':replying},liveText,streaming?React.createElement('i',{className:'gx-caret','aria-hidden':'true'}):null)
+      ? React.createElement('div',{className:'whg-line-now heroine','data-streaming-reply':true,'aria-live':'off','aria-busy':replying},privatePlayback.progressive?React.createElement(GalgameSentenceText,{playback:privatePlayback}):liveText,streaming?React.createElement('i',{className:'gx-caret','aria-hidden':'true'}):null)
       : replying
       ? React.createElement('div', { className: 'whg-line-now gx-typing', role: 'status' }, React.createElement('span', { 'aria-hidden': 'true' }, React.createElement('i'), React.createElement('i'), React.createElement('i')), fill(t('{name} 正在想…'), { name: s.name }))
       : last
-        ? React.createElement('div', { key: 'now-' + ((s.history || []).length), className: 'whg-line-now ' + last.who + (apiError ? ' muted' : ''), 'aria-live': 'polite' }, displayLastText)
+        ? React.createElement('div', { key: 'now-' + ((s.history || []).length), className: 'whg-line-now ' + last.who + (apiError ? ' muted' : ''), 'aria-live': 'polite' }, privatePlayback.progressive?React.createElement(GalgameSentenceText,{playback:privatePlayback}):displayLastText)
         : React.createElement('div', { className: 'whg-line-now narrator' }, t("（点击输入框，开始和") + s.name + t("对话吧）"))
     const footStatus = voiceLine?.waiting
       ? React.createElement('span',{className:'gx-foot-st',role:'status'},t('正在准备配音…'))
@@ -2483,14 +2549,29 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
       : stopped ? React.createElement('span', { className: 'gx-foot-st stopped', role: 'status' }, Icon('stop', { size: 12 }), t('已停止 · 保留了已生成的部分') + (stopReason ? ' · ' + stopReason : '')) : null
     const sourceMessage = !replying && !liveText && !speechShown ? lastStored : null
     const fullText = stopped ? liveText : !replying && !liveText && !speechShown && displayLastText ? displayLastText : ''
-    const fullAt = stopped ? (interrupted?.updatedAt ?? interrupted?.at ?? lastStored?.createdAt) : (s.companion?.messages?.find((m: any) => m.id && m.id === last?.id)?.createdAt ?? (lastStored?.role === 'assistant' ? lastStored.createdAt : undefined))
+    const fullAt = stopped ? (interrupted?.updatedAt ?? interrupted?.at ?? lastStored?.createdAt) : (s.companion?.messages?.find((m: any) => last?.occurrenceId ? m.occurrenceId === last.occurrenceId : m.id && m.id === last?.id)?.createdAt ?? (lastStored?.role === 'assistant' ? lastStored.createdAt : undefined))
     const stopButton = replying ? React.createElement('button',{type:'button',className:'gx-gbtn gx-stop',onClick:()=>{void callApi('companion-chat-cancel',{conversationId:s.companion?.activeConversationId}).catch(()=>{})}},Icon('stop',{size:14}),t('停止回复')) : voiceClient.speaking ? voiceClient.stopReading : null
-    const foot = footStatus || stopButton || needsFullView(fullText) || sourceView(sourceMessage)
-      ? React.createElement('div', { className: 'gx-foot' }, footStatus, React.createElement(MessageSources, { message: sourceMessage }), React.createElement('span', { className: 'grow' }), stopButton,
-        fullText ? React.createElement(FullMessageButton, { text: fullText, messageId: [s.current, s.companion?.activePersonaId, s.companion?.activeConversationId, stopped ? 'stopped:' + (interrupted?.requestId || streamReply?.requestId || '') : last?.id || (s.history || []).length].join(':'), title: plateLabel, name: stopped || last?.who === 'heroine' ? s.name : undefined, at: fullAt, interrupted: stopped }) : null)
+    const foot = footStatus || classic&&stopButton || needsFullView(fullText) || sourceView(sourceMessage)
+      ? React.createElement('div', { className: 'gx-foot' }, footStatus, React.createElement(MessageSources, { message: sourceMessage }), React.createElement('span', { className: 'grow' }), classic?stopButton:null,
+        fullText ? React.createElement(FullMessageButton, { galgame:true, text: fullText, messageId: [s.current, s.companion?.activePersonaId, s.companion?.activeConversationId, stopped ? 'stopped:' + (interrupted?.requestId || streamReply?.requestId || '') : (last?.occurrenceId ?? last?.id) || (s.history || []).length].join(':'), title: plateLabel, name: stopped || last?.who === 'heroine' ? s.name : undefined, at: fullAt, interrupted: stopped }) : null)
       : null
     const pct = Math.min(100, Math.round((s.affection / Math.max(1, s.cap)) * 100))
-    return React.createElement('div', { id: 'whg-panel', className: 'whg-panel gx-dlg' },
+    if(!classic&&voiceClient.live&&voiceClient.replacingInput&&voiceClient.inputReplacement)return React.createElement('section',{id:'whg-panel',className:'dialogue-shell','aria-label':t('私聊消息'),inert:stageUi.hidden},
+      React.createElement('div',{className:'live','data-galgame-live':true},
+        React.createElement('div',{className:'nm'},GalgameIcon('wave'),Ornament(),s.name,React.createElement('span',{className:'rule','aria-hidden':true})),
+        voiceLine?.subtitle&&React.createElement('div',{className:'tx'},now),
+        voiceClient.inputReplacement,voiceClient.alerts))
+    if(!classic)return React.createElement('section',{id:'whg-panel',className:'dialogue-shell','aria-label':t('私聊消息'),inert:stageUi.hidden},
+      React.createElement('div',{className:'say'},
+        React.createElement('div',{className:'nm'},pWho==='heroine'&&voiceClient.speaking?GalgameIcon('wave'):null,Ornament(),pLabel,React.createElement('span',{className:'rule','aria-hidden':true}),
+          React.createElement('span',{className:'lv'},'Lv.'+s.level+t(' · 好感度 ')+affectionText(s.affection)+'/'+s.cap,React.createElement('i',{style:{'--p':pct+'%'} as React.CSSProperties,'aria-hidden':true}))),
+        React.createElement(StageDialogueText,{scope:stageScope,replyId,follow:streaming||!!(voiceLine?voiceLine.subtitle:speechVoiceLine?.subtitle)},now),
+        React.createElement('div',{className:'st'},foot&&!voiceLine?.waiting?foot:null,voiceClient.stageAlerts),
+        s.companion?.lifeRecovery?.characterId===s.current?React.createElement(LifeRecoveryBanner,{state:s.companion,request:companionRequest,characterId:s.current,setFeedback:(text:string,error?:boolean)=>setApiError(error?text:null)}):null,
+        alert),
+      speechShown&&!voiceLine?React.createElement('div',{className:'choices gx-speech-actions',ref:setSpeechActions}):speechShown?null:choices,
+      React.createElement(GalgameInput,{open:stageUi.inputOpen,onOpen:stageUi.openInput,trigger:stageUi.trigger,label:replying||voiceClient.speaking?t('等 ')+s.name+t(' 说完…'):offline?t('开启联网聊天后就能回复'):null,input,help:!voiceClient.replacingInput}))
+    return React.createElement('div', { id: 'whg-panel', className: 'whg-panel gx-dlg gx-classic-content',inert:stageUi.hidden },
       React.createElement('div', { className: 'whg-plate gx-plate' + (pWho === 'heroine' ? '' : ' ' + pWho), style: pStyle }, pLabel, pWho === 'heroine' && voiceClient.speaking ? voiceClient.speakingIndicator : null, pWho === 'heroine' ? React.createElement('i', { className: 'gx-acc', 'aria-hidden': 'true' }) : null),
       React.createElement('div', { className: 'whg-level gx-lvl' },
         React.createElement('span', null, 'Lv.', React.createElement('b', null, s.level), t(" · 好感度 "), React.createElement('b', null, affectionText(s.affection)), '/' + s.cap),
@@ -2508,13 +2589,14 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
   function cgModal(): React.ReactElement | null {
     if (!settled || !s || !s.cg) return null
     const who = s.cg.name || s.name
+    const cgId = s.cg.cgId || s.cg.id
     if (s.cg.status === 'paused') {
-      return React.createElement('div', { className: 'whg-toast gx-toast', role: 'status' }, React.createElement(CgPausedNotice, { key: s.cg.id, item: s.cg, compact: true, onResume: () => resumeGalleryCg(s.cg) }))
+      return React.createElement('div', { className: 'whg-toast gx-toast', role: 'status' }, React.createElement(CgPausedNotice, { key: cgId, item: s.cg, compact: true, onResume: () => resumeGalleryCg({id:cgId}) }))
     }
     // design → queue → draw, shown as three steps
     if (s.cg.status === 'planning' || s.cg.status === 'generating' || s.cg.status === 'queued') {
       const step = s.cg.status === 'planning' ? 1 : s.cg.status === 'queued' ? 2 : 3
-      return React.createElement('div', { className: 'whg-toast gx-toast', role: 'status' },
+      return React.createElement('div', { className: 'whg-toast gx-toast gx-stage-cg-toast', role: 'status' },
         React.createElement('span', { className: 'ui-spinner', 'aria-hidden': 'true' }),
         React.createElement('div', null,
           React.createElement('b', null, step === 1 ? t("正在设计纪念 CG 主题…") : step === 2 ? t("CG 已排队。") : t("正在绘制纪念 CG…")),
@@ -2522,75 +2604,85 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
           React.createElement('small', null, t("第 {k} 步 / 共 3 步").replace('{k}', String(step)) + ' · ' + who + (s.level ? ' Lv.' + s.level : ''))))
     }
     if (s.cg.status === 'failed' && !s.cg.seen) {
-      return React.createElement('div', { className: 'whg-toast gx-toast err', role: 'alert' },
+      return React.createElement('div', { className: 'whg-toast gx-toast gx-stage-cg-toast err', role: 'alert' },
         Icon('alert', { size: 18 }),
         React.createElement('div', null,
           React.createElement('b', null, t("CG 生成失败")),
-          React.createElement('small', null, s.cg.error || t("未知错误")),
+          React.createElement('small', null, (cgStageRetryError?.id===cgId && cgStageRetryError?.message) || s.cg.error || t("未知错误")),
           React.createElement('span', { className: 'gx-row-btns' },
-            s.cg.id ? React.createElement('button', { type: 'button', className: 'ui-btn sm primary', disabled: busy, onClick: () => { generateGalleryCg({ id: s.cg.id, characterId: s.current }); act('cg-ack') } }, t("重试")) : null,
-            React.createElement('button', { type: 'button', className: 'ui-btn sm', disabled: busy, onClick: () => act('cg-ack') }, t("关闭")))))
+            cgId ? React.createElement('button', { type: 'button', className: 'b pri', disabled: busy, onClick: () => void retryStageCg(cgId) }, t("重试")) : null,
+            React.createElement('button', { type: 'button', className: 'b', disabled: busy, onClick: () => act('cg-ack', {id:cgId}) }, t("关闭")))))
     }
     if (s.cg.status === 'ready' && !s.cg.seen) {
       const detailReady = rewardCgDetail
         && String(rewardCgDetail.id || '') === rewardCgId
         && typeof rewardCgDetail.dataUrl === 'string'
         && rewardCgDetail.dataUrl
-      const head = React.createElement('div', { className: 'gx-gift-b' },
-        face(s.current),
-        React.createElement('div', { className: 'grow' },
-          React.createElement('h4', null, t("升级啦 · ") + who + t(" 送你一张特殊 CG")),
-          React.createElement('p', null, (s.level ? 'Lv.' + s.level + t(" 纪念 · ") : '') + t("已收进 CG 图鉴"))),
-        detailReady
-          ? (s.cg.savedAsBg
-            ? React.createElement('button', { className: 'ui-btn', onClick: () => { bgCache.current = null; act('cg-clear-bg') }, type: 'button' }, t("恢复默认背景"))
-            : React.createElement('button', { className: 'ui-btn', disabled: busy, onClick: saveRewardCgBackground, type: 'button' }, Icon('image', { size: 15 }), t("设为 Galgame 背景")))
-          : rewardCgError
-            ? React.createElement('button', { className: 'ui-btn', disabled: rewardCgLoading, onClick: () => loadRewardCg(rewardCgId), type: 'button' }, rewardCgLoading ? t("重新读取中…") : t("重新读取"))
-            : null,
-        React.createElement('button', { className: 'ui-btn primary', disabled: busy, onClick: acknowledgeRewardCg, type: 'button' }, detailReady ? t("收下") : t("先关闭")))
-      return React.createElement('div', { 'aria-modal': 'true', className: 'whg-cg-backdrop gx-veil', role: 'dialog', 'aria-label': t("升级啦 · ") + who + t(" 送你一张特殊 CG") },
-        React.createElement('div', { className: 'gx-gift' },
-          detailReady
-            ? React.createElement('div', { className: 'gx-big' }, React.createElement(CgImageViewer, { src: rewardCgDetail.dataUrl, alt: who + t("的特殊CG"), title: who + t("的特殊CG"), subtitle: (s.level ? 'Lv.' + s.level + ' · ' : '') + t("升级纪念") }))
-            : React.createElement('div', { className: 'gx-big gx-big-wait', role: rewardCgError ? 'alert' : 'status' },
-              rewardCgError ? Icon('alert', { size: 22 }) : React.createElement('span', { className: 'ui-spinner', 'aria-hidden': 'true' }),
-              rewardCgError ? t("特殊 CG 读取失败：") + rewardCgError : rewardCgLoading ? t("正在取出这份礼物……") : t("正在准备这份礼物……")),
-          head))
+      const title=t('升级啦 · ')+who+t(' 送你一张特殊 CG')
+      return React.createElement('div',{'aria-modal':'true',className:'whg-cg-backdrop gx-veil gx-gift-paper',role:'dialog','aria-label':title},
+        React.createElement('section',{className:'sheet md'},
+          React.createElement('header',{className:'shh'},Ornament(),React.createElement('h4',null,title),React.createElement('span',{className:'sub'},'Gift'),React.createElement('span',{className:'crumb'}),
+            React.createElement('button',{type:'button',className:'x',disabled:busy,onClick:acknowledgeRewardCg},t('先关闭'))),
+          React.createElement('div',{className:'shb'},
+            detailReady
+              ? React.createElement('div',{className:'gx-big'},React.createElement(CgImageViewer,{galgame:true,src:rewardCgDetail.dataUrl,alt:who+t('的特殊CG'),title,subtitle:(s.level?'Lv.'+s.level+' · ':'')+t('升级纪念')}))
+              : React.createElement('div',{className:'gx-big gx-big-wait',role:rewardCgError?'alert':'status'},rewardCgError?Icon('alert',{size:22}):React.createElement('span',{className:'ui-spinner','aria-hidden':true}),rewardCgError?t('特殊 CG 读取失败：')+rewardCgError:rewardCgLoading?t('正在取出这份礼物……'):t('正在准备这份礼物……'))),
+          React.createElement('footer',{className:'shf'},
+            detailReady&&s.cg.savedAsBg===true?React.createElement('button',{className:'b',type:'button',onClick:()=>{bgCache.current=null;act('cg-clear-bg')}},t('恢复默认背景'))
+              : detailReady?React.createElement('button',{className:'b',disabled:busy,onClick:saveRewardCgBackground,type:'button'},t('设为 Galgame 背景'))
+              : rewardCgError?React.createElement('button',{className:'b',disabled:rewardCgLoading,onClick:()=>loadRewardCg(rewardCgId),type:'button'},t(rewardCgLoading?'重新读取中…':'重新读取')):null,
+            detailReady&&React.createElement('button',{className:'b pri',disabled:busy,onClick:acknowledgeRewardCg,type:'button'},t('收下')))))
+
     }
     return null
   }
 
+  function stageContent(showBack:boolean,bgEl:React.ReactElement){
+    return React.createElement(React.Fragment,null,
+      React.createElement('div',{className:'whg-scene'},bgEl),stage(),React.createElement('div',{className:'shade','aria-hidden':true}),
+      React.createElement('div',{className:'gx-stage-chrome',inert:stageUi.hidden},topbar(showBack)),dialogue(),
+      stageUi.hidden&&React.createElement('button',{type:'button',className:'hidehint','data-galgame-restore':true,onClick:stageUi.restore},t('点击任意处恢复界面')),
+      archiveDrawer(),
+      (cgUndo||cgUndoError)&&React.createElement('div',{className:'toast gx-undo-toast',role:'status'},cgUndoError?React.createElement('span',{role:'alert'},cgUndoError):t('已移入回收站'),cgUndo&&React.createElement('button',{type:'button',className:'b pri',disabled:busy,onClick:()=>void recycleCg(cgUndo,true),'aria-label':t('撤销')},t('撤销')+' '+undoLeft)),
+      companionPanel&&s.companion?React.createElement(CompanionManager,{state:s.companion,galgame:true,request:companionRequest,panel:companionPanel,historyOnly:companionPanel==='history',renderHistoryPortrait,onClose:()=>setCompanionPanel(null),resolveArt:art}):null,
+      presentationPanel&&React.createElement(GalgameSettings,{
+        name:group?.name??s.name,group:!!group,galgame:true,
+        titleEditor:group?React.createElement('span',{className:'grow gx-setting-title'},group.name):titleEditor(t('编辑')),
+        settings:presentationSettings,
+        onPatch:(patch:any)=>companionRequest('companion-settings',{...patch,...(group?{groupId:group.id}:{characterId:s.current})}),
+        onClose:()=>setPresentationPanel(false),
+        onReset:group?undefined:()=>companionRequest('companion-relationship-reset',{characterId:s.current}),busy,
+      }),
+      cgModal())
+  }
+
+  const stageClasses = ' gx-redesign'+(group?' grp':'')+(classic?' classic':'')+(stageUi.hidden?' hidden-ui':'')
+  const stageAttrs = {'data-stage-scheme':stageScheme,style:{'--gx-font-scale':presentationSettings.fontScale} as React.CSSProperties,onClick:stageUi.hidden?stageUi.restore:undefined,'data-galgame-dialogue-style':presentationSettings.dialogueStyle}
+  const migrationProgress = Number.isFinite(storageMigration?.count)&&Number.isFinite(storageMigration?.total)
+    ? storageMigration.count+' / '+storageMigration.total : ''
   const isTab = props.variant === 'tab'
 
   if (isTab) {
-    // whole-page states: connecting, failed to connect, switched off
-    const fullCard = (kind: string, icon: any, title: string, text: string, action: any) => React.createElement('div', { id: 'whg-tab-root', className: 'whg-root-tab' },
-      React.createElement('div', { className: 'whg-bg whg-bg-fallback' }),
-      React.createElement('div', { className: 'gx-full' }, React.createElement('div', { className: 'gx-fcard' + (kind === 'err' ? ' err' : ''), role: kind === 'err' ? 'alert' : 'status' }, icon, React.createElement('h4', null, title), React.createElement('p', null, text), action)))
-    if (s === null) {
+    // Keep the production retry and settings actions inside the approved whole-stage frame.
+    const fullCard=(kind:string,title:string,detail:string,action:any)=>React.createElement('div',{id:'whg-tab-root',className:'whg-root-tab gx-redesign','data-stage-scheme':stageScheme,'data-galgame-screen':kind},
+      React.createElement('div',{className:'whg-scene'},React.createElement('img',{className:'whg-bg',src:openingBackground,alt:''})),
+      React.createElement('div',{className:'gx-intro'},React.createElement('div',{className:'gx-intro-card',role:kind==='not-ready'?'alert':'status'},
+        (kind==='connecting'||kind==='migrating')&&React.createElement('span',{className:'ui-spinner','aria-hidden':true}),React.createElement('b',null,title),React.createElement('div',{className:'sub'},detail),
+        action&&React.createElement('div',{className:'acts'},action))))
+    if(storageMigration)return fullCard('migrating',t('正在整理聊天记录…'),migrationProgress,null)
+    if(s===null){
       return apiError
-        ? fullCard('err', Icon('alert', { size: 28 }), t("Galgame 服务没有就绪"), apiError, React.createElement('button', { type: 'button', className: 'ui-btn sm primary', onClick: () => { setApiError(null); callApi('view').then((v: any) => { if (v && typeof v === 'object') setS(v) }).catch((e: any) => setApiError(String(e && e.message ? e.message : e))) } }, Icon('retry', { size: 14 }), t("重新连接")))
-        : fullCard('busy', React.createElement('span', { className: 'ui-spinner gx-big-spin', 'aria-hidden': 'true' }), t("正在连接 Galgame…"), t("通常几秒钟就好。"), null)
+        ? fullCard('not-ready',t('Galgame 服务没有就绪'),t(cleanIpcMessage(apiError)),React.createElement('button',{type:'button',className:'b pri',onClick:()=>{setApiError(null);setViewAttempt(previous=>previous+1)}},t('重新连接')))
+        : fullCard('connecting',t('正在连接'),t('Galgame 服务启动中…'),null)
     }
-    if (s.enabled === false) {
-      return fullCard('off', Icon('power', { size: 28 }), t("AI娘 Galgame 已关闭"), t("在通用设置中开启 Galgame 后，即可继续。"), React.createElement('button', { type: 'button', className: 'ui-btn sm', onClick: () => (window as any).whale?.open?.('settings') }, t("去通用设置")))
-    }
-    const bgSrc = group ? (companionImage(group.background, art) || art('bg-kimi-moonlit-reading-study') || art('palace-night')) : (s.bg === 'cg' || s.bg === 'custom' ? bgCache.current : companionImage(s.bg, art))
+    if(s.enabled===false)return fullCard('closed',t('AI娘 Galgame 已关闭'),t('在通用设置中开启 Galgame 后，即可继续。'),React.createElement('button',{type:'button',className:'b',onClick:()=>(window as any).whale?.open?.('settings')},t('去通用设置')))
     const bgEl = bgSrc
       ? React.createElement('img', { className: 'whg-bg', src: bgSrc, alt: '', draggable: false })
       : React.createElement('div', { className: 'whg-bg whg-bg-fallback' })
-    return React.createElement('div', { id: 'whg-tab-root', className: 'whg-root-tab' },
-      topbar(false),
-      React.createElement('div', {className:'whg-scene'},bgEl),
-      stage(),
-      dialogue(),
-      archiveDrawer(),
-      companionPanel && s.companion ? React.createElement(CompanionManager, { state: s.companion, request: companionRequest, panel: companionPanel, onClose: () => setCompanionPanel(null), resolveArt: art }) : null,
-      cgModal(),
-    )
+    return React.createElement('div',{id:'whg-tab-root',className:'whg-root-tab'+stageClasses,...stageAttrs},stageContent(false,bgEl))
   }
 
+  if(storageMigration)return React.createElement('div',{className:'whg-toast',role:'status'},t('正在整理聊天记录…'),migrationProgress&&' '+migrationProgress)
   if (!open) {
     const petEnabled = !!s && s.enabled !== false && s.petEnabled !== false
     return React.createElement(React.Fragment, null,
@@ -2608,19 +2700,10 @@ function App(props: { useSessions: any; variant?: string; sessionId?: string; hi
     )
   }
   if (s.enabled === false) return React.createElement(React.Fragment, null)
-  const bgSrc = group ? (companionImage(group.background, art) || art('bg-kimi-moonlit-reading-study') || art('palace-night')) : (s.bg === 'cg' || s.bg === 'custom' ? bgCache.current : companionImage(s.bg, art))
   const bgEl = bgSrc
     ? React.createElement('img', { className: 'whg-bg', src: bgSrc, alt: '', draggable: false })
     : React.createElement('div', { className: 'whg-bg whg-bg-fallback' })
-  return React.createElement('div', { className: 'whg-root' },
-    topbar(true),
-    bgEl,
-    stage(),
-    dialogue(),
-    archiveDrawer(),
-    companionPanel && s.companion ? React.createElement(CompanionManager, { state: s.companion, request: companionRequest, panel: companionPanel, onClose: () => setCompanionPanel(null), resolveArt: art }) : null,
-    cgModal(),
-  )
+  return React.createElement('div',{className:'whg-root'+stageClasses,...stageAttrs},stageContent(true,bgEl))
 }
 
 export const name = 'whale-galgame'

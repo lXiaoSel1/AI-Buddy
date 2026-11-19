@@ -15,14 +15,15 @@ async function setup(t,options={}){
  const provider={enabled:true,resolveSearchCapability:()=>({supported:true}),captureConnection:()=>({id:'fixture',model:'fixture-model',kind:'custom',contextTokens:272000}),withRequestContext:(value,fn)=>ctx.run(value,fn),runCaptured:(_profile,fn)=>fn(),
   async *stream(options){calls.push({...options,context:ctx.getStore()});yield {type:'text-delta',text:options.purpose==='meal'?'{"manualEquivalentAffection":1.5}':'{"changed":false}'};yield {type:'finish',reason:{kind:'stop'}};}};
  const relationships=[];const service=await createCompanionR95({...options,store,dataRoot,provider,getContext:()=>({characterId:store.state.activeCharacterId,personaId:store.state.activePersonaId,conversationId:store.state.activeConversationId}),memory:{context:async()=>({text:''})},getRuntimeState:()=>runtime,delta:(...args)=>relationships.push(args),audit:options.audit??(()=>{})});
- t.after(async()=>{await service.close();await store.flush();rmSync(dataRoot,{recursive:true,force:true});});
- return {store,service,provider,calls,relationships,setRuntime:value=>runtime={...runtime,...value}};
+ const close=async()=>{await service.close();if(store.close)await store.close();else await store.flush();rmSync(dataRoot,{recursive:true,force:true});};
+ if(!options.manualClose)t.after(close);
+ return {store,service,provider,calls,relationships,close,setRuntime:value=>runtime={...runtime,...value}};
 }
 test('refreshes the right open private conversation after a consumed portion has durable evidence',async t=>{
  const notices=[];const {service,store}=await setup(t,{onMealCommitted:scope=>notices.push({scope,evidence:Object.keys(store.state.lives[scope.characterId].r95.evidence)})});
  const scope=service.activeScope(),feeding=service.feeding,tx='meal-chat-low';
- feeding.lifeBridge.prepare({transactionId:tx,scope,target:{scope,satiety:20}});feeding.lifeBridge.apply({transactionId:tx});feeding.lifeBridge.finalize({transactionId:tx});feeding.activeScope(scope);
- feeding.ingestUsageFact({canonicalRequestId:'meal-chat-credit',revision:1,basis:'actual',origin:'native-ledger',usage:{total:30000}},{trusted:true});
+ await feeding.lifeBridge.prepare({transactionId:tx,scope,target:{scope,satiety:20}});await feeding.lifeBridge.apply({transactionId:tx});await feeding.lifeBridge.finalize({transactionId:tx});await feeding.activeScope(scope);
+ await feeding.ingestUsageFact({canonicalRequestId:'meal-chat-credit',revision:1,basis:'actual',origin:'native-ledger',usage:{total:30000}},{trusted:true});
  await feeding.action('buy',{foodId:'rice',requestId:'meal-chat-buy'});
  const result=await feeding.action('feed',{foodId:'rice',requestId:'meal-chat-feed'});
  assert.equal(result.consumed,true);assert.equal(notices.length,1);assert.equal(notices[0].scope.conversationId,store.state.activeConversationId);
@@ -46,26 +47,27 @@ test('Core defaults missing native search to enabled and invalidates an in-fligh
 });
 test('an explicit search disable survives conversation restore and disk reopening',async t=>{
  const path=mkdtempSync(join(tmpdir(),'r95-search-store-'));
- t.after(()=>rmSync(path,{recursive:true,force:true}));
- const store=await openCompanionStore(path),{schema,...fixture}=await companionFixture();
+ let current,store;
+ t.after(async()=>{if(current)await current.close();else await store?.close();rmSync(path,{recursive:true,force:true});});
+ store=await openCompanionStore(path);const {schema,...fixture}=await companionFixture();
  await store.mutate(state=>Object.assign(state,fixture));
- const {service}=await setup(t,{store});
+ current=await setup(t,{store,manualClose:true});const {service}=current;
  assert.equal(service.view().search.enabled,true);
  await service.action('search-settings',{enabled:false});
  await store.mutate(state=>restoreCompanionExport(state,{format:'ai-buddy-conversations',version:1,conversations:[{...fixture.conversations.conversation,id:'restored'}],r95:{searchEnabled:true}}));
  assert.equal(service.view().search.enabled,false);
- await service.close();await store.flush();
- const reopened=await openCompanionStore(path),restored=await setup(t,{store:reopened});
- assert.ok(reopened.state.conversations.restored);
- assert.equal(restored.service.view().search.enabled,false);
+ await current.close();current=null;
+ store=await openCompanionStore(path);current=await setup(t,{store,manualClose:true});
+ assert.ok(store.state.conversations.restored);
+ assert.equal(current.service.view().search.enabled,false);
 });
 test('Core wallet receives only private canonical facts, shared across Persona and isolated from life facets',async t=>{
  const {service,store}=await setup(t);
- assert.throws(()=>service.feeding.ingestUsageFact({canonicalRequestId:'fake',totalTokens:100000,revision:1}));
- service.feeding.ingestUsageFact({canonicalRequestId:'api:r',totalTokens:20000,revision:1,live:true,baseline:false},{trusted:true});
- const first=service.feeding.view().wallet;service.feeding.ingestUsageFact({canonicalRequestId:'api:r',totalTokens:20000,revision:1,live:true,baseline:false},{trusted:true});
+ await assert.rejects(service.feeding.ingestUsageFact({canonicalRequestId:'fake',totalTokens:100000,revision:1}));
+ await service.feeding.ingestUsageFact({canonicalRequestId:'api:r',totalTokens:20000,revision:1,live:true,baseline:false},{trusted:true});
+ const first=service.feeding.view().wallet;await service.feeding.ingestUsageFact({canonicalRequestId:'api:r',totalTokens:20000,revision:1,live:true,baseline:false},{trusted:true});
  assert.deepEqual(service.feeding.view().wallet,first);
- const facet=service.coreStateBridge.snapshot(service.activeScope());assert.equal(facet.feeding.format,'ai-buddy-feeding-state');assert.equal('wallet' in facet,false);assert.equal('inventory' in facet,false);
+ const facet=await service.coreStateBridge.snapshot(service.activeScope());assert.equal(facet.feeding.format,'ai-buddy-feeding-state');assert.equal('wallet' in facet,false);assert.equal('inventory' in facet,false);
  await assert.rejects(service.action('usage-fact',{totalTokens:100000}),/未知/);
  await store.mutate(state=>{state.lives.claude.operationId='new-op';});
  assert.equal(service.origins.resolve('fake'),null);
@@ -96,4 +98,4 @@ test('actual monitor startup/import establishes a baseline; subsequent canonical
 
 
 
- test('Core quiescence refuses a fresh model origin and feeding action while retaining read-only life facets',async t=>{const {store,service,calls}=await setup(t),scope=service.activeScope();await store.mutate(state=>{state.lifeTransaction={characterId:scope.characterId,id:'in-progress-reset'};});let entered=false;await assert.rejects(service.withOrigin(scope,'chat',async()=>{entered=true;}),/失效/);assert.equal(entered,false);assert.equal(calls.length,0);await assert.rejects(service.action('feeding-feed',{foodId:'rice',requestId:'blocked-during-reset'}),/人生事务/);assert.equal(service.coreStateBridge.snapshot(scope).lifeId,scope.lifeId);});
+ test('Core quiescence refuses a fresh model origin and feeding action while retaining read-only life facets',async t=>{const {store,service,calls}=await setup(t),scope=service.activeScope();await store.mutate(state=>{state.lifeTransaction={characterId:scope.characterId,id:'in-progress-reset'};});let entered=false;await assert.rejects(service.withOrigin(scope,'chat',async()=>{entered=true;}),/失效/);assert.equal(entered,false);assert.equal(calls.length,0);await assert.rejects(service.action('feeding-feed',{foodId:'rice',requestId:'blocked-during-reset'}),/人生事务/);assert.equal((await service.coreStateBridge.snapshot(scope)).lifeId,scope.lifeId);});

@@ -1,5 +1,6 @@
 import test from 'node:test';
-import {recordMoodRequest} from './support/mood-request.mjs';
+import {recordMoodRequest,waitForMoodRequest} from './support/mood-request.mjs';
+import {waitForReplyChoices} from './support/reply-ready.mjs';
 import assert from 'node:assert/strict';
 import {join} from 'node:path';
 import {createGalgame} from '../src/galgame-host.mjs';
@@ -32,8 +33,8 @@ test('Private companion workspace routes chat, remembers replies and disables le
  const online={...provider,enabled:true,currentSelection:()=>({provider:'codex',model:'gpt-6.1-sol'}),async *stream(options){if(recordMoodRequest(options,moodCalls,{characterIds:['deepseek']})){yield{type:'text-delta',text:'{"changed":false}'};return;}modelCalls++;const response=/情绪分类器/.test(options.system)?'cheerful':/选项生成器/.test(options.system)?'{"positive":"一起休息吧","neutral":"说说今天","negative":"先安静一下"}':'主人，鲸鱼娘在这里陪你呀。';yield {type:'text-delta',text:response};yield {type:'finish',reason:{kind:'stop'}};}};
  let game=await createGalgame({dataRoot:root,provider:online,model:'gpt-6.1-sol',onPetVisibility:v=>petVisible=v});
  const chat=await game.action('chat',{text:'你好'});assert.ok(JSON.stringify(chat).includes('鲸鱼娘在这里陪你'));assert.equal(modelCalls,1,'body returns before background choices');
- for(let n=0;n<100&&modelCalls<2;n++)await new Promise(r=>setTimeout(r,5));
- assert.equal(modelCalls,2);assert.ok(moodCalls.length>0);assert.ok(JSON.stringify(await game.action('view')).includes('一起休息吧'));
+ const choices=await waitForReplyChoices(game);await waitForMoodRequest(()=>moodCalls[0]);
+ assert.equal(modelCalls,2);assert.ok(JSON.stringify(choices.choices).includes('一起休息吧'));
  await game.action('pet-set',{enabled:false});assert.equal(petVisible,false);await game.action('pet-set',{enabled:true});
  game.workTokens(180000);
  for(let i=0;i<12;i++){await game.action('view');await new Promise(r=>setTimeout(r,15));}

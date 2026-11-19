@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {readFileSync,readdirSync} from 'node:fs';
 import {join} from 'node:path';
 import {planLegacyDedupe,applyLegacyDedupe} from '../src/legacy-dedupe.mjs';
+import {openCompanionStore} from '../src/companion-store.mjs';
+import {createSnapshotStorage} from '../src/storage.mjs';
 import {createMaintenance} from '../src/maintenance.mjs';
 import {tmpDir,memoryStore,copy} from './support/audit-harness.mjs';
 
@@ -53,6 +55,34 @@ test('T3 through maintenance: plan is read-only, apply backs up first and refuse
  assert.equal(result.total,5);assert.deepEqual(JSON.parse(readFileSync(result.backup,'utf8')),before);
  assert.deepEqual(texts(store.state,'third'),[]);assert.equal(audit[0].type,'maintenance-apply');
  assert.throws(()=>tool.plan('unknown'),/未知维护任务/);
+});
+
+test('T3 through SQLite maintenance exports a complete backup and applies only the planned rows',async t=>{
+ const root=tmpDir('t3-sqlite',{t}),legacy={schema:1,...duplicated()};
+ legacy.conversations.ambiguous=conversation('ambiguous',0,[line('repeated','user','旧消息一'),line('repeated','assistant','旧回复一')]);
+ const archive=join(root,'galgame','companion.json');
+ await createSnapshotStorage(archive,{retention:false}).writeText(JSON.stringify(legacy));
+ const store=await openCompanionStore(root);
+ try{
+  const task='legacy-dedupe',actions={plan:planLegacyDedupe,apply:applyLegacyDedupe,summary:({task,planId,total,skippedAmbiguousConversations,skippedReason})=>({task,planId,total,skippedAmbiguousConversations,skippedReason})};
+  const maintenance=createMaintenance({store,dataRoot:root,tasks:{[task]:actions}});
+  const plan=await maintenance.plan(task);
+  assert.equal(plan.total,5);
+  assert.equal(plan.skippedAmbiguousConversations,1);
+  assert.equal(plan.skippedReason,'ambiguous-message-id');
+  assert.equal(plan.planId,planLegacyDedupe(legacy).planId);
+  await assert.rejects(maintenance.apply(task,'0'.repeat(32)),{code:'MAINTENANCE_PLAN_CHANGED'});
+  assert.ok(!readdirSync(join(root,'galgame')).includes('maintenance'));
+  const before=await store.snapshotAsync();
+  const result=await maintenance.apply(task,plan.planId);
+  assert.deepEqual(JSON.parse(readFileSync(result.backup,'utf8')),before,'Backup includes archived and live rows and original memory events');
+  assert.deepEqual((await store.messages.history('private','second')).messages.map(m=>m.id),['u2','d2']);
+  assert.equal((await store.messages.history('private','third')).totalCount,0);
+  assert.equal(store.records.get('memory.events','claude','e-copy').duplicateOf,'e-first');
+  assert.equal(result.skippedAmbiguousConversations,1);
+  assert.deepEqual((await store.snapshotAsync()).conversations.ambiguous.messages,legacy.conversations.ambiguous.messages);
+  assert.equal((await maintenance.plan(task)).total,0);
+ }finally{await store.close();}
 });
 
 test('T3: thousands of legacy lines plan in well under a second',()=>{

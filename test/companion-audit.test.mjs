@@ -1,3 +1,4 @@
+import {readCompanionExport} from './support/companion-export-file.mjs';
 import {presentedState} from './support/presented-state.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,9 +23,39 @@ test('A completed legacy skit keeps A effects once when the user switches to B b
 });
 
 test('Request audit metadata lists actual bounded model context, while complete original history remains intact',async()=>{
- const calls=[],game=await createGalgame({dataRoot:temp(),provider:{...provider,resolveContextCapacity:()=>({tokens:128000,source:'test-interface',verified:true}),async *stream(o){calls.push(o);yield*provider.stream(o);}},model:'fixture'});
- try{for(let n=0;n<15;n++){await game.action('chat',{text:'完整原文-'+n});await state(game);}const s=await state(game),answer=s.messages.filter(row=>row.request).at(-1),request=calls.filter(row=>row.maxTokens===1200).at(-1),versions=answer.request.inputVersions;
-  assert.equal(s.messages.filter(row=>row.role==='user').length,15);assert.ok(s.messages.some(row=>row.text==='完整原文-0'));assert.ok(versions.length>11);assert.deepEqual(answer.request.inputMessageIds,versions.map(row=>row.id));const actual=request.messages.slice(1,-1).map(row=>row.content[0].text),recorded=versions.map(version=>s.messages.find(row=>row.id===version.id).text);assert.equal(recorded.length,actual.length);assert.ok(recorded.every((text,index)=>actual[index].endsWith(text)));assert.ok(answer.request.inputMessageIds.includes(s.messages.find(row=>row.text==='完整原文-0').id));
+ const calls=[],dataRoot=temp(),options={dataRoot,provider:{...provider,resolveContextCapacity:()=>({tokens:128000,source:'test-interface',verified:true}),async *stream(o){calls.push(o);yield*provider.stream(o);}},model:'fixture'};
+ let game=await createGalgame(options);
+ try{
+  const originals=Array.from({length:15},(_,index)=>'完整原文-'+index);
+  for(const text of originals){await game.action('chat',{text});await state(game);}
+  const current=await state(game),ownerId=current.activeConversationId,answer=current.messages.filter(row=>row.request).at(-1);
+  const request=calls.filter(row=>row.maxTokens===1200).at(-1),versions=answer.request.inputVersions,capacity=answer.request.capacity;
+  const actual=request.messages.slice(1,-1);
+  const recorded=versions.map(version=>{
+   const original=current.messages.find(row=>row.id===version.id);
+   assert.ok(original,'A cited input ID must resolve to its original message');
+   assert.equal(version.revision,original.revisions?.length??0);
+   return original;
+  });
+  assert.ok(recorded.length>0&&recorded.length<current.messages.length-2);
+  assert.deepEqual(answer.request.inputMessageIds,versions.map(row=>row.id));
+  assert.equal(recorded.length,actual.length);
+  for(const [index,row] of recorded.entries()){
+   assert.equal(actual[index].role,row.role);
+   assert.ok(actual[index].content[0].text.endsWith(row.text));
+  }
+  const previousUser=current.messages.find(row=>row.text===originals.at(-2));
+  const previousAnswer=current.messages[current.messages.indexOf(previousUser)+1];
+  assert.deepEqual(recorded.slice(-2).map(row=>row.id),[previousUser.id,previousAnswer.id]);
+  assert.equal(capacity.tokens,128000);
+  assert.equal(capacity.verified,true);
+  assert.ok(capacity.estimatedInputTokens+capacity.reserveTokens<=capacity.tokens);
+  assert.deepEqual(current.messages.filter(row=>row.role==='user').map(row=>row.text),originals);
+  await game.close();
+  game=await createGalgame(options);
+  const page=await game.action('companion-history-page',{ownerType:'private',ownerId});
+  assert.deepEqual(page.messages.filter(row=>row.role==='user').map(row=>row.text),originals);
+  assert.equal(page.totalCount,current.messages.length);
  }finally{await game.close();}
 });
 
@@ -41,7 +72,7 @@ test('Only saved registered characters pass sender validation; drafts and protot
 });
 
 test('New conversations retain the active Persona; default remains an independent preference through export/restore',async()=>{
- const dataRoot=temp();let game=await createGalgame({dataRoot,provider:{...provider,enabled:false},model:'fixture'});try{const original=await state(game),persona=(await game.action('companion-persona-save',{name:'默认新身份',default:true})).persona;let s=await state(game);assert.equal(s.defaultPersonaId,persona.id);assert.equal(s.activePersonaId,'default');assert.equal(s.activeConversationId,original.activeConversationId);await game.action('companion-character-select',{id:'claude'});assert.equal((await state(game)).activePersonaId,'default');await game.action('companion-conversation-new',{title:'沿用当前身份的新会话'});assert.equal((await state(game)).activePersonaId,'default');await game.action('companion-conversation-select',{id:original.activeConversationId});assert.equal((await state(game)).activePersonaId,'default');const exported=(await game.action('companion-conversation-export')).data;assert.equal(exported.defaultPersonaId,persona.id);await game.close();game=await createGalgame({dataRoot,provider:{...provider,enabled:false},model:'fixture'});assert.equal((await state(game)).activePersonaId,'default');assert.equal((await state(game)).defaultPersonaId,persona.id);
+ const dataRoot=temp();let game=await createGalgame({dataRoot,provider:{...provider,enabled:false},model:'fixture'});try{const original=await state(game),persona=(await game.action('companion-persona-save',{name:'默认新身份',default:true})).persona;let s=await state(game);assert.equal(s.defaultPersonaId,persona.id);assert.equal(s.activePersonaId,'default');assert.equal(s.activeConversationId,original.activeConversationId);await game.action('companion-character-select',{id:'claude'});assert.equal((await state(game)).activePersonaId,'default');await game.action('companion-conversation-new',{title:'沿用当前身份的新会话'});assert.equal((await state(game)).activePersonaId,'default');await game.action('companion-conversation-select',{id:original.activeConversationId});assert.equal((await state(game)).activePersonaId,'default');const exported=(await readCompanionExport(game,'companion-conversation-export'));assert.equal(exported.defaultPersonaId,persona.id);await game.close();game=await createGalgame({dataRoot,provider:{...provider,enabled:false},model:'fixture'});assert.equal((await state(game)).activePersonaId,'default');assert.equal((await state(game)).defaultPersonaId,persona.id);
   const other=await createGalgame({dataRoot:temp(),provider:{...provider,enabled:false},model:'fixture'});try{await other.action('companion-conversation-import',{data:exported});assert.equal((await state(other)).defaultPersonaId,persona.id);await other.action('companion-conversation-new',{});assert.equal((await state(other)).activePersonaId,'default');await other.action('companion-conversation-new',{personaId:persona.id});assert.equal((await state(other)).activePersonaId,persona.id);}finally{other.close();}
  }finally{await game.close();}
 });

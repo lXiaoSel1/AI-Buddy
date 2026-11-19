@@ -96,3 +96,22 @@ test('native Codex sends the host image through its own turn input adapter witho
  let text='';for await(const part of provider.stream({model:'gpt-6.1-sol',messages:[{role:'user',content:[{type:'text',text:'Read this picture'},{type:'image',mimeType:'image/png',data}]}]}))if(part.type==='text-delta')text+=part.text;
  assert.equal(text,'Picture read');const turns=requests.filter(row=>row.method==='turn/start');assert.equal(turns.length,1);assert.equal(turns[0].params.model,'gpt-6.1-sol');assert.deepEqual(turns[0].params.input[1],{type:'image',url:'data:image/png;base64,'+data});
 });
+
+test('Grok 4.6 Chat Completions is statically supported for the official legacy endpoint only',async t=>{
+ const {router,requests}=await fixture(t,{kind:'grok',protocol:'chat-completions',baseUrl:'https://api.x.ai/v1',model:'grok-4.6'});
+ const exact=router.resolveImageCapability();
+ assert.equal(exact.supported,true);
+ assert.equal(exact.transportSourceUrl,'https://docs.x.ai/developers/rest-api-reference/inference/chat-completions');
+ assert.equal((await router.ensureImageCapability(router.captureConnection(),{attemptId:'offline-grok'})).supported,true);
+ assert.equal(requests.length,0);
+ const profile={kind:'grok',model:'grok-4.6',protocol:'chat-completions',baseUrl:'https://api.x.ai/v1'};
+ assert.equal(imageInputCapability({...profile,kind:'custom'}).supported,true);
+ for(const candidate of [
+  {...profile,baseUrl:'https://proxy.invalid/v1'},
+  {...profile,baseUrl:'https://api.x.ai.proxy.invalid/v1',kind:'custom'},
+  {...profile,baseUrl:'https://api.x.ai:8080/v1'},
+  {...profile,baseUrl:'https://api.x.ai/v2'},
+  {...profile,model:'grok-4.7'},
+  {...profile,model:'grok4.6'},
+ ])assert.equal(imageInputCapability(candidate).supported,false);
+});

@@ -69,14 +69,36 @@ test('C1–C4 English: Backpack everywhere, plurals, "Need N more", Auto-meal, L
  setLocale('zh-CN');
 });
 
-test('C2: 「今天吃过」 lists only today in the app zone; the pending note names the food and keeps the raw error in the title',()=>{
+test('C2: 「今天吃过」 lists only today and R7 meals show the correct retry state in both languages',()=>{
  setLocale('zh-CN');
- const meals=[{id:'today',foodId:'pudding',at:NOW-3600000,scope,affectionState:'pending',restored:15,error:'FEEDING_EVALUATION_TIMEOUT raw backend text'},{id:'yesterday',foodId:'rice',at:NOW-86400000*2,scope,affectionState:'settled',restored:35}];
- const html=render(FeedingPage,{view:feedView({meals}),initialTab:'inventory',timeZone:'UTC',now:NOW,onAction:noop});
+ const failure='Synthetic provider error',meals=[{id:'today',foodId:'pudding',at:NOW-3600000,scope,affectionState:'pending',restored:15,error:failure},{id:'yesterday',foodId:'rice',at:NOW-86400000*2,scope,affectionState:'settled',restored:35}];
+ const backpack=(available,attempts)=>render(FeedingPage,{view:feedView({modelAvailable:available,meals:[{...meals[0],attempts},meals[1]]}),initialTab:'inventory',timeZone:'UTC',now:NOW,onAction:noop});
+ const html=backpack(true,2),offline=backpack(false,2),exhausted=backpack(true,3),visible=html=>html.replace(/<[^>]+>/g,' ');
  assert.match(html,/今天吃过/);assert.doesNotMatch(html,/最近吃过/);assert.equal((html.match(/class="feed-meal/g)??[]).length,1);assert.match(html,/小布丁 <span class="feed-ok">\+15/);
- assert.match(html,/小布丁已经吃下了，好感还没算上。/);assert.match(html,/通常几秒内完成；连接恢复后会自动再试。/);assert.match(html,/现在重试/);
- assert.match(html,/title="FEEDING_EVALUATION_TIMEOUT raw backend text"/);assert.doesNotMatch(html,/>FEEDING_EVALUATION_TIMEOUT/);
+ assert.match(html,/小布丁已经吃下了，好感还没算上。/);assert.match(html,/通常几秒内完成，没成功会自动再试。/);assert.match(html,/现在重试/);assert.doesNotMatch(visible(html),/Synthetic provider error/);
+ assert.match(offline,/联网聊天关着，开启后会自动结算。/);assert.doesNotMatch(offline,/现在重试/);
+ assert.match(visible(exhausted),/自动重试已用完。\s*Synthetic provider error/);assert.match(exhausted,/现在重试/);assert.doesNotMatch(exhausted,/自动再试/);
  assert.match(render(FeedingPage,{view:feedView({inventory:{}}),initialTab:'inventory',onAction:noop}),/背包里还没有食物/);
+ try{
+  setLocale('en');assert.match(backpack(false,0),/Online chat is off\. Meals will settle automatically when enabled\./);
+  assert.match(backpack(true,1),/This usually takes a few seconds\. Failed attempts are retried automatically\./);
+  assert.match(visible(backpack(true,3)),/Automatic retries are exhausted\.\s*Synthetic provider error/);
+ }finally{setLocale('zh-CN');}
+});
+
+test('an offline meal with exhausted attempts says to retry manually after online chat returns',()=>{
+ const meal={id:'exhausted',foodId:'pudding',at:NOW,scope,affectionState:'pending',attempts:3};
+ const backpack=()=>render(FeedingPage,{view:feedView({modelAvailable:false,meals:[meal]}),initialTab:'inventory',timeZone:'UTC',now:NOW,onAction:noop});
+ try{
+  setLocale('zh-CN');
+  const zh=backpack();
+  assert.ok(zh.includes('联网聊天关着。自动重试已用完，开启后点「现在重试」。'),'Chinese notice should say to retry manually');
+  assert.doesNotMatch(zh,/开启后会自动结算|<button[^>]*>现在重试<\/button>/);
+  setLocale('en');
+  const en=backpack();
+  assert.ok(en.includes('Online chat is off. Automatic retries are exhausted. Enable online chat, then select “Retry now”.'),'English notice should say to retry manually');
+  assert.doesNotMatch(en,/Meals will settle automatically|<button[^>]*>Retry now<\/button>/);
+ }finally{setLocale('zh-CN');}
 });
 
 test('C3: the scale shows 「现在 N」, a paused meal explains itself with its own button, and there is no empty saved row',()=>{

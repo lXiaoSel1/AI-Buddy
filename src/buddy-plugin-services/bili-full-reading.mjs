@@ -3,11 +3,13 @@ import {mkdirSync,readFileSync,writeFileSync,existsSync,lstatSync,readdirSync} f
 import {join,isAbsolute} from 'node:path';
 import {createBiliFullReadingStore,fullReadingUnits} from './bili-full-reading-store.mjs';
 import {parseModelResponseObject} from './model-response-object.mjs';
+import {fullReadingCueError} from './bili-full-reading-authority.mjs';
 
 const fail=code=>Object.assign(Error(code),{code});
 const ensure=(v,code)=>{if(!v)throw fail(code);};
 export const fullReadingHash=value=>createHash('sha256').update(typeof value==='string'||Buffer.isBuffer(value)?value:JSON.stringify(value)).digest('hex');
 const copy=v=>JSON.parse(JSON.stringify(v));
+const summaryEvidenceRule='bili-full-summary-evidence-v2';
 const scopeKeys=['pluginId','packageName','accountBindingId','bindingGeneration','accountRef','accountId','generation','characterId','personaId','lifeId','operationId'];
 const scopeHash=s=>fullReadingHash(Object.fromEntries(scopeKeys.filter(k=>s?.[k]!==undefined).map(k=>[k,s[k]])));
 const ticks=v=>Math.round(v*1000000);
@@ -29,12 +31,52 @@ export function fullReadingSheets(part,config={}){
  }
  return sheets;
 }
-export function fullReadingCues(tracks,parts){
- ensure(Array.isArray(tracks)&&tracks.length<=parts.length,'BILI_FULL_CUES_INVALID');const all=[],usedTracks=new Set(),seen=new Set();
- for(const track of tracks){const part=parts.find(p=>p.cid===track.cid);ensure(part&&!usedTracks.has(track.cid)&&Array.isArray(track.items)&&track.items.length<=200000,'BILI_FULL_CUES_INVALID');usedTracks.add(track.cid);
-  for(const item of track.items){const key=`p${track.cid}:${item.id}`;ensure(typeof item.id==='string'&&item.id.length>0&&item.id.length<=300&&!seen.has(key)&&typeof item.text==='string'&&item.text.length>0&&item.text.length<=16*1024*1024&&Number.isFinite(item.start)&&Number.isFinite(item.end)&&item.start>=0&&item.end>=item.start&&item.end<=part.duration+1,'BILI_FULL_CUES_INVALID');seen.add(key);all.push({cueId:key,originalId:item.id,cid:track.cid,language:String(track.language??'unknown').slice(0,100),start:item.start,end:item.end,text:item.text,textSha256:fullReadingHash(item.text),source:item.source==='local-asr'?'local-asr':'platform-subtitles'});}
- }ensure(all.reduce((n,c)=>n+c.text.length,0)<=64*1024*1024,'BILI_FULL_TEXT_CAPACITY');return all;
+function checkedFullReadingCues(tracks,parts){
+ if(!Array.isArray(tracks)||tracks.length>parts.length)throw fullReadingCueError(null,'invalid-tracks');
+ const cues=[],subtitleNotices=[],subtitleSourceProofs=[],usedTracks=new Set();
+ let totalCharacters=0;
+ for(const track of tracks){
+  const part=parts.find(p=>p.cid===track?.cid);
+  if(!part||usedTracks.has(track.cid)||!Array.isArray(track.items)||track.items.length>200000)throw fullReadingCueError(part,'invalid-track');
+  if(!track.items.length)throw fullReadingCueError(part,'empty-track');
+  usedTracks.add(track.cid);
+  const ids=new Set(),limit=part.duration+1;
+  let earliest=Infinity,latest=-Infinity,aligned=0,overlapping=0;
+  for(const item of track.items){
+   if(typeof item?.id!=='string'||!item.id||item.id.length>300)throw fullReadingCueError(part,'invalid-id');
+   if(typeof item.text!=='string'||!item.text||item.text.length>16*1024*1024)throw fullReadingCueError(part,'invalid-text');
+   if(!Number.isFinite(item.start)||!Number.isFinite(item.end)||item.start>item.end)throw fullReadingCueError(part,'invalid-time');
+   if(ids.has(item.id))throw fullReadingCueError(part,'duplicate-cue');
+   ids.add(item.id);
+   earliest=Math.min(earliest,item.start);
+   latest=Math.max(latest,item.end);
+   if(item.start>=0&&item.end<=limit)aligned++;
+   if(item.start<=limit&&item.end>=0)overlapping++;
+   totalCharacters+=item.text.length;
+   ensure(totalCharacters<=64*1024*1024,'BILI_FULL_TEXT_CAPACITY');
+  }
+  let shift=0,reason;
+  if(aligned!==track.items.length){
+   const firstHour=Math.max(1,Math.ceil((latest-limit)/3600)),lastHour=Math.floor(earliest/3600);
+   if(overlapping)reason='partial';
+   else if(firstHour>lastHour||!Number.isSafeInteger(firstHour)||!Number.isSafeInteger(firstHour*3600))reason='out-of-range';
+   else if(firstHour<lastHour)reason='ambiguous';
+   else {
+    const offset=firstHour*3600;
+    if(earliest-offset<0||latest-offset>limit)reason='out-of-range';
+    else {shift=offset;reason='shifted';}
+   }
+   subtitleNotices.push({cid:part.cid,page:part.page,reason,...(shift?{timebaseShiftSeconds:shift}:{})});
+   subtitleSourceProofs.push({cid:part.cid,sourceTrackSha256:fullReadingHash(track),...(track.sourceResponseSha256?{sourceResponseSha256:track.sourceResponseSha256}:{})});
+   if(!shift)continue;
+  }
+  for(const item of track.items){
+   cues.push({cueId:`p${track.cid}:${item.id}`,originalId:item.id,cid:track.cid,language:String(track.language??'unknown').slice(0,100),start:item.start-shift,end:item.end-shift,text:item.text,textSha256:fullReadingHash(item.text),source:item.source==='local-asr'?'local-asr':'platform-subtitles',...(shift?{originalStart:item.start,originalEnd:item.end,sourceCueSha256:fullReadingHash(item)}:{})});
+  }
+ }
+ return {cues,subtitleNotices,subtitleSourceProofs};
 }
+export function fullReadingCues(tracks,parts){return checkedFullReadingCues(tracks,parts).cues;}
 export function fullReadingCuePages(cues,budget=12000){
  ensure(Number.isInteger(budget)&&budget>=256,'BILI_FULL_MODEL_CAPACITY');const pages=[];
  for(const cue of cues)for(let at=0;at<cue.text.length;){let end=Math.min(cue.text.length,at+budget);if(end<cue.text.length&&/[\uD800-\uDBFF]/.test(cue.text[end-1]))end--;const text=cue.text.slice(at,end),id=`${cue.cueId}@${at}-${end}`;pages.push({id,cueId:cue.cueId,cid:cue.cid,start:cue.start,end:cue.end,charStart:at,charEnd:end,text,textSha256:cue.textSha256,spanSha256:fullReadingHash(text),source:cue.source});at=end;}
@@ -63,7 +105,7 @@ export function validFullReadingUnderstanding(value,ids){
  const keys=['summary','notes','evidenceRefs','completedMaterial','shareWorthy','shareText','interestTags','commentWorthy'];
  return !!(value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).every(k=>keys.includes(k))&&typeof value.summary==='string'&&value.summary.length<=10000&&typeof value.notes==='string'&&value.notes.length<=100000&&typeof value.shareText==='string'&&value.shareText.length<=3000&&['completedMaterial','shareWorthy','commentWorthy'].every(k=>typeof value[k]==='boolean')&&Array.isArray(value.evidenceRefs)&&value.evidenceRefs.length>0&&value.evidenceRefs.length<=ids.size&&value.evidenceRefs.every(id=>typeof id==='string'&&ids.has(id))&&Array.isArray(value.interestTags)&&value.interestTags.length<=5&&value.interestTags.every(tag=>typeof tag==='string'&&tag.length<=100));
 }
-export function createBiliFullReading({directory,acquireMedia,now=Date.now,storageBytes=2*1024*1024*1024,onStorageWrite=()=>{}}={}){
+export function createBiliFullReading({directory,acquireMedia,now=Date.now,storageBytes=2*1024*1024*1024,onStorageWrite=()=>{},onSummaryEvidenceIgnored=()=>{}}={}){
  ensure(isAbsolute(directory??''),'BILI_FULL_DIRECTORY_REQUIRED');const root=join(directory,'full-v1'),records=join(root,'readings'),images=join(root,'images');mkdirSync(records,{recursive:true});mkdirSync(images,{recursive:true});
  let closed=false;const jobs=new Map(),revisions=new Map();let storedBytes=readdirSync(images).filter(n=>/^[a-f0-9]{64}\.png$/.test(n)).reduce((n,name)=>{const stat=lstatSync(join(images,name));ensure(stat.isFile()&&!stat.isSymbolicLink(),'BILI_VISION_CACHE_INVALID');return n+stat.size;},0);
  const checkOpen=()=>ensure(!closed,'BILI_VISION_CLOSED');
@@ -78,7 +120,7 @@ export function createBiliFullReading({directory,acquireMedia,now=Date.now,stora
  const frameRows=asset=>asset?.frameMapRef?disk.get('frame-map',asset.frameMapRef).frames:[];
  const noteText=node=>disk.get('note',node.textRef).text;
  const noteNode=(text,metadata)=>({...metadata,textRef:disk.put('note',{text}),characters:text.length});
- const dto=r=>{const coverage=fullReadingCoverage(r),first=r.sheets.find(s=>r.assets[s.id]),last=r.lastBatch?.visualMaterialRefs?.[0],sheet=(last?r.sheets.find(s=>r.assets[s.id]?.ref===last):null)??first,currentFrames=sheet?frameRows(r.assets[sheet.id]):[];return {readingMode:'full-v1',readingId:r.readingId,revision:r.revision??0,finalBatchId:r.finalBatchId??null,finalProcessed:!!r.batches.find(b=>b.batchId===r.finalBatchId&&b.status==='completed'&&b.processed===true),finalProviderRequestId:r.finalBatchId?r.batches.find(b=>b.batchId===r.finalBatchId)?.providerRequestId??null:null,videoId:r.video.videoId,currentCid:r.video.cid,phase:r.phase,planHash:r.planHash,config:r.config,parts:r.parts,availableParts:r.availableParts??r.parts,model:r.model,frameCount:r.sheets.reduce((n,s)=>n+s.frames.length,0),sheetCount:r.sheets.length,windowCount:r.parts.reduce((n,p)=>n+Math.ceil(ticks(p.duration)/ticks(r.config.windowSeconds)),0),cueCount:r.cues.length,textCharacters:r.cues.reduce((n,c)=>n+c.text.length,0),estimatedCalls:r.estimatedCalls,confirmed:r.confirmed===true,progress:{completed:coverage.images.completed+coverage.cues.completed,total:coverage.images.total+coverage.cues.total},coverage,sheetRef:sheet?(r.assets[sheet.id]?.ref??null):null,cells:sheet?sheet.frames.map(f=>({index:f.index,start:f.time,end:Math.min(sheet.to,f.time+r.config.sampleSeconds),decodedPTS:currentFrames.find(x=>x.id===f.id)?.decodedPTS})):[],sheets:r.sheets.filter(s=>r.assets[s.id]).map(s=>({sheetRef:r.assets[s.id].ref,cid:s.cid,from:s.from,to:s.to,cells:s.frames.map(f=>({index:f.index,start:f.time,end:Math.min(s.to,f.time+r.config.sampleSeconds)})),slots:12,emptySlots:12-s.frames.length,source:'original-video',kind:'full-window'})),materialMissing:r.materialMissing??[],modelReason:r.modelReason??null,needsReview:r.batches.some(b=>['submitted','unknown'].includes(b.status)),calls:r.batches.map(({batchId,status,stepKind,providerRequestId,processed})=>({stepId:batchId,status,stepKind,providerRequestId,processed:processed===true})),source:'original-video',media:r.media??null};};
+ const dto=r=>{const coverage=fullReadingCoverage(r),first=r.sheets.find(s=>r.assets[s.id]),last=r.lastBatch?.visualMaterialRefs?.[0],sheet=(last?r.sheets.find(s=>r.assets[s.id]?.ref===last):null)??first,currentFrames=sheet?frameRows(r.assets[sheet.id]):[];return {readingMode:'full-v1',readingId:r.readingId,revision:r.revision??0,finalBatchId:r.finalBatchId??null,finalProcessed:!!r.batches.find(b=>b.batchId===r.finalBatchId&&b.status==='completed'&&b.processed===true),finalProviderRequestId:r.finalBatchId?r.batches.find(b=>b.batchId===r.finalBatchId)?.providerRequestId??null:null,videoId:r.video.videoId,currentCid:r.video.cid,phase:r.phase,planHash:r.planHash,config:r.config,parts:r.parts,availableParts:r.availableParts??r.parts,model:r.model,frameCount:r.sheets.reduce((n,s)=>n+s.frames.length,0),sheetCount:r.sheets.length,windowCount:r.parts.reduce((n,p)=>n+Math.ceil(ticks(p.duration)/ticks(r.config.windowSeconds)),0),cueCount:r.cues.length,textCharacters:r.cues.reduce((n,c)=>n+c.text.length,0),estimatedCalls:r.estimatedCalls,confirmed:r.confirmed===true,progress:{completed:coverage.images.completed+coverage.cues.completed,total:coverage.images.total+coverage.cues.total},coverage,subtitleNotices:r.subtitleNotices??[],sheetRef:sheet?(r.assets[sheet.id]?.ref??null):null,cells:sheet?sheet.frames.map(f=>({index:f.index,start:f.time,end:Math.min(sheet.to,f.time+r.config.sampleSeconds),decodedPTS:currentFrames.find(x=>x.id===f.id)?.decodedPTS})):[],sheets:r.sheets.filter(s=>r.assets[s.id]).map(s=>({sheetRef:r.assets[s.id].ref,cid:s.cid,from:s.from,to:s.to,cells:s.frames.map(f=>({index:f.index,start:f.time,end:Math.min(s.to,f.time+r.config.sampleSeconds)})),slots:12,emptySlots:12-s.frames.length,source:'original-video',kind:'full-window'})),materialMissing:r.materialMissing??[],modelReason:r.modelReason??null,needsReview:r.batches.some(b=>['submitted','unknown'].includes(b.status)),calls:r.batches.map(({batchId,status,stepKind,providerRequestId,processed})=>({stepId:batchId,status,stepKind,providerRequestId,processed:processed===true})),source:'original-video',media:r.media??null};};
  async function guard(signal,check){checkOpen();signal?.throwIfAborted();await check?.();checkOpen();signal?.throwIfAborted();}
  function storeSheet(id,sheet){const r=load(id),planned=r.sheets.find(s=>s.id===sheet.id);ensure(planned&&sheet.frames.length===planned.frames.length&&sheet.frames.every((f,i)=>f.id===planned.frames[i].id&&f.time===planned.frames[i].time&&Number.isFinite(f.decodedPTS)),'BILI_FULL_FRAME_MISMATCH');const bytes=Buffer.from(sheet.png);ensure(bytes.length>=24&&bytes.length<=4*1024*1024&&bytes.subarray(0,8).equals(pngHeader),'BILI_VISION_IMAGE_INVALID');const sha256=fullReadingHash(bytes),dest=join(images,sha256+'.png');if(!existsSync(dest)){ensure(budget.used+bytes.length<=budget.limit,'BILI_FULL_STORAGE_PAUSED');writeFileSync(dest,bytes,{flag:'wx'});budget.used+=bytes.length;r.imageBytes=(r.imageBytes??0)+bytes.length;}r.assets[sheet.id]={ref:'full:'+r.readingId+':'+sheet.id,sha256,bytes:bytes.length,frameMapRef:disk.put('frame-map',{sheetId:sheet.id,frames:sheet.frames})};save(r);notify(id);}
  function sourceArgs(r,part,signal,check,onSheet){return {scope:r.scope,video:{...r.video,...part,videoId:r.video.videoId},config:r.config,sheets:r.sheets.filter(s=>s.cid===part.cid),hasSubtitles:r.cues.some(c=>c.cid===part.cid),signal,check,onSheet};}
@@ -97,9 +139,56 @@ export function createBiliFullReading({directory,acquireMedia,now=Date.now,stora
  async function cancelScope(scope){const exact=scopeHash(scope),selected=[...jobs.values()].filter(job=>job.scopeHash===exact&&!job.done);for(const job of selected){job.controller.abort(fail('BILI_FULL_PAUSED'));notify(job.readingId);}await Promise.allSettled(selected.map(job=>job.promise));return {cancelled:selected.length};}
 
  function summaryLimits(r){r.summaryTextBudget??=Math.max(512,Math.floor(r.model.maxTextChars*.6));return {input:r.summaryTextBudget,node:Math.floor(r.summaryTextBudget/2)};}
- function sourceNotes(r,batchId,value){const limit=summaryLimits(r).node,nodes=[];for(const [field,text]of [['summary',value.summary],['notes',value.notes]])for(let at=0;at<text.length;){let end=Math.min(text.length,at+limit);const encode=()=>JSON.stringify({batchId,field,text:text.slice(at,end),charStart:at,charEnd:end});while(end>at&&encode().length>limit)end--;if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end--;ensure(end>at,'BILI_FULL_SUMMARY_CAPACITY');nodes.push(noteNode(encode(),{level:0,id:'note:'+batchId+':'+field+':'+at,batchId}));at=end;}return nodes;}
+ function* sourceNotePieces(r,batchId,value){const limit=summaryLimits(r).node;for(const [field,text]of [['summary',value.summary],['notes',value.notes]])for(let at=0;at<text.length;){let end=Math.min(text.length,at+limit);const encode=()=>JSON.stringify({batchId,field,text:text.slice(at,end),charStart:at,charEnd:end});while(end>at&&encode().length>limit)end--;if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end--;ensure(end>at,'BILI_FULL_SUMMARY_CAPACITY');yield {text:encode(),level:0,id:'note:'+batchId+':'+field+':'+at,batchId};at=end;}}
+ const sourceNotes=(r,batchId,value)=>Array.from(sourceNotePieces(r,batchId,value),({text,...metadata})=>noteNode(text,metadata));
  function upgradeSummary(r){summaryLimits(r);if(r.summaryGraphVersion===2)return;const next=[];for(const batch of r.batches.filter(b=>b.stepKind==='segment'&&b.status==='completed'&&b.processed===true)){const receipt=disk.get('receipt',batch.receiptHash),value=parseFullReadingUnderstanding(receipt.result);ensure(value&&typeof value.summary==='string'&&typeof value.notes==='string','BILI_FULL_SOURCE_MISMATCH');next.push(...sourceNotes(r,batch.batchId,value));}r.priorSummaryGraph??={version:r.summaryGraphVersion??1,nodes:copy(r.summaryNodes??[]),preparedBatch:copy(r.lastBatch??null),upgradedAt:now()};r.lastBatch=null;delete r.nextSummaryFinal;r.summaryNodes=next;r.summaryGraphVersion=2;save(r);}
  const batchInput=b=>fullReadingHash({batchId:b.batchId,stepKind:b.stepKind,material:b.material,visualMaterialRefs:b.visualMaterialRefs,unitIds:b.unitIds});
+ function boundRequest(r,batch){
+  const request=disk.get('request',batch.requestHash),original=request.batch,range=original?.material?.readRange;
+  ensure(request.readingId===r.readingId&&original?.batchId===batch.batchId&&original.inputHash===batch.inputHash&&original.inputHash===batchInput(original)&&original.material?.videoId===r.video.videoId&&range?.scope==='full-reading-v1'&&range.planHash===r.planHash&&Array.isArray(range.selectedCids)&&fullReadingHash(range.selectedCids)===fullReadingHash(r.parts.map(p=>p.cid))&&Array.isArray(original.material.items)&&['stepKind','unitIds','summaryNodeIds','finalSummary','visualMaterialRefs','summaryGraphVersion','summaryOutputChars'].every(k=>fullReadingHash(original[k]??null)===fullReadingHash(batch[k]??null)),'BILI_FULL_SOURCE_MISMATCH');
+  return request;
+ }
+ function boundReceipt(r,batch){
+  const prior=disk.get('receipt',batch.receiptHash);
+  ensure(prior.readingId===r.readingId&&prior.batchId===batch.batchId&&prior.requestHash===batch.requestHash&&prior.providerRequestId===batch.providerRequestId&&prior.finishedAt===batch.finishedAt,'BILI_FULL_SOURCE_MISMATCH');
+  return prior;
+ }
+ function earlierSegmentEvidence(r,batch,pending){
+  const done=completedSet(r);
+  for(const source of r.batches){
+   if(source===batch)break;
+   if(source.stepKind!=='segment'||source.status!=='completed'||source.processed!==true)continue;
+   const notePrefix='note:'+source.batchId+':',notes=[...pending].filter(id=>id.startsWith(notePrefix));
+   const material=source.unitIds.filter(id=>pending.has(id)&&done.has(id));
+   if(!notes.length&&!material.length)continue;
+   const request=boundRequest(r,source),receipt=boundReceipt(r,source),value=parseFullReadingUnderstanding(receipt.result);
+   const ids=new Set(request.batch.material.items.map(item=>item.id));
+   if(!validFullReadingUnderstanding(value,ids)||value.completedMaterial!==true)continue;
+   for(const id of material)if(ids.has(id))pending.delete(id);
+   if(notes.length)for(const {id,text} of sourceNotePieces(r,source.batchId,value)){
+    if(!pending.has(id))continue;
+    try{disk.get('note',fullReadingHash({text}));pending.delete(id);}catch{ /* Missing or damaged notes cannot prove a reference. */ }
+   }
+   if(!pending.size)return true;
+  }
+  return false;
+ }
+ function inspectUnderstanding(r,batch,request,result){
+  const raw=parseFullReadingUnderstanding(result),ids=new Set(request.batch.material.items.map(item=>item.id));
+  if(validFullReadingUnderstanding(raw,ids))return {understanding:raw,schemaValid:true};
+  if(batch.stepKind!=='summary'||!Array.isArray(raw?.evidenceRefs)||!raw.evidenceRefs.every(id=>typeof id==='string'))return {understanding:raw,schemaValid:false};
+  const understanding={...raw,evidenceRefs:raw.evidenceRefs.filter(id=>ids.has(id))};
+  const ignoredEvidenceRefs=[...new Set(raw.evidenceRefs.filter(id=>!ids.has(id)))];
+  if(!ignoredEvidenceRefs.length||!validFullReadingUnderstanding(understanding,ids)||!earlierSegmentEvidence(r,batch,new Set(ignoredEvidenceRefs)))return {understanding:raw,schemaValid:false};
+  return {understanding,schemaValid:true,fullReadingValidation:{rule:summaryEvidenceRule,ignoredEvidenceRefs}};
+ }
+ function validationBinding(r,batch){return {readingId:r.readingId,scopeHash:r.scopeHash,planHash:r.planHash,batchId:batch.batchId,inputHash:batch.inputHash,requestHash:batch.requestHash,receiptHash:batch.receiptHash,providerRequestId:batch.providerRequestId};}
+ function sealedValidation(r,batch){
+  if(!batch?.validationHash||batch.processed!==true)return;
+  const {rule,ignoredEvidenceRefs,...binding}=disk.get('validation',batch.validationHash);
+  ensure(rule===summaryEvidenceRule&&fullReadingHash(binding)===fullReadingHash(validationBinding(r,batch)),'BILI_FULL_SOURCE_MISMATCH');
+  return {rule,ignoredEvidenceRefs};
+ }
  function buildBatch(r,{shrink=false}={}){
   const unknown=r.batches.find(b=>['submitted','unknown'].includes(b.status));ensure(!unknown,'BILI_VISION_UNCERTAIN');
   const done=completedSet(r);let units=r.units.slice(r.unitCursor??0).filter(u=>!done.has(u.id));
@@ -120,38 +209,61 @@ export function createBiliFullReading({directory,acquireMedia,now=Date.now,stora
   const b={batchId,stepKind,...(stepKind==='summary'?{summaryGraphVersion:r.summaryGraphVersion,summaryOutputChars:r.nextSummaryFinal?summaryLimits(r).input:summaryLimits(r).node}:{}),unitIds:chosen.map(u=>u.id),summaryNodeIds:summaryNodes?chosen.map(u=>u.id):[],finalSummary:stepKind==='summary'&&r.nextSummaryFinal===true&&chosen.length===summaryNodes.length,visualMaterialRefs:refs,material:{videoId:r.video.videoId,coverage:'frames',complete:false,sourceRefs:[r.video.url??`https://www.bilibili.com/video/${r.video.videoId}`],items,readRange:{scope:'full-reading-v1',selectedCids:r.parts.map(p=>p.cid),planHash:r.planHash},coverageNotes:stepKind==='summary'?'Derived notes from completed, source-preserved batches. These notes create no new real-world fact.':'Every planned sample and subtitle character is tracked separately. Image transmission does not guarantee semantic accuracy.'},status:'prepared'};b.inputHash=batchInput(b);return b;
  }
  function finishBatch({scope,readingId,batchId,status,providerRequestId,result,inputHash},{reconcile=false}={}){
-    const r=owned(readingId,scope),batch=r.batches.find(b=>b.batchId===batchId);ensure(batch&&['completed','unknown'].includes(status),'BILI_FULL_BATCH_MISMATCH');let request,localReprocess=false;
+    const r=owned(readingId,scope),batch=r.batches.find(b=>b.batchId===batchId);ensure(batch&&['completed','unknown'].includes(status),'BILI_FULL_BATCH_MISMATCH');let request,validation,localReprocess=false;
     if(reconcile){ensure(status==='completed'&&r.phase!=='cancelled'&&typeof inputHash==='string'&&inputHash===batch.inputHash,'BILI_FULL_BATCH_MISMATCH');if(batch.status==='completed'){
-     const prior=disk.get('receipt',batch.receiptHash);ensure(batch.providerRequestId===providerRequestId&&fullReadingHash(prior.result)===fullReadingHash(result),'BILI_VISION_STEP_CONFLICT');if(batch.processed!==false||batch.localReprocess)return dto(r);
-     ensure(prior.readingId===readingId&&prior.batchId===batchId&&prior.requestHash===batch.requestHash&&prior.providerRequestId===batch.providerRequestId&&prior.finishedAt===batch.finishedAt,'BILI_FULL_SOURCE_MISMATCH');request=disk.get('request',batch.requestHash);const original=request.batch;
-     ensure(request.readingId===readingId&&original?.batchId===batchId&&original.inputHash===batch.inputHash&&original.inputHash===batchInput(original)&&original.material?.videoId===r.video.videoId&&original.material.readRange?.scope==='full-reading-v1'&&original.material.readRange.planHash===r.planHash&&Array.isArray(original.material.readRange.selectedCids)&&fullReadingHash(original.material.readRange.selectedCids)===fullReadingHash(r.parts.map(p=>p.cid))&&Array.isArray(original.material.items)&&['stepKind','unitIds','summaryNodeIds','finalSummary','visualMaterialRefs','summaryGraphVersion','summaryOutputChars'].every(k=>fullReadingHash(original[k]??null)===fullReadingHash(batch[k]??null)),'BILI_FULL_SOURCE_MISMATCH');
+     const prior=boundReceipt(r,batch);ensure(batch.providerRequestId===providerRequestId&&fullReadingHash(prior.result)===fullReadingHash(result),'BILI_VISION_STEP_CONFLICT');if(batch.processed!==false)return dto(r);
+     request=boundRequest(r,batch);validation=inspectUnderstanding(r,batch,request,prior.result);
+     if(batch.localReprocess&&(!validation.fullReadingValidation||validation.understanding.completedMaterial!==true||batch.summaryEvidenceReprocess))return dto(r);
      localReprocess=true;result=prior.result;
     }else ensure(['submitted','unknown'].includes(batch.status),'BILI_VISION_STEP_CONFLICT');}else if(batch.status!=='submitted'){ensure(batch.status===status,'BILI_VISION_STEP_CONFLICT');return dto(r);}if(status==='completed')ensure(typeof providerRequestId==='string'&&providerRequestId,'BILI_MODEL_RECEIPT_REQUIRED');const cancelled=r.phase==='cancelled',explicitPause=localReprocess&&r.phase==='paused'&&r.modelReason==='BILI_FULL_PAUSED';if(reconcile&&batch.status==='unknown'){batch.priorUnknown={status:batch.status,finishedAt:batch.finishedAt,providerRequestId:batch.providerRequestId};batch.reconciledAt=now();}
-    if(localReprocess)batch.localReprocess={attemptedAt:now(),priorProcessed:false,priorPhase:r.phase,priorModelReason:r.modelReason??null};else{batch.status=status;batch.providerRequestId=providerRequestId??null;batch.finishedAt=now();
+    if(localReprocess){const attempt={attemptedAt:now(),priorProcessed:false,priorPhase:r.phase,priorModelReason:r.modelReason??null};batch.localReprocess??=attempt;if(validation.fullReadingValidation&&validation.understanding.completedMaterial===true)batch.summaryEvidenceReprocess={...attempt,rule:summaryEvidenceRule};}else{batch.status=status;batch.providerRequestId=providerRequestId??null;batch.finishedAt=now();
      if(status==='unknown'){if(!cancelled){r.phase='paused';r.modelReason='BILI_VISION_UNCERTAIN';}save(r);pause(readingId);return dto(r);}
      // Persist the known paid response before validation. Invalid schema is a
      // known response, never a reason to replay the same provider submission.
-     batch.receiptHash=disk.put('receipt',{readingId,batchId,requestHash:batch.requestHash,providerRequestId,result:copy(result??{}),finishedAt:batch.finishedAt});try{request=disk.get('request',batch.requestHash);ensure(request.readingId===readingId&&request.batch.batchId===batchId&&request.batch.inputHash===batch.inputHash,'BILI_FULL_BATCH_MISMATCH');}catch{batch.processed=false;if(!cancelled)r.phase='paused';r.modelReason='BILI_FULL_SOURCE_MISMATCH';r.lastBatch=null;save(r);pause(readingId);return dto(r);}
-    }const value=parseFullReadingUnderstanding(result);
-    batch.processed=validFullReadingUnderstanding(value,new Set(request.batch.material.items.map(item=>item.id)))&&value.completedMaterial===true;
+     batch.receiptHash=disk.put('receipt',{readingId,batchId,requestHash:batch.requestHash,providerRequestId,result:copy(result??{}),finishedAt:batch.finishedAt});try{request=boundRequest(r,batch);validation=inspectUnderstanding(r,batch,request,result);}catch{batch.processed=false;if(!cancelled)r.phase='paused';r.modelReason='BILI_FULL_SOURCE_MISMATCH';r.lastBatch=null;save(r);pause(readingId);return dto(r);}
+    }
+    const {understanding:value,schemaValid,fullReadingValidation}=validation;
+    batch.processed=schemaValid&&value.completedMaterial===true;
     if(!batch.processed){if(!cancelled)r.phase='paused';if(!explicitPause)r.modelReason='BILI_FULL_MATERIAL_NOT_COMPLETED';r.lastBatch=null;save(r);pause(readingId);return dto(r);}
+    // This receipt proves which citations the schema accepted. Summary graph
+    // advancement and final coverage still need their own checks below.
+    if(fullReadingValidation)batch.validationHash=disk.put('validation',{...validationBinding(r,batch),...fullReadingValidation});
+    const saveValidated=()=>{
+     save(r);
+     if(fullReadingValidation)try{onSummaryEvidenceIgnored(fullReadingValidation.ignoredEvidenceRefs.length);}catch{ /* Audit failure cannot invalidate an accepted paid receipt. */ }
+    };
         const note=JSON.stringify({batchId,summary:value.summary,factsAndUncertainties:value.notes,evidenceRefs:value.evidenceRefs}),limit=summaryLimits(r),consumed=r.summaryNodes.filter(n=>batch.summaryNodeIds?.includes(n.id));
-     if(batch.stepKind==='summary'&&(batch.summaryGraphVersion!==r.summaryGraphVersion||consumed.length!==batch.summaryNodeIds.length||batch.finalSummary&&consumed.length!==r.summaryNodes.length)){batch.aggregationAccepted=false;if(!cancelled)r.phase='paused';if(!explicitPause)r.modelReason='BILI_FULL_SUMMARY_GRAPH_CHANGED';r.lastBatch=null;save(r);pause(readingId);return dto(r);}
-     if(batch.stepKind==='summary'&&(note.length>(batch.finalSummary?limit.input:limit.node)||!batch.finalSummary&&(consumed.length<2||note.length>=consumed.reduce((n,x)=>n+x.characters,0)))){batch.aggregationAccepted=false;if(!cancelled)r.phase='paused';if(!explicitPause)r.modelReason='BILI_FULL_SUMMARY_NO_PROGRESS';r.lastBatch=null;save(r);pause(readingId);return dto(r);}
+     if(batch.stepKind==='summary'&&(batch.summaryGraphVersion!==r.summaryGraphVersion||consumed.length!==batch.summaryNodeIds.length||batch.finalSummary&&consumed.length!==r.summaryNodes.length)){batch.aggregationAccepted=false;if(!cancelled)r.phase='paused';if(!explicitPause)r.modelReason='BILI_FULL_SUMMARY_GRAPH_CHANGED';r.lastBatch=null;saveValidated();pause(readingId);return dto(r);}
+     if(batch.stepKind==='summary'&&(note.length>(batch.finalSummary?limit.input:limit.node)||!batch.finalSummary&&(consumed.length<2||note.length>=consumed.reduce((n,x)=>n+x.characters,0)))){batch.aggregationAccepted=false;if(!cancelled)r.phase='paused';if(!explicitPause)r.modelReason='BILI_FULL_SUMMARY_NO_PROGRESS';r.lastBatch=null;saveValidated();pause(readingId);return dto(r);}
      if(batch.stepKind==='segment'){const done=completedSet(r);for(const id of batch.unitIds)done.add(id);r.completedUnitIds=[...done];while(r.unitCursor<r.units.length&&done.has(r.units[r.unitCursor].id))r.unitCursor++;r.summaryNodes.push(...sourceNotes(r,batchId,value));}
      else{const level=Math.max(0,...consumed.map(n=>n.level??0))+1;r.summaryNodes=r.summaryNodes.filter(n=>!batch.summaryNodeIds.includes(n.id));r.summaryNodes.push(noteNode(note,{level,id:'note:'+batchId,batchId}));r.summaryDepth=Math.max(r.summaryDepth??0,level);batch.aggregationAccepted=true;}r.lastBatch=null;
- if(!cancelled&&batch.finalSummary&&fullReadingCoverage(r).complete&&!r.materialMissing.length){r.phase='completed';r.completedAt=now();r.finalBatchId=batchId;r.modelReason=null;}if(reconcile&&['BILI_VISION_UNCERTAIN','BILI_FULL_MATERIAL_NOT_COMPLETED'].includes(r.modelReason))r.modelReason=null;save(r);notify(readingId);return dto(r);
+ if(!cancelled&&batch.finalSummary&&fullReadingCoverage(r).complete&&!r.materialMissing.length){r.phase='completed';r.completedAt=now();r.finalBatchId=batchId;r.modelReason=null;}if(reconcile&&['BILI_VISION_UNCERTAIN','BILI_FULL_MATERIAL_NOT_COMPLETED'].includes(r.modelReason))r.modelReason=null;saveValidated();
+ notify(readingId);return dto(r);
   }
 
  return {
   get available(){return !closed&&typeof acquireMedia?.fullSampling==='function';},
-  async prepare({scope,video,parts,selectedCids,config,subtitleTracks=[],model,readingId=randomUUID(),signal,check}){
+  async prepare({scope,video,description,parts,selectedCids,config,subtitleTracks=[],model,readingId=randomUUID(),signal,check}){
    await guard(signal,check);if(existsSync(path(readingId))){const r=owned(readingId,scope);ensure(r.video.videoId===video.videoId,'BILI_VISION_VIDEO_MISMATCH');return dto(r);}
    const sampling=fullReadingConfig(config);ensure(/^BV[0-9A-Za-z]{6,30}$/.test(video?.videoId??'')&&Array.isArray(parts)&&parts.length>0&&parts.length<=10000,'BILI_FULL_PART_INVALID');
    const selected=selectedCids??[video.cid];ensure(Array.isArray(selected)&&selected.length>0&&new Set(selected).size===selected.length&&selected.every(cid=>parts.some(p=>p.cid===cid)),'BILI_FULL_PART_INVALID');
-   const picked=parts.filter(p=>selected.includes(p.cid)).map(p=>({cid:p.cid,page:p.page??1,title:String(p.title??p.part??'').slice(0,1000),duration:p.duration})),budget=modelBudget(model);ensure(picked.reduce((n,p)=>n+Math.ceil(ticks(p.duration)/ticks(sampling.sampleSeconds)),0)<=864000,'BILI_FULL_PLAN_CAPACITY');const sheets=picked.flatMap(p=>fullReadingSheets(p,sampling)),cues=fullReadingCues(subtitleTracks,picked),textBudget=Math.max(256,Math.floor(budget.maxTextChars*.6)),pages=fullReadingCuePages(cues,textBudget),units=[];
+   const picked=parts.filter(p=>selected.includes(p.cid)).map(p=>({cid:p.cid,page:p.page??1,title:String(p.title??p.part??'').slice(0,1000),duration:p.duration})),budget=modelBudget(model);ensure(picked.reduce((n,p)=>n+Math.ceil(ticks(p.duration)/ticks(sampling.sampleSeconds)),0)<=864000,'BILI_FULL_PLAN_CAPACITY');const sheets=picked.flatMap(p=>fullReadingSheets(p,sampling)),{cues,subtitleNotices,subtitleSourceProofs}=checkedFullReadingCues(subtitleTracks,picked),textBudget=Math.max(256,Math.floor(budget.maxTextChars*.6)),pages=fullReadingCuePages(cues,textBudget),units=[];
    const added=new Set(),byWindow=new Map(),byPart=new Map();for(const page of pages){const key=page.cid+':'+Math.floor(ticks(page.start)/ticks(sampling.windowSeconds));if(!byWindow.has(key))byWindow.set(key,[]);byWindow.get(key).push(page);if(!byPart.has(page.cid))byPart.set(page.cid,[]);byPart.get(page.cid).push(page);}for(const part of picked){for(const sheet of sheets.filter(s=>s.cid===part.cid)){units.push({id:sheet.id,kind:'image',cid:part.cid});for(const page of byWindow.get(part.cid+':'+sheet.windowIndex)??[])if(!added.has(page.id)){added.add(page.id);units.push({id:page.id,kind:'text',cid:part.cid,item:page});}}for(const page of byPart.get(part.cid)??[])if(!added.has(page.id)){added.add(page.id);units.push({id:page.id,kind:'text',cid:part.cid,item:page});}}
-   const frozen={scopeHash:scopeHash(scope),video,parts:picked,config:sampling,model:budget,cues:cues.map(({text,...rest})=>rest),sheets},r={schemaVersion:1,readingMode:'full-v1',readingId,scope:copy(scope),scopeHash:frozen.scopeHash,owner:{pluginId:scope.pluginId,accountRef:scope.accountRef,accountBindingId:scope.accountBindingId},video:copy(video),parts:picked,availableParts:copy(parts),config:sampling,model:budget,textBudget,summaryTextBudget:textBudget,summaryGraphVersion:2,sheets,cues,units,assets:{},batches:[],completedUnitIds:[],unitCursor:0,pageBudgets:[],summaryNodes:[],materialMissing:[],phase:'preparing',createdAt:now(),confirmed:false,planHash:fullReadingHash(frozen),estimatedCalls:Math.ceil(sheets.length/Math.max(1,Math.min(budget.maxImages,Math.floor((budget.contextTokens-4096)/budget.imageTokens))))+Math.ceil(cues.reduce((n,c)=>n+c.text.length,0)/textBudget)+1};save(r);
+   const skippedSubtitles=subtitleNotices.some(notice=>notice.reason!=='shifted');
+   const descriptionProof=skippedSubtitles&&typeof description==='string'&&description.trim()?{descriptionSha256:fullReadingHash(description),characters:description.length}:null;
+   if(descriptionProof){
+    const descriptionUnits=[];
+    // A later capacity shrink can reduce the text budget to 256 characters.
+    for(let start=0;start<description.length;){
+     let end=Math.min(start+256,description.length);
+     if(end<description.length&&/[\uD800-\uDBFF]/.test(description[end-1]))end--;
+     const id=start===0?'video-description':'video-description:'+start;
+     descriptionUnits.push({id,kind:'metadata',item:{id,text:description.slice(start,end),source:'video-description',charStart:start,charEnd:end}});
+     start=end;
+    }
+    units.unshift(...descriptionUnits);
+   }
+   const frozen={scopeHash:scopeHash(scope),video,parts:picked,config:sampling,model:budget,...(subtitleNotices.length?{subtitleNotices,subtitleSourceProofs}:{}),...(descriptionProof?{descriptionProof}:{}),cues:cues.map(({text,...rest})=>rest),sheets},r={schemaVersion:1,readingMode:'full-v1',readingId,scope:copy(scope),scopeHash:frozen.scopeHash,owner:{pluginId:scope.pluginId,accountRef:scope.accountRef,accountBindingId:scope.accountBindingId},video:copy(video),parts:picked,availableParts:copy(parts),config:sampling,model:budget,...(subtitleNotices.length?{subtitleNotices,subtitleSourceProofs}:{}),...(descriptionProof?{descriptionProof}:{}),textBudget,summaryTextBudget:textBudget,summaryGraphVersion:2,sheets,cues,units,assets:{},batches:[],completedUnitIds:[],unitCursor:0,pageBudgets:[],summaryNodes:[],materialMissing:[],phase:'preparing',createdAt:now(),confirmed:false,planHash:fullReadingHash(frozen),estimatedCalls:Math.ceil(sheets.length/Math.max(1,Math.min(budget.maxImages,Math.floor((budget.contextTokens-4096)/budget.imageTokens))))+Math.ceil(cues.reduce((n,c)=>n+c.text.length,descriptionProof?.characters??0)/textBudget)+1};save(r);
    try{await produce(r,signal,check,{preview:true});await guard(signal,check);const latest=load(readingId);latest.phase='awaiting-confirmation';save(latest);return dto(latest);}catch(e){const latest=load(readingId);latest.phase='paused';latest.modelReason=e.code??'BILI_FULL_ORIGINAL_UNAVAILABLE';save(latest);throw e;}
   },
   get({scope,readingId}){return dto(owned(readingId,scope));},
@@ -176,6 +288,19 @@ export function createBiliFullReading({directory,acquireMedia,now=Date.now,stora
   releaseUnsent({scope,readingId,batchId,inputHash}){const r=owned(readingId,scope),batch=r.batches.find(b=>b.batchId===batchId);ensure(batch?.status==='submitted'&&batch.inputHash===inputHash&&!batch.receiptHash&&!batch.providerRequestId,'BILI_FULL_BATCH_MISMATCH');batch.notSentAttempts=[...(batch.notSentAttempts??[]),{submittedAt:batch.submittedAt,releasedAt:now(),requestHash:batch.requestHash}];batch.status='not-sent';if(!['cancelled','completed'].includes(r.phase)){r.phase='paused';r.modelReason='SOCIAL_MODEL_NOT_SUBMITTED';}save(r);return dto(r);},
   finish:args=>finishBatch(args),
   reconcile:args=>finishBatch({...args,status:'completed'},{reconcile:true}),
+  inspectReceipt({scope,readingId,batchId,inputHash,providerRequestId,result}){
+   const r=owned(readingId,scope),batch=r.batches.find(b=>b.batchId===batchId);
+   ensure(batch&&r.phase!=='cancelled'&&batch.inputHash===inputHash&&['completed','submitted','unknown'].includes(batch.status),'BILI_FULL_BATCH_MISMATCH');
+   if(batch.status==='completed')ensure(batch.providerRequestId===providerRequestId&&fullReadingHash(boundReceipt(r,batch).result)===fullReadingHash(result),'BILI_VISION_STEP_CONFLICT');
+   return inspectUnderstanding(r,batch,boundRequest(r,batch),result);
+  },
+  receiptValidation({scope,readingId,batchId,providerRequestId}){
+   const r=owned(readingId,scope),batch=r.batches.find(b=>b.batchId===batchId);
+   if(!batch?.validationHash)return;
+   ensure(batch.providerRequestId===providerRequestId,'BILI_VISION_STEP_CONFLICT');
+   boundRequest(r,batch);boundReceipt(r,batch);
+   return sealedValidation(r,batch);
+  },
   readImageForAccount(args){const r=account(args),id=Object.keys(r.assets).find(id=>r.assets[id].ref===args.ref);ensure(id,'BILI_VISION_REFERENCE_DENIED');const a=r.assets[id],bytes=readFileSync(join(images,a.sha256+'.png'));ensure(fullReadingHash(bytes)===a.sha256,'BILI_VISION_CACHE_MISMATCH');return {mimeType:'image/png',dataUrl:'data:image/png;base64,'+bytes.toString('base64')};},
   pauseForAccount(args){const r=account(args);pause(r.readingId);if(!['completed','cancelled'].includes(r.phase)){r.phase='paused';r.modelReason='BILI_FULL_PAUSED';save(r);}return dto(r);},
   stopForAccount(args){const r=account(args);if(args.onlyIfUnconfirmed===true){ensure(r.confirmed!==true,'BILI_FULL_PLAN_FROZEN');ensure(typeof args.planHash==='string'&&args.planHash===r.planHash&&Number.isSafeInteger(args.revision)&&args.revision===r.revision&&['awaiting-confirmation','paused'].includes(r.phase)&&r.batches.length===0,'BILI_CONTROL_STALE');}if(r.phase==='completed'||r.phase==='cancelled')return dto(r);pause(r.readingId,'BILI_VISION_STOPPED');r.phase='cancelled';save(r);return dto(r);},

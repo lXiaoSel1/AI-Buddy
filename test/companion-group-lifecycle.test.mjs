@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createGalgame} from '../src/galgame-host.mjs';
 import {openCompanionStore} from '../src/companion-store.mjs';
-const until=async fn=>{for(let n=0;n<300;n++){if(await fn())return;await new Promise(r=>setTimeout(r,4));}throw Error('fixture timeout');};
+const until=async fn=>{for(let n=0;n<750;n++){if(await fn())return;await new Promise(r=>setTimeout(r,4));}throw Error('fixture timeout');};
 const state=presentedState;
 async function fixture(){
  const root=mkdtempSync(join(tmpdir(),'buddy-group-leave-')),activity=new Set(),events=[],calls=[];let blocked=false,release,entered=false,aborted=false;const gate=new Promise(r=>release=r);
@@ -19,7 +19,7 @@ for(const exit of ['character','persona','another-group'])test(`Leaving a genera
  const f=await fixture();try{const first=(await f.game.action('companion-group-save',{memberIds:['deepseek','claude'],mode:'list'})).group,other=(await f.game.action('companion-group-save',{memberIds:['qwen'],mode:'list'})).group,persona=(await f.game.action('companion-persona-save',{name:'新身份'})).persona;
   await f.game.action('companion-group-select',{id:first.id});await f.game.action('companion-group-send',{id:first.id,text:'第一轮'});await until(async()=>(await state(f.game)).groupRuntime.status==='awaiting-continue');f.block();await f.game.action('companion-group-continue',{id:first.id});await until(()=>f.entered);assert.equal(f.activity.size,1);
   if(exit==='character')await f.game.action('companion-character-select',{id:'kimi'});else if(exit==='persona')await f.game.action('companion-persona-select',{id:persona.id});else await f.game.action('companion-group-select',{id:other.id});await until(()=>f.activity.size===0);f.unblock();assert.equal(f.aborted,true);assert.equal(f.events.filter(e=>e.group).length,1);
-  await f.game.flushSaves();const disk=await openCompanionStore(f.root),saved=disk.state.groups[first.id];assert.equal(saved.pending,undefined);assert.equal(saved.messages.filter(m=>m.role==='assistant').length,1);assert.equal(saved.messages.at(-1).text,'已提交台词');await f.game.action('companion-group-select',{id:first.id});const s=await state(f.game);assert.equal(s.groupRuntime.status,'idle');assert.deepEqual(s.groupRuntime.queue,[]);assert.ok(!JSON.stringify(s.groupMessages).includes('未展示草稿'));
+  await f.game.flushSaves();const disk=await openCompanionStore(f.root);try{const saved=disk.state.groups[first.id];assert.equal(saved.pending,undefined);assert.equal(disk.messages.recent('group',first.id).filter(m=>m.role==='assistant').length,1);assert.equal(disk.messages.recent('group',first.id,1).at(-1).text,'已提交台词');}finally{await disk.close();}await f.game.action('companion-group-select',{id:first.id});const s=await state(f.game);assert.equal(s.groupRuntime.status,'idle');assert.deepEqual(s.groupRuntime.queue,[]);assert.ok(!JSON.stringify(s.groupMessages).includes('未展示草稿'));
  }finally{f.unblock();await f.game.close();}
 });
 

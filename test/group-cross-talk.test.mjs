@@ -1,3 +1,4 @@
+import {readCompanionExport} from './support/companion-export-file.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {AsyncLocalStorage} from 'node:async_hooks';
@@ -38,7 +39,7 @@ test('Members receive presented peer turns in order, can disagree in their own m
   assert.match(bodies(request),/DeepSeek：Claude，我觉得今晚吃火锅/);assert.ok(second.text.startsWith('DeepSeek，我不赞成'));
   assert.match(request.system,/可以直接.*同伴|成员.*接话/);assert.match(request.system,/不是.*玩家指令|不代表.*玩家指令/);
   const sourceIndex=JSON.parse(request.system.split('消息来源索引（与消息同序）：').at(-1));assert.deepEqual(sourceIndex.slice(0,2),['user','deepseek']);assert.deepEqual(sourceIndex.slice(2),['host']);assert.equal(sourceIndex.length,request.messages.length);assert.equal(request.messages.at(-1).role,'user');assert.equal(request.messages.at(-1).source.kind,'host-control');assert.match(request.messages.at(-1).content[0].text,/host-control/);
-  const history=(await state(f.game)).groupMessages,exported=(await f.game.action('companion-group-export',{id:f.group.id})).data.groups.find(row=>row.id===f.group.id);assert.equal(history.length,2);assert.equal(history[0].role,'user');assert.equal(history[1].id,first.id);assert.deepEqual(exported.messages.map(row=>row.id),history.map(row=>row.id));assert.ok(!history.some(row=>row.text.includes('host-control')));assert.ok(!exported.messages.some(row=>row.text.includes('host-control')));
+  const history=(await state(f.game)).groupMessages,exported=(await readCompanionExport(f.game,'companion-group-export',{id:f.group.id})).groups.find(row=>row.id===f.group.id);assert.equal(history.length,2);assert.equal(history[0].role,'user');assert.equal(history[1].id,first.id);assert.deepEqual(exported.messages.map(row=>row.id),history.map(row=>row.id));assert.ok(!history.some(row=>row.text.includes('host-control')));assert.ok(!exported.messages.some(row=>row.text.includes('host-control')));
   assert.ok(second.request.inputMessageIds.includes(first.id));assert.equal(second.interactionTarget,'deepseek');
   await present(f);await f.game.action('companion-group-continue');const third=await pending(f);
   assert.equal(third.characterId,'chatgpt');assert.match(bodies(f.calls[2]),/Claude：DeepSeek，我不赞成/);await present(f);
@@ -75,8 +76,8 @@ test('Complete plain group output presents neutrally without affection; saved le
   const before=(await state(f.game)).relationship.affection;f.respond(()=>'DeepSeek：我很困惑。');await f.game.action('companion-group-send',{text:'继续讨论',forceCharacterId:'deepseek'});
   const line=await pending(f),waiting=await state(f.game);assert.equal(line.text,'我很困惑。');assert.equal(line.emotion,'normal');assert.equal(line.emotionSource,'compatibility');assert.equal(waiting.relationship.affection,before);assert.equal(waiting.groupMessages.filter(row=>row.role==='assistant').length,0);
   await f.game.action('companion-group-present',{requestId:line.id});const shown=await state(f.game);assert.equal(shown.relationship.affection,before);assert.equal(shown.groupMessages.at(-1).emotion,'normal');assert.equal(shown.groupMessages.at(-1).emotionSource,'compatibility');assert.equal(shown.groupRuntime.status,'idle');
-  const data=(await f.game.action('companion-group-export',{id:f.group.id})).data,group=data.groups[0],at=Date.now();group.id='legacy-plain-readable';group.seq=(group.seq??0)+1;group.messages.push({id:'legacy-plain-line',seq:group.seq,role:'assistant',characterId:'deepseek',characterName:'DeepSeek',text:'DeepSeek：我很困惑。',emotion:'confused',emotionSource:'keyword',status:'presented',presentedAt:at,createdAt:at});
-  await f.game.action('companion-conversation-import',{data});await f.game.action('companion-group-select',{id:group.id});const legacy=(await state(f.game)).groupMessages.at(-1);assert.equal(legacy.text,'我很困惑。');assert.equal(legacy.emotion,'confused');assert.equal((await f.game.action('companion-group-export',{id:group.id})).data.groups[0].messages.at(-1).text,'DeepSeek：我很困惑。');assert.equal(f.calls.filter(row=>row.purpose==='group-chat').length,1,'viewing/importing legacy history does not generate another group reply');
+  const data=(await readCompanionExport(f.game,'companion-group-export',{id:f.group.id})),group=data.groups[0],at=Date.now();group.id='legacy-plain-readable';group.seq=(group.seq??0)+1;group.messages.push({id:'legacy-plain-line',seq:group.seq,role:'assistant',characterId:'deepseek',characterName:'DeepSeek',text:'DeepSeek：我很困惑。',emotion:'confused',emotionSource:'keyword',status:'presented',presentedAt:at,createdAt:at});
+  await f.game.action('companion-conversation-import',{data});await f.game.action('companion-group-select',{id:group.id});const legacy=(await state(f.game)).groupMessages.at(-1);assert.equal(legacy.text,'我很困惑。');assert.equal(legacy.emotion,'confused');assert.equal((await readCompanionExport(f.game,'companion-group-export',{id:group.id})).groups[0].messages.at(-1).text,'DeepSeek：我很困惑。');assert.equal(f.calls.filter(row=>row.purpose==='group-chat').length,1,'viewing/importing legacy history does not generate another group reply');
  }finally{await f.close();}
 });
 
@@ -114,17 +115,23 @@ test('Peer context still excludes unpresented drafts, old membership intervals, 
  }finally{await f.close();}
 });
 
-test('Five hundred witnessed messages fit an explicit 8192 capacity by verified compression, with compact source index and unchanged originals',async()=>{
+test('A live group turn selects bounded witnessed context at 8192 while preserving all five hundred original messages',async()=>{
  const f=await fixture({capacity:8192});try{
-  const data=(await f.game.action('companion-group-export',{id:f.group.id})).data,imported=data.groups[0],at=Date.now()-1000;
+  const data=(await readCompanionExport(f.game,'companion-group-export',{id:f.group.id})),imported=data.groups[0],at=Date.now()-1000;
   imported.id='cross-talk-budget-history';imported.seq=500;imported.messages=Array.from({length:500},(_,index)=>({id:'original-source-'+index+'-'+('a'.repeat(70)),seq:index+1,role:index%2?'assistant':'user',...(index%2?{characterId:'claude',characterName:'Claude',status:'presented',presentedAt:at+index}:{}),text:'群内已经共同讨论的事项 '+index,createdAt:at+index}));
   await f.game.action('companion-conversation-import',{data});await f.game.action('companion-group-select',{id:imported.id});
-  const before=(await f.game.action('companion-group-export',{id:imported.id})).data.groups[0].messages;
+  const before=(await readCompanionExport(f.game,'companion-group-export',{id:imported.id})).groups[0].messages;
+  const known=(await f.game.action('companion-memory-view',{characterId:'deepseek',groupId:imported.id})).memory;
+  assert.equal(known.totalEventCount,500);
+
   await f.game.action('companion-group-send',{text:'Claude，你刚才最后一个事项是什么？',forceCharacterId:'deepseek'});const p=await pending(f),request=f.calls.filter(row=>row.purpose==='group-chat').at(-1),{signal,...serializable}=request;
-  assert.equal(p.request.capacity.tokens,8192);assert.equal(p.request.capacity.compressed,true);assert.ok(p.request.memoryEventIds.length>=501);
+  assert.equal(p.request.capacity.tokens,8192);assert.equal(p.request.capacity.compressed,false);
+  // Live replies select recent/recall sources. Complete 500-source coverage is
+  // separately enforced at daily consolidation in companion-memory-budget.test.mjs.
+  assert.ok(p.request.memoryEventIds.length>=1&&p.request.memoryEventIds.length<=27, `Selected ${p.request.memoryEventIds.length} witnessed memory events in ${request.messages.length} API messages`);
   assert.ok(estimateMemoryTokens(serializable)+1800<=8192);assert.ok(!request.system.includes('original-source-'));
   const index=JSON.parse(request.system.split('消息来源索引（与消息同序）：').at(-1));assert.equal(index.length,request.messages.length);assert.ok(index.includes('user'));
-  assert.ok(f.calls.some(row=>row.purpose==='memory-context-segment'));assert.match(request.system,/已核验的群聊旧话题摘要/);assert.match(bodies(request),/Claude，你刚才最后一个事项是什么/);
-  const after=(await f.game.action('companion-group-export',{id:imported.id})).data.groups[0].messages;assert.deepEqual(after.slice(0,500),before);assert.equal(after.length,501);
+  assert.ok(!f.calls.some(row=>row.purpose==='memory-context-segment'));assert.match(bodies(request),/Claude，你刚才最后一个事项是什么/);assert.equal(known.events.findLast(row=>row.source.seq===500).text,'群内已经共同讨论的事项 499');
+  const after=(await readCompanionExport(f.game,'companion-group-export',{id:imported.id})).groups[0].messages;assert.deepEqual(after.slice(0,500),before);assert.equal(after.length,501);
  }finally{await f.close();}
 });

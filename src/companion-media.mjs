@@ -1,3 +1,4 @@
+import {copyCompanionValue} from './companion-draft.mjs';
 import {createHash} from 'node:crypto';
 import {mkdirSync,realpathSync,readFileSync,writeFileSync,existsSync} from 'node:fs';
 import {join,relative,isAbsolute} from 'node:path';
@@ -23,7 +24,7 @@ function metadata(record){
  // Legacy portable photos deliberately omit source-machine life ownership.
  // Daily artwork retains its frozen owner and must pass the daily scope guard.
  const keys=record.kind==='daily'?[...fields,...dailyFields]:fields;
- const out=Object.fromEntries(keys.filter(k=>record[k]!==undefined).map(k=>[k,structuredClone(record[k])]));
+ const out=Object.fromEntries(keys.filter(k=>record[k]!==undefined).map(k=>[k,copyCompanionValue(record[k])]));
  if(out.characters&&!Array.isArray(out.characters))throw Error('CG 角色名单无效');
  for(const c of out.characters??[])id(c.id);
  // Only finished local images can be ready. Imported tasks never submit work.
@@ -70,10 +71,16 @@ export function writePortableImages(dataRoot,codec,files){
  if(files.length&&!codec)throw Error('CG 图片解码器尚未就绪');
  // Decode the entire batch before publishing any image or gallery record.
  const decoded=files.map(file=>({...file,decoded:codec(file.bytes)}));
+ return writeValidatedPortableImages(dataRoot,decoded);
+}
+
+export function writeValidatedPortableImages(dataRoot,decoded){
  const result=new Map();
  mkdirSync(join(dataRoot,'cg-assets'),{recursive:true});
  const root=realpathSync(join(dataRoot,'cg-assets'));
  for(const file of decoded){
+  if(!HASH.test(file.key)||!Buffer.isBuffer(file.bytes)||sha(file.bytes)!==file.key||
+    !Buffer.isBuffer(file.decoded.thumbnail??file.decoded.png))throw Error('CG 图片 SHA-256 校验失败');
   const directory=join(root,'portable-'+file.key);mkdirSync(directory,{recursive:true});
   const rel=relative(root,realpathSync(directory));
   if(rel.startsWith('..')||isAbsolute(rel))throw Error('CG 附件目录越界');

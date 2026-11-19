@@ -11,9 +11,9 @@ import {createMediaStore} from './media-store.mjs';
 import {createDraftStore} from './draft-store.mjs';
 import {deferredSaves} from './deferred-saves.mjs';
 
-export async function createGalgame({dataRoot,provider,model,cg=null,resources=null,getLanguage=()=> 'zh-CN',getReplyStyle=()=> 'natural',onCharacter=()=>{},onPetVisibility=()=>{},onChatCommitted=()=>{},onOutput=()=>{},onCgUpdated=()=>{},onActivity=()=>{},audit=()=>{},imageConverter=null,automaticWorkAllowed=()=>true,workBridge=null,r95Options={},voice=null,deferredSaveRegistry=deferredSaves}) {
+export async function createGalgame({dataRoot,provider,model,cg=null,resources=null,getLanguage=()=> 'zh-CN',getReplyStyle=()=> 'natural',onCharacter=()=>{},onPetVisibility=()=>{},onChatCommitted=()=>{},onOutput=()=>{},onCgUpdated=()=>{},onActivity=()=>{},audit=()=>{},imageConverter=null,imageValidator=null,imageConversionWorker=null,automaticWorkAllowed=()=>true,workBridge=null,r95Options={},voice=null,deferredSaveRegistry=deferredSaves,onMigrationProgress,chooseConversationExportPath}) {
   const media=createMediaStore(dataRoot),drafts=createDraftStore(dataRoot,{onError:error=>audit({type:'draft-store-error',message:String(error?.message??error)})});
-  const companionStore=await openCompanionStore(dataRoot,{media,deferredSaveRegistry,audit});
+  const companionStore=await openCompanionStore(dataRoot,{media,deferredSaveRegistry,audit,onMigrationProgress});
   let engine;const effects=[];
   try{
   const languageContext=new AsyncLocalStorage();
@@ -42,7 +42,7 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
     const view=await engine.handleAction('view',{});
     await engine.handleAction('settings-set',{characterMode:'manual',characterId:resources?.fallback(resources.status().initialCharacter)??(provider.currentSelection?view.current||'deepseek':'deepseek'),sideStorySeedSource:'activity',...(!provider.currentSelection?{chatMode:'manual',chatProvider:'codex',chatModel:model}:{})});
   }
-  const companion=await createCompanionService({workBridge,r95Options,voice,store:companionStore,engine,provider,dataRoot,imageCodec:cg?.imageCodec,imageConverter,media,drafts,resources,onCharacter,onChatCommitted,onOutput,onActivity,getLanguage,getReplyStyle,audit,automaticWorkAllowed});
+  const companion=await createCompanionService({workBridge,r95Options,voice,chooseConversationExportPath,store:companionStore,engine,provider,dataRoot,imageCodec:cg?.imageCodec,imageConverter,imageValidator,imageConversionWorker,media,drafts,resources,onCharacter,onChatCommitted,onOutput,onActivity,getLanguage,getReplyStyle,audit,automaticWorkAllowed});
   bus.on('galgame/output-timing',value=>companion.captureTiming(value));
   bus.on('galgame/text-delta',value=>companion.captureDelta(value));
   ctx.finishCompanionVoice=(id,raw)=>companion.finishPrivateVoice(id,raw);
@@ -55,11 +55,12 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
   ctx.cgAssetExists=ref=>!(typeof ref==='string'&&ref.replaceAll('\\','/').startsWith('cg-assets/'))||existsSync(resolve(dataRoot,ref));
   ctx.companionHistory=(characterId,personaId)=>companion.history(characterId,personaId);
   ctx.companionPersonaId=()=>personaContext.getStore()||companion.context().personaId;
+  ctx.serializeCompanionRelationship=companion.serializeLegacyRelationship;
   ctx.companionProgress=(characterId,personaId)=>companion.progress(characterId,personaId);
-  let sequence=0;
+  let sequence=0,closing=null;
   return {
     get gameEconomy(){return companion.r95?.feeding?.gameEconomy;},viewState:()=>companion.viewState(),cardGamesPortrait:companion.cardGamesPortrait,gameContext:scope=>companion.gameContext(scope),recordGameFact:value=>companion.recordGameFact(value),
-    voiceScope:companion.voiceScope,voiceSubmit:companion.voiceSubmit,voiceReceipt:companion.voiceReceipt,voiceSkip:companion.voiceSkip,voiceCancel:companion.voiceCancel,
+    voiceScope:companion.voiceScope,voiceGroupSpeaker:companion.voiceGroupSpeaker,voiceSubmit:companion.voiceSubmit,voiceReceipt:companion.voiceReceipt,voiceSkip:companion.voiceSkip,voiceCancel:companion.voiceCancel,
     async action(action,args={}) {
      const previous=voice?companion.voiceScope():null;
      try{
@@ -90,6 +91,7 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
     r95:companion.r95,workScope:companion.workScope,pluginScope:companion.pluginScope,workContext:companion.workContext,workConnection:companion.workConnection,recordWorkExperience:companion.recordWorkExperience,
     context:()=>companion.context(),
     hasCharacter:id=>companion.hasCharacter(id),
+    voiceCharacters:()=>Object.keys(companionStore.state.cards).filter(id=>companion.hasCharacter(id)),
     touch:args=>companion.touch(args),
     workTokens(amount) {
       if(amount<=0)return;
@@ -99,7 +101,19 @@ export async function createGalgame({dataRoot,provider,model,cg=null,resources=n
     flushWorkLedger:()=>engine.flushWorkLedger(),
     flushSaves:()=>engine.flushSaves(),
     maintenance:companion.maintenance,
-    async close(){if(ledgerTimer)writeLedger();await engine.flushWorkLedger();await companion.close();await engine.flushSaves();for(const fn of effects)fn();engine.releaseDeferredSaves();companionStore.releaseDeferredSave();},
+    close(){
+      closing??=(async()=>{
+        if(ledgerTimer)writeLedger();
+        await engine.flushWorkLedger();
+        await companion.close();
+        await companion.persistRelationshipProjections();
+        await engine.flushSaves();
+        for(const fn of effects)fn();
+        engine.releaseDeferredSaves();
+        await companionStore.close();
+      })().catch(error=>{closing=null;throw error;});
+      return closing;
+    },
   };
-  }catch(error){engine?.releaseDeferredSaves();companionStore.releaseDeferredSave();for(const fn of effects)try{fn();}catch{}throw error;}
+  }catch(error){engine?.releaseDeferredSaves();try{await companionStore.close();}catch{}for(const fn of effects)try{fn();}catch{}throw error;}
 }

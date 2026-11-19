@@ -1,5 +1,8 @@
 import {createHash} from 'node:crypto';
 const fail=code=>Object.assign(Error(code),{code});
+export function fullReadingCueError(part,reason){
+ return Object.assign(fail('BILI_FULL_CUES_INVALID'),{details:{cid:part?.cid,page:part?.page,reason}});
+}
 const need=(value,code='SOCIAL_UNOBSERVED_MATERIAL')=>{if(!value)throw fail(code);};
 const parse=o=>{try{return {row:o,url:new URL(o.url),value:JSON.parse(o.body)};}catch{return null;}};
 const subtitleUrl=value=>{try{const u=new URL(String(value).startsWith('//')?'https:'+value:value);return u.protocol==='https:'&&!u.username&&!u.password&&(!u.port||u.port==='443')&&/(^|\.)(hdslb\.com|bilibili\.com)$/.test(u.hostname)?u.href:null;}catch{return null;}};
@@ -15,11 +18,18 @@ export function fullReadingAuthority(payload,observations){
   const player=rows.find(o=>o.url.hostname==='api.bilibili.com'&&['/x/player/v2','/x/player/wbi/v2'].includes(o.url.pathname)&&o.url.searchParams.get('cid')===String(cid)&&o.url.searchParams.get('bvid')===view.bvid&&o.value.code===0);
   need(player);const offered=player.value.data?.subtitle?.subtitles??[],track=tracks.filter(t=>t.cid===cid);need(track.length<=1);
   if(!offered.length){need(!track.length);continue;}need(track.length===1);const requested=track[0];need(requested.items===undefined||Array.isArray(requested.items)&&requested.items.length>0);
-  let source=null;const complete=offered.find(o=>{if(requested.language!=='unknown'&&requested.language!==o.lan)return false;const u=subtitleUrl(o.subtitle_url);if(!u)return false;const found=rows.find(r=>r.url.href===u&&Array.isArray(r.value.body)&&r.value.body.length>0);if(!found)return false;const body=found.value.body;if(requested.items&&(body.length!==requested.items.length||!body.every((cue,i)=>cue.content===requested.items[i].text&&cue.from===requested.items[i].start&&cue.to===requested.items[i].end)))return false;source=body;return true;});
-  need(complete&&source.every(c=>typeof c.content==='string'&&c.content.length>0&&Number.isFinite(c.from)&&Number.isFinite(c.to)&&c.from>=0&&c.to>=c.from));verified.push({cid,language:complete.lan??'unknown',items:source.map((cue,i)=>({id:requested.items?.[i]?.id??'subtitle:'+(i+1),start:cue.from,end:cue.to,text:cue.content}))});
+  const partIndex=pages.findIndex(p=>p.cid===cid),part={cid,page:pages[partIndex].page??partIndex+1};
+  let source=null,sourceResponseSha256,emptySource=false;const complete=offered.find(o=>{if(requested.language!=='unknown'&&requested.language!==o.lan)return false;const u=subtitleUrl(o.subtitle_url);if(!u)return false;const found=rows.find(r=>r.url.href===u&&Array.isArray(r.value.body)&&r.value.body.length>0);if(!found){emptySource ||= rows.some(r=>r.url.href===u&&Array.isArray(r.value.body)&&r.value.body.length===0);return false;}const body=found.value.body;if(requested.items&&(body.length!==requested.items.length||!body.every((cue,i)=>cue?.content===requested.items[i]?.text&&cue?.from===requested.items[i]?.start&&cue?.to===requested.items[i]?.end)))return false;source=body;sourceResponseSha256=createHash('sha256').update(found.row.body).digest('hex');return true;});
+  if(!complete&&emptySource&&requested.items===undefined)throw fullReadingCueError(part,'empty-track');
+  need(complete);
+  for(const cue of source){
+   if(typeof cue?.content!=='string'||!cue.content||cue.content.length>16*1024*1024)throw fullReadingCueError(part,'invalid-text');
+   if(!Number.isFinite(cue.from)||!Number.isFinite(cue.to)||cue.to<cue.from)throw fullReadingCueError(part,'invalid-time');
+  }
+  verified.push({cid,language:complete.lan??'unknown',sourceResponseSha256,items:source.map((cue,i)=>({id:requested.items?.[i]?.id??'subtitle:'+(i+1),start:cue.from,end:cue.to,text:cue.content}))});
  }
  need(tracks.every(t=>selected.includes(t.cid)));
- return {video:{videoId:view.bvid,cid:currentCid,title:view.title,duration:pages.find(p=>p.cid===currentCid).duration},parts:pages.map((p,i)=>({cid:p.cid,page:p.page??i+1,title:p.part??p.title??'',duration:p.duration})),selectedCids:[...selected],subtitleTracks:verified};
+ return {video:{videoId:view.bvid,cid:currentCid,title:view.title,duration:pages.find(p=>p.cid===currentCid).duration},description:typeof view.desc==='string'?view.desc:null,parts:pages.map((p,i)=>({cid:p.cid,page:p.page??i+1,title:p.part??p.title??'',duration:p.duration})),selectedCids:[...selected],subtitleTracks:verified};
 }
 export const fullReadingModelFingerprint=profile=>createHash('sha256').update(JSON.stringify(profile)).digest('hex');
 export function fullReadingModel(profile){

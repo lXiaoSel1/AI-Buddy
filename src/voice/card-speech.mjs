@@ -1,4 +1,5 @@
 import {voiceSpeechText,voiceSpeechChunks} from './speech-text.mjs';
+import {MiniMaxSpeechError,minimaxSpeechStatus} from './minimax-speech-errors.mjs';
 import {mkdir,readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
@@ -85,7 +86,8 @@ export function createCardSpeech({dataRoot,resolveVoice,isScopeValid,emit=()=>{}
       const resolved=row.speech?await resolveVoice(row.scope):null;
       const voice=row.voice=resolved?Object.freeze({...resolved}):null;
       await guard(row);
-      if(voice&&(!voice.runtime||typeof voice.runtime.speak!=='function'||typeof voice.runtime.stopEngine!=='function'||!['breeze','gpt'].includes(voice.engine)||!['local','minimax'].includes(voice.speechProvider)||
+      const validEngine=!voice||['breeze','gpt'].includes(voice.engine)||voice.engine==='cloud'&&voice.speechProvider==='minimax'&&['minimax-cn','minimax-global'].includes(voice.providerId)&&voice.packageId==='builtin-asr';
+      if(voice&&(!voice.runtime||typeof voice.runtime.speak!=='function'||typeof voice.runtime.stopEngine!=='function'||!validEngine||!['local','minimax'].includes(voice.speechProvider)||
         typeof voice.packageId!=='string'||!voice.packageId||typeof voice.profileId!=='string'||!voice.profileId||voice.profileVersion==null))throw fault('VOICE_CARD_VOICE_INVALID');
       const envelope=row.envelope=Object.freeze({...row.scope,requestId,messageId:row.eventId,epoch,voiceProfileVersion:voice?.profileVersion??0,index:0,segmentId:requestId+':voice:0'});
       row.status='synthesizing';row.updatedAt=now();await save();
@@ -119,6 +121,21 @@ export function createCardSpeech({dataRoot,resolveVoice,isScopeValid,emit=()=>{}
       if(row.abort.signal.aborted||active!==row)return;
       if(error.code==='VOICE_CARD_DISPLAY_TIMEOUT'){void expire(row).catch(()=>{});return;}
       clearTimeout(row.displayTimer);
+      if(error instanceof MiniMaxSpeechError || error.suppressed===true){
+        const suppressed=error.suppressed===true;
+        row.status=suppressed?'explicitlySkipped':'failed';row.reason=error.code;row.updatedAt=now();
+        row.receiptEvidence.push({status:row.status,reason:row.reason,at:row.updatedAt});
+        try{await save();}catch(failure){
+          if(active===row)active=null;
+          failedSave(failure,row);
+          return;
+        }
+        if(active!==row)return;
+        if(suppressed)send({type:'turn',state:'skipped',requestId});
+        else send({type:'segment',envelope:row.envelope,requestId,...minimaxSpeechStatus(error),state:'failed'});
+        active=null;void pump();
+        return;
+      }
       row.status='failed';row.reason=error.code??'VOICE_CARD_FAILED';row.receiptEvidence.push({status:'failed',reason:row.reason,at:now()});
       try{await save();}catch{}
       send({type:'segment',state:'failed',envelope:row.envelope,requestId,code:row.reason,message:String(error.message??'牌桌配音失败').slice(0,500)});

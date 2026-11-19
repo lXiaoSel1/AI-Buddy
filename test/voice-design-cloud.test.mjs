@@ -69,6 +69,7 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
   const renderer=String.raw`
     import React,{useState} from 'react';
     import {createRoot} from 'react-dom/client';
+    import {flushSync} from 'react-dom';
     import {CloudVoiceSettings} from './src/voice/cloud-settings-ui.mjs';
     import {setLocale} from './src/i18n.mjs';
     const {ipcRenderer}=window.require('electron');
@@ -77,7 +78,21 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
     const h=React.createElement,calls=[],checks=[],wait=()=>new Promise(resolve=>setTimeout(resolve,20));
     const check=(value,name)=>{if(!value)throw Error(name);checks.push(name);};
     const find=selector=>document.querySelector(selector);
-    const click=async selector=>{const element=find(selector);check(element,'Present: '+selector);element.click();await wait();};
+    const waitForElement=(selector,enabled=false)=>new Promise((resolve,reject)=>{
+      const observe=()=>{
+        const element=find(selector);if(!element||(enabled&&element.disabled))return;
+        observer.disconnect();clearTimeout(timeout);resolve(element);
+      };
+      const observer=new MutationObserver(observe);
+      const timeout=setTimeout(()=>{observer.disconnect();reject(Error('Present: '+selector));},2000);
+      observer.observe(document.body,{subtree:true,childList:true,attributes:true});
+      observe();
+    });
+    const click=async selector=>{
+      const element=await waitForElement(selector,true);
+      check(element,'Present: '+selector);
+      flushSync(()=>element.click());
+    };
     const input=async(selector,value)=>{const element=find(selector);check(element,'Present: '+selector);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(element,value);element.dispatchEvent(new Event('input',{bubbles:true}));await wait();};
     let snapshot=${JSON.stringify({state})},update,releasePrepare,queryFailure=false,previewBad=false,shortReference=false,holdQuery=false,releaseQuery;
     Object.assign(snapshot.state.cloudBatch.items.find(row=>row.characterId==='claude'),{status:'profile-incomplete',availableStatus:'not-prepared',missingEngines:['gpt']});
@@ -106,10 +121,10 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
     function Harness(){const [value,setValue]=useState(snapshot);update=setValue;return h(CloudVoiceSettings,{snapshot:value,session});}
     const root=createRoot(document.getElementById('root'));root.render(h(Harness));
     (async()=>{try{
-      await wait();check(calls.length===0,'Opening C3 performs no provider request');
+      await waitForElement('[data-cloud-open-batch]');check(calls.length===0,'Opening C3 performs no provider request');
       check(!find('[data-cloud-reclone="unknown-fixture"]'),'Unknown outcome never offers automatic recloning');
       await click('[data-cloud-reclone="expired-fixture"]');check(find('[data-cloud-character="expired-fixture"]').checked,'Reclone selects only the expired character');
-      await click('[data-cloud-prepare]');check(find('[data-cloud-cost]').textContent==='¥9.90'&&!calls.some(row=>row.op==='cloud-batch-prepare'),'Expired voice returns to the original explicit fee review');
+      await click('[data-cloud-prepare]');check((await waitForElement('[data-cloud-cost]')).textContent==='¥9.90'&&!calls.some(row=>row.op==='cloud-batch-prepare'),'Expired voice returns to the original explicit fee review');
       await click('dialog .ui-dlg-act .ghost');await click('dialog [aria-label="关闭"]');
       await click('[data-cloud-open-batch]');
       check(find('[data-cloud-character="deepseek"]').disabled,'Ready voice cannot be selected');
@@ -120,14 +135,15 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
       check(find('[data-cloud-prepare]').disabled,'Empty selection cannot advance');
       await click('[data-cloud-character="claude"]');await click('[data-cloud-prepare]');
       check(calls.filter(row=>row.op==='cloud-batch-preview').length===2&&!calls.some(row=>row.op==='cloud-batch-prepare'),'Cost review does not upload or prepare');
+      await waitForElement('[data-cloud-cost]');
       check(find('dialog').textContent.includes('Claude')&&find('[data-cloud-clone-count]').textContent==='2'&&find('[data-cloud-cost]').textContent==='¥19.80','Confirmation identifies selected character and actual clone count and plan cost');
       const realNow=Date.now;Date.now=()=>realNow()+6*60*1000;emit({});await wait();
       check(find('[data-cloud-confirm]').disabled,'Expired preview cannot be confirmed');Date.now=realNow;
       await click('dialog .ui-dlg-act .ghost');previewBad=true;await click('[data-cloud-prepare]');
-      check(find('[data-cloud-confirm]').disabled,'Malformed preview cannot be confirmed');
+      check((await waitForElement('[data-cloud-confirm]')).disabled,'Malformed preview cannot be confirmed');
       await click('dialog .ui-dlg-act .ghost');previewBad=false;shortReference=true;
       await click('[data-cloud-prepare]');
-      check(find('dialog [role="alert"]')?.textContent.includes('云端克隆的参考录音至少需要 10 秒'),'Short reference shows a specific Chinese correction');
+      check((await waitForElement('dialog [role="alert"]')).textContent.includes('云端克隆的参考录音至少需要 10 秒'),'Short reference shows a specific Chinese correction');
       check(!find('[data-cloud-cost]')&&!find('[data-cloud-confirm]'),'Short reference opens neither a fee estimate nor upload consent');
       setLocale('en');emit({});await wait();
       check(find('dialog [role="alert"]')?.textContent.includes('at least 10 seconds'),'Short reference shows a specific English correction');
@@ -135,7 +151,7 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
       await click('[data-cloud-prepare]');await click('[data-cloud-confirm]');
       const sent=calls.find(row=>row.op==='cloud-batch-prepare').payload;
       check(JSON.stringify(sent.selectedCharacterIds)==='["claude"]'&&sent.planHash==='approved-plan'&&sent.consentUpload===true&&sent.consentActivation===true,'Prepare preserves exact plan and both explicit consents');
-      check(find('[data-cloud-cancel]')&&!find('[data-cloud-cancel]').disabled,'Running work remains cancellable');
+      check(!(await waitForElement('[data-cloud-cancel]')).disabled,'Running work remains cancellable');
       await click('dialog .ui-dlg-act .primary');check(!find('dialog')&&snapshot.cloudBatchWorking,'Closing progress keeps preparation running');
       await click('[data-cloud-open-batch]');await click('[data-cloud-cancel]');
       check(calls.some(row=>row.op==='cloud-batch-cancel'),'Stop remaining uses existing cancellation');
@@ -143,13 +159,14 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
       await click('[data-cloud-open-voices]');check(!calls.some(row=>row.op==='cloud-voices'),'Voice dialog waits for explicit refresh');
       check(find('[data-cloud-voices-refresh]').textContent===''&&find('[data-cloud-voices-refresh]').getAttribute('aria-label')==='刷新音色列表','Refresh remains an icon-only accessible action');
       await click('[data-cloud-voices-refresh]');
+      await waitForElement('[data-cloud-voice-bind="system-voice"]');
       const systemTab=[...document.querySelectorAll('[role="radio"]')].find(element=>element.textContent==='系统音色');systemTab.click();await wait();
       check(!find('[data-cloud-voice-bind="designed-voice"]')&&find('[data-cloud-voice-bind="system-voice"]'),'Category filters real provider categories');
       await click('[data-cloud-voice-bind="system-voice"]');
       const bound=calls.find(row=>row.op==='cloud-bind').payload;
       check(bound.voiceId==='system-voice'&&bound.expectedSelection.scope.characterId==='deepseek'&&bound.expectedSelection.cloudConnectionId==='local','Existing voice binding preserves current scope and configuration');
       check(calls.filter(row=>row.op==='cloud-batch-prepare').length===1,'Existing voice binding does not clone again');
-      queryFailure=true;await click('[data-cloud-voices-refresh]');check(find('[role="alert"]').textContent.includes('1008')&&find('[role="alert"]').textContent.includes('余额不足'),'Provider errors keep stable reason and code');
+      queryFailure=true;await click('[data-cloud-voices-refresh]');const providerError=await waitForElement('[role="alert"]');check(providerError.textContent.includes('1008')&&providerError.textContent.includes('余额不足'),'Provider errors keep stable reason and code');
       queryFailure=false;holdQuery=true;await click('[data-cloud-voices-refresh]');
       emit({state:{...snapshot.state,scope:{characterId:'claude'},profile:{id:'claude-reference',version:2}}});await wait();releaseQuery();await wait();
       check(!find('dialog')&&!find('[data-cloud-voice-bind="system-voice"]'),'Late list for previous character cannot appear in new scope');
@@ -164,7 +181,7 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
       region.value='minimax';region.dispatchEvent(new Event('change',{bubbles:true}));await wait();check(!find('[data-cloud-save]').disabled,'Returning to original region can keep the original key');
       await input('[data-cloud-field="name"]','Renamed configuration');await click('[data-cloud-save]');
       check(calls.find(row=>row.op==='cloud-connection-save').payload.name==='Renamed configuration'&&!Object.hasOwn(calls.find(row=>row.op==='cloud-connection-save').payload,'key'),'Blank edit keeps saved credential');
-      check(find('[data-cloud-field="key"]').value==='','Editor clears key after save');
+      check((await waitForElement('[data-cloud-field="key"]')).value==='','Editor clears key after save');
       await input('[data-cloud-field="name"]','New test account');await input('[data-cloud-field="key"]','STUB_KEY_ONLY');await click('[data-cloud-save]');
       check(calls.some(row=>row.op==='cloud-connection-save'&&row.payload.key==='STUB_KEY_ONLY')&&find('[data-cloud-field="key"]').value==='','New configuration submits only entered key and immediately clears editor');
       await click('[data-cloud-use="local"]');check(calls.some(row=>row.op==='cloud-connection-select'&&row.payload.id==='local'),'Saved account selection keeps original action');
@@ -175,12 +192,12 @@ test('real cloud dialogs preserve explicit upload consent, scoped voice binding,
   try{
     await build({stdin:{contents:renderer,resolveDir:host,sourcefile:'cloud-ui-dom-fixture.mjs'},bundle:true,format:'iife',platform:'browser',outfile:join(directory,'renderer.js')});
     await writeFile(join(directory,'index.html'),'<!doctype html><div id="root"></div><script src="renderer.js"></script>');
-    await writeFile(join(directory,'main.cjs'),`const {app,BrowserWindow,ipcMain,session}=require('electron');const fs=require('node:fs'),path=require('node:path');app.setPath('userData',path.join(__dirname,'profile'));app.disableHardwareAcceleration();ipcMain.once('result',(_,value)=>{fs.writeFileSync(path.join(__dirname,'result.json'),JSON.stringify(value));app.quit();});app.whenReady().then(()=>{session.defaultSession.webRequest.onBeforeRequest((details,done)=>done({cancel:!details.url.startsWith('file:')&&!details.url.startsWith('data:')}));const w=new BrowserWindow({show:false,webPreferences:{nodeIntegration:true,contextIsolation:false}});w.loadFile(path.join(__dirname,'index.html'));});setTimeout(()=>app.exit(2),20000);`);
+    await writeFile(join(directory,'main.cjs'),`const {app,BrowserWindow,ipcMain,session}=require('electron');const fs=require('node:fs'),path=require('node:path');app.setPath('userData',path.join(__dirname,'profile'));app.disableHardwareAcceleration();ipcMain.once('result',(_,value)=>{fs.writeFileSync(path.join(__dirname,'result.json'),JSON.stringify(value));app.quit();});app.whenReady().then(()=>{session.defaultSession.webRequest.onBeforeRequest((details,done)=>done({cancel:!details.url.startsWith('file:')&&!details.url.startsWith('data:')}));const w=new BrowserWindow({show:false,webPreferences:{nodeIntegration:true,contextIsolation:false,backgroundThrottling:false}});w.loadFile(path.join(__dirname,'index.html'));});setTimeout(()=>app.exit(2),20000);`);
     const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
     const outcome=await new Promise((resolve,reject)=>{const child=spawn(require('electron'),[join(directory,'main.cjs')],{windowsHide:true,env,stdio:['ignore','pipe','pipe']});let output='';child.stdout.on('data',value=>output+=value);child.stderr.on('data',value=>output+=value);child.on('error',reject);child.on('close',code=>resolve({code,output}));});
     assert.equal(outcome.code,0,outcome.output);
     const result=JSON.parse(await readFile(join(directory,'result.json'),'utf8'));
-    assert.equal(result.error,undefined,result.error);
+    assert.equal(result.error,undefined,result.error&&result.error+'\nLast verified action: '+result.checks.at(-1));
     assert.ok(result.checks.length>=20);
     context.diagnostic('Actual Electron DOM checks: '+result.checks.length);
   }finally{

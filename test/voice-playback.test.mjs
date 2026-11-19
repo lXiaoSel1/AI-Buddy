@@ -177,3 +177,46 @@ test('FIFO waits for the terminal acknowledgement and ordinary stop releases the
   }finally{acknowledge();offPrivate();offGroup();await release();}
   assert.equal(audio.contexts[0].state,'closed');
 });
+
+test('the active visual expression advances with audio rather than queued voice text',async t=>{
+  const audio=audioFactory(),subtitles=[];
+  const playback=createVoicePlayback({createContext:audio.create,action:async()=>{},onSubtitle:value=>subtitles.push(value)});
+  t.after(()=>playback.close());
+  await playback.handle({...segment(0),visualEmotion:'gentle'});
+  await playback.handle({...segment(1),visualEmotion:'smug'});
+  await playback.handle(pcm(0));
+  await playback.handle({type:'audio',phase:'end',envelope:envelope(0)});
+  assert.equal(subtitles.some(Boolean),false);
+  const context=audio.contexts[0];
+  context.currentTime=1;
+  await delay(80);
+  assert.equal(subtitles.at(-1).visualEmotion,'gentle');
+  assert.equal(subtitles.at(-1).text,'第0段');
+  await playback.handle(pcm(1));
+  await playback.handle({type:'audio',phase:'end',envelope:envelope(1)});
+  assert.equal(subtitles.at(-1).visualEmotion,'gentle');
+  context.currentTime=2;
+  await delay(80);
+  assert.equal(subtitles.at(-1).visualEmotion,'smug');
+  assert.equal(subtitles.at(-1).text,'第1段');
+});
+
+test('a queued next visual expression is available without switching the current subtitle',async t=>{
+  const audio=audioFactory(),listeners=new Set(),states=[];
+  const api={action:async()=>({ok:true}),onEvent(listener){listeners.add(listener);return()=>listeners.delete(listener);}};
+  const output=ensureVoiceOutput(api,{createContext:audio.create});
+  const scope={channel:'app-private',characterId:'deepseek',personaId:'persona',conversationId:'conversation'};
+  const emit=event=>Promise.all([...listeners].map(listener=>listener({...event,envelope:{...scope,...event.envelope}})));
+  const unsubscribe=output.subscribe(scope,state=>states.push(state));
+  t.after(async()=>{unsubscribe();await output.close();});
+  await emit({...segment(0),visualEmotion:'gentle'});
+  await emit({...segment(1),visualEmotion:'smug'});
+  assert.equal(states.at(-1).requests[0].subtitle,null);
+  assert.equal(states.at(-1).requests[0].nextVisualEmotion,'gentle');
+  await emit(pcm(0));
+  await emit({type:'audio',phase:'end',envelope:envelope(0)});
+  audio.contexts[0].currentTime=1;
+  await delay(80);
+  assert.equal(states.at(-1).requests[0].subtitle.visualEmotion,'gentle');
+  assert.equal(states.at(-1).requests[0].nextVisualEmotion,'smug');
+});

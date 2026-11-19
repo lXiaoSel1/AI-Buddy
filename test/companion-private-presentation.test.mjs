@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {setImmediate as turn} from 'node:timers/promises';
 import {createCompanionService} from '../src/companion-service.mjs';
-import {makeCard} from '../src/companion-store.mjs';
+import {makeCard,openCompanionStore} from '../src/companion-store.mjs';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
 import {ensureLives,lifeToken} from '../src/companion-life.mjs';
 
 const copy=structuredClone;
@@ -10,12 +13,13 @@ const gate=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {prom
 async function fixture(t,{relationship}={}){
  let clock=Date.now();const now=()=>++clock;
  const initial={schema:1,migrated:true,cards:{claude:makeCard({id:'claude',name:'Synthetic role',fields:{}})},personas:{default:{id:'default',name:'Synthetic persona',nickname:'Test',relationships:{}}},relationships:{claude:{mode:'independent',byPersona:{default:{level:4,affection:35}}}},conversations:{conversation:{id:'conversation',characterId:'claude',personaId:'default',createdAt:now(),updatedAt:now(),messages:[],choices:[],draft:''}},groups:{},events:{},touchQuotas:{},draftCards:{},settings:{allowUserMessageEdit:true},activeCharacterId:'claude',activePersonaId:'default',activeConversationId:'conversation',defaultPersonaId:'default'};
- ensureLives(initial,now());let value=copy(initial),tail=Promise.resolve();const changes=[],awards=[];let engineProgress={level:4,affection:35};
- const store={get state(){return value;},snapshot:()=>copy(value),flush:()=>tail,mutate(fn){const job=tail.then(async()=>{const next=copy(value),result=await fn(next);if(JSON.stringify(value)!==JSON.stringify(next))changes.push(copy(next));value=next;return result;});tail=job.catch(()=>{});return job;}};
+ ensureLives(initial,now());let value=copy(initial),tail=Promise.resolve();const changes=[],awards=[];let engineProgress={level:4,affection:35},failMutation=false;
+ const store={get state(){return value;},snapshot:()=>copy(value),flush:()=>tail,mutate(fn){const job=tail.then(async()=>{const next=copy(value),result=await fn(next);if(failMutation){failMutation=false;throw Error('Injected store write failure');}if(JSON.stringify(value)!==JSON.stringify(next))changes.push(copy(next));value=next;return result;});tail=job.catch(()=>{});return job;}};
  const engine={async handleAction(action,args={}){
   if(action==='companion-export')return {current:'claude',characters:[{id:'claude',profile:{displayName:'Synthetic role',persona:'Quiet',tone:'Calm',address:'Test',greeting:'Hi',visual:''},history:[],choices:[],personaId:'default',...engineProgress,pendingRelationEvents:[]}]};
   if(action==='view')return {current:'claude',characterMode:'manual'};
   if(action==='companion-relationship'){awards.push(copy(args));await relationship?.(args);engineProgress={level:args.base.level,affection:args.base.affection+args.delta};return {ok:true,...engineProgress,levels:[]};}
+  if(action==='companion-project'&&args.characterId==='claude')engineProgress=copy(args.relationship);
   if(['companion-register','companion-project','companion-ack-events'].includes(action))return {ok:true};
   throw Error('Unhandled synthetic engine action '+action);
  }};
@@ -23,7 +27,7 @@ async function fixture(t,{relationship}={}){
  t.after(()=>service.close());
  await store.mutate(s=>{s.conversations.conversation.messages.push({id:'reply',requestId:'synthetic-request',role:'assistant',text:'Synthetic completed text',characterId:'claude',personaId:'default',presentation:'pending',pendingAffection:1,createdAt:now(),lifeId:s.lives.claude.id,lifeToken:lifeToken(s,'claude')});});
  changes.length=0;
- return {service,store,changes,awards,present:()=>service.action('companion-private-present',{conversationId:'conversation',id:'reply'})};
+ return {service,store,engine,changes,awards,failNextMutation:()=>{failMutation=true;},present:()=>service.action('companion-private-present',{conversationId:'conversation',id:'reply'})};
 }
 
 test('concurrent confirmations of one private reply prepare one durable settlement and award once',async t=>{
@@ -68,4 +72,56 @@ test('an award returning after a life operation changes cannot commit into the n
  await f.store.mutate(state=>{state.lives.claude.id='next-life';state.lives.claude.operationId='next-operation';state.conversations.conversation.lifeId='next-life';state.conversations.conversation.messages=[];});
  release.resolve();await assert.rejects(pending,/旧人生/);
  assert.equal(f.store.state.events['chat:synthetic-request'],undefined);assert.equal(f.store.state.relationships.claude.byPersona.default.affection,35);assert.deepEqual(f.store.state.pendingPrivateSettlements.reply,original);assert.deepEqual(f.store.state.conversations.conversation.messages,[]);
+});
+
+test('presentation settings persist by character without changing an older chat', async t=>{
+ const directory=await mkdtemp(join(tmpdir(),'galgame-presentation-'));
+ const f=await fixture(t);
+ const disk=await openCompanionStore(directory);
+ let service,reopened;
+ t.after(async()=>{await service?.close();await reopened?.close();await disk.close();await rm(directory,{recursive:true,force:true});});
+ const source=f.store.snapshot(),legacy=structuredClone(source.conversations.conversation.messages[0]);
+ await disk.mutate((state,tx)=>{
+  Object.assign(state,source);
+  for(const owner of Object.values(state.conversations)){
+   for(const row of owner.messages??[])tx.messages.append('private',owner.id,row);
+   delete owner.messages;
+  }
+ });
+ service=await createCompanionService({store:disk,engine:f.engine,provider:{enabled:false}});
+ await service.action('companion-settings',{characterId:'claude',dialogueStyle:'classic',fontScale:1.15,expressionMode:'reply',expressionMotion:false});
+ await disk.flush();
+ reopened=await openCompanionStore(directory);
+ assert.deepEqual(reopened.state.settings.galgamePresentation?.claude,{dialogueStyle:'classic',fontScale:1.15,expressionMode:'reply',expressionMotion:false});
+ assert.equal(reopened.state.settings.galgamePresentation?.deepseek,undefined);
+ assert.deepEqual(reopened.messages.recent('private','conversation')[0],legacy);
+});
+
+test('Galgame restart clears only the selected character relationship and retains chats', async t=>{
+ const f=await fixture(t);
+ await f.store.mutate(state=>{
+  state.cards.deepseek=makeCard({id:'deepseek',name:'Other role'});
+  state.relationships.deepseek={mode:'independent',byPersona:{default:{level:7,affection:5}}};
+  state.personas.other={id:'other',name:'Other persona',relationships:{}};
+  state.relationships.claude.byPersona.other={level:2,affection:21};
+  state.conversations.conversation.messages[0].presentation='presented';
+  ensureLives(state,Date.now());
+ });
+ const before=f.store.snapshot();
+ await assert.rejects(f.service.action('companion-relationship-reset',{characterId:'deepseek'}),/当前角色/);
+ await f.service.action('companion-relationship-reset',{characterId:'claude'});
+ assert.deepEqual(f.service.progress('claude','default'),{level:1,affection:0});
+ assert.deepEqual(f.store.state.relationships.claude.byPersona.other,before.relationships.claude.byPersona.other);
+ assert.deepEqual(f.store.state.relationships.deepseek,before.relationships.deepseek);
+ assert.deepEqual(f.store.state.conversations,before.conversations);
+});
+
+test('a failed relationship reset save restores the old engine projection and persisted progress',async t=>{
+ const f=await fixture(t);
+ await f.store.mutate(state=>{state.conversations.conversation.messages[0].presentation='presented';});
+ f.failNextMutation();
+ await assert.rejects(f.service.action('companion-relationship-reset',{characterId:'claude'}),/Injected store write failure/);
+ assert.deepEqual(f.service.progress('claude','default'),{level:4,affection:35});
+ const {characters}=await f.engine.handleAction('companion-export');
+ assert.deepEqual(characters.map(row=>[row.level,row.affection]),[[4,35]]);
 });

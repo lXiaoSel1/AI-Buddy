@@ -83,14 +83,14 @@ for(const kind of ['request','input','audio','awaiting-user'])test('C02 Core '+k
 test('C03 active Persona retry survives an older pending Persona, restart and limit one',async t=>{
  const root=mkdtempSync(join(tmpdir(),'r95-persona-meals-')),current={characterId:'a',personaId:'current',lifeId:'life',operationId:'op'},other={...current,personaId:'old'};
  let store=createEconomyStore(root,{now:()=>10000}),service;
- t.after(async()=>{if(service)await service.close();else store.close();rmSync(root,{recursive:true,force:true});});
+ t.after(async()=>{if(service)await service.close();else await store.close();rmSync(root,{recursive:true,force:true});});
  store.initializeRewards({cursor:'new'});store.ingestUsageFact({canonicalRequestId:'funds',totalTokens:100000},{trusted:true});store.ensureScope(current);store.settleHunger(current,{elapsedMs:10*3600000});
  store.purchase({scope:current,foodId:'biscuit',requestId:'buy'});
  for(const [id,which] of [['old-meal',other],['current-meal',current]]){store.consume({scope:which,foodId:'biscuit',requestId:id});store.updateMeal(id,{attempts:1,retryAt:1000});}
- const before=store.view(current);store.close();store=createEconomyStore(root,{now:()=>10000});
+ const before=store.view(current);await store.close();store=createEconomyStore(root,{now:()=>10000});
  assert.deepEqual(store.pendingMeals(current).map(x=>x.id),['current-meal']);assert.deepEqual(store.pendingMeals(other,{limit:10}).map(x=>x.id),['old-meal']);
  assert.deepEqual(store.pendingMeals({...current,operationId:'stale'}),[]);
- const settled=[];service=createFeedingService({store,now:()=>10000,monotonicNow:()=>0,evaluateMeal:async()=>({manualEquivalentAffection:1}),settleAffection:async value=>{settled.push(value);}});service.activeScope(current);
+ const settled=[];service=createFeedingService({store,now:()=>10000,monotonicNow:()=>0,evaluateMeal:async()=>({manualEquivalentAffection:1}),settleAffection:async value=>{settled.push(value);}});await service.activeScope(current);
  await service.tick();await service.tick();assert.deepEqual(settled.map(x=>x.mealId),['current-meal']);
  const {held,available,...beforeWallet}=before.wallet;assert.equal(held,0);assert.equal(available,beforeWallet.balance);assert.deepEqual(store.wallet(),beforeWallet);assert.deepEqual(store.view(current).inventory,before.inventory);assert.equal(store.getMeal('old-meal').attempts,1);assert.equal(store.getMeal('current-meal').affectionState,'settled');
 });

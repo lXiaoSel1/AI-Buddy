@@ -1,5 +1,6 @@
 import test from 'node:test';
-import {recordMoodRequest} from './support/mood-request.mjs';
+import {recordMoodRequest,waitForMoodRequest} from './support/mood-request.mjs';
+import {readCompanionExport} from './support/companion-export-file.mjs';
 import assert from 'node:assert/strict';
 import {mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -20,6 +21,28 @@ async function fixture(mode='list',memberIds=['deepseek','claude','kimi']){
 }
 async function send(f,args={}){await f.game.action('companion-group-send',{id:f.group.id,text:'使用本地模拟回复检查发言',...args});return pending(f.game);}
 async function present(f){const current=await state(f.game);await f.game.action('companion-group-present',{id:f.group.id,requestId:current.groupRuntime.pendingMessage.id});return state(f.game);}
+
+test('a stopped round keeps its number and committed speakers after leaving or reopening the group',async()=>{
+ const f=await fixture();try{
+  await send(f);await f.game.action('companion-group-stop',{id:f.group.id});
+  await send(f);const completed=await present(f);assert.equal(completed.groupRuntime.roundNumber,2);
+  await f.game.action('companion-group-continue',{id:f.group.id});const pendingTurn=(await pending(f.game)).groupRuntime;
+  assert.equal(pendingTurn.pendingMessage.characterId,'claude');
+  await f.game.action('companion-group-stop',{id:f.group.id});
+  async function verify(){
+   const current=await state(f.game),round=current.groupRuntime;
+   assert.equal(round.roundNumber,2);assert.deepEqual(round.roundMembers,['deepseek','claude','kimi']);
+   assert.deepEqual(round.spokenIds,['deepseek']);assert.deepEqual(round.queue,[]);assert.equal(round.status,'idle');
+   assert.equal(round.canContinue,false);assert.equal(round.pendingMessage,null);
+   assert.deepEqual(current.groupMessages.filter(row=>row.role==='assistant').map(row=>row.characterId),['deepseek']);
+  }
+  await verify();
+  await assert.rejects(()=>f.game.action('companion-group-present',{id:f.group.id,requestId:pendingTurn.pendingMessage.id,roundId:pendingTurn.roundId}),{code:'GROUP_PRESENTATION_STALE'});
+  await f.game.action('companion-group-close');await f.game.action('companion-group-select',{id:f.group.id});await verify();
+  await f.restart();await verify();
+  const next=await send(f);assert.equal(next.groupRuntime.roundNumber,3);assert.deepEqual(next.groupRuntime.spokenIds,[]);
+ }finally{await f.close();}
+});
 
 test('Natural mode reads player talkativeness from cards and ignores former per-group overrides',()=>{
  const group={memberIds:['a','b','c','d'],mutedIds:['d'],talkativeness:{a:1,b:0,c:0,d:1},mode:'natural'},cards={a:{talkativeness:0},b:{talkativeness:1},c:{talkativeness:1},d:{talkativeness:1}};
@@ -75,7 +98,12 @@ for(const op of ['mute','leave'])test(`Discarding pending speaker by ${op} prese
   assert.equal(after.groupRuntime.status,'awaiting-continue');assert.deepEqual(after.groupRuntime.queue,['claude','kimi']);assert.equal(after.groupRuntime.pendingMessage,null);assert.equal(after.groupMessages.filter(m=>m.role==='assistant').length,0);assert.equal(f.events.filter(event=>event.group).length,0);
   await assert.rejects(()=>f.game.action('companion-group-present',{id:f.group.id,requestId:discardedId}),/失效|待呈现|取消/);
   await f.game.action('companion-group-continue',{id:f.group.id});assert.equal((await pending(f.game)).groupRuntime.pendingMessage.characterId,'claude');const committed=await present(f);
-  assert.deepEqual(committed.groupMessages.filter(m=>m.role==='assistant').map(m=>m.characterId),['claude']);assert.deepEqual(committed.groupRuntime.queue,['kimi']);assert.equal(f.events.filter(event=>event.group).length,1);assert.equal(f.calls.length,2);assert.ok(f.moodCalls.length>0);
+  assert.deepEqual(committed.groupMessages.filter(m=>m.role==='assistant').map(m=>m.characterId),['claude']);assert.deepEqual(committed.groupRuntime.queue,['kimi']);assert.equal(f.events.filter(event=>event.group).length,1);assert.equal(f.calls.length,2);
+  const assessment=await waitForMoodRequest(()=>f.moodCalls.find(row=>row.scope.characterId==='claude'));
+  assert.equal(assessment.scope.conversationId,f.group.id);
+  const input=JSON.parse(assessment.messages.at(-1).content[0].text);
+  assert.ok(input.events.some(event=>event.text==='使用本地模拟回复检查发言'));
+  assert.ok(input.events.every(event=>event.eventId!==discardedId&&event.text!=='本地模拟群聊台词'));
  }finally{await f.close();}
 });
 
@@ -102,7 +130,7 @@ test('Changing mode while awaiting Continue or while generating is blocked witho
 test('Pool export/import and restart preserve cursor so restored conversation continues with the next role',async()=>{
  const f=await fixture('pool');try{
   await send(f);await present(f);assert.equal((await send(f)).groupRuntime.pendingMessage.characterId,'claude');await present(f);
-  const exported=(await f.game.action('companion-group-export',{id:f.group.id})).data;assert.equal(exported.groups[0].poolLastSpeakerId,'claude');assert.equal(exported.groups[0].poolIndex,2);
+  const exported=await readCompanionExport(f.game,'companion-group-export',{id:f.group.id});assert.equal(exported.groups[0].poolLastSpeakerId,'claude');assert.equal(exported.groups[0].poolIndex,2);
   await f.game.action('companion-group-save',{id:f.group.id,name:'原件保留'});await f.game.action('companion-conversation-import',{data:exported});let current=await state(f.game),restored=current.groups.find(g=>g.importedFrom===f.group.id);assert.ok(restored);assert.equal(restored.poolLastSpeakerId,'claude');assert.equal(restored.poolIndex,2);
   await f.game.action('companion-group-select',{id:restored.id});await f.restart();current=await state(f.game);restored=current.groups.find(g=>g.id===restored.id);assert.equal(restored.poolLastSpeakerId,'claude');await f.game.action('companion-group-send',{id:restored.id,text:'恢复之后继续轮换'});assert.equal((await pending(f.game)).groupRuntime.pendingMessage.characterId,'kimi');
  }finally{await f.close();}

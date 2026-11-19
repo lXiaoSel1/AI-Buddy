@@ -152,7 +152,7 @@ export function R95OwnerBindingForm({view,onAction,accountsApi=globalThis.window
   receipt&&h('p',{role:'status',className:'r95-ok','data-r95-owner-receipt':true},t('主人工作绑定已保存'),' · ',t('第 {n} 版').replace('{n}',receipt.version)),error&&h('p',{role:'alert',className:'r95-err'},error),
   bindings.length>0&&h('details',{className:'r95-tech'},h('summary',null,t('已保存的绑定（{n}）').replace('{n}',bindings.length)),h('ul',null,...bindings.map(row=>h('li',{key:row.accountBindingId},[accountName(row.accountBindingId),row.actorId,personaName(row.personaId),row.route?.projectId&&projectName(row.route.projectId),row.route?.leadMemberId&&memberName(row.route.leadMemberId)].filter(Boolean).join(' · '),' · ',t('第 {n} 版').replace('{n}',row.version))))));
 }
-export function R95CorePage({page='social',language=locale(),request=globalThis.window?.whale?.game,onPage,onStatus,timeZone,initialView=null}){
+export function R95CorePage({page='social',language=locale(),request=globalThis.window?.whale?.game,onPage,onStatus,timeZone,modelAvailable,initialView=null}){
  const [view,setView]=useState(initialView),[error,setError]=useState(''),[loading,setLoading]=useState(true),client=useRef(null),revision=useRef(0);const requestRef=useRef(request);requestRef.current=request;
  const invoke=async(action,args)=>{const epoch=revision.current,result=await requestRef.current(action,args);if(epoch===revision.current&&result?.companion?.r95)setView(result.companion.r95);return result;};
  if(!client.current)client.current=createR95ActionClient(invoke);
@@ -163,7 +163,7 @@ export function R95CorePage({page='social',language=locale(),request=globalThis.
  if(!view)return h('div',{className:'ws-page','data-r95-page':page,'aria-busy':loading},h('div',{className:'ws-page-head'},h('div',null,h('h2',{className:'ws-ptitle'},t(page==='social'?'社交与心情':'商店与背包')))),h('div',{className:error?'ui-alert warn':'r95-loading',role:error?'alert':'status'},error?Icon('alert',{size:16}):h('span',{className:'ui-spinner','aria-hidden':true}),h('div',null,error||t('正在读取社交与生活…'))));
  // The app's statistics time zone ('local' by default) reaches every time shown here; see intlTimeZone.
  const zone=timeZone??view.timeZone,local={...view,language,timeZone:zone};
- if(['shop','inventory'].includes(page))return h('div',{'data-r95-page':page},error&&h('div',{role:'alert',className:'ui-alert warn'},Icon('alert',{size:16}),h('div',null,error)),h(FeedingPage,{key:page,initialTab:page,view:view.feeding,timeZone:zone,onPage,onAction:(action,args)=>client.current('feeding-'+action,args)}));
+ if(['shop','inventory'].includes(page))return h('div',{'data-r95-page':page},error&&h('div',{role:'alert',className:'ui-alert warn'},Icon('alert',{size:16}),h('div',null,error)),h(FeedingPage,{key:page,initialTab:page,view:modelAvailable===undefined?feeding:{...feeding,modelAvailable},timeZone:zone,onPage,onAction:(action,args)=>client.current('feeding-'+action,args)}));
  return h('div',{'data-r95-page':page,className:'ws-page r95-social'},
   h('div',{className:'ws-page-head'},h('div',null,h('h2',{className:'ws-ptitle'},t('社交与心情')),h('p',{className:'ws-meta'},t('她的心情、会不会主动找你、你忙不忙，以及谁能在 QQ 里交代工作。'))),onPage&&h('div',{className:'ws-row-btns'},h('button',{type:'button',className:'ui-btn ghost',onClick:()=>onPage('galgame')},Icon('chats',{size:16}),t('返回聊天')))),
   error&&h('div',{role:'alert',className:'ui-alert warn'},Icon('alert',{size:16}),h('div',null,error)),

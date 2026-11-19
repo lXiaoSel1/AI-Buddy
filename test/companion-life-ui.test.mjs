@@ -4,7 +4,8 @@ import React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {CompanionManager,companionCardDraft} from '../src/companion-ui.mjs';
 import {MemoryContent,MemoryCapacityInfo,MemoryJobStatus,GrowthPanel,ArchivePreview,companionGrowthLocked,companionLifeBytes,archiveDownloadPayload} from '../src/companion-life-ui.mjs';
-import {setLocale} from '../src/i18n.mjs';
+import {setLocale,t} from '../src/i18n.mjs';
+import {createLifeArchiveTransfers} from '../src/companion-life-transfers.mjs';
 
 const state=mode=>({characters:[{id:'deepseek',name:'DeepSeek',builtin:true,life:{id:'life-1',mode,startedAt:1},growth:{mode,history:[]},fields:{personality:{mode:'custom',value:'认真的第一段\n第二段'},visual:{mode:'custom',value:'蓝发'},tone:{mode:'custom',value:'温和'}},effective:{name:'DeepSeek',personality:'认真的第一段\n第二段',visual:'蓝发'},examples:[{scene:'问候',speaker:'DeepSeek',text:'你好'}],modelBinding:{enabled:true,connectionId:'api-a'},talkativeness:.5}],activeCharacterId:'deepseek',activePersonaId:'default',personas:[{id:'default',name:'日常'}],groups:[],conversations:[],messages:[],settings:{},relationship:{level:1,affection:0}});
 const render=(Component,props)=>renderToStaticMarkup(React.createElement(Component,props));
@@ -94,10 +95,11 @@ test('context capacity distinguishes user settings from unknown fallback and avo
  assert.match(appDefault,/272,000/);assert.match(appDefault,/应用默认容量（模型未声明）/);assert.doesNotMatch(appDefault,/模型目录声明/);assert.match(appDefault,/不代表此接口已通过极限实测/);
 });
 
-test('failed daily consolidation offers explicit retry but running and committed days do not expose a duplicate action',()=>{
- const jobs=[{id:'bad',day:'2026-10-20',scope:'persona:default',status:'failed',error:'接口暂不可用'},{id:'running',day:'2026-10-19',status:'running'},{id:'done',day:'2026-10-18',status:'committed'}];
+test('failed daily consolidation offers explicit retry while unknown deliveries stay visible and held',()=>{
+ const jobs=[{id:'bad',day:'2026-10-20',scope:'persona:default',status:'failed',error:'接口暂不可用'},{id:'running',day:'2026-10-19',status:'running'},{id:'done',day:'2026-10-18',status:'committed'},{id:'unknown',day:'2026-10-17',status:'unknown',error:'上一次模型请求结果待核对'}];
  const html=render(MemoryJobStatus,{jobs,onRetry(){}});
  assert.match(html,/接口暂不可用/);assert.equal((html.match(/data-memory-retry=/g)||[]).length,1);assert.match(html,/data-memory-retry="bad"/);assert.doesNotMatch(html,/2026-10-18/);
+ assert.match(html,/上一次模型请求结果待核对/);
 });
 
 test('archive preview resolves saved inherited defaults, custom values and explicit empty without consulting a live card',()=>{
@@ -105,4 +107,14 @@ test('archive preview resolves saved inherited defaults, custom values and expli
  const html=render(ArchivePreview,{preview});
  assert.match(html,/归档时继承的性格/);assert.match(html,/归档时的自定义语气/);assert.match(html,/背景经历：主动清空/);
  assert.doesNotMatch(html,/不应采用的缓存|已被覆盖的默认语气|应清空的旧经历|builtin-image-ref/);
+});
+
+
+test('life archive transfer errors have English copy and preserve their Chinese wording',()=>{
+ const transfers=createLifeArchiveTransfers('unused-by-invalid-transfer');
+ assert.throws(()=>transfers.beginImport(0),error=>{
+  assert.equal(t(error.message,'zh-CN'),'人生 ZIP 编码或大小无效');
+  assert.equal(t(error.message,'en'),'Invalid life archive ZIP encoding or size.');
+  return true;
+ });
 });

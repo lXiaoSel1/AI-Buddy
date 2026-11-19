@@ -7,9 +7,12 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {petContextTemplate,trayMenuTemplate} from '../src/pet-menu.mjs';
 import {bubbleView} from '../src/pet-badge.mjs';
 import {FeedingPage,foodCategory} from '../src/feeding-ui.mjs';
+import {R95CorePage} from '../src/r95-core-page.mjs';
 import {FOODS} from '../src/food-catalog.mjs';
 import {capabilityView,officialProfile} from '../src/community-capabilities.mjs';
 import {setLocale} from '../src/i18n.mjs';
+import {createCompanionR95} from '../src/companion-r95.mjs';
+import {companionFixture,gate,memoryStore,tmpDir} from './support/audit-harness.mjs';
 const noop=()=>{},han=/[㐀-鿿]/;
 const read=path=>readFile(new URL('../'+path,import.meta.url),'utf8');
 
@@ -66,7 +69,7 @@ test('install pages describe each declared capability; unknown ids stay visible 
 
 test('a streaming reply wears her name plate, and a stop the user asked for is not reported as a model failure',async()=>{
  const gal=await read('src/adapted/galgame-client.ts');
- assert.match(gal,/replyPlate = !!liveText \|\| speechShown, pWho = replyPlate \? 'heroine' : plateWho, pLabel = replyPlate \? s\.name : plateLabel/);
+ assert.match(gal,/replyPlate = replying \|\| !!liveText \|\| speechShown, pWho = replyPlate \? 'heroine' : plateWho, pLabel = replyPlate \? s\.name : plateLabel/);
  assert.match(gal,/className: 'whg-plate gx-plate' \+ \(pWho === 'heroine'/);
  const say=gal.slice(gal.indexOf('function say(payload'),gal.indexOf('function dialogue()'));
  assert.match(say,/if \(!\/用户停止回复\$\/\.test\([^)]*\)\)\) \{ setApiError\([^;]*\); setFailedChat\(payload\) \}/);
@@ -93,6 +96,16 @@ test('backpack lists the newest meals first and keeps a retry for every pending 
  assert.equal((html.match(/现在重试/g)??[]).length,2,'both pending meals, including the 12th, can be retried');
 });
 
+test('R7 the open backpack reflects the online-chat toggle before the feeding view refresh arrives',async()=>{
+ setLocale('zh-CN');const activeScope={characterId:'deepseek',lifeId:'l'};
+ const feeding={activeScope,modelAvailable:true,meals:[{id:'pending',scope:activeScope,at:Date.now(),foodId:'rice',affectionState:'pending',attempts:0}]};
+ const render=(modelAvailable,feedingView)=>renderToStaticMarkup(React.createElement(R95CorePage,{page:'inventory',modelAvailable,initialView:{feeding:feedingView}}));
+ assert.match(render(false,feeding),/联网聊天关着，开启后会自动结算。/);
+ assert.doesNotMatch(render(false,feeding),/现在重试/);
+ assert.match(render(true,{...feeding,modelAvailable:false}),/现在重试/);
+ const dashboard=await read('src/dashboard.mjs');assert.match(dashboard,/h\(R95CorePage,\{[^\n]*modelAvailable:settings\?\.modelConnections\?\.enabled/);
+});
+
 test('a line read elsewhere closes the pet bubble only if it shows that line; a user stop is not a chat failure',async()=>{
  const pet=await read('src/pet.mjs'),main=await read('src/main.mjs');
  assert.match(pet,/if\(value\.source==='social-line'&&value\.messageId\)bubble\.dataset\.social=value\.messageId;else delete bubble\.dataset\.social;/);
@@ -102,7 +115,28 @@ test('a line read elsewhere closes the pet bubble only if it shows that line; a 
  assert.equal((main.match(/!userStopped\(/g)??[]).length,2);
 });
 
-test('a line read while its presentation is being recorded stays read',async()=>{
- const r95=await read('src/companion-r95.mjs');
- assert.match(r95,/const line=state\.lives\[scope\.characterId\]\.r95\.lines\.find\(line=>line\.messageId===args\.messageId\);\/\*[^*]*\*\/if\(line\.status==='awaiting-presentation'\)line\.status='presented';line\.presentedAt\?\?=now\(\);/);
+test('a line read while its presentation is being recorded stays read',async t=>{
+ const data=await companionFixture(),base=memoryStore(data),recording=gate(),released=gate();let deferNextWrite=false,service;
+ const dataRoot=tmpDir('speech-read',{t,beforeRemove:async()=>{released.resolve();await service?.close();}});
+ const store={get state(){return base.state;},mutate(fn){
+  if(!deferNextWrite)return base.mutate(fn);
+  deferNextWrite=false;recording.resolve();return released.promise.then(()=>base.mutate(fn));
+ }};
+ const provider={enabled:true,currentSelection:()=>({provider:'fixture',model:'fixture'}),async *stream(){
+  yield {type:'text-delta',text:JSON.stringify({speak:true,text:'你好，想和你说句话。',mode:'awake'})};
+  yield {type:'finish',reason:{kind:'stop'}};
+ }};
+ service=await createCompanionR95({store,dataRoot,provider,getContext:()=>({characterId:data.activeCharacterId,personaId:data.activePersonaId,conversationId:data.activeConversationId}),getRuntimeState:()=>({sleepPhase:'awake',canPresent:true}),onSpeech:()=>{},delta:()=>{}});
+ const scope=service.activeScope();
+ await service.action('social-settings',{proactive:true});
+ await service.userInteraction({scope,eventId:'speech-source',kind:'chat',text:'现在有空。'});
+ const candidate=service.proactive.view({scope}).candidates.find(row=>row.eventIds.includes('speech-source'));
+ assert.equal((await service.proactive.tick({candidateId:candidate.id})).delivered,true);
+ const line=()=>service.view().lines.find(row=>row.candidateId===candidate.id);
+ assert.equal(line().status,'awaiting-presentation');
+ const {messageId}=line();deferNextWrite=true;
+ const present=service.action('speech-presented',{messageId});await recording.promise;
+ try{await service.action('speech-read',{messageId});assert.equal(line().status,'read');}
+ finally{released.resolve();await present;}
+ assert.equal(line().status,'read');assert.ok(line().presentedAt);
 });

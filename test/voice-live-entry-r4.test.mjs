@@ -7,7 +7,7 @@ import {createVoiceController} from '../src/voice/controller.mjs';
 import {createVoiceSettings} from '../src/voice/settings.mjs';
 
 const scope={channel:'app-private',characterId:'deepseek',personaId:'p',conversationId:'c'};
-const configuration={settings:{enabled:true,packages:{'ai-buddy.voice-breeze':{ttsProvider:'local'}}},selectedPackageId:'ai-buddy.voice-breeze',preparation:{state:'ready',target:'speech'},scope,packages:[{id:'ai-buddy.voice-breeze',installed:true,usable:true}],profile:{label:'Voice'},assets:{tts:{state:'ready'}},engine:'breeze'};
+const configuration={settings:{enabled:true,packages:{'ai-buddy.voice-breeze':{ttsProvider:'local'}}},selectedPackageId:'ai-buddy.voice-breeze',preparation:{state:'ready',target:'speech'},scope,packages:[{id:'ai-buddy.voice-breeze',installed:true,usable:true}],profile:{label:'Voice'},assets:{asr:{state:'ready'},tts:{state:'ready'}},engine:'breeze'};
 const snapshot={state:configuration,captureState:'idle',working:false,error:''};
 
 test('Galgame retains Live while the approved voice page owns engine and reference configuration',()=>{

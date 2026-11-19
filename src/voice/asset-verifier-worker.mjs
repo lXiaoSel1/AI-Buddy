@@ -8,6 +8,7 @@ import {assertPluginTreeNoLinks} from '../plugin-archive.mjs';
 
 const stamp=info=>[info.dev,info.ino,info.nlink,info.size,info.mtimeNs,info.ctimeNs].join(':');
 const rootIdentity=info=>[info.dev,info.ino].join(':');
+const sameEntry=(previous,next)=>previous?.identity===next.identity&&previous?.sha256===next.sha256;
 const fault=(code,message,path)=>Object.assign(Error(message),{code,...(path?{path}:{})});
 const plans=new Map(),states=new Map(),controllers=new Map();
 let tail=Promise.resolve();
@@ -15,7 +16,8 @@ let tail=Promise.resolve();
 function observe(destination,identity){
   // Watch ownership exists even when the first verification fails. Recording
   // it only after success would leave a recovered tree watched at the old inode.
-  const state={identity,generation:0,checkedGeneration:-1,rootStamp:null,cache:new Map(),loaded:false,watching:false};
+  const state={identity,generation:0,checkedGeneration:-1,rootStamp:null,cache:new Map(),durable:new Map(),
+    completeProof:null,proofStamp:null,loaded:false,watching:false};
   // Local ReadDirectoryChangesW notifications are scoped to this tree. UNC
   // paths and unsupported/erroring watchers use a metadata pass instead.
   try{
@@ -28,6 +30,11 @@ function observe(destination,identity){
   return state;
 }
 
+async function proofStamp(path){
+  const info=await lstat(path,{bigint:true});
+  if(!info.isFile()||info.nlink!==1n)throw fault('VOICE_ASSET_VERIFY','语音组件校验记录类型无效');
+  return stamp(info);
+}
 async function loadProof(selected,state,identity){
   state.loaded=true;
   if(!selected.proofFile)return;
@@ -39,19 +46,23 @@ async function loadProof(selected,state,identity){
       if(!file||expected.get(file.path)!==file.sha256||typeof file.identity!=='string'||accepted.has(file.path))return;
       accepted.set(file.path,{identity:file.identity,sha256:file.sha256});
     }
-    for(const [path,file] of accepted)state.cache.set(path,file);
+    for(const [path,file] of accepted){state.cache.set(path,file);state.durable.set(path,file);}
+    return accepted;
   };
   const read=async path=>{
-    await assertPluginTreeNoLinks(path);const info=await lstat(path);
-    if(!info.isFile()||info.nlink!==1)throw fault('VOICE_ASSET_VERIFY','语音组件校验记录类型无效');
-    return readFile(path,'utf8');
+    await assertPluginTreeNoLinks(path);const before=await proofStamp(path),text=await readFile(path,'utf8');
+    if(before!==await proofStamp(path))throw fault('VOICE_ASSET_VERIFY','语音组件校验记录类型无效');
+    return {text,stamp:before};
   };
   // The only cross-package candidate is derived by the caller from this tree's
   // exact .ready marker. Never search the receipt directory for a matching hash.
-  if(selected.readProof)try{accept(JSON.parse(await read(selected.readProof.proofFile)),selected.readProof.proof,true);}catch{}
-  try{accept(JSON.parse(await read(selected.proofFile)),selected.proof,true);}catch{}
+  if(selected.readProof)try{accept(JSON.parse((await read(selected.readProof.proofFile)).text),selected.readProof.proof,true);}catch{}
   try{
-    const lines=(await read(selected.proofFile+'.partial')).split('\n');
+    const stored=await read(selected.proofFile),accepted=accept(JSON.parse(stored.text),selected.proof,true);
+    if(accepted){state.completeProof=accepted;state.proofStamp=stored.stamp;}
+  }catch{}
+  try{
+    const lines=(await read(selected.proofFile+'.partial')).text.split('\n');
     // A crash can leave one incomplete final append; earlier lines remain useful.
     for(const line of lines.slice(0,-1))try{accept(JSON.parse(line),selected.proof,false);}catch{}
   }catch{}
@@ -74,6 +85,7 @@ async function persistProof(selected,cache,identity,signal){
     await writeFile(temporary,JSON.stringify({schemaVersion:1,proof:selected.proof,destination:selected.destination,rootIdentity:identity,
       files:[...cache].map(([path,value])=>({path,...value}))}),{flag:'wx',mode:0o600});
     signal.throwIfAborted();await rename(temporary,selected.proofFile);await rm(selected.proofFile+'.partial',{force:true});
+    return await proofStamp(selected.proofFile);
   }finally{await rm(temporary,{force:true});}
 }
 
@@ -97,7 +109,7 @@ async function verify(id,key,selected,signal){
     const pending=(async()=>{await directory(dirname(path));signal.throwIfAborted();const info=await lstat(path,{bigint:true});if(!info.isDirectory()||info.isSymbolicLink())throw fault('VOICE_ASSET_HASH','语音组件目录类型或链接已改变',relative(destination,path).replaceAll('\\','/'));return stamp(info);})();
     directories.set(path,pending);return pending;
   }
-  let completedFiles=0,receivedBytes=0,lastProgress=0,hashedFiles=0,hashedBytes=0;
+  let completedFiles=0,receivedBytes=0,lastProgress=0,hashedFiles=0,hashedBytes=0,refreshReceipt=!state.completeProof;
   const totalBytes=files.reduce((sum,file)=>sum+file.bytes,0);
   for(let start=0;start<files.length;start+=4){
     signal.throwIfAborted();
@@ -115,12 +127,18 @@ async function verify(id,key,selected,signal){
         if(hash.digest('hex')!==expected.sha256)throw fault('VOICE_ASSET_HASH','语音资源摘要与清单不符',expected.path);
         hashedFiles++;hashedBytes+=expected.bytes;
       }
-      const value={identity,sha256:expected.sha256};cache.set(expected.path,value);state.cache.set(expected.path,value);completed.push({path:expected.path,...value});completedFiles++;receivedBytes+=expected.bytes;
+      const value={identity,sha256:expected.sha256};cache.set(expected.path,value);state.cache.set(expected.path,value);
+      if(!sameEntry(state.completeProof?.get(expected.path),value))refreshReceipt=true;
+      // The metadata sweep admits every member again, but only a new trusted
+      // identity (or an earlier failed append) needs another progress record.
+      if(!sameEntry(state.durable.get(expected.path),value))completed.push({path:expected.path,...value});
+      completedFiles++;receivedBytes+=expected.bytes;
       const now=Date.now();if(completedFiles===1||completedFiles===files.length||now-lastProgress>=100){lastProgress=now;parentPort.postMessage({id,type:'progress',value:{phase:'verifying',completedFiles,totalFiles:files.length,receivedBytes,totalBytes,hashedFiles,hashedBytes}});}
     }));
     // Finish this small durable append even after cancellation. The parent waits
     // for our acknowledgement before closing/terminating the worker.
     await persistProgress(selected,completed,identity);
+    if(selected.proofFile)for(const {path,...value} of completed)state.durable.set(path,value);
     const failure=results.find(value=>value.status==='rejected');if(failure){state.checkedGeneration=-1;throw failure.reason;}
   }
   signal.throwIfAborted();
@@ -156,8 +174,17 @@ async function verify(id,key,selected,signal){
     throw fault('VOICE_ASSET_CHANGED','语音组件在校验期间持续发生变化，请重试','.');
   }
   let after=await settle();
-  await persistProof(selected,cache,identity,signal);signal.throwIfAborted();
-  // Receipt I/O also yields. Do not admit changes queued during that write.
+  if(selected.proofFile){
+    const currentStamp=!refreshReceipt&&await proofStamp(selected.proofFile).catch(()=>null);
+    if(refreshReceipt||currentStamp!==state.proofStamp){
+      // Cross-identity and partial receipts can prevent repeat hashing, but
+      // only this exact, complete persisted proof can avoid publication.
+      state.proofStamp=await persistProof(selected,cache,identity,signal);
+      state.completeProof=new Map(cache);state.durable=new Map(cache);
+    }
+  }
+  signal.throwIfAborted();
+  // Receipt inspection/publication also yields. Do not admit changes queued during it.
   if(state.generation!==checkedGeneration||!state.watching)after=await settle(true);
   state.cache=cache;state.identity=identity;state.rootStamp=stamp(after);state.checkedGeneration=checkedGeneration;
   return {verification:hashedFiles===files.length?'full':'metadata',checkedFiles:completedFiles,hashedFiles,hashedBytes,watching:state.watching};

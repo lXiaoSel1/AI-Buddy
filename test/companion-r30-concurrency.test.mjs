@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync} from 'node:fs';
+import {mkdtempSync,renameSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve,sep} from 'node:path';
 import {makeCard} from '../src/companion-store.mjs';
 import {ensureLives,lifeToken} from '../src/companion-life.mjs';
 import {createCompanionService} from '../src/companion-service.mjs';
+import {createCompanionCacheStore} from '../src/companion-cache-store.mjs';
 import {enableGrowth,applyGrowthCandidates} from '../src/companion-growth.mjs';
 
 const copy=value=>structuredClone(value);
@@ -16,7 +17,7 @@ async function setup(t,{initial=fixture(),store=memoryStore(initial),hooks={},pr
  const ownedServices=[],root=mkdtempSync(join(tmpdir(),'ai-buddy-r30-race-'));t.after(async()=>{for(const resource of ownedServices)await resource.close();assert.ok(resolve(root).startsWith(resolve(tmpdir())+sep+'ai-buddy-r30-race-'));rmSync(root,{recursive:true,force:true});});
  const engineState={claude:{level:4,affection:35,chatLines:[],choices:[],cgs:[]},gpt:{level:2,affection:5,chatLines:[],choices:[],cgs:[]}},calls=[];
  const engine={async handleAction(action,args={}){
-  calls.push({action,characterId:args.characterId,eventId:args.eventId});const extra=await hooks.call?.(action,args,{store,engineState,calls});if(extra!==undefined)return extra;
+  calls.push({action,characterId:args.characterId,eventId:args.eventId});const extra=await hooks.call?.(action,args,{store,engineState,calls,root});if(extra!==undefined)return extra;
   if(action==='companion-export')return {current:'claude',characters:Object.values(store.state.cards).map(card=>({id:card.id,profile:{displayName:card.name,persona:'安静',tone:'平和',address:'你',greeting:'你好',visual:''},history:[],choices:[],personaId:'default',...copy(engineState[card.id]),pendingRelationEvents:[]}))};
   if(action==='view')return {current:'claude',characterMode:'manual'};
   if(action==='companion-register')return {ok:true};
@@ -79,4 +80,22 @@ test('a daily model result arriving while snapshot is frozen cannot commit summa
  const f=await setup(t,{provider,hooks:{async call(action,args,{engineState}){if(action==='companion-life-content'&&holdSnapshot){holdSnapshot=false;snapshotEntered.resolve();await snapshotRelease.promise;return {ok:true,content:copy(engineState[args.characterId])};}}}});
  const day=new Date(Date.now()-86400000).toISOString().slice(0,10),daily=f.service.action('companion-memory-retry',{characterId:'claude',personaId:'default',day});await modelEntered.promise;
  const snapshot=f.service.action('companion-life-save',{characterId:'claude'});await snapshotEntered.promise;modelRelease.resolve();await daily;assert.equal(Object.keys(f.store.state.lives.claude.memory.summaries??{}).length,0);assert.equal(Object.keys(f.store.state.lives.claude.memory.guides??{}).length,0);assert.equal(f.store.state.cards.claude.revision,1);snapshotRelease.resolve();const saved=await snapshot;assert.ok(saved.archive.id);
+});
+test('rejected settlement startup leaves no open private cache lease', {skip:process.platform!=='win32'}, async t=>{
+ const initial=fixture();
+ initial.pendingPrivateSettlements={failed:{characterId:'claude',personaId:'default',amount:1,eventId:'chat:synthetic-startup-failure',at:1,lifeToken:lifeToken(initial,'claude')}};
+ let root;
+ await assert.rejects(setup(t,{initial,hooks:{call(action,_args,context){
+  if(action==='companion-relationship'){
+   root=context.root;
+   throw Error('synthetic startup settlement failure');
+  }
+ }}}),/synthetic startup settlement failure/);
+ // Hydrate then close another public facade on the same path. This waits out
+ // any pending open and leaves no owner that should still hold the database.
+ const probe=createCompanionCacheStore(root);
+ try{await probe.ready();assert.equal(probe.isDurable(),true);}
+ finally{await probe.close();}
+ const sidecar=join(root,'companion-cache-r1.sqlite');
+ renameSync(sidecar,sidecar+'.closed');
 });

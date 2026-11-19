@@ -83,3 +83,21 @@ test('a silent admitted chat retires its FIFO slot so queued card audio can play
     assert.equal(stopped,0,'retiring another silent turn must preserve active card playback');
   }finally{await release();}
 });
+
+test('R2 stale footer belongs only to its reply and clears across text-only replies and role changes',async()=>{
+ const listeners=new Set();
+ const api={action:async()=>({accepted:true}),onEvent:listener=>{listeners.add(listener);return()=>listeners.delete(listener);}};
+ const output=ensureVoiceOutput(api),release=output.retain();
+ const emit=event=>Promise.all([...listeners].map(listener=>listener(event)));
+ let presentation;
+ const listen=(characterId,replyId)=>output.subscribe({...scope,characterId},value=>{presentation=value;},{replyId,characterId});
+ try{
+  const off=listen(scope.characterId,envelope.requestId);
+  await emit({type:'segment',state:'failed',envelope,message:'synthetic failure'});
+  assert.equal(presentation.error,'synthetic failure');off();
+  const newer=listen(scope.characterId,'text-only-reply');
+  assert.equal(presentation.error,null);newer();
+  const changed=listen('deepseek',envelope.requestId);
+  assert.equal(presentation.error,null);changed();
+ }finally{await release();}
+});

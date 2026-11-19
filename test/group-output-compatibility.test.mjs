@@ -29,6 +29,10 @@ test('GG-C1 historical display, waiting request and failed member remain distinc
 });
 test('GG-C1 unresolved Auto pending overrides global busy and wait hints without claiming a speaker or following member',()=>{
  setLocale('zh-CN');for(const status of ['failed','unknown','cancelled']){const auto={status:'active',mode:'rounds',roundLimit:6,roundIndex:0,opportunityIndex:0,members:['deepseek','gpt'],pending:{characterId:'deepseek',status}},value=autoProgress(auto);assert.equal(value.status,'paused');assert.equal(value.speaking,null);assert.equal(value.next,null);
-  const html=renderToStaticMarkup(React.createElement(AutoRoundStrip,{view:{groupId:'g',auto,autoWait:{reason:'presenting'}},onAction(){},busy:true,speaker:'Claude'}));assert.match(html,/Auto 已暂停/);assert.doesNotMatch(html,/Claude|下一位|正在说|正在回复|等待上一句显示|ui-spinner/);
+  const html=renderToStaticMarkup(React.createElement(AutoRoundStrip,{view:{groupId:'g',auto,autoWait:{reason:'presenting'}},onAction(){},busy:true,speaker:'Claude'}));if(status==='unknown'){
+   assert.match(html,/上一轮没有完成。/);
+   assert.match(html,/<button[^>]*>[^]*?从下一位继续<\/button>/);
+  }else assert.match(html,/Auto 已暂停/);
+  assert.doesNotMatch(html.replace('从下一位继续',''),/Claude|下一位|正在说|正在回复|等待上一句显示|ui-spinner/);
  }
 });

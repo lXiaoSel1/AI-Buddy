@@ -40,10 +40,10 @@ async function bytesOf(response,limit){
  const reader=response.body?.getReader();assert(reader,'BILI_VISION_RESPONSE_INVALID');let length=0;const chunks=[];
  try{for(;;){const x=await reader.read();if(x.done)break;length+=x.value.byteLength;assert(length<=limit,'BILI_VISION_RESPONSE_TOO_LARGE');chunks.push(Buffer.from(x.value));}return Buffer.concat(chunks);}catch(e){await reader.cancel().catch(()=>{});throw e;}finally{reader.releaseLock();}
 }
-export function createBiliVision({directory,fetchImpl=fetch,renderSheet,analyzeFrames,acquireMedia,now=Date.now,cacheBytes=256*1024*1024}={}){
+export function createBiliVision({directory,fetchImpl=fetch,renderSheet,analyzeFrames,acquireMedia,now=Date.now,cacheBytes=256*1024*1024,onSummaryEvidenceIgnored}={}){
  assert(isAbsolute(directory??''),'BILI_VISION_DIRECTORY_REQUIRED');assert(Number.isSafeInteger(cacheBytes)&&cacheBytes>=1024,'BILI_VISION_CACHE_INVALID');
  mkdirSync(directory,{recursive:true});const records=join(directory,'readings'),cache=join(directory,'cache'),pools=join(directory,'pools');mkdirSync(records,{recursive:true});mkdirSync(cache,{recursive:true});mkdirSync(pools,{recursive:true});let closed=false;const lifetime=new AbortController();
- const fullReading=createBiliFullReading({directory,acquireMedia,now});
+ const fullReading=createBiliFullReading({directory,acquireMedia,now,onSummaryEvidenceIgnored});
  const checkOpen=()=>assert(!closed,'BILI_VISION_CLOSED');
  const file=id=>{assert(typeof id==='string'&&/^[a-zA-Z0-9_-]{1,100}$/.test(id),'BILI_VISION_READING_INVALID');return join(records,id+'.json');};
  const load=(id,scope)=>{checkOpen();let row;try{row=JSON.parse(readFileSync(file(id),'utf8'));}catch{throw fail('BILI_VISION_READING_UNAVAILABLE');}assert(row.scopeHash===scopeHash(scope),'BILI_VISION_SCOPE_DENIED');return row;};

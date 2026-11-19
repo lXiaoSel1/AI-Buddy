@@ -2,6 +2,7 @@
 // More menu, Auto progress, sources under a reply, her proactive lines and the sidebar unread dot.
 // Reading, presenting and every Auto action still go through the companion-r95 action bridge.
 import React,{useEffect,useLayoutEffect,useRef,useState} from 'react';
+import {createPortal} from 'react-dom';
 import {t,locale} from './i18n.mjs';
 import {Icon} from './ui-icons.mjs';
 import {Segmented} from './ui-controls.mjs';
@@ -10,6 +11,7 @@ import {MoodCard} from './social-core-ui.mjs';
 import {safeSearchUrl} from './native-search.mjs';
 import {scheduleRenderedAck,r95ElementVisible} from './r95-core-page.mjs';
 import {ensureVoiceOutput,VoiceDialogueLine} from './voice/client.mjs';
+import {GalgameChoice} from './galgame-redesign.mjs';
 const h=React.createElement,F=React.Fragment;
 const english=()=>locale()==='en';
 export const fill=(text,values={})=>Object.entries(values).reduce((out,[key,value])=>out.replaceAll('{'+key+'}',String(value)),String(text));
@@ -31,9 +33,9 @@ export function ChatPop({label,chip,className='',buttonClass='gx-tb r95-chip',ch
 
 // The same label the read-only mood card shows (overall label, else the mood's own label), translated when known.
 export function chatMoodLabel(view){const mood=view?.mood??{},label=mood.overall?.label??mood.label;return typeof label==='string'&&label.trim()?t(label):t('暂无评估');}
-export function MoodChip({view,onAction,onOpenSocial,initialOpen}){
+export function MoodChip({view,onAction,onOpenSocial,initialOpen,galgame=false}){
  if(!view)return null;const label=chatMoodLabel(view);
- return h(ChatPop,{initialOpen,label:t('心情')+' · '+label,className:'r95-mood-pop','data-chat-mood':true,chip:h(F,null,h('span',{className:'r95-mooddot','aria-hidden':true}),h('span',null,t('心情')+' · '+label))},close=>h(F,null,
+ return h(ChatPop,{initialOpen,chevron:!galgame,label:t('心情')+' · '+label,className:'r95-mood-pop','data-chat-mood':true,chip:h(F,null,h('span',{className:'r95-mooddot','aria-hidden':true}),h('span',null,t('心情')+' · '+label))},close=>h(F,null,
   h('div',{className:'r95-pop-h'},t('心情'),h('small',null,t('只读'))),
   h(MoodCard,{view:{...view,language:locale()},onAction,compact:true}),
   onOpenSocial&&h('div',{className:'r95-pop-f'},h('span',{className:'grow'}),h('button',{type:'button',className:'ui-btn ghost sm','data-open-social':'mood',onClick:()=>{close();onOpenSocial();}},t('在社交设置里看')))));
@@ -81,7 +83,7 @@ export function GroupAutoPanel({view={},onAction,nameOf=id=>id,onOpenSocial}){
   error&&h('p',{role:'alert',className:'r95-err'},error));
 }
 export function AutoChip({view,onAction,nameOf,onOpenSocial,initialOpen}){
- if(!view)return null;const progress=autoProgress(view.auto),status=progress?autoRoundText(progress):view.settings?.auto===true?t('未开始'):t('未开启');
+ if(!view)return null;const progress=autoProgress(view.auto),status=progress?autoRoundText(progress):view.settings?.auto!==true?t('未开启'):view.auto?.status==='ended'?t('已结束'):t('未开始');
  return h(ChatPop,{initialOpen,label:t('群聊 Auto')+' · '+status,className:'r95-auto-pop','data-r95-auto-menu':true,buttonClass:'gx-tb r95-chip'+(progress?' on':''),chip:h(F,null,Icon(progress?.status==='paused'?'pause':'play',{size:16}),h('span',null,'Auto'),h('small',{className:'r95-chip-st'},status))},close=>h(GroupAutoPanel,{view,onAction,nameOf,onOpenSocial:onOpenSocial&&(()=>{close();onOpenSocial();})}));
 }
 function AutoProgressDetails({auto,nameOf,busy=false}){
@@ -105,10 +107,10 @@ export function AutoRoundStrip({view,onAction,nameOf=id=>id,busy=false,speaker='
  const detail=['Auto',autoRoundText(progress),progress.failed&&nameOf(progress.failed)+' · '+t('回复失败'),progress.next&&fill(t('下一位 {name}'),{name:nameOf(progress.next)})].filter(Boolean).join(' · ');
  return h('div',{className:'r95-roundstrip',role:'status','data-auto-strip':groupId??''},
   h('span',{className:'r95-row r95-auto-state'},speakingBusy?h('span',{className:'ui-spinner','aria-hidden':true}):Icon(paused?'pause':'play',{size:14}),speakingBusy?h('span',null,who&&h('b',null,who),who?' '+t('正在说'):t('正在回复')):h('span',null,paused?t(view.auto?.pending?.status==='unknown'?'上一轮没有完成。':'Auto 已暂停'):wait??t('Auto 进行中'))),
-  h('small',{className:'r95-auto-detail'},detail),h(AutoProgressDetails,{auto:view.auto,nameOf,busy:speakingBusy}),h('span',{className:'grow'}),
+  h('small',{className:'r95-auto-detail',title:detail},detail),h(AutoProgressDetails,{auto:view.auto,nameOf,busy:speakingBusy}),h('span',{className:'grow'}),
   queued>0&&h('span',{className:'ws-tag','data-r95-queued-user':queued},t('你的消息排在她后面')),
   paused?h('button',{type:'button',className:'ui-btn sm ghost',disabled:pending||!!view.auto?.pending&&view.auto.pending.status!=='unknown',onClick:()=>void run('auto-continue',{groupId,...view.auto?.pending?.status==='unknown'&&{resumeFromNext:true,requestId:view.auto.pending.requestId}})},Icon('play',{size:14}),t(view.auto?.pending?.status==='unknown'?'从下一位继续':'继续')):h('button',{type:'button',className:'ui-btn sm ghost',disabled:pending,onClick:()=>void run('auto-pause',{groupId})},Icon('pause',{size:14}),t('暂停')),
-  h('button',{type:'button',className:'ui-btn sm ghost danger',disabled:pending,onClick:()=>void run('auto-stop',{groupId})},Icon('stop',{size:14}),t('停止')),error&&h('span',{role:'alert',className:'r95-err'},error));
+  h('button',{type:'button',className:'ui-btn sm ghost danger',disabled:pending,onClick:()=>void run('auto-stop',{groupId})},Icon('stop',{size:14}),t('停止')),error&&h('span',{role:'alert',className:'r95-err',title:error,tabIndex:0},error));
 }
 
 // The More menu that takes History / CG / Pet when the toolbar does not fit on one line (approved design C6).
@@ -161,8 +163,9 @@ const petLines=new Set();
 // main.mjs tells the window which line the pet showed (game:output social.updated with petMessageId).
 export function notePetLine(id){if(typeof id!=='string'||!id)return;petLines.add(id);if(petLines.size>64)petLines.delete(petLines.values().next().value);}
 export const petShowedLine=id=>petLines.has(id);
-export function speechOptions(line,{onReply,onDismiss}){const kind=speechKind(line),dismiss=kind==='proactive'?t('知道了'):english()?'Dismiss':t('收起');return [...(kind==='dream'?[]:[{key:'reply',label:kind==='proactive'?t('回她'):t('接一句'),run:()=>onReply?.(line)}]),{key:'read',label:dismiss,run:onDismiss,needsPresented:true}];}
-export function SpeechLine({line,onAction,onReply,more=0,inDialog=false,optionsRef,voicePresentation}){
+export function speechOptions(line,{onReply,onDismiss}){const kind=speechKind(line),dismiss=kind==='proactive'?t('知道了'):english()?'Dismiss':t('收起');return [...(kind==='dream'?[]:[{key:'reply',label:kind==='proactive'?t('回她'):t('接一句'),run:()=>onReply?.(line),needsPresented:kind==='proactive'}]),{key:'read',label:dismiss,run:onDismiss,needsPresented:true}];}
+export const speechVoiceRequestId=line=>'social-voice:'+line.messageId;
+export function SpeechLine({line,onAction,onReply,more=0,inDialog=false,frameless=false,optionsRef,voicePresentation,stageActions}){
  const node=useRef(null),[error,setError]=useState(''),[read,setRead]=useState(false),[pending,setPending]=useState(false),[voiceView,setVoiceView]=useState(null),action=useRef(onAction);action.current=onAction;
  const voiceApi=globalThis.whale?.voice,voiceKey=JSON.stringify([line.messageId,line.scope??null]);
  useEffect(()=>{if(voicePresentation!==undefined||!line.scope)return;return ensureVoiceOutput(voiceApi)?.subscribe(line.scope,value=>setVoiceView({key:voiceKey,value}));},[voiceApi,voiceKey,voicePresentation]);
@@ -173,17 +176,22 @@ export function SpeechLine({line,onAction,onReply,more=0,inDialog=false,optionsR
  const options=speechOptions(line,{onReply,onDismiss:()=>void dismiss()}).map(option=>({...option,disabled:option.needsPresented&&(!presented||pending)}));
  useEffect(()=>{if(!optionsRef)return;optionsRef.current=hidden?null:options;return()=>{if(optionsRef.current)optionsRef.current=null;};});
  if(hidden)return null;
- return h('article',{'data-r95-speech':line.messageId,className:'r95-speech '+kind+(inDialog?' in-dlg':'')},
-  h('div',{className:'r95-speech-h'},h('span',{className:'r95-spk '+kind},Icon(icon,{size:13}),[t(tag),clock(line.at)].filter(Boolean).join(' · ')),more>0&&h('small',null,fill(t('还有 {n} 句'),{n:more}))),
-  h('p',{ref:node,'data-r95-speech-text':line.messageId},line.status==='awaiting-presentation'?line.text:h(VoiceDialogueLine,{as:'span',presentation,requestId:'social-voice:'+line.messageId},line.text)),
-  h('div',{className:'gx-choices r95-speech-opts'},...options.map((option,index)=>h('button',{key:option.key,type:'button',className:'gx-choice','data-speech-option':option.key,disabled:option.disabled,title:option.disabled&&!presented?t('台词完整显示出来以后才能点'):undefined,onClick:option.run},h('kbd',{'aria-hidden':true},index+1),h('span',null,option.label)))),
-  petShowedLine(line.messageId)&&h('p',{className:'r95-speech-pet'},Icon('paw',{size:12}),t('桌宠上也说了这一句，在哪边回应都算读过')),
-  error&&h('p',{role:'alert',className:'r95-err'},error));
+ const heading=h('div',{className:'r95-speech-h'},h('span',{className:'r95-spk '+kind},Icon(icon,{size:13}),[t(tag),clock(line.at)].filter(Boolean).join(' · ')),more>0&&h('small',null,fill(t('还有 {n} 句'),{n:more})));
+ const body=line.status==='awaiting-presentation'?line.text:h(VoiceDialogueLine,{as:'span',presentation,requestId:speechVoiceRequestId(line)},line.text);
+ const actions=h('div',{className:frameless?'r95-speech-opts stage-capsules':'gx-choices r95-speech-opts'},...options.map((option,index)=>h(GalgameChoice,{key:option.key,...(!frameless&&{className:'gx-choice'}),index:index+1,label:option.label,'data-speech-option':option.key,disabled:option.disabled,title:option.disabled&&!presented?t('台词完整显示出来以后才能点'):undefined,onClick:option.run})));
+ const pet=petShowedLine(line.messageId)&&h('p',{className:'r95-speech-pet'},Icon('paw',{size:12}),t('桌宠上也说了这一句，在哪边回应都算读过'));
+ const failure=error&&h('p',{role:'alert',className:'r95-err'},error);
+ const marker={'data-r95-speech':line.messageId},textAttrs={ref:node,'data-r95-speech-text':line.messageId};
+ if(stageActions!==undefined)return h(React.Fragment,null,
+  h('span',{...marker,...textAttrs},body),
+  stageActions&&createPortal(h(React.Fragment,null,heading,actions,pet,failure),stageActions));
+ return h('article',{...marker,className:'r95-speech '+kind+(inDialog?' in-dlg':'')},heading,h('p',textAttrs,body),actions,pet,failure);
 }
 // One line at a time, oldest first; the rest wait their turn ("还有 N 句").
-export function ChatSpeechLines({view,onAction,onReply,inDialog=false,optionsRef}){
+export function ChatSpeechLines({view,onAction,onReply,inDialog=false,frameless=false,optionsRef,stageActions,voicePresentation}){
  const lines=unreadLines(view);if(!lines.length)return null;const line=lines[0];
- return h('div',{'data-r95-speech-lines':true,className:'r95-speech-lines'+(inDialog?' in-dlg':'')},h(SpeechLine,{key:JSON.stringify(view?.scope??{})+line.messageId,line,onAction,onReply,more:lines.length-1,inDialog,optionsRef}));
+ const content=h(SpeechLine,{key:JSON.stringify(view?.scope??{})+line.messageId,line,onAction,onReply,more:lines.length-1,inDialog,frameless,optionsRef,stageActions,voicePresentation});
+ return stageActions!==undefined?content:h('div',{'data-r95-speech-lines':true,className:'r95-speech-lines'+(inDialog?' in-dlg':'')},content);
 }
 // Read lines stay in the conversation history with what you said next (approved design C8).
 export function speechHistory(lines=[],messages=[]){

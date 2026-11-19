@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,link,rename,cp} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,link,rename,cp,lstat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createVoiceAssets} from '../src/voice/runtime-assets.mjs';
@@ -40,6 +40,10 @@ test('unchanged bytes with changed identity rehash only the changed file and har
   const f=await fixture(t),first=await f.assets.resolve('asr','breeze'),path=join(first.root,'lib/deep/a.bin');
   await writeFile(path,await readFile(path));
   const changed=await f.assets.resolve('asr','breeze');assert.equal(changed.verificationDetails.hashedFiles,1);assert.equal(changed.verificationDetails.checkedFiles,3);
+  const proofName=createHash('sha256').update(first.proof+'|'+first.root).digest('hex');
+  const saved=JSON.parse(await readFile(join(f.root,'voice/components/.verification',proofName+'.json'),'utf8'));
+  const info=await lstat(path,{bigint:true});
+  assert.equal(saved.files.find(row=>row.path==='lib/deep/a.bin').identity,[info.dev,info.ino,info.nlink,info.size,info.mtimeNs,info.ctimeNs].join(':'));
   await link(path,join(f.root,'extra-hardlink'));
   await assert.rejects(f.assets.resolve('asr','breeze'),{code:'VOICE_ASSET_HASH'});
 });
@@ -54,7 +58,7 @@ test('a damaged persisted proof forces full verification and changed install ide
   const f=await fixture(t);await f.assets.resolve('asr','breeze');await f.assets.close();
   const directory=join(f.root,'voice/components/.verification'),[proof]=await readdir(directory);await writeFile(join(directory,proof),'invalid');
   const next=f.open(),verified=await next.resolve('asr','breeze');assert.equal(verified.verification,'full');assert.equal(verified.verificationDetails.hashedFiles,3);
-  f.record.archiveSha256='archive-v2';await assert.rejects(next.resolve('asr','breeze'),{code:'VOICE_ASSET_HASH'});
+  f.record.archiveSha256='archive-v2';await assert.rejects(next.resolve('asr','breeze'),{code:'VOICE_ASSET_VERIFY_REQUIRED'});
 });
 
 test('replacing the component root renews its watch instead of watching the retired tree',async t=>{

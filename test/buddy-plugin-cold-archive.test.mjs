@@ -8,7 +8,7 @@ import {openCompanionStore,makeCard} from '../src/companion-store.mjs';
 import {ensureLives} from '../src/companion-life.mjs';
 import {appendWorkExperience} from '../src/companion-memory.mjs';
 import {createCompanionLives} from '../src/companion-life-service.mjs';
-import {workEvidenceHash} from '../src/companion-life-archive.mjs';
+import {createLifeArchiveRepository,workEvidenceHash} from '../src/companion-life-archive.mjs';
 import {createColdWorkArchiveBridge} from '../src/buddy-plugin-services/index.mjs';
 
 const executionRoot=resolve(process.env.AI_BUDDY_PLUGIN_TEST_ROOT??resolve(import.meta.dirname,'../local/test-fixtures'));
@@ -43,6 +43,8 @@ test('actual companion v2 life archive saves and restores work evidence while ex
   await appendWorkExperience(store,{id:'old-report',kind:'work',taskId:'task-existing',workspaceId:f.workspace.id,...f.scope,presented:true,createdAt:Date.now(),text:'historical completed report',sourceVersion:1});
   const before=store.snapshot(),raw=await readFile(join(f.legacyRoot,'task-existing','events.jsonl'));
   const lives=await createCompanionLives({store,dataRoot:f.root,workBridge:f.bridge,imageCodec:()=>false,call:async action=>action==='companion-life-content'?{ok:true,content:{}}:{ok:true},syncCard:async()=>{},projectPersona:async()=>{},enableGrowth:()=>{}});
-  const saved=await lives.save('a'),preview=lives.preview(saved.id);assert.equal(preview.version,2);assert.equal(preview.workEvidence.tasks[0].id,'task-existing');await lives.restore(saved.id);
+  const saved=await lives.save('a'),exported=await lives.export(saved.id);
+  const {snapshot}=createLifeArchiveRepository({dataRoot:f.root}).decode(Buffer.from(exported.base64,'base64'));
+  assert.equal(snapshot.version,2);assert.equal(snapshot.workEvidence.tasks[0].id,'task-existing');await lives.restore(saved.id);
   assert.equal((await f.bridge.pending()).length,1);assert.equal((await f.bridge.pending())[0].tasks[0].status,'paused-recoverable');assert.deepEqual(await readFile(join(f.legacyRoot,'task-existing','events.jsonl')),raw);assert.deepEqual(store.state.accountLedger,before.accountLedger);assert.deepEqual(store.state.lives.b,before.lives.b);assert.equal(await readFile(join(f.project,'valuable.txt'),'utf8'),'current user data');await store.flush();
 });

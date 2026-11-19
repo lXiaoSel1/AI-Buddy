@@ -10,13 +10,14 @@ const scope={pluginId:'bili',packageName:'@ai-buddy/bilibili-companion',accountB
 const readingId='fenced-reading',owner={pluginId:scope.pluginId,accountRef:scope.accountRef,accountBindingId:scope.accountBindingId,readingId};
 const png=Buffer.alloc(80);Buffer.from([137,80,78,71,13,10,26,10]).copy(png);png.writeUInt32BE(1009,16);png.writeUInt32BE(620,20);
 const valueFor=batch=>({summary:'A visible source-backed scene.',notes:'A concrete visible detail.',evidenceRefs:batch.material.items.map(item=>item.id),completedMaterial:true,shareWorthy:false,commentWorthy:false,shareText:'',interestTags:[]});
-async function fixture(t,{duration=6,maxImages=4}={}){
+async function fixture(t,{duration=6,maxImages=4,maxTextChars=10000,cid=123}={}){
  const directory=mkdtempSync(join(tmpdir(),'bili-full-fenced-')),media=async()=>{},calls=[];media.fullSampling=async args=>{calls.push(args.stopAfterSheets===1?'preview':'full');let n=0;for(const sheet of args.sheets){args.signal?.throwIfAborted();await args.onSheet({...sheet,frames:sheet.frames.map(frame=>({...frame,decodedPTS:frame.time+.001})),png});if(args.stopAfterSheets&&++n>=args.stopAfterSheets)break;}return {audio:'unavailable',transcript:[]};};
- let service=createBiliFullReading({directory,acquireMedia:media,now:()=>1760000000000});
+ const audits=[],onSummaryEvidenceIgnored=count=>audits.push(count);
+ let service=createBiliFullReading({directory,acquireMedia:media,now:()=>1760000000000,onSummaryEvidenceIgnored});
  t.after(async()=>{await service.close();rmSync(directory,{recursive:true,force:true});});
- const plan=await service.prepare({scope,readingId,video:{videoId:'BV12345678',cid:123,duration},parts:[{cid:123,page:1,duration}],config:{sampleSeconds:.5,windowSeconds:6},subtitleTracks:[],model:{connectionRef:'fixture-model',modelFingerprint:'fixture-fingerprint',modelId:'fixture-only',protocol:'responses',maxImages,contextTokens:32000,maxTextChars:10000,maxInputBytes:9*1024*1024}});
+ const plan=await service.prepare({scope,readingId,video:{videoId:'BV12345678',cid,duration},parts:[{cid,page:1,duration}],config:{sampleSeconds:.5,windowSeconds:6},subtitleTracks:[],model:{connectionRef:'fixture-model',modelFingerprint:'fixture-fingerprint',modelId:'fixture-only',protocol:'responses',maxImages,contextTokens:32000,maxTextChars,maxInputBytes:9*1024*1024}});
  service.confirmForAccount({...owner,confirmed:true,planHash:plan.planHash});
- return {directory,calls,get service(){return service;},store:()=>createBiliFullReadingStore({directory:join(directory,'full-v1')}),restart:async()=>{await service.close();service=createBiliFullReading({directory,acquireMedia:media,now:()=>1760000001000});},next:async()=>{const batch=await service.read({scope,readingId});assert.equal(service.claim({scope,readingId,batchId:batch.batchId,inputHash:batch.inputHash}).claimed,true);return batch;},finish:(batch,text)=>service.finish({scope,readingId,batchId:batch.batchId,status:'completed',providerRequestId:'provider-'+batch.batchId,result:{text}})};
+ return {directory,calls,audits,get service(){return service;},store:()=>createBiliFullReadingStore({directory:join(directory,'full-v1')}),restart:async()=>{await service.close();service=createBiliFullReading({directory,acquireMedia:media,now:()=>1760000001000,onSummaryEvidenceIgnored});},next:async()=>{const batch=await service.read({scope,readingId});assert.equal(service.claim({scope,readingId,batchId:batch.batchId,inputHash:batch.inputHash}).claimed,true);return batch;},finish:(batch,text)=>service.finish({scope,readingId,batchId:batch.batchId,status:'completed',providerRequestId:'provider-'+batch.batchId,result:{text}})};
 }
 
 test('a fenced fifth batch preserves twenty-sheet coverage and advances to summary without replay',async t=>{
@@ -39,6 +40,69 @@ test('restart locally reprocesses an exact legacy completed receipt once and pre
  const after=f.store().load(readingId).batches[0];for(const key of ['batchId','inputHash','requestHash','receiptHash','providerRequestId','finishedAt'])assert.equal(after[key],before[key],key);assert.deepEqual(f.store().get('receipt',after.receiptHash),receiptBefore);
  assert.equal(f.service.reconcile(args).revision,state.revision);await f.restart();assert.equal(f.service.reconcile(args).revision,state.revision);
  const next=await f.service.read({scope,readingId});assert.equal(next.stepKind,'summary');assert.equal(next.material.items.length,2);assert.equal(new Set(next.material.items.map(item=>item.id)).size,2);
+});
+
+test('B2 reconciles an already-paid intermediate summary citing a genuine omitted segment note',async t=>{
+ const f=await fixture(t,{maxTextChars:1000}),segment=await f.next();
+ f.finish(segment,JSON.stringify({...valueFor(segment),summary:'S'.repeat(290),notes:'N'.repeat(290)}));
+ const summary=await f.next();assert.equal(summary.finalSummary,false);
+ const ignored=`note:${segment.batchId}:notes:0`;
+ assert.ok(!summary.material.items.some(item=>item.id===ignored));
+ const value=valueFor(summary);value.evidenceRefs.push(ignored);
+ const result={text:JSON.stringify(value)},args=seedLegacy(f,summary,result),before=f.store().load(readingId).batches.at(-1);
+ await f.restart();const mediaBefore=[...f.calls];
+ const state=f.service.reconcile(args);
+ assert.equal(state.calls.at(-1).processed,true);
+ assert.equal(state.modelReason,null);
+ assert.equal(state.calls.length,2);
+ assert.deepEqual(f.calls,mediaBefore);
+ const after=f.store().load(readingId).batches.at(-1);
+ assert.equal(after.requestHash,before.requestHash);
+ assert.equal(after.receiptHash,before.receiptHash);
+ assert.deepEqual(f.store().get('receipt',after.receiptHash).result,result);
+ assert.deepEqual(f.store().get('validation',after.validationHash).ignoredEvidenceRefs,[ignored]);
+ assert.equal(f.service.reconcile(args).revision,state.revision);
+ await f.restart();assert.equal(f.service.reconcile(args).revision,state.revision);
+ assert.deepEqual(f.audits,[1]);
+ assert.equal((await f.service.read({scope,readingId})).stepKind,'summary');
+});
+
+test('B2 rejects an otherwise genuine omitted segment note when its source object is missing',async t=>{
+ const f=await fixture(t,{maxTextChars:1000}),segment=await f.next();
+ f.finish(segment,JSON.stringify({...valueFor(segment),summary:'S'.repeat(290),notes:'N'.repeat(290)}));
+ const summary=await f.next(),ignored=f.store().load(readingId).summaryNodes.find(node=>node.id===`note:${segment.batchId}:notes:0`);
+ assert.ok(ignored);assert.ok(!summary.material.items.some(item=>item.id===ignored.id));
+ rmSync(join(f.directory,'full-v1','notes',ignored.textRef+'.json'));
+ const value=valueFor(summary);value.evidenceRefs.push(ignored.id);
+ const state=f.finish(summary,JSON.stringify(value));
+ assert.equal(state.calls.at(-1).processed,false);
+ assert.equal(state.modelReason,'BILI_FULL_MATERIAL_NOT_COMPLETED');
+ assert.deepEqual(f.audits,[]);
+});
+
+for(const scenario of ['fabricated note','another reading','excess current refs','no current refs','segment step'])test('B2 rejects '+scenario,async t=>{
+ const f=await fixture(t,{duration:12,maxImages:1}),first=await f.next();
+ f.finish(first,JSON.stringify(valueFor(first)));
+ const second=await f.next(),priorRawId=first.material.items[0].id;
+ let batch=second,extra=priorRawId;
+ if(scenario!=='segment step'){
+  f.finish(second,JSON.stringify(valueFor(second)));batch=await f.next();assert.equal(batch.stepKind,'summary');
+ }
+ if(scenario==='fabricated note')extra=`note:${first.batchId}:notes:123456`;
+ if(scenario==='another reading'){
+  const foreign=await fixture(t,{cid:456}),other=await foreign.next();
+  foreign.finish(other,JSON.stringify(valueFor(other)));
+  extra=(await foreign.next()).material.items[0].id;
+ }
+ const value=valueFor(batch);
+ if(scenario==='excess current refs')value.evidenceRefs.push(value.evidenceRefs[0]);
+ if(scenario==='no current refs')value.evidenceRefs=[];
+ value.evidenceRefs.push(extra);
+ const state=f.finish(batch,JSON.stringify(value));
+ assert.equal(state.calls.at(-1).processed,false);
+ assert.equal(state.modelReason,'BILI_FULL_MATERIAL_NOT_COMPLETED');
+ assert.equal(f.store().load(readingId).batches.at(-1).validationHash,undefined);
+ assert.deepEqual(f.audits,[]);
 });
 
 for(const [name,wrap]of [['raw',text=>text],['plain fence',text=>'```\n'+text+'\n```'],['JSON fence and surrounding whitespace',text=>' \r\n```JSON\r\n'+text+'\r\n```\r\n ']])test(name+' segment and final summary complete through the same public service',async t=>{

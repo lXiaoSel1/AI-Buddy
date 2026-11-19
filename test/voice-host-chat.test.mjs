@@ -113,3 +113,31 @@ test('host group presentation waits for the current audio and preserves silent/c
   assert.deepEqual(presented.voicePresentation.map(row=>row.status),['audioStarted','audioCompleted']);
 });
 
+
+test('tagged voice dialogue persists the same per-sentence expressions across a restart',async t=>{
+  const {game,segments,finishes,restart}=await fixture(t,async function*(options){
+    if(!options.system.includes('逐行 JSON'))return;
+    yield segment('[[emotion:温柔]]第一句。');
+    yield segment('没有标签。');
+    yield segment('[[emotion:得意]]再一句。');
+    yield line({type:'control'});
+  });
+  const scope=game.voiceScope();
+  await game.voiceSubmit({scope,text:'说说看',submissionId:'tagged-voice-capture'});
+  await until(()=>finishes.length);
+  assert.deepEqual(segments.map(({visualEmotion})=>visualEmotion),['gentle','gentle','smug']);
+  assert.ok(segments.every(({text})=>!text.includes('[[emotion:')));
+  for(const {envelope} of segments){
+    await game.voiceReceipt({envelope,status:'textDisplayed'});
+    await game.voiceReceipt({envelope,status:'audioStarted'});
+    await game.voiceReceipt({envelope,status:'audioCompleted'});
+  }
+  const last=segments.at(-1).envelope;
+  await game.action('companion-private-present',{conversationId:scope.conversationId,id:last.messageId});
+  const reopened=await restart();
+  const message=(await reopened.action('view')).companion.messages.at(-1);
+  assert.equal(message.text,'第一句。没有标签。再一句。');
+  assert.equal(message.emotion,'gentle');
+  assert.deepEqual(message.emotionSentences.map(row=>row.emotion),['gentle','gentle','smug']);
+  assert.ok(message.emotionSentences.every(row=>message.text.slice(row.start,row.end)===row.text));
+});

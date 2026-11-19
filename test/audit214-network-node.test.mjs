@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
+import tls from 'node:tls';
 import {gzipSync} from 'node:zlib';
 import {createNodeNetworkFetch} from '../src/network-node.mjs';
 
@@ -28,7 +29,7 @@ f6YIqqp3gt8EflCDmvgGQAJDRdXDXXhUPaWlAiEAk57Tc+BBuaLSPgC0JTOCgisn
 
 // These fixtures expose wire behavior through real loopback servers. The only
 // product seam under test is the public createNodeNetworkFetch() result.
-async function listenServer(t, server, protocol = 'http') {
+async function listenServer(t, server, protocol = 'http', host = '127.0.0.1') {
   const sockets = new Set();
   server.on('connection', socket => {
     sockets.add(socket);
@@ -36,16 +37,76 @@ async function listenServer(t, server, protocol = 'http') {
   });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
+    server.listen(0, host, resolve);
   });
   t.after(async () => {
     for (const socket of sockets) socket.destroy();
     await new Promise(resolve => server.close(resolve));
   });
-  return {server, url: `${protocol}://127.0.0.1:${server.address().port}`};
+  return {server, url: `${protocol}://${host.includes(':')?'['+host+']':host}:${server.address().port}`};
 }
 
 const serve = (t, handler) => listenServer(t, http.createServer(handler));
+
+test('r16 plain HTTP does not load certificates for direct or HTTP proxy routes', {timeout:5000},async t=>{
+  const adapter=createNodeNetworkFetch({ca:()=>{throw Error('Plain HTTP attempted to load TLS certificates');}});
+  for(const host of ['127.0.0.1','::1']){
+    const server=http.createServer((_req,res)=>res.end('plain'));
+    const {url}=await listenServer(t,server,'http',host);
+    assert.equal(await (await adapter(url)).text(),'plain');
+  }
+  const origin=await serve(t,echoRequest),proxy=await serveProxy(t);
+  const proxied=createNodeNetworkFetch({
+    ca:()=>{throw Error('Plain HTTP proxy attempted to load TLS certificates');},
+    resolveRoute:async()=>[{kind:'http',url:proxy.url}]
+  });
+  const request=await (await proxied(origin.url)).json();
+  assert.equal(request.headers['user-agent'],'node');
+  assert.equal(proxy.hits.length,1);
+});
+
+test('r16 loading custom certificates starts at the HTTPS redirect', {timeout:5000},async t=>{
+  const order=[];
+  const secure=await listenServer(t,https.createServer({key:fixtureKey,cert:fixtureCert},(_req,res)=>{
+    order.push('HTTPS');
+    res.end('trusted');
+  }),'https');
+  const origin=await serve(t,(_req,res)=>{
+    order.push('HTTP');
+    res.writeHead(302,{location:secure.url}).end();
+  });
+  const adapter=createNodeNetworkFetch({ca:()=>{order.push('CA');return fixtureCert;}});
+  const response=await adapter(origin.url);
+  assert.equal(await response.text(),'trusted');
+  assert.equal(response.redirected,true);
+  assert.deepEqual(order,['HTTP','CA','HTTPS']);
+});
+
+test('r16 a trusted HTTPS proxy still requests CA options for a plain HTTP origin', {timeout:5000},async t=>{
+  // For the TLS hop to a proxy, Node uses its default trust list.
+  const originalCAs=tls.getCACertificates('default');
+  tls.setDefaultCACertificates([...originalCAs,fixtureCert]);
+  t.after(()=>tls.setDefaultCACertificates(originalCAs));
+  const origin=await serve(t,echoRequest);
+  let caLoads=0,proxyHit;
+  const proxy=await listenServer(t,https.createServer({key:fixtureKey,cert:fixtureCert},(req,res)=>{
+    proxyHit={url:req.url,encrypted:req.socket.encrypted};
+    const upstream=http.request(req.url,{method:req.method,headers:req.headers},reply=>{
+      res.writeHead(reply.statusCode,reply.headers);
+      reply.pipe(res);
+    });
+    upstream.on('error',error=>res.destroy(error));
+    req.pipe(upstream);
+  }),'https');
+  const adapter=createNodeNetworkFetch({
+    ca:()=>{caLoads++;return fixtureCert;},
+    resolveRoute:async()=>[{kind:'https',url:proxy.url}]
+  });
+  const request=await (await adapter(origin.url+'/proxied')).json();
+  assert.equal(request.method,'GET');
+  assert.deepEqual(proxyHit,{url:origin.url+'/proxied',encrypted:true});
+  assert.equal(caLoads,1);
+});
 
 test('G2 mixed PAC uses HTTP CONNECT first then DIRECT after a rejected CONNECT', {timeout:5000},async t=>{
   const origin=await listenServer(t,https.createServer({key:fixtureKey,cert:fixtureCert},(_req,res)=>res.end('mixed PAC success')),'https');

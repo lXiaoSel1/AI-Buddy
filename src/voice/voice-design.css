@@ -5,6 +5,7 @@
 .vx-vst.ok .vx-vdot,.vx-cst.ok .vx-vdot{background:var(--buddy-ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--buddy-ok) 22%,transparent)}
 .vx-vst.err{color:var(--buddy-err)}
 .vx-vst.err .vx-vdot{background:var(--buddy-err)}
+.vx-vst.warn .vx-vdot{background:var(--buddy-warn)}
 .vx-vst.idle .vx-vdot,.vx-cst.idle .vx-vdot{opacity:.55}
 .vx-cst.warn .vx-vdot{background:var(--buddy-warn)}
 .vx-cst.busy .vx-vdot{background:var(--buddy-accent)}

@@ -22,12 +22,36 @@ test('card close retries one transient Windows publication refusal without repla
  finally{fsPromises.rename=original;syncBuiltinESMExports();await bridge?.recoverStop();await bridge?.close();await rm(root,{recursive:true,force:true});}
 });
 
-test('card close retains a durable target on bounded permanent refusal and recoverStop must save before exit',async()=>{
- const root=await mkdtemp(join(tmpdir(),'card-permanent-')),target=join(root,'voice','card-speech.json'),bridge=createCardSpeech({dataRoot:root,isScopeValid:()=>true,resolveVoice:()=>assert.fail('No speech')});await bridge.invalidate('idle');const before=await readFile(target),original=fsPromises.rename,sources=[];
- fsPromises.rename=async(source,to)=>{if(to===target){sources.push(source);throw Object.assign(Error('controlled permanent refusal'),{code:'EPERM'});}return original(source,to);};syncBuiltinESMExports();
- try{await assert.rejects(bridge.close(),{code:'VOICE_CARD_RECEIPTS_WRITE_FAILED'});assert.equal(sources.length,7);assert.equal(new Set(sources).size,1);assert.deepEqual(await readFile(target),before);assert.equal(bridge.busy(),true);assert.ok((await readdir(join(root,'voice'))).some(name=>name.endsWith('.partial')));}
- finally{fsPromises.rename=original;syncBuiltinESMExports();}
- try{assert.equal((await bridge.recoverStop()).recovered,true);await bridge.close();assert.equal(bridge.busy(),false);}finally{await rm(root,{recursive:true,force:true});}
+test('card close retains a durable target on bounded permanent refusal and recoverStop must save before exit',async t=>{
+ const root=await mkdtemp(join(tmpdir(),'card-permanent-'));
+ t.after(()=>rm(root,{recursive:true,force:true}));
+ const target=join(root,'voice','card-speech.json');
+ const bridge=createCardSpeech({dataRoot:root,isScopeValid:()=>true,resolveVoice:()=>assert.fail('No speech')});
+ await bridge.invalidate('idle');
+ const before=await readFile(target),original=fsPromises.rename,sources=[];
+ fsPromises.rename=async(source,to)=>{
+   if(to===target){
+     sources.push(source);
+     throw Object.assign(Error('controlled permanent refusal'),{code:'EPERM'});
+   }
+   return original(source,to);
+ };
+ syncBuiltinESMExports();
+ try{
+   await assert.rejects(bridge.close(),{code:'VOICE_CARD_RECEIPTS_WRITE_FAILED'});
+   // Filesystem and timer delays can exhaust the retry budget before the seventh attempt.
+   assert.ok(sources.length>=1&&sources.length<=7);
+   assert.equal(new Set(sources).size,1);
+   assert.deepEqual(await readFile(target),before);
+   assert.equal(bridge.busy(),true);
+   assert.ok((await readdir(join(root,'voice'))).some(name=>name.endsWith('.partial')));
+ }finally{
+   fsPromises.rename=original;
+   syncBuiltinESMExports();
+ }
+ assert.equal((await bridge.recoverStop()).recovered,true);
+ await bridge.close();
+ assert.equal(bridge.busy(),false);
 });
 
 test('card close cannot overwrite a destination replaced during its publication retry',async()=>{

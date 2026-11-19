@@ -4,7 +4,12 @@ import {catalog,setupCommunity} from './support/community-fixtures.mjs';
 
 test('controlled old bridge refuses a signed schema2 Work release before native runtime inspection',async t=>{
  const f=await setupCommunity(t,{bridgeCompatibilityVersion:'1.0.0'}),value=catalog(f.pub);value.works[0].releases[0].package.compatibility.bridge='^1.1.0';value.works[0].releases[0].package.dataSchemaVersion=2;await f.load(value);
- await assert.rejects(f.service.action({action:'dsh-plan',sourceId:f.pub.source.sourceId,id:'test.tools'}),{code:'PLUGIN_INCOMPATIBLE'});assert.deepEqual(f.calls,[]);assert.equal(f.service.snapshot().dsh.installed.length,0);
+ const request={action:'dsh-plan',sourceId:f.pub.source.sourceId,id:'test.tools'};
+ await assert.rejects(f.service.action({...request,version:'1.0.0'}),{code:'PLUGIN_INCOMPATIBLE'});
+ assert.deepEqual(f.calls,[]);
+ await assert.rejects(f.service.action(request),{code:'COMMUNITY_NO_COMPATIBLE_RELEASE'});
+ assert.equal(f.calls.some(([action])=>action==='plan'||action==='install'),false);
+ assert.equal(f.service.snapshot().dsh.installed.length,0);
 });
 
 test('bridge1.1 accepts a signed schema2 release while retaining old bridge1 plugin compatibility',async t=>{

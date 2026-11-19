@@ -3,62 +3,91 @@ import {createPortal} from 'react-dom';
 import {scheduleRenderedAck,r95ElementVisible,createR95ActionClient} from './r95-core-page.mjs';
 import {stageCapacity,stageWindow,stableMembers,groupSpeakerState} from './group-stage.mjs';
 import {t} from './i18n.mjs';
-import {isStoredImage} from './companion-image.mjs';
-import {plateVars} from './plate-colors.mjs';
+import {VoiceIcon} from './voice/design-icons.mjs';
+import {hasCloudVoice} from './voice/design-ui.mjs';
+import {groupMemberAvatar} from './group-member-avatar.mjs';
+import {ExpressionBubble,portraitWidth,useGalgameExpressionFx} from './galgame-redesign.mjs';
 import {visibleCompanionText} from './companion-presentation.mjs';
 const h=React.createElement;
 const name=c=>c?.name||c?.id||'';
 const image=(c,resolve)=>Object.hasOwn(c?.effective||{},'sprite')?c.effective.sprite||null:resolve(c?.sprite)||null;
-const thumb=c=>isStoredImage(c?.avatar)?c.avatar:c?.builtin?`assets/group-thumbnails/${c.id}.png`:null;
 const button=(label,onClick,props={})=>h('button',{type:'button',className:'whg-btn',onClick,...props},t(label));
-export const GroupStageCSS=`
-.whg-stage.buddy-stage{display:block;inset:126px 20px 300px!important;pointer-events:none;overflow:visible;min-height:145px;container-type:inline-size}
-.galgame-page .whg-root-tab .whg-stage.buddy-stage{position:relative;inset:auto!important;display:block;width:100%;height:100%;padding:4px 16px;min-height:155px;overflow:visible;box-sizing:border-box;z-index:1}
-.buddy-stage-layout{display:grid;grid-template-columns:minmax(0,1fr) 164px;gap:18px;height:100%;width:100%}.buddy-stage-view{position:relative;min-width:0;height:100%;overflow:visible;border-radius:16px;isolation:isolate}
-.buddy-stage-cast{position:absolute;inset:10px 4% -68%;display:flex;align-items:flex-start;justify-content:center;gap:12px;z-index:2}
-.buddy-stage-person{position:relative;height:94%;min-width:0;flex:1 1 0;display:flex;align-items:flex-end;justify-content:center;transform-origin:50% 0%;transition:transform .2s,filter .2s;filter:brightness(.55)}
-.buddy-stage-person[data-speaker=true]{filter:brightness(1);z-index:3}.buddy-stage-person[data-focus=true]{transform:scale(1.12)}
-.buddy-stage-person img,.buddy-stage-person canvas{width:145%!important;max-width:none;flex-shrink:0;height:100%;object-fit:contain;object-position:top;display:block}.buddy-stage-person>span{display:none}
-.buddy-stage-names{position:absolute;z-index:5;left:4%;right:4%;bottom:10px;display:flex;gap:12px;justify-content:space-around}.buddy-stage-names span{flex:1;min-width:0;text-align:center;color:var(--buddy-text);font-size:12px;text-shadow:0 1px 5px #000;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* The far rim is 24% down the transparent artwork. Anchor that rim to the
-   portrait stage so a wide, short window cannot push the table into faces. */
-.buddy-round-table{position:absolute;z-index:4;pointer-events:none;width:108%;max-width:none;height:auto;left:-4%;top:74%;bottom:auto;transform:translateY(-24%);filter:drop-shadow(0 -4px 6px #0005)}
-.buddy-stage-toolbar{position:absolute;z-index:6;left:0;right:0;top:0;display:flex;align-items:center;gap:8px;pointer-events:auto;flex-wrap:wrap;font-size:12px}.buddy-stage-toolbar button{font-size:12px!important;padding:5px 10px!important}.buddy-stage-toolbar .buddy-viewing{background:color-mix(in srgb,var(--buddy-surface2) 87%,transparent);color:var(--buddy-accent-text);padding:5px 10px;border-radius:10px}
-.buddy-roster{pointer-events:auto;display:flex;flex-direction:column;min-height:0;background:color-mix(in srgb,var(--buddy-side-bg) 81%,transparent);border:1px solid color-mix(in srgb,var(--buddy-muted) 33%,transparent);border-radius:14px;padding:10px;gap:8px}.buddy-roster>strong{font-size:14px}.buddy-roster input,.buddy-member-search{min-width:0;width:100%;box-sizing:border-box;background:var(--buddy-surface2);color:var(--buddy-text);border:1px solid color-mix(in srgb,var(--buddy-muted) 40%,transparent);border-radius:7px;padding:7px;font:inherit}.buddy-roster-list{overflow:auto;min-height:0;scrollbar-width:thin;overscroll-behavior:contain;display:flex;flex-direction:column;gap:5px}
-.buddy-roster-entry{display:flex;align-items:center;gap:7px;min-height:46px;padding:5px!important;text-align:left;color:var(--buddy-text);background:color-mix(in srgb,var(--buddy-surface2) 40%,transparent);border:1px solid transparent;border-radius:9px;font:inherit;cursor:pointer}.buddy-roster-entry img,.buddy-overview-card img{width:36px;height:42px;object-fit:contain;flex:none}.buddy-roster-entry span{min-width:0;overflow-wrap:anywhere;font-size:12px}.buddy-roster-entry small{display:block;color:var(--buddy-muted);font-size:10px}.buddy-roster-entry[data-speaking=true]{border-color:var(--buddy-accent-text);background:color-mix(in srgb,var(--buddy-accent) 40%,transparent)}.buddy-roster-entry[data-viewed=true]{outline:1px dashed var(--buddy-a2);outline-offset:-4px}
-
-.buddy-stage-placeholder{padding:16px;background:color-mix(in srgb,var(--buddy-surface2) 73%,transparent);color:var(--buddy-text);border:1px solid var(--buddy-muted);border-radius:16px;max-width:90%;overflow-wrap:anywhere}
-.buddy-group-panel .buddy-group-mentions{flex-wrap:nowrap;overflow-x:auto;max-width:100%;padding-bottom:4px}.buddy-group-mentions button{white-space:nowrap}.buddy-group-panel .whg-line-now{overflow:auto;min-height:48px;max-height:110px;white-space:pre-wrap;overflow-wrap:anywhere}.buddy-group-panel .whg-input{max-height:85px!important;min-height:40px!important}.buddy-group-panel .buddy-group-meta{margin-bottom:6px}.buddy-group-panel .whg-input-row{flex-shrink:0}
-.galgame-page .whg-root-tab .buddy-group-panel{padding-top:24px;gap:6px}.buddy-group-panel .whg-btn{padding:5px 9px!important;font-size:12px!important}.buddy-group-panel .buddy-group-mentions{margin-top:2px;scrollbar-width:thin}.buddy-group-panel textarea.whg-input{height:48px;resize:none}.buddy-group-panel .buddy-group-controls{font-size:12px}.buddy-group-panel .buddy-group-meta{margin-bottom:2px}
-@container(max-width:800px){.buddy-stage-layout{grid-template-columns:minmax(0,1fr)}.buddy-roster{display:none}}
-@media(prefers-reduced-motion:reduce){.buddy-stage-person{transition:none!important}.buddy-group-panel .whg-line-now{animation:none!important}}
-@media(max-width:1000px){.whg-stage.buddy-stage{inset:142px 12px 300px!important}.buddy-stage-toolbar{gap:4px}.buddy-stage-toolbar button{padding:4px 7px!important}.buddy-stage-person>span{font-size:11px}}
-`;
-export function CompanionGroupStage({state,request,resolveArt=()=>null,renderPortrait,browseRequest,toolbarTarget}){
- const group=state.groups?.find(g=>g.id===state.activeGroupId),identity=groupSpeakerState(state.groupRuntime,state.groupMessages),message=identity.running&&state.groupRuntime?.streaming?.text?{...state.groupRuntime.streaming,id:state.groupRuntime.streaming.requestId}:identity.displayMessage,speaker=identity.activeId??identity.displayId,speaking=identity.speakingId;
- const viewport=useRef(null),presenting=useRef(null),previous=useRef([]),lastMessage=useRef(null);
- const [width,setWidth]=useState(1000),[manual,setManual]=useState(null),[wide,setWide]=useState(false),[rosterSearch,setRosterSearch]=useState(''),[error,setError]=useState(''),[ackError,setAckError]=useState(''),[ackCheck,setAckCheck]=useState(0);
+export function CompanionGroupStage({state,request,resolveArt=()=>null,renderPortrait,browseRequest,toolbarTarget,onMembers,playback,expressionMotion,classic=true,cloudVoiceCharacters}){
+ const group=state.groups?.find(g=>g.id===state.activeGroupId);
+ const identity=groupSpeakerState(state.groupRuntime,state.groupMessages),runtime=state.groupRuntime||{};
+ const streaming=identity.running&&runtime.streaming?.text?runtime.streaming:null;
+ const message=streaming?{...streaming,id:streaming.requestId}:identity.displayMessage;
+ const speaker=identity.activeId??identity.displayId;
+ const viewport=useRef(null),previous=useRef([]),lastMessage=useRef(null);
+ const [width,setWidth]=useState(1280),[manual,setManual]=useState(null),[presentationError,setPresentationError]=useState(null),[ackError,setAckError]=useState(''),[ackCheck,setAckCheck]=useState(0);
+ const activeCharacter=playback?.characterId??speaker;
+ const visual=playback??{key:'',emotion:message?.characterId===activeCharacter?message?.emotion??'normal':'normal',fresh:false};
+ const fx=useGalgameExpressionFx(visual,expressionMotion!==false&&!manual);
  useEffect(()=>{const node=viewport.current;if(!node)return;const measure=()=>setWidth(node.clientWidth);measure();const observer=new ResizeObserver(measure);observer.observe(node);return()=>observer.disconnect();},[group?.id]);
- useEffect(()=>{setManual(null);previous.current=[];lastMessage.current=null;setWide(group?.cameraMode==='wide');},[group?.id]);
- useEffect(()=>{if(message?.id&&lastMessage.current!==message.id){lastMessage.current=message.id;setManual(null);}},[message?.id]);
+ useEffect(()=>{setManual(null);previous.current=[];lastMessage.current=null;},[group?.id]);
+ const messageKey=message?.occurrenceId??message?.id;
+ useEffect(()=>{if(messageKey&&lastMessage.current!==messageKey){lastMessage.current=messageKey;setManual(null);}},[messageKey]);
  useEffect(()=>{if(browseRequest?.groupId!==group?.id)return;if(browseRequest.characterId==null)setManual(null);else if(group.memberIds.includes(browseRequest.characterId))setManual(browseRequest.characterId);},[browseRequest]);
- const r95Request=useRef(request);r95Request.current=request;
- const renderedMessage=state.groupRuntime?.currentMessage,renderedText=visibleCompanionText(renderedMessage,{messages:state.groupMessages??[]}),streamingPending=!!state.groupRuntime?.streaming?.text,renderedScope=state.r95?.scope,renderedScopeKey=JSON.stringify(renderedScope??null),renderedTarget=state.r95?.autoPresentation,renderedTargetKey=JSON.stringify(renderedTarget??null),targetMatches=renderedTarget?.messageId===renderedMessage?.id&&renderedTarget?.autoRequestId===renderedMessage?.autoRequestId&&renderedTarget?.characterId===renderedMessage?.characterId&&renderedTarget?.scope&&renderedScope&&['characterId','personaId','lifeId','operationId','channel','conversationId'].every(key=>renderedTarget.scope[key]===renderedScope[key]),autoStopped=state.r95?.auto?.status==='ended'&&!['round-limit','topic-ended'].includes(state.r95.auto.endedReason);
- useEffect(()=>{setAckError('');const m=renderedMessage;if(autoStopped||!targetMatches||!m?.autoRequestId||m.status!=='presented'||!m.id)return;const ackClient=createR95ActionClient((...args)=>r95Request.current(...args));return scheduleRenderedAck({isReady:()=>{const node=[...document.querySelectorAll('[data-group-message-id]')].find(n=>n.dataset.groupMessageId===m.id&&n.dataset.autoRequestId===m.autoRequestId);return r95ElementVisible(node)&&node.textContent===renderedText;},send:()=>ackClient('auto-rendered',{groupId:group.id,messageId:m.id,autoRequestId:m.autoRequestId,scope:renderedScope}),onError:e=>setAckError(e.message)});},[group?.id,renderedMessage?.id,renderedMessage?.autoRequestId,renderedMessage?.status,renderedText,streamingPending,renderedScopeKey,renderedTargetKey,state.r95?.auto?.id,autoStopped,ackCheck]);
- const pending=state.groupRuntime?.pendingMessage;
- useEffect(()=>{if(!pending||!request)return;let stopped=false;const ack=()=>{if(stopped||presenting.current===pending.id||document.hidden||document.querySelector('dialog[open]'))return;presenting.current=pending.id;request('companion-group-present',{id:group.id,requestId:pending.id}).catch(e=>{setError(e.message);}).finally(()=>{presenting.current=null;});};const timer=setInterval(ack,200);const frame=requestAnimationFrame(ack);return()=>{stopped=true;clearInterval(timer);cancelAnimationFrame(frame);};},[pending?.id,group?.id,request]);
- useEffect(()=>{if(manual)return;viewport.current?.parentElement?.querySelector('[data-speaking=true]')?.scrollIntoView({block:'nearest'});},[speaker,manual]);
- // Warm only the immediate next/previous neighbor, never every member/expression.
- useEffect(()=>{if(!group)return;const order=stableMembers(group),visible=stageWindow(order,stageCapacity(width),manual||speaker,previous.current),first=order.indexOf(visible[0]),last=order.indexOf(visible.at(-1)),images=[];for(const id of [order[first-1],order[last+1]]){const card=state.characters?.find(c=>c.id===id);if(!card||card.hasCustomSprite)continue;const src=image(card,resolveArt);if(!src)continue;const img=new Image();img.decoding='async';img.src=src;images.push(img);}return()=>{for(const img of images)img.src='';};},[group?.id,group?.stageOrder?.join(','),group?.memberIds?.join(','),width,manual,speaker]);
+ const requestRef=useRef(request);requestRef.current=request;
+ const renderedMessage=runtime.currentMessage,renderedText=visibleCompanionText(renderedMessage,{messages:state.groupMessages??[]}),streamingPending=!!state.groupRuntime?.streaming?.text,renderedScope=state.r95?.scope,renderedScopeKey=JSON.stringify(renderedScope??null),renderedTarget=state.r95?.autoPresentation,renderedTargetKey=JSON.stringify(renderedTarget??null),targetMatches=renderedTarget?.messageId===renderedMessage?.id&&renderedTarget?.occurrenceId===renderedMessage?.occurrenceId&&renderedTarget?.autoRequestId===renderedMessage?.autoRequestId&&renderedTarget?.characterId===renderedMessage?.characterId&&renderedTarget?.scope&&renderedScope&&['characterId','personaId','lifeId','operationId','channel','conversationId'].every(key=>renderedTarget.scope[key]===renderedScope[key]),autoStopped=state.r95?.auto?.status==='ended'&&!['round-limit','topic-ended'].includes(state.r95.auto.endedReason);
+ useEffect(()=>{setAckError('');const m=renderedMessage;if(autoStopped||!targetMatches||!m?.autoRequestId||m.status!=='presented'||!m.id)return;const ackClient=createR95ActionClient((...args)=>requestRef.current(...args));return scheduleRenderedAck({isReady:()=>{const node=[...document.querySelectorAll('[data-group-message-id]')].find(n=>n.dataset.groupMessageId===m.id&&(!m.occurrenceId||n.dataset.groupMessageOccurrence===m.occurrenceId)&&n.dataset.autoRequestId===m.autoRequestId);return r95ElementVisible(node)&&node.textContent===renderedText;},send:()=>ackClient('auto-rendered',{groupId:group.id,messageId:m.id,occurrenceId:m.occurrenceId,autoRequestId:m.autoRequestId,scope:renderedScope}),onError:e=>setAckError(e.message)});},[group?.id,renderedMessage?.id,renderedMessage?.occurrenceId,renderedMessage?.autoRequestId,renderedMessage?.status,renderedText,streamingPending,renderedScopeKey,renderedTargetKey,state.r95?.auto?.id,autoStopped,ackCheck]);
+ const groupId=group?.id,pendingId=runtime.pendingMessage?.id,roundId=runtime.roundId,canPresent=typeof request==='function';
+ const error=presentationError?.groupId===groupId&&presentationError?.pendingId===pendingId&&presentationError?.roundId===roundId?presentationError?.message:null;
+ useEffect(()=>{
+  setPresentationError(null);
+  if(!groupId||!pendingId||!canPresent)return;
+  let stopped=false,presenting=false;
+  const ack=async()=>{
+   if(stopped||presenting||document.hidden||document.querySelector('dialog[open]'))return;
+   presenting=true;
+   try{
+    const result=await requestRef.current('companion-group-present',{id:groupId,requestId:pendingId,roundId});
+    if(stopped)return;
+    setPresentationError(null);
+    if(!result?.presentationDeferred)stop();
+   }catch(error){
+    if(stopped)return;
+    if(error?.code==='GROUP_PRESENTATION_STALE'){setPresentationError(null);stop();}
+    else setPresentationError({groupId,pendingId,roundId,message:String(error?.message??error)});
+   }finally{presenting=false;}
+  };
+  const timer=setInterval(ack,200),frame=requestAnimationFrame(ack);
+  function stop(){stopped=true;clearInterval(timer);cancelAnimationFrame(frame);}
+  return stop;
+ },[groupId,pendingId,roundId,canPresent]);
  if(!group)return null;
- const order=stableMembers(group),capacity=stageCapacity(width),visible=stageWindow(order,capacity,manual||speaker,previous.current);previous.current=visible;
+ const order=stableMembers(group);
+ const hero=[manual,activeCharacter,order[0]].find(id=>order.includes(id));
+ const capacity=stageCapacity(width),visible=stageWindow(order,capacity,hero,previous.current);previous.current=visible;
+ const rail=width>860,stageWidth=rail?width-90:width,tableWidth=stageWidth*1.2;
+ const withoutVoice=id=>!!cloudVoiceCharacters&&!cloudVoiceCharacters.some(row=>row.characterId===id&&hasCloudVoice(row));
  const characters=Object.fromEntries((state.characters||[]).map(c=>[c.id,c])),viewed=manual&&characters[manual];
- const choose=id=>setManual(id);
- const portrait=c=>{const src=thumb(c);return src?h('img',{src,alt:'',loading:'lazy',onError:e=>{e.currentTarget.style.display='none';}}):h('span',{'aria-hidden':true},name(c).slice(0,2));};
- const status=id=>[(speaking===id?t('正在发言'):identity.failedId===id?t('回复失败'):''),(manual===id?t('查看中'):''),group.mutedIds?.includes(id)?t('静音'):t('在场')].filter(Boolean).join(' · ');
+ const rest=visible.filter(id=>id!==hero),slots=rest.length===3?[.27,.73,.1]:rest.length===2?[.24,.76]:[.24];
+ const portrait=c=>{const src=groupMemberAvatar(c,resolveArt);return src?h('img',{src,alt:'',loading:'lazy',draggable:false,onError:e=>{e.currentTarget.style.display='none';}}):name(c).slice(0,2);};
  const controls=manual&&h(React.Fragment,null,
-  h('span',{className:'buddy-viewing','data-viewing':manual},t('正在查看：')+name(viewed)),
+  h('span',{className:'buddy-viewing','data-viewing':manual,title:classic?undefined:name(viewed)},t('正在查看：')+name(viewed)),
   button('回到发言者',()=>setManual(null)));
- const ackControl=ackError&&!autoStopped&&h('div',{className:'buddy-ack-error',role:'alert'},h('span',null,ackError),h('button',{type:'button',className:'ui-btn sm','data-recheck-rendered':renderedMessage?.id,onClick:()=>setAckCheck(value=>value+1)},t('重新检查显示状态')));
- return h(React.Fragment,null,toolbarTarget&&createPortal(controls,toolbarTarget),h('div',{className:'whg-stage buddy-stage','data-companion-group-stage':group.id},ackControl,h('div',{className:'buddy-stage-layout'},h('div',{className:'buddy-stage-view',ref:viewport,'data-capacity':capacity,'data-visible-members':visible.join(',')},h('div',{className:'buddy-stage-cast'},...visible.map(id=>{const c=characters[id],src=image(c,resolveArt);return h('div',{key:id,className:'buddy-stage-person','data-speaker':!speaker||id===speaker,'data-focus':!wide&&id===(manual||speaker),'data-character-id':id},src?(renderPortrait?renderPortrait(c,src,id===speaker&&message?.characterId===id?message?.emotion||'normal':'normal'):h('img',{src,alt:name(c),draggable:false})):h('div',{className:'buddy-stage-placeholder'},name(c)),h('span',null,name(c)));})),h('div',{className:'buddy-stage-names'},...visible.map(id=>h('span',{key:id,'data-speaker':id===speaker,style:id===speaker?plateVars({characterId:id,color:characters[id]?.color}):undefined},name(characters[id])))),group.sceneTemplate!=='plain'&&h('img',{className:'buddy-round-table',src:'assets/group-scene/discussion-table-v2.png',alt:'',draggable:false,'aria-hidden':true})),h('aside',{className:'buddy-roster','aria-label':t('群成员')},h('strong',null,t('成员'),' ',h('small',null,String(order.length))),order.length>6&&h('input',{type:'search',placeholder:t('搜索成员'),'aria-label':t('搜索成员'),value:rosterSearch,onChange:e=>setRosterSearch(e.target.value)}),h('div',{className:'buddy-roster-list'},...order.filter(id=>name(characters[id]).toLowerCase().includes(rosterSearch.toLowerCase())).map(id=>h('button',{key:id,type:'button',className:'buddy-roster-entry','data-speaking':speaking===id,'data-viewed':manual===id,onClick:()=>choose(id)},portrait(characters[id]),h('span',null,name(characters[id]),h('small',null,status(id))))))))),error&&h('span',{role:'alert'},error));
+ const ackControl=ackError&&!autoStopped&&h('div',{className:'buddy-ack-error gx-group-feedback',role:'alert'},h('span',null,ackError),h('button',{type:'button',className:'ui-btn sm','data-recheck-rendered':renderedMessage?.id,onClick:()=>setAckCheck(value=>value+1)},t('重新检查显示状态')));
+ const feedback=h(React.Fragment,null,ackControl,error&&h('span',{className:'gx-group-feedback',role:'alert'},error));
+ const figure=(id,position,main)=>{
+  if(!id)return null;
+  const c=characters[id],src=image(c,resolveArt),isSpeaking=main&&id===activeCharacter,emotion=isSpeaking?visual.emotion:'normal';
+  return h('div',{
+   key:id,className:'gf '+(main?'spk gx-figure-hero':'gx-figure-back')+(isSpeaking&&fx?.action?' m-'+fx.action:''),
+   'data-character-id':id,'data-speaker':isSpeaking,'data-galgame-emotion':emotion,
+   style:{left:Math.round(position)+'px',top:main?30:122,height:main?880:600,'--gx-portrait-width-natural':portraitWidth(id,main?880:600)+'px'},
+   onAnimationEnd:e=>{if(e.target===e.currentTarget&&isSpeaking&&fx?.action)e.currentTarget.classList.remove('m-'+fx.action);},
+  },
+  c&&renderPortrait?renderPortrait(c,src,emotion,isSpeaking?visual.nextEmotion:null):src?h('img',{src,alt:name(c),draggable:false}):h('div',{className:'buddy-stage-placeholder'},name(c)),isSpeaking&&h(ExpressionBubble,{effect:fx}));
+ };
+ return h(React.Fragment,null,
+  toolbarTarget&&createPortal(classic?controls:h(React.Fragment,null,manual&&h('div',{className:'buddy-group-stage-controls gx-group-stage-controls'},controls),feedback),toolbarTarget),
+  h('div',{className:'gscene',ref:viewport,'data-companion-group-stage':group.id,'data-capacity':capacity,'data-visible-members':visible.join(',')},
+   ...rest.map((id,index)=>figure(id,slots[index]*stageWidth,false)),figure(hero,stageWidth/2,true),
+   group.sceneTemplate!=='plain'&&h('img',{className:'gtable2 soft',src:'assets/group-scene/galgame-table.webp',alt:'',draggable:false,'aria-hidden':true,style:{width:Math.round(tableWidth),left:Math.round(stageWidth/2-tableWidth/2),top:'calc(max(586px, 81.3889%) - '+Math.round(tableWidth*533/1600*.24)+'px)'}}),
+   ...rest.map((id,index)=>h('span',{className:'gcap',key:'cap-'+id,style:{left:Math.round(slots[index]*stageWidth),top:98}},name(characters[id])))),
+  (rail||!classic&&!!cloudVoiceCharacters)&&h('button',{className:'grail'+(rail?'':' bc-small-rail'),type:'button','data-galgame-roster':true,'aria-label':t('在场角色'),title:t('在场角色'),onClick:onMembers},
+   h('span',{className:'grail-faces'},...order.map(id=>h('span',{className:(id===hero?'spk ':'')+(group.mutedIds?.includes(id)?'mute ':'')+(withoutVoice(id)?'bc-rail-missing':''),key:id,'data-speaking':id===identity.speakingId,title:withoutVoice(id)?`${name(characters[id])} · ${t('还没选云端声音')}`:name(characters[id])},portrait(characters[id]),withoutVoice(id)&&h('i',{className:'bc-rail-indicator','aria-label':t('还没选云端声音')},VoiceIcon('mic-off',{size:10}))))),
+   h('span',null,t('在场')+' '+order.length)),
+  (classic||!toolbarTarget)&&feedback);
 }

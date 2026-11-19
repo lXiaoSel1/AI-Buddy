@@ -1,3 +1,4 @@
+import {readCompanionExport} from './support/companion-export-file.mjs';
 import test from 'node:test';
 import {recordMoodRequest} from './support/mood-request.mjs';
 import assert from 'node:assert/strict';
@@ -56,7 +57,7 @@ test('Group labels are normalized for display, bubbles and context while exporte
   await f.game.action('companion-group-present',{requestId:pending.id});
   assert.equal(f.events[0].text,pending.text);
   let view=await state(f.game);assert.equal(view.groupRuntime.currentMessage.text,pending.text);assert.equal(view.groupMessages.at(-1).text,pending.text);
-  const exported=(await f.game.action('companion-group-export',{id:f.group.id})).data;
+  const exported=(await readCompanionExport(f.game,'companion-group-export',{id:f.group.id}));
   assert.equal(exported.groups[0].messages.at(-1).text,raw);
   await f.game.action('companion-character-save',{id:'deepseek',name:'小鱼'});
   view=await state(f.game);assert.equal(view.groupRuntime.currentMessage.text,pending.text);assert.equal(view.groupRuntime.currentMessage.characterName,'DeepSeek');
@@ -78,13 +79,13 @@ test('Group parser passes the captured speaker to quoted-line fallback without a
   const pending=await until(async()=>(await state(f.game)).groupRuntime.pendingMessage);
   assert.equal(pending.emotion,'shy');assert.equal(pending.emotionSource,'keyword');assert.equal(pending.characterId,'deepseek');
   await f.game.action('companion-group-present',{requestId:pending.id});
-  assert.equal(f.calls.filter(x=>x.purpose==='quoted-group').length,1);assert.ok(f.moodCalls.length>0);assert.equal(f.events[0].emotion,'shy');
+  assert.equal(f.calls.filter(x=>x.purpose==='quoted-group').length,1);await until(()=>f.moodCalls.length>0);assert.equal(f.events[0].emotion,'shy');
  }finally{await f.game.close();}
 });
 test('Unpresented generated response makes no history/reward; ack commits exactly once and only Continue generates next',async()=>{
  const f=await fixture();try{await f.game.action('companion-group-send',{text:'hello'});const pending=await until(async()=>(await state(f.game)).groupRuntime.pendingMessage);assert.equal(f.events.length,0);assert.equal((await state(f.game)).groupMessages.filter(m=>m.role==='assistant').length,0);assert.equal((await state(f.game)).relationship.affection,0);
  await Promise.all([1,2,3].map(()=>f.game.action('companion-group-present',{requestId:pending.id})));assert.equal(f.events.length,1);assert.equal((await state(f.game)).relationship.affection,1);assert.equal(f.calls.filter(c=>c.purpose==='group-chat').length,1);
- await f.game.action('companion-group-continue');const second=await until(async()=>(await state(f.game)).groupRuntime.pendingMessage);assert.notEqual(second.id,pending.id);await f.game.action('companion-group-stop');await assert.rejects(()=>f.game.action('companion-group-present',{requestId:second.id}),/失效/);assert.equal(f.events.length,1);
+ await f.game.action('companion-group-continue');const second=await until(async()=>(await state(f.game)).groupRuntime.pendingMessage);assert.notEqual(second.id,pending.id);await f.game.action('companion-group-stop');await assert.rejects(()=>f.game.action('companion-group-present',{requestId:second.id}),{code:'GROUP_PRESENTATION_STALE',message:/失效/});assert.equal(f.events.length,1);
  }finally{await f.game.close();}
 });
 test('Failed group pauses with retained queue, explicit retry and no automatic model resubmit',async()=>{const f=await fixture();try{f.setFail(true);await f.game.action('companion-group-send',{text:'hi'});await until(async()=>(await state(f.game)).groupRuntime.status==='failed');assert.equal((await state(f.game)).groupRuntime.queue.length,5);assert.equal(f.calls.filter(c=>c.purpose==='group-chat').length,1);f.setFail(false);await f.game.action('companion-group-retry');await until(async()=>(await state(f.game)).groupRuntime.pendingMessage);assert.equal(f.calls.filter(c=>c.purpose==='group-chat').length,2);}finally{await f.game.close();}});
@@ -120,7 +121,7 @@ test('Restart discards pending presentation without a reward or automatic model 
 
 test('Legacy custom sprites remain discoverable for off-screen members; stage preferences survive export/restore',async()=>{
  const f=await fixture();try{await f.game.action('sprite-upload',{characterId:'claude',dataUrl:'data:image/png;base64,aGVsbG8='});assert.equal((await state(f.game)).characters.find(c=>c.id==='claude').hasCustomSprite,true);
- await f.game.action('companion-group-camera',{cameraMode:'wide'});const data=(await f.game.action('companion-group-export')).data;assert.equal(data.groups[0].cameraMode,'wide');await f.game.action('companion-group-save',{id:f.group.id,name:'changed after export'});await f.game.action('companion-conversation-import',{data});const group=(await state(f.game)).groups.find(g=>g.importedFrom===f.group.id);assert.equal(group.cameraMode,'wide');assert.deepEqual(group.stageOrder,data.groups[0].stageOrder);assert.equal(group.sceneTemplate,'library');assert.equal(group.autoPhoto,false);
+ await f.game.action('companion-group-camera',{cameraMode:'wide'});const data=(await readCompanionExport(f.game,'companion-group-export'));assert.equal(data.groups[0].cameraMode,'wide');await f.game.action('companion-group-save',{id:f.group.id,name:'changed after export'});await f.game.action('companion-conversation-import',{data});const group=(await state(f.game)).groups.find(g=>g.importedFrom===f.group.id);assert.equal(group.cameraMode,'wide');assert.deepEqual(group.stageOrder,data.groups[0].stageOrder);assert.equal(group.sceneTemplate,'library');assert.equal(group.autoPhoto,false);
  }finally{await f.game.close();}
 });
 test('Dedicated deleted, disabled and non-chat profiles report failure instead of using the global model',()=>{

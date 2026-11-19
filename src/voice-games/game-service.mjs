@@ -1,6 +1,7 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {actionPrompt,parseActionResponse,publicChatPrompt,reviewPrompt} from './prompts.mjs';
 import {createGameModelBindings} from './model-bindings.mjs';
+import {gameRulesRegistration} from './rule-artifact.mjs';
 import {settledHands,settledShowdown} from './game-presentation.mjs';
 import {committedCardSpeechFacts,committedTableChatFact} from '../voice/card-speech-facts.mjs';
 import {CARD_SPEECH_DISPLAY_WAIT_MS} from '../voice/card-speech.mjs';
@@ -9,10 +10,11 @@ const copy=v=>structuredClone(v),digest=v=>createHash('sha256').update(JSON.stri
 const fail=(code,message=code)=>Object.assign(Error(message),{code});
 const allowedActionKeys=new Set(['type','cards','raiseTo','factor','pattern','bodyRanks','moveId']);
 const modelCancelled=()=>fail('GAME_MODEL_CANCELLED');
+const initializationSuperseded=()=>fail('GAME_INITIALIZATION_SUPERSEDED');
 const moveMethod='games.table.action',leaveMethod='games.table.leave';
 /** This service is composed by Core, never created by a page or a tool-enabled agent. */
 export function createCardGameService({getGame,getProvider,now=Date.now,onCommittedSpeech=null,onSpeechPresentation=null,onSpeechError=()=>{}}){
- let economy,models,rules,ruleHash,closed=false,closing=false,closePromise;
+ let economy,initializedHost,models,rules,ruleArtifact,registeredArtifact,initialization,closed=false,closing=false,closePromise;
  const running=new Map(),auxiliary=new Map(),faults=new Map();
  const speechScopes=new Map(),speechKey=(tableId,handId)=>JSON.stringify([tableId,handId]);
  const tableIdentities=new Map();
@@ -46,7 +48,50 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
    return {eventId:row.eventId,state:row.state,deadlineAt:row.deadlineAt};
   })};
  }
- function ready(){if(closed||closing)throw fail('GAME_SERVICE_CLOSED');const live=getGame()?.gameEconomy;if(!live)throw fail('GAME_ECONOMY_UNAVAILABLE');if(!rules)throw fail('GAME_RULES_UNAVAILABLE');if(economy!==live){tableIdentities.clear();economy=live;economy.registerRules({...rules,versions:rules.RULE_MANIFEST,deck:type=>rules.STANDARD_DECK[type],sourceHash:ruleHash});economy.recover();models=createGameModelBindings({economy,getProvider,getContext:scope=>getGame().gameContext(scope),now});}return economy;}
+ function liveEconomy(){
+  if(closed||closing)throw fail('GAME_SERVICE_CLOSED');
+  const live=getGame()?.gameEconomy;
+  if(!live)throw fail('GAME_ECONOMY_UNAVAILABLE');
+  if(!ruleArtifact)throw fail('GAME_RULES_UNAVAILABLE');
+  return live;
+ }
+ function ready(){
+  const live=liveEconomy();
+  if(live!==economy||initializedHost!==getGame()||registeredArtifact!==ruleArtifact)throw fail('GAME_ECONOMY_UNAVAILABLE');
+  return live;
+ }
+ async function initialize(){
+  const host=getGame(),live=liveEconomy(),artifact=ruleArtifact;
+  if(initializedHost===host&&economy===live&&registeredArtifact===artifact)return live;
+  if(initialization?.host===host&&initialization.live===live&&initialization.artifact===artifact)return initialization.task;
+  // Only rule registration is abortable. A submitted economy write still drains
+  // through the worker queue before the shared store closes.
+  initialization?.controller.abort(initializationSuperseded());
+  const pending={host,live,artifact,controller:new AbortController()};
+  const guard=()=>{
+   if(pending.controller.signal.aborted||closing||closed||getGame()!==host||ruleArtifact!==artifact)throw initializationSuperseded();
+   if(liveEconomy()!==live)throw fail('GAME_ECONOMY_UNAVAILABLE');
+  };
+  pending.task=Promise.resolve().then(async()=>{
+   guard();
+   const module=artifact.module;
+   try{await live.registerRules(live.workerBacked?artifact:gameRulesRegistration(artifact),{guard,signal:pending.controller.signal});}
+   catch(error){guard();throw error;}
+   guard();
+   if(economy!==live||initializedHost!==host){
+    await live.recover({guard});
+    guard();
+    await models?.close();
+    guard();
+    tableIdentities.clear();
+    models=createGameModelBindings({economy:live,getProvider,getContext:scope=>getGame().gameContext(scope),now});
+   }
+   economy=live;initializedHost=host;registeredArtifact=artifact;rules=module;
+   return live;
+  }).finally(()=>{if(initialization===pending)initialization=null;});
+  initialization=pending;
+  return pending.task;
+ }
  function persona(){return getGame().context().personaId;}
  function authorizedTable(t){if(t.players.find(p=>p.kind==='user')?.personaId!==persona())throw fail('GAME_PERSONA_DENIED');for(const p of t.players.filter(p=>p.kind!=='user')){const current=getGame().pluginScope(p.characterId,p.personaId);for(const k of ['lifeId','operationId'])if(current[k]!==p[k])throw fail('GAME_LIFE_CHANGED');}return t;}
  function table(id){
@@ -105,7 +150,12 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
  }
  function resolvePlayers(selected){if(!Array.isArray(selected)||selected.filter(p=>p.kind==='user').length!==1||new Set(selected.filter(p=>p.kind!=='user').map(p=>p.characterId)).size!==selected.filter(p=>p.kind!=='user').length)throw fail('GAME_PLAYERS_INVALID');const pid=persona();return selected.map(p=>{if(p.kind==='user')return {id:'user',kind:'user',personaId:pid};if(!p.characterId||!getGame().hasCharacter(p.characterId))throw fail('GAME_CHARACTER_MISSING');const scope=getGame().pluginScope(p.characterId,pid);return {id:'ai-'+p.characterId,kind:'ai',...Object.fromEntries(['characterId','personaId','lifeId','operationId'].map(k=>[k,scope[k]]))};});}
  async function prepareBindings(players,handId){const values=[];for(const p of players.filter(p=>p.kind!=='user')){const context=await getGame().gameContext(p);values.push(models.prepare({id:handId+':'+p.id,scope:p,modelBinding:context.modelBinding}));}return values;}
- async function flushOutbox(){ready();for(const fact of economy.outbox()){try{const ack=await getGame().recordGameFact(fact);economy.acknowledge(fact.id,ack);}catch(error){if(['GAME_LIFE_CHANGED','COMPANION_STALE_LIFE'].includes(error.code))continue;/* Retain pending facts, never fabricate delivery. */}}}
+ async function flushOutbox(){
+  const live=await initialize(),game=getGame();
+  const guard=()=>{if(getGame()!==game||ready()!==live)throw fail('GAME_ECONOMY_UNAVAILABLE');};
+  for(const fact of live.outbox())try{guard();const ack=await game.recordGameFact(fact);guard();await live.acknowledge(fact.id,ack,{guard});}
+  catch{/* Keep pending facts for a later delivery attempt. */}
+ }
  function checkVersion(t,v){if(t.version!==v)throw fail('GAME_STALE_VERSION');}
  function mutationIntent(t,method,payload){
   const {tableId,expectedVersion,commandId}=payload??{};
@@ -150,7 +200,10 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
  }
  async function chatSend(t,payload,options){
   const priorMessage=t.chat.find(m=>m.id===payload.submissionId),selectedId=payload.characterId??priorMessage?.scope?.replyCharacterId??t.players.find(p=>p.id===t.state.actorId&&p.kind!=='user')?.characterId??t.players.find(p=>p.kind!=='user')?.characterId,p=t.players.find(p=>p.characterId===selectedId);if(!p)throw fail('GAME_CHAT_PARTICIPANT_REQUIRED');
-  const receipt=economy.chat({...payload,scope:{personaId:persona(),replyCharacterId:selectedId}}),baseId=payload.submissionId+':reply',receiptKey=digest([t.id,payload.submissionId,p.id]);let requestId=baseId;
+  const checkHand=()=>{options.checkSync?.();if(tableIdentity(t.id).state.handId!==t.state.handId)throw fail('GAME_CHAT_HAND_CHANGED');};
+  const receipt=await economy.chat({...payload,scope:{personaId:persona(),replyCharacterId:selectedId}},{guard:checkHand});
+  checkHand();
+  const baseId=payload.submissionId+':reply',receiptKey=digest([t.id,payload.submissionId,p.id]);let requestId=baseId;
   const chatStatus=id=>{
    const value=models.status(id);
    if(!value)return null;
@@ -160,22 +213,28 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
    throw fail('GAME_CHAT_REPLY_SCOPE_DENIED');
   };
   if(payload.retryAssistant){const old=chatStatus(baseId);if(old&&!['failed','cancelled','interrupted'].includes(old.state))return {...receipt,messages:copy(economy.table(t.id).chat),assistant:{status:old.state==='completed'?'completed':'waiting',requestId:baseId,retryAllowed:false}};if(typeof payload.replyRequestId!=='string'||!payload.replyRequestId||payload.replyRequestId===baseId)throw fail('GAME_CHAT_RETRY_ID_REQUIRED');requestId=payload.replyRequestId;}
-  const known=chatStatus(requestId);if(known?.state==='completed'){options.checkSync?.();table(t.id);economy.appendChat({tableId:t.id,id:requestId,characterId:p.characterId,text:known.result.text});announce([committedTableChatFact(t,p,{id:requestId,text:known.result.text})]);return {...receipt,messages:copy(economy.table(t.id).chat),assistant:{status:'completed',text:known.result.text,characterId:p.characterId,requestId,retryAllowed:false}};}if(known&&['queued','submitted'].includes(known.state))return {...receipt,messages:copy(economy.table(t.id).chat),assistant:{status:'waiting',characterId:p.characterId,requestId,retryAllowed:false}};
+  const known=chatStatus(requestId);if(known?.state==='completed'){
+   await economy.appendChat({tableId:t.id,id:requestId,characterId:p.characterId,text:known.result.text},{guard:checkHand});
+   checkHand();announce([committedTableChatFact(t,p,{id:requestId,text:known.result.text})]);
+   return {...receipt,messages:copy(economy.table(t.id).chat),assistant:{status:'completed',text:known.result.text,characterId:p.characterId,requestId,retryAllowed:false}};
+  }
+  if(known&&['queued','submitted'].includes(known.state))return {...receipt,messages:copy(economy.table(t.id).chat),assistant:{status:'waiting',characterId:p.characterId,requestId,retryAllowed:false}};
   const active=auxiliary.get(requestId);
   if(active){
    if(active.tableId!==t.id||active.receiptKey!==receiptKey)throw fail('GAME_CHAT_REPLY_SCOPE_DENIED');
    return {...receipt,messages:copy(economy.table(t.id).chat),assistant:{status:'waiting',characterId:p.characterId,requestId,retryAllowed:false}};
   }
-  return runAuxiliary(t,requestId,options.signal,async signal=>{
-   const checkHand=()=>{options.checkSync?.();signal.throwIfAborted();if(table(t.id).state.handId!==t.state.handId)throw fail('GAME_CHAT_HAND_CHANGED');};
+  return runAuxiliary(t,requestId,options.signal,async(signal,beginCommit)=>{
+   const checkReply=()=>{checkHand();signal.throwIfAborted();};
    try{
     const context=await getGame().gameContext(p);
-    checkHand();
+    checkReply();
     const prompt=publicChatPrompt({projection:economy.project(t,{channel:'public'}),character:context.character,text:payload.text,history:t.chat.filter(m=>m.source!=='game-action').slice(-20)}),bindingId=bindingIdFor(t,p);
-    const result=await models.request({bindingId,requestId,receiptKey,...prompt,scope:p,guard:async()=>{await options.check?.();checkHand();},signal});
-    checkHand();models.assert(bindingId);
+    const result=await models.request({bindingId,requestId,receiptKey,...prompt,scope:p,guard:async()=>{await options.check?.();checkReply();},guardSync:checkReply,signal});
+    checkReply();models.assert(bindingId);
     if(!result.text||result.text.length>200000)throw fail('GAME_CHAT_REPLY_INVALID');
-    economy.appendChat({tableId:t.id,id:requestId,characterId:p.characterId,text:result.text});
+    await economy.appendChat({tableId:t.id,id:requestId,characterId:p.characterId,text:result.text},{guard:()=>{checkReply();models.assert(bindingId);beginCommit();}});
+    checkHand();
     announce([committedTableChatFact(t,p,{id:requestId,text:result.text})]);
     return {...receipt,messages:copy(economy.table(t.id).chat),assistant:{status:'completed',text:result.text,characterId:p.characterId,requestId,retryAllowed:false}};
    }catch(error){
@@ -186,8 +245,9 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
    }
   },receiptKey);
  }
- function modelFault(t,turn,code,commandId){
-  const paused=economy.control({tableId:t.id,commandId,expectedVersion:t.version,op:'pause'});
+ async function modelFault(t,turn,code,commandId,guard){
+  guard();
+  const paused=await economy.control({tableId:t.id,commandId,expectedVersion:t.version,op:'pause'},undefined,{guard});
   const status={status:'needs-retry',code,actorId:turn.actorId,requestId:turn.requestId};
   if(faults.size>=128&&!faults.has(t.id))faults.delete(faults.keys().next().value);
   faults.set(t.id,{version:paused.version,status});
@@ -221,7 +281,7 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
     await guard();
     if(attempt)Object.assign(turn,{stage:'correcting',attempt:attempt+1});
     const prompt=actionPrompt({projection:economy.project(t,{actorId:p.id,channel:'action'}),character:context.character,memories:context.knownMemories??[],strategyAssistance:payload.strategyAssistance===true,correction});
-    const result=await models.request({bindingId,requestId:requestId+':'+attempt,...prompt,scope:p,guard,signal:combined,maxTokens:8192,onSubmitted:()=>{if(!attempt)turn.stage='generating';}});
+    const result=await models.request({bindingId,requestId:requestId+':'+attempt,...prompt,scope:p,guard,guardSync,signal:combined,maxTokens:8192,onSubmitted:()=>{if(!attempt)turn.stage='generating';}});
     await guard();
     let action,decoration;
     try{({action,...decoration}=parseActionResponse(result.text));if(!rules.legalActions(t.state,p.id).some(legal=>legal.type===action.type))throw fail('GAME_MODEL_ACTION_TYPE_DENIED');if(action.type==='all-in'&&action.raiseTo!==undefined&&action.raiseTo!==rules.legalActions(t.state,p.id).find(a=>a.type==='all-in')?.raiseTo)throw fail('GAME_ALLIN_AMOUNT_INVALID');rules.reduceGame(copy(t.state),{...action,actorId:p.id});}
@@ -229,11 +289,12 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
      correction={code:error.code??'GAME_MODEL_FORMAT',message:String(error.message).slice(0,1000),previousProposal:action??null};
      if(attempt<2)continue;
      guardSync();
-     const paused=modelFault(t,turn,correction.code,requestId+':pause');
-     return {...view(paused),model:{...faults.get(t.id).status,corrections:attempt,latencyMs:performance.now()-started}};
+     const paused=await modelFault(t,turn,correction.code,requestId+':pause',guardSync);
+     checkSync?.();return {...view(table(paused.id)),model:{...faults.get(t.id).status,corrections:attempt,latencyMs:performance.now()-started}};
     }
     guardSync();models.assert(bindingId);
-    const next=economy.action({tableId:t.id,expectedVersion:t.version,commandId:requestId+':commit',action:{...action,actorId:p.id}},decoration);
+    const next=await economy.action({tableId:t.id,expectedVersion:t.version,commandId:requestId+':commit',action:{...action,actorId:p.id}},decoration,undefined,{guard:()=>{guardSync();models.assert(bindingId);}});
+    checkSync?.();tableIdentity(t.id);
     announce(committedCardSpeechFacts(next,{...action,actorId:p.id}));
     await flushOutbox();await check();
     return {...view(table(next.id)),model:{requestId,corrections:attempt,latencyMs:performance.now()-started,status:'completed'}};
@@ -246,7 +307,7 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
    let current;
    if(!closing)try{current=table(t.id);}catch{}
    if(current?.status==='active'&&current.version===t.version){
-    const paused=modelFault(t,turn,typeof error?.code==='string'?error.code:'GAME_MODEL_FAILED',requestId+':fault-pause');
+    const paused=await modelFault(t,turn,typeof error?.code==='string'?error.code:'GAME_MODEL_FAILED',requestId+':fault-pause',guardSync);
     if(['GAME_BINDING_REVOKED','GAME_BINDING_MISSING'].includes(error?.code)){
      await check();checkSync?.();combined.throwIfAborted();
      const latest=table(t.id);
@@ -268,8 +329,14 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
   }
   if(!['games.chat.send','games.replay.review'].includes(method))await flushOutbox();
   options.checkSync?.();if(method==='games.table.read')return lobby();
-  options.checkSync?.();if(method==='games.table.create'){const players=resolvePlayers(payload.players),tableId='table-'+digest([persona(),payload.commandId]).slice(0,24),bindings=await prepareBindings(players,tableId+':1');options.checkSync?.();ready();const current=resolvePlayers(payload.players);if(digest(current)!==digest(players))throw fail('GAME_LIFE_CHANGED');for(const value of bindings)models.assertPrepared(value);const created=economy.create({...payload,tableId,players,bindings});return view(table(created.id));}
+  if(method==='games.table.create'){
+   const players=resolvePlayers(payload.players),tableId='table-'+digest([persona(),payload.commandId]).slice(0,24),bindings=await prepareBindings(players,tableId+':1');
+   const guard=()=>{options.checkSync?.();if(digest(resolvePlayers(payload.players))!==digest(players))throw fail('GAME_LIFE_CHANGED');for(const value of bindings)models.assertPrepared(value);};
+   guard();const created=await economy.create({...payload,tableId,players,bindings},{guard});
+   options.checkSync?.();return view(table(created.id));
+  }
   const t=table(payload.tableId);
+  const guard=()=>{options.checkSync?.();tableIdentity(t.id);};
   if(method===moveMethod||method===leaveMethod){
    const intent=mutationIntent(t,method,payload);
    if(receiptFor(t,method,payload,intent).status==='applied')return view(t);
@@ -279,22 +346,30 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
     const {action}=intent,legal=rules.legalActions(t.state,'user').find(a=>a.type===action.type);
     if(!legal)throw fail('GAME_USER_ACTION_DENIED');
     if(action.type==='all-in'&&action.raiseTo!==undefined&&action.raiseTo!==legal.raiseTo)throw fail('GAME_ALLIN_AMOUNT_INVALID');
-    const next=economy.action({...payload,action},undefined,intent.body);announce(committedCardSpeechFacts(next,action));
+    const next=await economy.action({...payload,action},undefined,intent.body,{guard});guard();announce(committedCardSpeechFacts(next,action));
    }else if(payload.voidHand){
     if(payload.confirmed!==true)throw fail('GAME_RECOVERY_CONFIRMATION_REQUIRED');if(!bindingRevoked(t))throw fail('GAME_BINDING_RECOVERY_DENIED');
     if([...auxiliary.values()].some(row=>row.tableId===t.id))throw fail('GAME_MODEL_BUSY');
-    economy.control({...payload,op:'void-hand'},intent.body);
+    await economy.control({...payload,op:'void-hand'},intent.body,{guard:()=>{
+     guard();if(!bindingRevoked(table(t.id)))throw fail('GAME_BINDING_RECOVERY_DENIED');
+     if([...auxiliary.values()].some(row=>row.tableId===t.id))throw fail('GAME_MODEL_BUSY');
+    }});
    }else if(t.status==='closed'){
     throw fail('GAME_PAUSED_OR_COMPLETED');
    }else if(t.status==='completed'||t.type==='doudizhu'||payload.afterHand){
     const op=t.status==='completed'?'close':'leave-after';
-    economy.control({...payload,op},intent.body);
+    await economy.control({...payload,op},intent.body,{guard:()=>{guard();if(pendingTurn(t))throw fail('GAME_MODEL_BUSY');}});
    }else{
-    economy.action({...payload,action:{type:'leave',actorId:'user'}},undefined,intent.body);
+    await economy.action({...payload,action:{type:'leave',actorId:'user'}},undefined,intent.body,{guard:()=>{guard();if(pendingTurn(t))throw fail('GAME_MODEL_BUSY');}});
    }
    await flushOutbox();options.checkSync?.();const current=table(t.id);if(method===leaveMethod)announce(committedCardSpeechFacts(current,null));return view(current);
   }
-  if(method==='games.table.next'){const bindings=t.state.phase==='redeal-required'?[]:await prepareBindings(t.pendingSeats??t.players,t.id+':'+(t.hand+1));options.checkSync?.();table(t.id);for(const value of bindings)models.assertPrepared(value);const next=economy.next({...payload,bindings});announce(committedCardSpeechFacts(next,null));return view(next);}
+  if(method==='games.table.next'){
+   const bindings=t.state.phase==='redeal-required'?[]:await prepareBindings(t.pendingSeats??t.players,t.id+':'+(t.hand+1));
+   const checkNext=()=>{guard();for(const value of bindings)models.assertPrepared(value);};
+   checkNext();const next=await economy.next({...payload,bindings},{guard:checkNext});
+   guard();announce(committedCardSpeechFacts(next,null));return view(table(next.id));
+  }
   if(['games.table.pause','games.table.resume','games.table.seats','games.table.topup'].includes(method)){
    let recoveryBindings=[];
    if(method==='games.table.resume'){
@@ -309,12 +384,27 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
     if(prior)return view(t);
     if(pendingTurn(t))throw fail('GAME_MODEL_BUSY');
    }
-   const result=economy.control({...payload,op:method.split('.').at(-1),bindings:recoveryBindings,...(method.endsWith('.seats')?{players:resolvePlayers(payload.players)}:{})});
+   const newSeats=method.endsWith('.seats')?resolvePlayers(payload.players):null;
+   const checkControl=()=>{
+    guard();
+    if(method==='games.table.topup'&&pendingTurn(t))throw fail('GAME_MODEL_BUSY');
+    if(newSeats&&digest(resolvePlayers(payload.players))!==digest(newSeats))throw fail('GAME_LIFE_CHANGED');
+    if(method!=='games.table.resume')return;
+    if(!payload.rebindCurrent){for(const p of t.players.filter(row=>row.kind!=='user'))models.assert(bindingIdFor(t,p));return;}
+    if(!bindingRevoked(table(t.id)))throw fail('GAME_BINDING_RECOVERY_DENIED');
+    if(running.has(t.id)||[...auxiliary.values()].some(row=>row.tableId===t.id))throw fail('GAME_MODEL_BUSY');
+    for(const value of recoveryBindings)models.assertPrepared(value);
+   };
+   const result=await economy.control({...payload,op:method.split('.').at(-1),bindings:recoveryBindings,...newSeats&&{players:newSeats}},undefined,{guard:checkControl});
+   guard();
    if(method==='games.table.pause'&&!result.duplicate&&result.status==='paused')running.get(t.id)?.controller.abort(modelCancelled());
    announce(committedCardSpeechFacts(table(result.id),null));
    return view(table(result.id));
   }
-  if(method==='games.chat.read'){if(payload.handId&&!t.history.includes(payload.handId)&&payload.handId!==t.state.handId)throw fail('GAME_REPLAY_NOT_SETTLED');return economy.chatPage(t.id,{before:payload.before??null,limit:payload.limit??200,handId:payload.handId??null});}
+  if(method==='games.chat.read'){
+   if(payload.handId&&!t.history.includes(payload.handId)&&payload.handId!==t.state.handId)throw fail('GAME_REPLAY_NOT_SETTLED');
+   const page=await economy.chatPage(t.id,{before:payload.before??null,limit:payload.limit??200,handId:payload.handId??null},{guard});guard();return page;
+  }
   if(method==='games.chat.send')return chatSend(t,payload,options);
   if(method==='games.replay.read'||method==='games.replay.review'){
    if(!t.history.includes(payload.handId))throw fail('GAME_REPLAY_NOT_SETTLED');
@@ -331,7 +421,7 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
     };
     const context=await getGame().gameContext(p);checkReview();
     const prompt=reviewPrompt({replay,character:context.character,question:payload.question}),bindingId=bindingIdFor(t,p,payload.handId);
-    const result=await models.request({bindingId,requestId:payload.requestId,...prompt,scope:p,guard:async()=>{await options.check?.();checkReview();},signal});
+    const result=await models.request({bindingId,requestId:payload.requestId,...prompt,scope:p,guard:async()=>{await options.check?.();checkReview();},guardSync:checkReview,signal});
     checkReview();models.assert(bindingId);beginCommit();
     await getGame().recordGameFact({id:payload.requestId+':review',kind:'review',scope:p,handId:payload.handId,text:result.text,knowledge:'post-settlement-review'});
     return {review:{text:result.text,knowledge:'post-settlement-review',requestId:result.requestId}};
@@ -340,6 +430,10 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
   throw fail('GAME_METHOD_UNAVAILABLE');
  }
  async function invoke(method,payload={},options={}){
+  options.checkSync?.();
+  const live=await initialize();
+  const supplied=options;
+  options={...options,checkSync:()=>{supplied.checkSync?.();supplied.signal?.throwIfAborted();if(ready()!==live)throw fail('GAME_ECONOMY_UNAVAILABLE');}};
   if(method==='games.table.read'&&payload.voiceOnly===true){
    ready();await options.check?.();options.checkSync?.();
    const t=tableIdentity(payload.tableId);
@@ -357,5 +451,36 @@ export function createCardGameService({getGame,getProvider,now=Date.now,onCommit
   if(table(tableId).state.handId!==t.state.handId)throw fail('GAME_CHAT_HAND_CHANGED');
   return {...value,...(!value.tableId?{tableId,handId:t.state.handId}:{}),presentation:{...value.presentation,voice}};
  }
-  return {invoke,flushOutbox,voiceScopeValid,principalScope:()=>({personaId:persona()}),registerRuleArtifact(value){if(!value?.module||!/^[a-f0-9]{64}$/.test(value.sha256??''))throw fail('GAME_RULE_MODULE_INVALID');if(economy)economy.registerRules({...value.module,versions:value.module.RULE_MANIFEST,deck:type=>value.module.STANDARD_DECK[type],sourceHash:value.sha256});rules=value.module;ruleHash=value.sha256;return {registered:true,ruleModuleSha256:ruleHash};},describe(){let gamesReady=false;try{ready();gamesReady=true;}catch{}return {gamesReady,voiceReady:false,aiAiRelationshipReady:false,ruleModuleSha256:ruleHash??null};},async pauseAll(){const tasks=[...running.values(),...auxiliary.values()];for(const row of tasks)row.controller.abort(modelCancelled());await Promise.allSettled(tasks.map(row=>row.task));if(economy){economy.recover();for(const current of economy.list())announce(committedCardSpeechFacts(current,null));}},close(){if(closePromise)return closePromise;closing=true;closePromise=Promise.resolve().then(async()=>{await this.pauseAll();await models?.close();closed=true;});return closePromise;}};
+ async function pauseAll(){
+  const tasks=[...running.values(),...auxiliary.values()];
+  for(const row of tasks)row.controller.abort(modelCancelled());
+   initialization?.controller.abort(initializationSuperseded());
+   await Promise.allSettled(tasks.map(row=>row.task));
+  const live=economy;
+  if(live&&getGame()?.gameEconomy===live){
+   const guard=()=>{if(getGame()?.gameEconomy!==live)throw fail('GAME_ECONOMY_UNAVAILABLE');};
+   await live.recover({guard});guard();
+   for(const current of live.list())announce(committedCardSpeechFacts(current,null));
+  }
+ }
+ return {invoke,flushOutbox,voiceScopeValid,pauseAll,principalScope:()=>({personaId:persona()}),
+  async registerRuleArtifact(value){
+   if(!value?.module||!/^[a-f0-9]{64}$/.test(value.sha256??''))throw fail('GAME_RULE_MODULE_INVALID');
+   const previous=ruleArtifact;ruleArtifact=value;
+   try{if(getGame()?.gameEconomy)await initialize();}catch(error){if(ruleArtifact===value)ruleArtifact=previous;throw error;}
+   return {registered:true,ruleModuleSha256:value.sha256};
+  },
+  async hostReady(){
+   if(ruleArtifact&&getGame()?.gameEconomy&&!closing&&!closed)await initialize();
+  },
+  describe(){
+   let gamesReady=false;try{ready();gamesReady=true;}catch{}
+   return {gamesReady,voiceReady:false,aiAiRelationshipReady:false,ruleModuleSha256:ruleArtifact?.sha256??null};
+  },
+  close(){
+   if(closePromise)return closePromise;
+   closing=true;
+   closePromise=(async()=>{try{await pauseAll();}finally{try{await models?.close();}finally{closed=true;}}})();
+   return closePromise;
+  }};
 }

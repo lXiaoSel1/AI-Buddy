@@ -3,14 +3,17 @@ import {existsSync,readFileSync,mkdirSync,readdirSync,copyFileSync,writeFileSync
 import {resolve,join,dirname,sep} from 'node:path';
 import {createHash} from 'node:crypto';
 import {CHARACTER_EXPRESSIONS} from '../src/character-expressions.generated.mjs';
+import {readApprovedExpressions,materializeGalgameExpressions,isLegacyStageExpression} from './galgame-expression-resources.mjs';
 import {checkReleaseVersion,checkResourceVersion} from './check-release-version.mjs';
 import {readInteractionResources} from './interaction-resources.mjs';
 import {buildPetButtons,buildPetFullscreen} from './build-pet-buttons.mjs';
 import {validateMediaBuild,assertFreshCandidateOutput} from './media-baseline-validation.mjs';
 import {buildManagedProcessGuard} from './build-managed-process-guard.mjs';
+import {stageBuiltinAsrAssets} from './builtin-asr-assets.mjs';
 import {createOwnedCandidateOutput} from './owned-candidate-output.mjs';
 import {upstreamMediaMode,stageUpstreamMediaBuild} from './media-upstream-build.mjs';
 const root=resolve(import.meta.dirname,'..'),resources=process.argv.find(a=>a.startsWith('--resources='))?.slice(12);
+const isBuiltinVoiceReferenceAsset=path=>/^assets\/voice-reference(?:\/|$)/i.test(path);
 const releaseState=checkReleaseVersion(root),upstreamMedia=upstreamMediaMode(process.argv.slice(2));
 if(!resources)throw Error('Pass --resources=<build folder from the matching portable release>');
 const outputName=process.argv.find(a=>a.startsWith('--out='))?.slice(6)??'development';
@@ -21,12 +24,16 @@ let linkedAssetFiles=0,linkedAssetBytes=0,copiedAssetFiles=0,copiedAssetBytes=0,
 assertFreshCandidateOutput(finalOut);
 const mediaArg=prefix=>process.argv.find(arg=>arg.startsWith(prefix))?.slice(prefix.length);
 const samplesArg=mediaArg('--interaction-samples=');
+const expressionsArg=mediaArg('--galgame-expressions=');
+if(!expressionsArg)throw Error('Pass --galgame-expressions=<approved Galgame directory containing manifest.json and x2/>');
+const expressions=readApprovedExpressions(expressionsArg,{manifestSha256:mediaArg('--galgame-expression-manifest-sha256=')});
+if(JSON.stringify(expressions.catalog)!==JSON.stringify(CHARACTER_EXPRESSIONS))throw Error('Approved Galgame media differs from the generated catalog');
 const mediaProof=validateMediaBuild({resources:source,legacyLockPath:join(root,'scripts/media-baselines/r192-r5.json'),baselinePath:mediaArg('--media-baseline='),approvalPath:mediaArg('--media-approval='),publicEvidence:process.argv.includes('--public-evidence'),interactionSamples:samplesArg});
 console.log('Media baseline validation: '+JSON.stringify(mediaProof));
 if(!existsSync(join(source,'assets/frame-sequence-manifest.json')))throw Error('Resource manifest missing');
 checkResourceVersion(releaseState.version,JSON.parse(readFileSync(join(source,'package.json'),'utf8')).version,releaseState);
 const proof=JSON.parse(readFileSync(join(root,'assets/cg-references/maid-left.source.json'),'utf8'));
-for(const[file,hash]of [['assets/maid-left.webp',proof.sourceSha256],['assets/cg-references/maid-left.png',proof.pngSha256],...Object.values(CHARACTER_EXPRESSIONS).flatMap(r=>Object.values(r.expressions).map(a=>[a.src,a.sha256]))])if(createHash('sha256').update(readFileSync(resolve(source,file))).digest('hex')!==hash)throw Error('Reference/expression resources differ from this release: '+file);
+for(const[file,hash]of [['assets/maid-left.webp',proof.sourceSha256],['assets/cg-references/maid-left.png',proof.pngSha256]])if(createHash('sha256').update(readFileSync(resolve(source,file))).digest('hex')!==hash)throw Error('CG reference resource differs from this release: '+file);
 const candidateOutput=createOwnedCandidateOutput(join(root,'builds'),outputName),out=candidateOutput.stagePath;
 try{
 const sequences=JSON.parse(readFileSync(join(source,'assets/frame-sequence-manifest.json'),'utf8')),previews=JSON.parse(readFileSync(join(source,'assets/gallery-preview-manifest.json'),'utf8'));
@@ -47,6 +54,7 @@ function copyAssets(from,to,prefix='assets'){
   for(const entry of readdirSync(from,{withFileTypes:true})){
     const a=join(from,entry.name),b=join(to,entry.name),assetPath=prefix+'/'+entry.name;
     if(from===join(source,'assets')&&['frame-sequence-manifest.json','character-sequence-manifest.json','install-resource-index.json'].includes(entry.name))continue;
+    if(isLegacyStageExpression(assetPath)||isBuiltinVoiceReferenceAsset(assetPath))continue;
     if(entry.isDirectory()){copyAssets(a,b,assetPath);continue;}
     if(!entry.isFile())throw Error('Unsupported resource entry');
     const input=statSync(a);
@@ -71,6 +79,10 @@ function copyAssets(from,to,prefix='assets'){
   }
 }
 copyAssets(join(source,'assets'),join(out,'assets'));
+const stagedExpressions=materializeGalgameExpressions(expressions,out,linkAssets);
+linkedAssetFiles+=stagedExpressions.linkedFiles;linkedAssetBytes+=stagedExpressions.linkedBytes;
+copiedAssetFiles+=stagedExpressions.copiedFiles;copiedAssetBytes+=stagedExpressions.copiedBytes;
+copyAssets(join(root,'assets/galgame-fonts'),join(out,'assets/galgame-fonts'),'assets/galgame-fonts');
 buildPetButtons(root,out);
 buildPetFullscreen(root,out);
 buildManagedProcessGuard(root,out);
@@ -98,9 +110,24 @@ if(existsSync(join(root,'assets/pet-glove-v2')))for(const name of readdirSync(jo
 for(const folder of ['assets/pet-glove-tint'])if(existsSync(join(root,folder)))for(const name of listFiles(join(root,folder))){const path=folder+'/'+name,entry=indexedFile(path),index=installIndex.shared.findIndex(file=>file.path===path);if(index<0)installIndex.shared.push(entry);else installIndex.shared[index]=entry;}
 if(existsSync(join(root,'assets/theme')))for(const name of listFiles(join(root,'assets/theme'))){const path='assets/theme/'+name,entry=indexedFile(path),index=installIndex.shared.findIndex(file=>file.path===path);if(index<0)installIndex.shared.push(entry);else installIndex.shared[index]=entry;}
 for(const file of sampleFiles){const path=file.to.slice(out.length+1).replaceAll('\\','/');if(!installIndex.characters[file.characterId].some(entry=>entry.path===path))installIndex.characters[file.characterId].push(indexedFile(path));}
+for(const [id,rows] of Object.entries(installIndex.characters))installIndex.characters[id]=rows.filter(row=>!isLegacyStageExpression(row.path)&&!isBuiltinVoiceReferenceAsset(row.path));
+for(const {characterId,path,bytes,sha256} of expressions.files)installIndex.characters[characterId].push({path,bytes,sha256});
+for(const name of listFiles(join(root,'assets/galgame-fonts'))){
+  const path='assets/galgame-fonts/'+name;
+  if(!installIndex.shared.some(row=>row.path===path))installIndex.shared.push(indexedFile(path));
+}
+const builtinAsrIndex=await stageBuiltinAsrAssets(root,out);
+installIndex.shared=installIndex.shared.filter(row=>!row.path.startsWith('assets/voice-asr/')).concat(builtinAsrIndex);
+installIndex.shared=installIndex.shared.filter(row=>!isBuiltinVoiceReferenceAsset(row.path));
 ownedJson('install-resource-index.json',installIndex);
 const shared={bundle:true,logLevel:'info',legalComments:'eof'};
-for(const entry of ['main','preload','plugin-client-preload','monitor-worker','plugin-runner','plugin-maintenance'])await build({...shared,entryPoints:[join(root,'src',entry+'.mjs')],outfile:join(out,entry+'.cjs'),platform:'node',target:'node24',format:'cjs',external:['electron'],define:entry==='main'?{'__FRAME_SEQUENCES__':JSON.stringify(sequences),'__PET_CHARACTER_SEQUENCES__':JSON.stringify(characters)}:undefined});
+for(const entry of ['main','preload','plugin-client-preload','companion-life-image-preload','monitor-worker','plugin-runner','plugin-maintenance'])await build({...shared,entryPoints:[join(root,'src',entry+'.mjs')],outfile:join(out,entry+'.cjs'),platform:'node',target:'node24',format:'cjs',external:['electron'],define:entry==='main'?{'__FRAME_SEQUENCES__':JSON.stringify(sequences),'__PET_CHARACTER_SEQUENCES__':JSON.stringify(characters)}:undefined});
+await build({...shared,entryPoints:[join(root,'src/companion-storage-worker.mjs')],outfile:join(out,'companion-storage-worker.mjs'),platform:'node',target:'node24',format:'esm'});
+await build({...shared,entryPoints:[join(root,'src/companion-cache-worker.mjs')],outfile:join(out,'companion-cache-worker.mjs'),platform:'node',target:'node24',format:'esm'});
+await build({...shared,entryPoints:[join(root,'src/companion-economy-worker.mjs')],outfile:join(out,'companion-economy-worker.mjs'),platform:'node',target:'node24',format:'esm'});
+await build({...shared,entryPoints:[join(root,'src/companion-economy-wal-worker.mjs')],outfile:join(out,'companion-economy-wal-worker.mjs'),platform:'node',target:'node24',format:'esm'});
+await build({...shared,entryPoints:[join(root,'src/companion-wal-worker.mjs')],outfile:join(out,'companion-wal-worker.mjs'),platform:'node',target:'node24',format:'esm'});
+await build({...shared,entryPoints:[join(root,'scripts/export-companion-for-rollback.mjs')],outfile:join(out,'export-companion-for-rollback.mjs'),platform:'node',target:'node24',format:'esm'});
 // App-owned archive parser runs as a separate ESM worker beside the CJS host.
 await build({...shared,entryPoints:[join(root,'src/work-archive-cursor-worker.mjs')],outfile:join(out,'work-archive-cursor-worker.mjs'),platform:'node',target:'node24',format:'esm'});
 await build({...shared,entryPoints:[join(root,'src/voice/asset-verifier-worker.mjs')],outfile:join(out,'voice-assets-worker.cjs'),platform:'node',target:'node24',format:'cjs'});

@@ -9,6 +9,7 @@ import {MODEL_PRESETS,apiBaseUrl} from '../src/model-presets.mjs';
 import {createGalgame} from '../src/galgame-host.mjs';
 import {mockModelServer,fakeCrypto,stubCodex} from './support/mock-model-server.mjs';
 import {waitForReplyChoices} from './support/reply-ready.mjs';
+import {waitForMoodRequest} from './support/mood-request.mjs';
 async function output(stream){let text='';for await(const part of stream)if(part.type==='text-delta')text+=part.text;return text;}
 async function setup(t,legacy=false){const server=await mockModelServer();t.after(()=>server.close());const dataRoot=await mkdtemp(join(tmpdir(),'whale-api-')),codex=stubCodex(),usage=[],router=new ModelRouter({dataRoot,codex,legacy,crypto:fakeCrypto,onUsage:value=>usage.push(value),timeoutMs:1000});await router.ready;t.after(()=>router.close());return {router,codex,server,dataRoot,usage};}
 for(const protocol of ['chat-completions','responses','gemini','anthropic'])test(protocol+' streams fragmented UTF8, excludes reasoning, normalizes usage and model list',async t=>{
@@ -58,9 +59,9 @@ test('Disabling chat cancels in-flight API work and encryption failure leaves ex
 });
 test('Galgame commits early, sends reply/options without a classification request to one selected API and preserves history offline',async t=>{
  const {router,server,dataRoot,codex,usage}=await setup(t);const p=await router.save({kind:'custom',baseUrl:server.url+'/responses',protocol:'responses',model:'fixture'});await router.activate(p.id);router.setEnabled(true);let commits=0;const requests=[],originalStream=router.stream.bind(router);router.stream=options=>{requests.push(options);if(options.purpose==='mood')assert.equal(commits,1,'mood assessment cannot block the original commit');return originalStream(options);};const dialogueRequests=()=>server.requests.filter(row=>row.purpose!=='mood');
- const game=await createGalgame({dataRoot,provider:router,model:'old-local',onChatCommitted:()=>{commits++;assert.equal(server.requests.filter(v=>/选项生成器/.test(v.body?.instructions??'')).length,0);}});t.after(()=>game.close());
- const before=await game.action('view');const result=await game.action('chat',{text:'太好了'});assert.equal(commits,1);assert.equal(dialogueRequests().length,1);assert.match(JSON.stringify(result),/你好呀/);assert.deepEqual(result.choices,[]);const ready=await waitForReplyChoices(game);assert.equal(dialogueRequests().length,2);assert.ok(server.requests.every(v=>v.body.model==='fixture'));assert.match(JSON.stringify(ready.choices),/再聊一会/);assert.equal(codex.calls,0);assert.equal(usage.filter(row=>row.purpose!=='mood').length,2);assert.equal((await game.action('settings-get')).characterId,'deepseek');assert.equal((await game.action('view')).chatModelLabel,'fixture');
- const mood=requests.filter(row=>row.purpose==='mood');assert.equal(mood.length,1);assert.equal(mood[0].scope.characterId,'deepseek');assert.equal(mood[0].scope.personaId,result.companion.activePersonaId);assert.ok(mood[0].scope.lifeId&&mood[0].scope.operationId&&mood[0].activityOriginId);assert.ok(server.requests.findIndex(row=>row.purpose==='mood')>server.requests.findIndex(row=>row.purpose==='chat'));
+ const game=await createGalgame({dataRoot,provider:router,model:'old-local',onChatCommitted:()=>{commits++;assert.deepEqual(dialogueRequests().map(row=>row.purpose),['chat'],'only the reply request can precede the first commit');}});t.after(()=>game.close());
+ const before=await game.action('view');const result=await game.action('chat',{text:'太好了'});assert.equal(commits,1);assert.match(JSON.stringify(result),/你好呀/);assert.deepEqual(result.choices,[]);const ready=await waitForReplyChoices(game);assert.deepEqual(dialogueRequests().map(row=>row.purpose),['chat','choices']);assert.ok(server.requests.every(v=>v.body.model==='fixture'));assert.match(JSON.stringify(ready.choices),/再聊一会/);assert.equal(codex.calls,0);assert.equal(usage.filter(row=>row.purpose!=='mood').length,2);assert.equal((await game.action('settings-get')).characterId,'deepseek');assert.equal((await game.action('view')).chatModelLabel,'fixture');
+ const mood=await waitForMoodRequest(()=>server.requests.some(row=>row.purpose==='mood')&&requests.find(row=>row.purpose==='mood'));assert.equal(requests.filter(row=>row.purpose==='mood').length,1);assert.equal(mood.scope.characterId,'deepseek');assert.equal(mood.scope.personaId,result.companion.activePersonaId);assert.ok(mood.scope.lifeId&&mood.scope.operationId&&mood.activityOriginId);assert.ok(server.requests.findIndex(row=>row.purpose==='mood')>server.requests.findIndex(row=>row.purpose==='chat'));
  router.setEnabled(false);await game.action('view');await game.action('model-options');assert.equal(dialogueRequests().length,2);assert.equal(before.characterId,(await game.action('view')).characterId);
 });
 test('Primary API failures do not commit fake replies; user emotion does not override neutral role reply',async t=>{
@@ -72,4 +73,97 @@ test('Side stories use the selected API and keep the cast separate from the mode
  const {router,server,dataRoot,codex,usage}=await setup(t);const p=await router.save({kind:'custom',baseUrl:server.url+'/gemini',protocol:'gemini',model:'manual-story-model'});await router.activate(p.id);router.setEnabled(true);const game=await createGalgame({dataRoot,provider:router,model:'old-local'});t.after(()=>game.close());
  const result=await game.action('side-story',{topic:'大家一起喝茶'});assert.equal(result.sideStoryError,undefined);assert.ok(result.sideStory.scene);assert.ok(server.requests.every(v=>v.path.includes('manual-story-model')));assert.equal(codex.calls,0);assert.ok(usage.some(v=>v.purpose==='side-story'));
  const character=(await game.action('settings-get')).characterId;const other=await router.save({kind:'custom',baseUrl:server.url+'/responses',protocol:'responses',model:'different-model'});await router.activate(other.id);await game.action('view');assert.equal((await game.action('settings-get')).characterId,character);
+});
+
+
+test('the host API receipts and request audit let the main event loop run during file persistence',async t=>{
+ const {runInNewContext}=await import('node:vm');
+ const {performance}=await import('node:perf_hooks');
+ const {open,rm}=await import('node:fs/promises');
+ const dataRoot=await mkdtemp(join(tmpdir(),'buddy-api-journal-'));
+ t.after(()=>rm(dataRoot,{recursive:true,force:true}));
+ const host=await readFile(new URL('../src/main.mjs',import.meta.url),'utf8');
+ let unpause,started,monitorUpdates=0;
+ const gate=new Promise(resolve=>{unpause=resolve;});
+ const writing=new Promise(resolve=>{started=resolve;});
+ const worker={postMessage(value){if(value.type==='refresh')monitorUpdates++;}};
+ const holdOpen=async(...args)=>{
+  const file=await open(...args);
+  return {
+   write:async(...args)=>{started();await gate;return file.write(...args);},
+   close:(...args)=>file.close(...args),stat:(...args)=>file.stat(...args),read:(...args)=>file.read(...args)
+  };
+ };
+ const {createApiUsageJournal}=await import('../src/api-usage-journal.mjs');
+ const declarations=host.slice(host.indexOf('const apiUsageJournal='),host.indexOf('deferredSaves.setAudit(audit)'));
+ const onUsage=host.match(/onUsage:(apiUsageJournal\.recordUsage),audit/)[1];
+ const callbacks=runInNewContext(declarations+'\n({onUsage:'+onUsage+',audit,drain:()=>apiUsageJournal.drain()})',{
+  createApiUsageJournal:options=>createApiUsageJournal({...options,openFile:holdOpen}),dataRoot,worker,
+  appendFileSync:()=>assert.fail('request logging must not wait in a synchronous file call')
+ });
+ const response=()=>new Response(
+  'data: {"choices":[{"delta":{"content":"published reply"}}]}\n\n'+
+  'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":2,"total_tokens":9}}\n\ndata: [DONE]\n\n',
+  {headers:{'content-type':'text/event-stream'}});
+ const transport=new ApiTransport({fetchImpl:async()=>response(),...callbacks});
+ const profile={id:'fixture',kind:'custom',protocol:'chat-completions',baseUrl:'https://example.invalid',key:'fixture',model:'fixture'};
+ let last=performance.now(),max=0;
+ const pulse=setInterval(()=>{const now=performance.now();max=Math.max(max,now-last);last=now;},1);
+ try{
+  const text=await output(transport.stream(profile,{traceId:'first',messages:[{role:'user',content:'fixture'}]}));
+  assert.equal(text,'published reply');
+  await writing;
+  callbacks.audit({type:'ordinary-follow-up',traceId:'second'});
+  let drained=false;
+  const draining=callbacks.drain().then(()=>{drained=true;});
+  await new Promise(resolve=>setTimeout(resolve,10));
+  t.diagnostic('maximum main thread heartbeat '+max.toFixed(3)+' ms');
+  assert.ok(max<50,'main heartbeat is independent of file completion; delay '+max.toFixed(1)+'ms');
+  assert.equal(drained,false);
+  assert.equal(monitorUpdates,0);
+  unpause();
+  await draining;
+  assert.equal(monitorUpdates,1);
+  const usage=(await readFile(join(dataRoot,'api-usage.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+  const audit=(await readFile(join(dataRoot,'runtime-audit.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(usage.length,1);
+  assert.equal(usage[0].usage.total,9);
+  assert.deepEqual(audit.map(row=>[row.type,row.traceId]),[['api-request','first'],['ordinary-follow-up','second']]);
+  assert.equal(audit[0].requestId,usage[0].requestId);
+ }finally{clearInterval(pulse);unpause();await callbacks.drain();}
+});
+
+
+test('API journal retains a paid receipt across an ambiguous partial write and a failed drain',async t=>{
+ const {createApiUsageJournal}=await import('../src/api-usage-journal.mjs');
+ const {open,rm}=await import('node:fs/promises');
+ const dataRoot=await mkdtemp(join(tmpdir(),'buddy-api-journal-partial-'));
+ t.after(()=>rm(dataRoot,{recursive:true,force:true}));
+ const errors=[];
+ let availability=false,writes=0,refreshes=0;
+ const openFile=async(file,...args)=>{
+  const handle=await open(file,...args);
+  return {
+   stat:(...args)=>handle.stat(...args),read:(...args)=>handle.read(...args),close:()=>handle.close(),
+   async write(data,offset,length,position){
+    writes++;
+    if(availability)return handle.write(data,offset,length,position);
+    if(writes===1)await handle.write(data,offset,Math.min(9,length),position);
+    throw Object.assign(Error('configured fixture write failure'),{code:'EIO'});
+   }
+  };
+ };
+ const recorder=createApiUsageJournal({dataRoot,openFile,onRecorded(){refreshes++;},onError:error=>errors.push(error.code)});
+ const usage=[{requestId:'first',usage:{total:9}},{requestId:'second',usage:{total:4}}];
+ for(const row of usage)recorder.recordUsage(row);
+ await assert.rejects(recorder.drain(),{code:'API_JOURNAL_WRITE_FAILED'});
+ assert.equal(writes,3);
+ assert.deepEqual(errors,['API_JOURNAL_WRITE_FAILED']);
+ assert.equal(refreshes,0);
+ const file=join(dataRoot,'api-usage.jsonl'),expected=usage.map(row=>JSON.stringify(row)+'\n').join('');
+ assert.equal(await readFile(file,'utf8'),expected.slice(0,9));
+ availability=true;
+ await recorder.drain();
+ assert.equal(await readFile(file,'utf8'),expected);
+ assert.equal(refreshes,1);
 });

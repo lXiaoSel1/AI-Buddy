@@ -25,15 +25,31 @@ const fact=(id,units,revision=1,extra={})=>({canonicalRequestId:id,totalTokens:u
 const fallback=(id,count=1,revision=1)=>({canonicalRequestId:id,revision,basis:'cg-fallback',origin:'cg-completion',status:'ready',completedImageIds:Array.from({length:count},(_,i)=>'image-'+i)});
 function fixture(t,create=createEconomyStore){
  const root=mkdtempSync(join(tmpdir(),'r95-reward-batch-'));let store=create(root,{now:fixedNow});
- t.after(()=>{store.close();rmSync(root,{recursive:true,force:true});});
- return {root,get store(){return store;},reopen(){store.close();store=create(root,{now:fixedNow});return store;}};
+ t.after(async()=>{await store.close();rmSync(root,{recursive:true,force:true});});
+ return {root,get store(){return store;},async reopen(){await store.close();store=create(root,{now:fixedNow});return store;}};
 }
 function snapshot(path){const db=new DatabaseSync(path,{readOnly:true});try{return Object.fromEntries(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(({name})=>[name,JSON.parse(JSON.stringify(db.prepare('SELECT * FROM "'+name+'" ORDER BY rowid').all()))]));}finally{db.close();}}
 function schema(path){const db=new DatabaseSync(path,{readOnly:true});try{return db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name").all().map(r=>({...r}));}finally{db.close();}}
-const gameTables=['game_accounts','game_bindings','game_commands','game_events','game_hands','game_holds','game_outbox','game_progress','game_requests','game_settlements','game_tables','game_welfare'];
-function expectedGamesMigration(original){const value=structuredClone(original);value.meta=value.meta.map(row=>row.key==='schemaVersion'?{...row,value:'2'}:row.key==='minimumWriter'?{...row,value:JSON.stringify('voice-games-economy-v1')}:row).sort((a,b)=>a.key.localeCompare(b.key));for(const table of gameTables)value[table]=[];return value;}
-function assertMigratedSnapshot(current,original){const actual=snapshot(current);actual.meta.sort((a,b)=>a.key.localeCompare(b.key));assert.deepEqual(actual,expectedGamesMigration(snapshot(original)));}
-function assertMigratedSchema(current,original){const actual=schema(current),added=actual.filter(row=>row.name.startsWith('game_'));assert.deepEqual(added.map(row=>row.name),gameTables);assert.ok(added.every(row=>row.type==='table'&&/PRIMARY KEY/.test(row.sql)));assert.deepEqual(actual.filter(row=>!row.name.startsWith('game_')),schema(original));}
+const gameTables=['game_accounts','game_bindings','game_chat','game_chat_heads','game_commands','game_events','game_hands','game_holds','game_outbox','game_progress','game_requests','game_settlements','game_tables','game_welfare'];
+function expectedMigratedSnapshot(original){
+ const value=structuredClone(original);
+ value.meta=value.meta.map(row=>row.key==='schemaVersion'?{...row,value:'2'}:row.key==='minimumWriter'?{...row,value:JSON.stringify('voice-games-economy-v1')}:row);
+ value.meta.push({key:'mealDisabledRetryMigrationV1',value:'true'});
+ value.meta.sort((a,b)=>a.key.localeCompare(b.key));
+ for(const table of gameTables)value[table]=[];
+ return value;
+}
+function assertMigratedSnapshot(current,original){const actual=snapshot(current);actual.meta.sort((a,b)=>a.key.localeCompare(b.key));assert.deepEqual(actual,expectedMigratedSnapshot(snapshot(original)));}
+function assertMigratedSchema(current,original){
+ const actual=schema(current),added=actual.filter(row=>row.name.startsWith('game_'));
+ const tables=added.filter(row=>row.type==='table'),indices=added.filter(row=>row.type!=='table');
+ assert.deepEqual(tables.map(row=>row.name),gameTables);
+ assert.ok(tables.every(row=>/PRIMARY KEY/.test(row.sql)));
+ assert.deepEqual(indices.map(({type,name,tbl_name})=>({type,name,tbl_name})),
+  [{type:'index',name:'game_chat_table',tbl_name:'game_chat'}]);
+ assert.match(indices[0].sql,/^CREATE INDEX (?:IF NOT EXISTS )?game_chat_table ON game_chat\(table_id,seq\)$/);
+ assert.deepEqual(actual.filter(row=>!row.name.startsWith('game_')),schema(original));
+}
 function reference(original,rows,options=trusted){return rows.map(row=>original.ingestUsageFact(row,options));}
 function countTransactions(run){
  const original=DatabaseSync.prototype.exec,calls=[];
@@ -78,11 +94,11 @@ test('second-row injected SQL abort rolls back wallet, facts, ledger and sequenc
  const result=store.ingestUsageFacts([fact('first',20000),fact('sql-fail',30000)],trusted);assert.equal(result[1].wallet.balance,5);
 });
 
-test('late conflicting revision rolls back accepted prefix and retry/restart remain idempotent',t=>{
+test('late conflicting revision rolls back accepted prefix and retry/restart remain idempotent',async t=>{
  const f=fixture(t);f.store.initializeRewards({cursor:'ready'});f.store.ingestUsageFact(fact('existing',10000),trusted);const before=snapshot(f.store.path);
  assert.throws(()=>f.store.ingestUsageFacts([fact('new-prefix',20000),fact('existing',11000)],trusted),{code:'REWARD_FACT_CONFLICT'});assert.deepEqual(snapshot(f.store.path),before);
  const rows=[fact('new-prefix',20000),fact('existing',11000,2)],expected=f.store.ingestUsageFacts(rows,trusted);assert.equal(expected[1].wallet.balance,3);
- const committed=snapshot(f.store.path);f.reopen();const repeated=f.store.ingestUsageFacts(rows,trusted);assert.ok(repeated.every(r=>r.duplicate));assert.deepEqual(snapshot(f.store.path),committed);
+ const committed=snapshot(f.store.path);await f.reopen();const repeated=f.store.ingestUsageFacts(rows,trusted);assert.ok(repeated.every(r=>r.duplicate));assert.deepEqual(snapshot(f.store.path),committed);
 });
 
 test('bounded batch validates all input before mutation and uses exactly one transaction',t=>{
@@ -98,25 +114,25 @@ test('bounded batch validates all input before mutation and uses exactly one tra
  const observed=countTransactions(()=>store.ingestUsageFacts(rows,trusted));assert.equal(observed.result.length,MAX_REWARD_FACT_BATCH);assert.equal(observed.calls.length,2);assert.ok(observed.calls[0].startsWith('SAVEPOINT '));assert.ok(observed.calls[1].startsWith('RELEASE '));assert.equal(store.wallet().balance,MAX_REWARD_FACT_BATCH);
 });
 
-test('batch-local wallet cache is refreshed for later purchases and independent committed writers',t=>{
+test('batch-local wallet cache is refreshed for later purchases and independent committed writers',async t=>{
  const {store,root}=fixture(t);store.initializeRewards({cursor:'ready'});store.ensureScope(scope);store.ingestUsageFacts([fact('a',20000),fact('b',10000)],trusted);store.purchase({scope,foodId:'rice',requestId:'spend'});
- const other=createEconomyStore(root,{now:fixedNow});try{other.ingestUsageFact(fact('external',10000),trusted);}finally{other.close();}
+ const other=createEconomyStore(root,{now:fixedNow});try{other.ingestUsageFact(fact('external',10000),trusted);}finally{await other.close();}
  const result=store.ingestUsageFacts([fact('c',9999),fact('d',1)],trusted);assert.deepEqual(result.map(x=>x.wallet),[{balance:2,remainder:9999,debtUnits:0},{balance:3,remainder:0,debtUnits:0}]);
 });
 
-function measuredService(t,{subscribe=false}={}){
+async function measuredService(t,{subscribe=false}={}){
  const f=fixture(t),calls={view:0,ledger:0,notify:0},proxy=new Proxy(f.store,{get(target,key){if(key==='view')return (...args)=>{calls.view++;return target.view(...args);};if(key==='ledgerPage')return (...args)=>{calls.ledger++;return target.ledgerPage(...args);};return Reflect.get(target,key);}});
- const service=createFeedingService({store:proxy,now:fixedNow,...subscribe?{onState:()=>calls.notify++}:{}});t.after(()=>service.close());service.initializeRewards({cursor:'ready'});Object.assign(calls,{view:0,ledger:0,notify:0});return {service,calls,store:f.store};
+ const service=createFeedingService({store:proxy,now:fixedNow,...subscribe?{onState:()=>calls.notify++}:{}});t.after(()=>service.close());await service.initializeRewards({cursor:'ready'});Object.assign(calls,{view:0,ledger:0,notify:0});return {service,calls,store:f.store};
 }
-test('no default subscriber means neither single nor batch ingestion computes a full view or ledger count',t=>{
- const {service,calls}=measuredService(t);service.ingestUsageFacts([fact('a',10000),fact('b',10000)],trusted);service.ingestUsageFact(fact('c',10000),trusted);
+test('no default subscriber means neither single nor batch ingestion computes a full view or ledger count',async t=>{
+ const {service,calls}=await measuredService(t);await service.ingestUsageFacts([fact('a',10000),fact('b',10000)],trusted);await service.ingestUsageFact(fact('c',10000),trusted);
  assert.deepEqual(calls,{view:0,ledger:0,notify:0});assert.equal(service.view().wallet.balance,3);
 });
-test('one subscriber notification per committed nonempty batch, none for empty or aborted batch',t=>{
- const {service,calls,store}=measuredService(t,{subscribe:true});service.ingestUsageFacts([fact('a',10000),fact('b',10000)],trusted);assert.deepEqual(calls,{view:1,ledger:1,notify:1});
- service.ingestUsageFacts([],trusted);assert.throws(()=>service.ingestUsageFacts([fact('prefix',10000),fact('a',11000)],trusted),{code:'REWARD_FACT_CONFLICT'});assert.deepEqual(calls,{view:1,ledger:1,notify:1});assert.equal(store.wallet().balance,2);
+test('one subscriber notification per committed nonempty batch, none for empty or aborted batch',async t=>{
+ const {service,calls,store}=await measuredService(t,{subscribe:true});await service.ingestUsageFacts([fact('a',10000),fact('b',10000)],trusted);assert.deepEqual(calls,{view:1,ledger:1,notify:1});
+ await service.ingestUsageFacts([],trusted);await assert.rejects(service.ingestUsageFacts([fact('prefix',10000),fact('a',11000)],trusted),{code:'REWARD_FACT_CONFLICT'});assert.deepEqual(calls,{view:1,ledger:1,notify:1});assert.equal(store.wallet().balance,2);
 });
-test('SQL failure cannot notify a subscriber or leave accepted-prefix reward evidence',t=>{
- const {service,calls,store}=measuredService(t,{subscribe:true});const db=new DatabaseSync(store.path);try{db.exec("CREATE TRIGGER injected_notify BEFORE INSERT ON reward_facts WHEN NEW.id='stop' BEGIN SELECT RAISE(ABORT,'notification batch abort'); END;");}finally{db.close();}
- const before=snapshot(store.path);assert.throws(()=>service.ingestUsageFacts([fact('prefix',10000),fact('stop',20000)],trusted),/notification batch abort/);assert.deepEqual(calls,{view:0,ledger:0,notify:0});assert.deepEqual(snapshot(store.path),before);
+test('SQL failure cannot notify a subscriber or leave accepted-prefix reward evidence',async t=>{
+ const {service,calls,store}=await measuredService(t,{subscribe:true});const db=new DatabaseSync(store.path);try{db.exec("CREATE TRIGGER injected_notify BEFORE INSERT ON reward_facts WHEN NEW.id='stop' BEGIN SELECT RAISE(ABORT,'notification batch abort'); END;");}finally{db.close();}
+ const before=snapshot(store.path);await assert.rejects(service.ingestUsageFacts([fact('prefix',10000),fact('stop',20000)],trusted),/notification batch abort/);assert.deepEqual(calls,{view:0,ledger:0,notify:0});assert.deepEqual(snapshot(store.path),before);
 });

@@ -26,7 +26,7 @@ async function fixture(t,options={}){
   service.grants.set({pluginId,declared:[...BUDDY_PLUGIN_CAPABILITIES],granted:[...BUDDY_PLUGIN_CAPABILITIES]});
   const issue=(extra={})=>service.issueContext({pluginId,characterId:'a',personaId:'p',sessionId:'native-session',taskId:'task-native',workspace:{id:'project-one',path:root},permissionScope:[...BUDDY_PLUGIN_CAPABILITIES],connectionRefs:[],...extra});
   const call=(token,method,payload={},extra={})=>service.invoke({pluginId,contextToken:token.contextToken,method,payload},extra);
-  t.after(async()=>{await service.close();await game.close();await store.flush();});
+  t.after(async()=>{await service.close();await game.close();await store.close();});
   return {root,store,game,service,events,usages,notifications,pages,disposed,issue,call,setClock:value=>{clock=value;}};
 }
 
@@ -58,15 +58,15 @@ test('host-native evidence and actual presentation gate existing companion memor
   const f=await fixture(t),a=await f.issue(),b=await f.issue({characterId:'b',sessionId:'b-session',taskId:'task-b'}),before=f.store.snapshot(),scope=a.context;
   await f.service.registerEventEvidence({pluginId,contextToken:a.contextToken,evidence:{id:'observed',status:'completed',presented:false,text:'not shown',at:2000}});
   assert.equal((await f.call(a,'memory.appendEvent',{evidenceId:'observed',presented:true})).recorded,false);assert.equal(f.events.length,1);
-  assert.equal(f.store.state.lives.a.workExperiences?.length??0,0);
+  assert.equal(f.store.records.count('life.workExperiences','a'),0);
   await f.service.registerEventEvidence({pluginId,contextToken:a.contextToken,evidence:{id:'shown',status:'completed',presented:true,text:'real shown project result',at:2001}});
   const refreshed=await f.issue();await f.service.registerEventEvidence({pluginId,contextToken:refreshed.contextToken,evidence:{id:'shown',status:'completed',presented:true,text:'real shown project result',at:2001}});
   await assert.rejects(f.call(b,'memory.appendEvent',{evidenceId:'shown'}),{code:'BUDDY_CONTEXT_DENIED'});
   const [one,two]=await Promise.all([f.call(a,'memory.appendEvent',{evidenceId:'shown'}),f.call(a,'memory.appendEvent',{evidenceId:'shown'})]);assert.deepEqual(one,two);
-  const rows=f.store.state.lives.a.workExperiences;assert.equal(rows.length,1);assert.equal(rows[0].lifeId,scope.lifeId);assert.equal(rows[0].taskId,'task-native');assert.match(rows[0].sourceHash,/^[a-f0-9]{64}$/);
+  const rows=f.store.records.recent('life.workExperiences','a').map(row=>row.value);assert.equal(rows.length,1);assert.equal(rows[0].lifeId,scope.lifeId);assert.equal(rows[0].taskId,'task-native');assert.match(rows[0].sourceHash,/^[a-f0-9]{64}$/);
   assert.deepEqual(f.store.state.lives.b,before.lives.b);assert.deepEqual(f.store.state.accountLedger,before.accountLedger);assert.deepEqual(f.store.state.conversations,before.conversations);
   await assert.rejects(f.service.registerEventEvidence({pluginId,contextToken:a.contextToken,evidence:{id:'shown',status:'completed',presented:true,text:'rewritten'}}),{code:'BUDDY_EVIDENCE_CONFLICT'});
-  await f.store.flush();const reopened=await openCompanionStore(f.root);assert.equal(reopened.state.lives.a.workExperiences[0].text,'real shown project result');
+  await f.store.flush();const reopened=await openCompanionStore(f.root);try{assert.equal(reopened.records.recent('life.workExperiences','a')[0].value.text,'real shown project result');}finally{await reopened.close();}
 });
 
 test('plugin cannot invent usage; native request accounting distinguishes parent totals and child details',async t=>{

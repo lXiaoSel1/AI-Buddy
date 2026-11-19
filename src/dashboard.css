@@ -140,3 +140,6 @@ p,small{color:var(--buddy-muted)}:root{}
 
 /* B2 output limit, B6 safe mode */
 .setting-row.output-limit{cursor:default}.safe-mode{max-width:720px;padding:28px 30px;line-height:1.75}.safe-mode h1{margin:0 0 10px;font-size:22px}.safe-mode p{margin:10px 0}.safe-mode-reason{margin:16px 0;padding:14px 16px;border:1px solid var(--buddy-border);border-radius:10px;background:var(--buddy-surface2);color:var(--buddy-err)}.safe-mode-reason p{margin:6px 0 4px;white-space:pre-wrap;overflow-wrap:anywhere;font-family:Consolas,ui-monospace,monospace;font-size:12px}.safe-mode-reason small{opacity:.75}.safe-mode-banner{display:flex;align-items:center;justify-content:space-between;gap:12px}.action-viewport[data-active=true]{box-shadow:inset 0 0 0 2px var(--buddy-accent)}.action-viewport:focus-visible{outline:2px solid var(--buddy-accent);outline-offset:3px}
+
+/* Cloud voice is a built-in Companion page with the usual workspace header. */
+.bc-page .vx-eng-main .bc-logo{flex:none}

@@ -1,6 +1,8 @@
+import {lifeRecord,saveLifeRecord} from './companion-record-access.mjs';
+import {copyCompanionValue} from './companion-draft.mjs';
 import {assertSocialScope,r95LifeState,socialError} from './companion-presentation-state.mjs';
 
-const copy=value=>structuredClone(value),MAX_RECOVERY=315360000000;
+const copy=value=>copyCompanionValue(value),MAX_RECOVERY=315360000000;
 export function projectedMood(value,at=Date.now()){
  if(!value)return null;const result=copy(value),elapsed=Math.max(0,at-(Number.isFinite(value.anchorAt)?value.anchorAt:at));
  const project=feeling=>({...feeling,intensity:Math.max(0,Math.min(1,feeling.anchorIntensity*Math.pow(.5,elapsed/feeling.recoveryHalfLifeMs)))});
@@ -48,23 +50,26 @@ export function createMoodService({store,now=()=>Date.now(),generate,getEvidence
    if(closing)return {deferred:true,reason:'closing'};
    assertSocialScope(store.state,scope);if(!Array.isArray(eventIds)||!eventIds.length||eventIds.length>100||eventIds.some(id=>typeof id!=='string'))throw socialError('MOOD_EVIDENCE_INVALID','心情评估需要实际事件');
    if(!['event','scheduled-review'].includes(reason))throw socialError('MOOD_REASON_INVALID','心情复评原因无效');
-   const ids=[...new Set(eventIds)],key=JSON.stringify([scope.characterId,scope.lifeId,scope.operationId,ids,reason]);if(running.has(key))return running.get(key);
-   const job=(tails.get(scope.characterId)??Promise.resolve()).catch(()=>{}).then(async()=>{if(closing)return {deferred:true,reason:'closing'};assertSocialScope(store.state,scope);const r95=store.state.lives[scope.characterId].r95??{},known=r95.moodEvaluations??{},reviewKey=reason==='scheduled-review'?String(r95.mood?.version)+':'+String(r95.mood?.nextReviewAt):null;
+   const ids=[...new Set(eventIds)],key=JSON.stringify([scope.characterId,scope.lifeId,scope.operationId,ids,reason]);
+   const name=reason==='scheduled-review'?'moodReviewEvaluations':'moodEvaluations',namespace='life.r95.'+name,path=['r95',name];
+   const committed=(state,keys,tx)=>keys.every(id=>lifeRecord(store,state,scope.characterId,namespace,path,id,tx)?.status==='committed');
+   if(running.has(key))return running.get(key);
+   const job=(tails.get(scope.characterId)??Promise.resolve()).catch(()=>{}).then(async()=>{if(closing)return {deferred:true,reason:'closing'};assertSocialScope(store.state,scope);const r95=store.state.lives[scope.characterId].r95??{},reviewKey=reason==='scheduled-review'?String(r95.mood?.version)+':'+String(r95.mood?.nextReviewAt):null;
     if(reason==='scheduled-review'&&(!r95.mood?.nextReviewAt||r95.mood.nextReviewAt>now()))return {deferred:true,reason:'review-not-due'};
-    if(reason==='scheduled-review'?r95.moodReviewEvaluations?.[reviewKey]?.status==='committed':ids.every(id=>known[id]?.status==='committed'))return {duplicate:true,mood:api.view({scope})};
+    if(committed(store.state,reason==='scheduled-review'?[reviewKey]:ids))return {duplicate:true,mood:api.view({scope})};
     const failure=reason==='event'?failures.get(lifeKey(scope)):null;
     if(failure&&(failure.count>=5||now()<failure.nextAllowedAt))return {deferred:true,reason:failure.count>=5?'failure-limit':'failure-backoff'};
     const events=await getEvidence({scope,eventIds:ids});assertSocialScope(store.state,scope);if(!Array.isArray(events)||ids.some(id=>!events.some(event=>(event.eventId??event.id)===id)))throw socialError('MOOD_EVIDENCE_INVALID','缺少当前范围的真实事件证据');
     if(typeof generate!=='function')return {deferred:true,reason:'model-unavailable'};
     const controller=new AbortController(),chatVersion=chatVersions.get(lifeKey(scope))??0;controllers.add(controller);
     try{const current=api.view({scope}),raw=await generate({kind:'mood',reason,scope:copy(scope),events:copy(events),currentMood:current,context:copy(context),signal:controller.signal}),at=now();if(closing||controller.signal.aborted)throw socialError('MOOD_CANCELLED','心情评估已取消');assertSocialScope(store.state,scope);
-     if(raw?.changed===false){const result=await store.mutate(state=>{const life=r95LifeState(state,scope);life.moodEvaluations??={};life.moodReviewEvaluations??={};if(reason==='scheduled-review')life.moodReviewEvaluations[reviewKey]={status:'committed',unchanged:true,at};else for(const id of ids)life.moodEvaluations[id]={status:'committed',unchanged:true,at};delete life.moodFailure;return {unchanged:true};});failures.delete(lifeKey(scope));return result;}
+     if(raw?.changed===false){const result=await store.mutate((state,tx)=>{const life=r95LifeState(state,scope);for(const id of reason==='scheduled-review'?[reviewKey]:ids)saveLifeRecord(state,scope.characterId,namespace,path,id,{status:'committed',unchanged:true,at},tx);delete life.moodFailure;return {unchanged:true};});failures.delete(lifeKey(scope));return result;}
      const overall=normalizedFeeling(raw?.overall,ids,scope,at),feelings=(raw.feelings??[]);if(!Array.isArray(feelings)||feelings.length>50)throw socialError('MOOD_OUTPUT_INVALID','感受列表无效');
      const next={schemaVersion:1,anchorAt:at,lastEvaluatedAt:at,overall,feelings:feelings.map(row=>normalizedFeeling(row,ids,scope,at)),eventIds:ids,reviewCondition:typeof raw.reviewCondition==='string'?raw.reviewCondition.slice(0,1000):null};
      if(raw.nextReviewAt!==undefined&&raw.nextReviewAt!==null){if(!Number.isFinite(raw.nextReviewAt)||raw.nextReviewAt<=at||raw.nextReviewAt>at+MAX_RECOVERY)throw socialError('MOOD_OUTPUT_INVALID','下次心情复评时间无效');next.nextReviewAt=raw.nextReviewAt;}
-     const result=await store.mutate(state=>{const life=r95LifeState(state,scope);life.moodEvaluations??={};life.moodReviewEvaluations??={};if(reason==='scheduled-review'?life.moodReviewEvaluations[reviewKey]?.status==='committed':ids.every(id=>life.moodEvaluations[id]?.status==='committed'))return {duplicate:true};next.version=(life.mood?.version??0)+1;
+     const result=await store.mutate((state,tx)=>{const life=r95LifeState(state,scope);if(committed(state,reason==='scheduled-review'?[reviewKey]:ids,tx))return {duplicate:true};next.version=(life.mood?.version??0)+1;
       const feelingKey=row=>JSON.stringify([row.target??'',row.visibility?.personaId,row.visibility?.channel,row.visibility?.conversationId]),updated=new Set(next.feelings.map(feelingKey)),previous=projectedMood(life.mood,at);next.feelings=[...(previous?.feelings??[]).filter(row=>!updated.has(feelingKey(row))).map(row=>({...row,anchorIntensity:row.intensity})),...next.feelings];life.mood=next;
-      if(reason==='scheduled-review')life.moodReviewEvaluations[reviewKey]={status:'committed',at,version:next.version};else for(const id of ids)life.moodEvaluations[id]={status:'committed',at,version:next.version};delete life.moodFailure;return {mood:copy(next)};});failures.delete(lifeKey(scope));return result;
+      for(const id of reason==='scheduled-review'?[reviewKey]:ids)saveLifeRecord(state,scope.characterId,namespace,path,id,{status:'committed',at,version:next.version},tx);delete life.moodFailure;return {mood:copy(next)};});failures.delete(lifeKey(scope));return result;
     }catch(error){if(!closing&&!controller.signal.aborted&&error.code!=='ABORT_ERR'&&error.name!=='AbortError'){if(reason==='event')noteFailure(scope,chatVersion,error);await store.mutate(state=>{const r95=r95LifeState(state,scope);r95.moodFailure={at:now(),code:error.code??'MOOD_MODEL_FAILED',message:String(error.message).slice(0,500)};}).catch(()=>{});}throw error;}finally{controllers.delete(controller);}
    });running.set(key,job);tails.set(scope.characterId,job);try{return await job;}finally{running.delete(key);if(tails.get(scope.characterId)===job)tails.delete(scope.characterId);}
   },

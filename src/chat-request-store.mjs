@@ -43,7 +43,7 @@ export async function openChatRequestStore(dataRoot,{rename:replace=rename,platf
     const work=tail.then(async()=>{
       const previous=rows.get(scope.requestId);
       if(!previous||['characterId','personaId','lifeId','operationId'].some(key=>previous[key]!==scope[key])||
-        (previous.groupId??previous.conversationId)!==scope.conversationId)return false;
+        (previous.groupId??previous.conversationId)!==scope.conversationId||scope.roundId!==undefined&&previous.roundId!==scope.roundId)return false;
       const existing=previous.voicePresentation??[];
       if(existing.some(row=>row.segmentId===receipt.segmentId&&row.status===receipt.status))return true;
       const row={...previous,voicePresentation:[...existing,structuredClone(receipt)]};

@@ -28,7 +28,7 @@ const allowed=new Set(['github.com','api.github.com','release-assets.githubuserc
 const payload=Buffer.from('AI Buddy audit214 immutable synthetic component. '.repeat(40));
 const digest=createHash('sha256').update(payload).digest('hex');
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=','base64');
-const result={electron:process.versions.electron,node:process.versions.node,checks,requests,nativeCalls};
+const result={electron:process.versions.electron,node:process.versions.node,pid:process.pid,checks,requests,nativeCalls};
 const check=async(name,work,transport)=>{const requestStart=requests.length,nativeStart=nativeCalls.length;try{const value=await work();checks.push({name,ok:true,...(value?.skip?{skipped:true,skipReason:value.skip}:{}),...(transport?{transport}:{}),requests:[requestStart,requests.length],sessionCalls:[nativeStart,nativeCalls.length]});}catch(error){checks.push({name,ok:false,error:error.stack??String(error),code:error.code,cause:error.cause?.message,...(transport?{transport}:{}),requests:[requestStart,requests.length],sessionCalls:[nativeStart,nativeCalls.length]});}};
 const timeout=()=>AbortSignal.timeout(5000);
 const consume=async stream=>{const chunks=[];for await(const chunk of stream)chunks.push(Buffer.from(chunk));return Buffer.concat(chunks);};
@@ -39,7 +39,7 @@ app.setPath('userData',join(run,'profile'));
 const deadline=setTimeout(()=>{result.fatal='Harness deadline exceeded';void writeFile(join(run,'result.json'),JSON.stringify(result,null,2)).finally(()=>app.exit(2));},45000);
 
 await app.whenReady();
-let tlsServer,proxy,loopbackServer;
+let tlsServer,proxy,alternateProxy,loopbackServer;
 try{
   const publicProof=process.env.AUDIT214_PUBLIC_PROOF&&process.env.AUDIT214_PUBLIC_INSTALLER?JSON.parse(await readFile(process.env.AUDIT214_PUBLIC_PROOF,'utf8')):null;
   const installer=publicProof?await readFile(process.env.AUDIT214_PUBLIC_INSTALLER):null;
@@ -52,6 +52,7 @@ try{
   const zipHead=Buffer.concat([local,filename,file]),zipDirectory=Buffer.concat([central,filename]);end.writeUInt32LE(0x06054b50);end.writeUInt16LE(1,8);end.writeUInt16LE(1,10);end.writeUInt32LE(zipDirectory.length,12);end.writeUInt32LE(zipHead.length,16);
   const qqZip=Buffer.concat([zipHead,zipDirectory,end]);
   const cert=await readFile(join(run,'fixture-cert.pem')),key=await readFile(join(run,'fixture-key.pem')),fingerprint=new X509Certificate(cert).fingerprint256;
+  const tunnelRoutes=new Map(),heldStreams=new Map();
   tlsServer=track(https.createServer({cert,key},async(req,res)=>{
     const chunks=[];for await(const chunk of req)chunks.push(chunk);
     const body=Buffer.concat(chunks),row={host:req.headers.host,path:req.url,method:req.method,headers:req.headers,bytes:body.length};requests.push(row);
@@ -87,17 +88,39 @@ try{
       const bytes=encoded?gzipSync(payload):payload;res.writeHead(200,{'content-length':bytes.length,...(encoded?{'content-encoding':'gzip'}:{})});return res.end(bytes);
     }
     if(req.url==='/gzip'){const bytes=gzipSync(payload);res.writeHead(200,{'content-encoding':'gzip','content-length':bytes.length});return res.end(bytes);}
+    if(req.url.startsWith('/r17-stream-')){
+      res.writeHead(200,{'content-type':'text/event-stream','x-fixture-proxy':tunnelRoutes.get(req.socket.remotePort)??'DIRECT'});
+      res.write('data: started\n\n');
+      heldStreams.set(req.url,res);
+      return;
+    }
+    if(req.url==='/r17-first'){
+      res.end(tunnelRoutes.get(req.socket.remotePort)??'DIRECT');
+      return;
+    }
     if(req.url==='/stream'){res.writeHead(200,{'content-type':'text/event-stream'});res.write('data: one\n\n');return setTimeout(()=>res.end('data: two\n\n'),30);}
     res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({headers:req.headers,body:body.toString('utf8')}));
   }));
   await listen(tlsServer);
-  proxy=track(http.createServer((_req,res)=>{res.writeHead(400);res.end();}));
-  proxy.on('connect',(req,client,head)=>{
-    const target=new URL('https://'+req.url);if(!allowed.has(target.hostname)){client.end('HTTP/1.1 403 Forbidden\r\n\r\n');return;}
-    const upstream=net.connect(tlsServer.address().port,'127.0.0.1');sockets.add(upstream);upstream.on('close',()=>sockets.delete(upstream));
-    upstream.on('connect',()=>{client.write('HTTP/1.1 200 Connection Established\r\n\r\n');if(head.length)upstream.write(head);client.pipe(upstream);upstream.pipe(client);});
-    upstream.on('error',()=>client.destroy());client.on('error',()=>upstream.destroy());client.on('close',()=>upstream.destroy());
-  });
+  function createProxy(route){
+    const server=track(http.createServer((_req,res)=>{res.writeHead(400);res.end();}));
+    server.on('connect',(req,client,head)=>{
+      const target=new URL('https://'+req.url);if(!allowed.has(target.hostname)){client.end('HTTP/1.1 403 Forbidden\r\n\r\n');return;}
+      const upstream=net.connect(tlsServer.address().port,'127.0.0.1');
+      sockets.add(upstream);
+      let port;
+      upstream.on('close',()=>{sockets.delete(upstream);if(port!==undefined)tunnelRoutes.delete(port);});
+      upstream.on('connect',()=>{
+        port=upstream.localPort;tunnelRoutes.set(port,route);
+        client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        if(head.length)upstream.write(head);
+        client.pipe(upstream);upstream.pipe(client);
+      });
+      upstream.on('error',()=>client.destroy());client.on('error',()=>upstream.destroy());client.on('close',()=>upstream.destroy());
+    });
+    return server;
+  }
+  proxy=createProxy('A');
   await listen(proxy);
   const ses=session.fromPartition('audit214-network-real-session',{cache:false});
   ses.setCertificateVerifyProc((request,callback)=>{
@@ -108,9 +131,22 @@ try{
   // Observation only: every call forwards unchanged to this real Session.
   ses.fetch=(input,init)=>{nativeCalls.push({url:String(input instanceof Request?input.url:input),redirect:init?.redirect??'follow'});return nativeFetch(input,init);};
   const service=await createNetworkService({electronSession:ses,userAgent:'AI-Buddy/2.0.14'});services.push(service);
-  await service.save({mode:'manual',proxyUrl:'http://127.0.0.1:'+proxy.address().port});
+  const proxyAuthority='127.0.0.1:'+proxy.address().port;
+  const saveStartedAt=performance.now();
+  await service.save({mode:'manual',proxyUrl:'http://'+proxyAuthority});
+  const saveCompletedAt=performance.now();
   await check('F6 nonloopback requests pass through the real Electron Session',async()=>{
-    const before=nativeCalls.length,response=await service.fetch('https://model.audit214.invalid/echo',{signal:timeout()});assert.equal(response.status,200);await response.json();assert.equal(nativeCalls.length,before+1);
+    const url='https://model.audit214.invalid/echo',expected='PROXY '+proxyAuthority;
+    const readiness=result.f6ProxyReadiness={expected,saveElapsedMs:saveCompletedAt-saveStartedAt,resolutions:[]};
+    result.f6Proxy=await ses.resolveProxy(url);
+    readiness.resolutions.push({route:result.f6Proxy,elapsedSinceSaveMs:performance.now()-saveCompletedAt});
+    assert.equal(result.f6Proxy,expected,'The Electron Session must resolve the fixture proxy after saving the configuration');
+    const before=nativeCalls.length, upstream=requests.length;
+    assert.equal(before,0);
+    assert.equal(upstream,0);
+    const response=await service.fetch(url,{signal:timeout()});assert.equal(response.status,200);await response.json();
+    assert.equal(nativeCalls.length,before+1);
+    assert.equal(requests.length,upstream+1);
   });
   await check('native Electron manual 302 control reproduces Redirect was cancelled',async()=>{
     await assert.rejects(nativeFetch('https://github.com/redirect',{redirect:'manual',credentials:'omit',signal:timeout()}),/Redirect was cancelled/);
@@ -218,9 +254,57 @@ try{
     await assert.rejects(acquire({scope:{},video:{duration:1},windows:[],hasSubtitles:true,signal:controller.signal,check:()=>{if(requests.slice(start).some(row=>row.path==='/media.mp4'))controller.abort(stop);}}),error=>error===stop);
     assert.equal(requests[start].headers.range,'bytes=0-');assert.equal(requests[start].headers.referer,'https://www.bilibili.com/');assert.equal(nativeCalls.length,before+1);
   },'Session; intentionally stops before ffmpeg');
+  const proxyOperations=[];
+  for(const name of ['setProxy','forceReloadProxyConfig','closeAllConnections']){
+    const original=ses[name].bind(ses);
+    ses[name]=(...args)=>{proxyOperations.push(name);return original(...args);};
+  }
+  async function saveDuringStream(label,update,afterSave=async()=>{}){
+    const path='/r17-stream-'+label,base='https://model.audit214.invalid';
+    const response=await service.fetch(base+path,{signal:timeout()});
+    assert.equal(response.headers.get('x-fixture-proxy'),'A');
+    const reader=response.body.getReader(),decoder=new TextDecoder();
+    const stream=result[label]={started:decoder.decode((await reader.read()).value)};
+    assert.equal(stream.started,'data: started\n\n');
+    try{
+      const start=proxyOperations.length;
+      await update();
+      stream.operations=proxyOperations.slice(start);
+      await afterSave(base,stream);
+      heldStreams.get(path).end('data: finished\n\ndata: [DONE]\n\n');
+      stream.rest='';
+      for(;;){
+        const {done,value}=await reader.read();
+        if(done)break;
+        stream.rest+=decoder.decode(value,{stream:true});
+      }
+      stream.rest+=decoder.decode();
+      assert.equal(stream.rest,'data: finished\n\ndata: [DONE]\n\n');
+      assert.deepEqual(stream.operations,label==='mirror'?[]:['setProxy','forceReloadProxyConfig']);
+    }finally{
+      heldStreams.get(path)?.end();
+      heldStreams.delete(path);
+      await reader.cancel().catch(()=>{});
+      reader.releaseLock();
+    }
+  }
+  await check('A5 saving only a mirror leaves a real in-flight HTTPS stream intact',()=>saveDuringStream('mirror',()=>
+    service.save({mode:'manual',proxyUrl:'http://'+proxyAuthority,githubMirror:'https://mirror.audit214.invalid'})
+  ));
+  alternateProxy=createProxy('B');
+  await listen(alternateProxy);
+  await check('A5 changing the proxy preserves the old HTTPS stream and routes the first new request through B',()=>
+    saveDuringStream('proxyChange',()=>
+      service.save({mode:'manual',proxyUrl:'http://127.0.0.1:'+alternateProxy.address().port}),
+      async(base,stream)=>{
+        const response=await service.fetch(base+'/r17-first',{signal:timeout()});
+        stream.firstNewRoute=await response.text();
+        assert.equal(stream.firstNewRoute,'B');
+      })
+  );
 }catch(error){result.fatal=error.stack??String(error);}
 finally{
   clearTimeout(deadline);for(const service of services)await service.close().catch(()=>{});for(const socket of sockets)socket.destroy();
-  await Promise.all([tlsServer,proxy,loopbackServer].filter(Boolean).map(server=>new Promise(resolve=>server.close(resolve))));
+  await Promise.all([tlsServer,proxy,alternateProxy,loopbackServer].filter(Boolean).map(server=>new Promise(resolve=>server.close(resolve))));
   await writeFile(join(run,'result.json'),JSON.stringify(result,null,2)+'\n');app.exit(result.fatal?2:0);
 }

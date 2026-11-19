@@ -1,6 +1,8 @@
 import {rename} from 'node:fs/promises';
 import {setTimeout as delay} from 'node:timers/promises';
 
+export const isWindowsSharingError=(error,platform)=>platform==='win32'&&['EPERM','EACCES','EBUSY'].includes(error.code);
+
 /** Freshly extracted executable directories can briefly deny rename on Windows.
  * Retry that exact operation only, with a four-second default (explicit budgets capped at ten). Never copy, remove
  * a destination, or replay registry/activation operations after an unknown result. */
@@ -11,7 +13,7 @@ export async function renamePluginPath(source,target,{platform=process.platform,
     try{return await renameImpl(source,target);}
     catch(error){
       const wait=waits[attempt];
-      if(platform!=='win32'||!['EPERM','EACCES','EBUSY'].includes(error.code)||wait===undefined||now()-started+wait>retryBudgetMs)throw error;
+      if(!isWindowsSharingError(error,platform)||wait===undefined||now()-started+wait>retryBudgetMs)throw error;
       await sleepImpl(wait);
       if(now()-started>=retryBudgetMs)throw error;
     }

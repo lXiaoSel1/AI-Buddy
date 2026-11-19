@@ -67,3 +67,13 @@ test('planner offline and English states explain local fallback while leaving ch
  const explicitOffline=plannerFields(planner,'codex');assert.match(explicitOffline,/联网聊天未开启：请先开启后再使用指定的策划模型/);assert.doesNotMatch(explicitOffline,/本次使用本地提示词/);
  try{setLocale('en');const html=plannerFields(planner);assert.match(html,/Prompt planning model/);assert.match(html,/Automatic \(entry character \/ global connection\)/);assert.match(html,/Online chat is off/);assert.match(plannerFields(planner,'codex'),/enable it before using the selected planning model/);assert.match(html,/Grok · grok-4.6/);assert.doesNotMatch(html,/提示词策划模型/);}finally{setLocale('zh-CN');}
 });
+
+test('stage history offers an archive switch alongside New conversation and preserves the manager history',()=>{
+ setLocale('zh-CN');
+ const props={panel:'history',state:state(),request:async()=>({ok:true}),onClose(){}};
+ const stage=renderToStaticMarkup(React.createElement(CompanionManager,{...props,historyOnly:true}));
+ assert.match(stage,/<div class="buddy-history-actions">[^]*?role="switch" aria-checked="false" aria-label="已归档"[^]*?<button[^>]*>新建会话<\/button><\/div>/);
+ assert.match(stage,/恢复会话/);
+ const settings=renderToStaticMarkup(React.createElement(CompanionManager,props));
+ assert.match(settings,/<button[^>]*class="buddy-chip" aria-pressed="false"[^>]*>[^]*?已归档<\/button>/);
+});

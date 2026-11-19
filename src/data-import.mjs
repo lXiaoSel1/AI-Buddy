@@ -11,8 +11,11 @@ import {writeAtomic} from './atomic-write.mjs';
 import {registeredDataPath,normalizedPipe} from './installation-record.mjs';
 import {requestLocalControl} from './local-control.mjs';
 import {deferredSaves} from './deferred-saves.mjs';
+import {inspectCompanionDataRoot,interruptImportedCompanion} from './companion-store.mjs';
+import {COMPANION_WRITER} from './companion-sqlite.mjs';
 
-const companionArchive='galgame/companion.json',globalArchive='galgame/storages/dsh-whale-galgame/global.json';
+const companionArchive='galgame/companion.json',companionDatabase='galgame/companion.sqlite',globalArchive='galgame/storages/dsh-whale-galgame/global.json';
+const usesSqlite=snapshot=>snapshot?.minimumWriter===COMPANION_WRITER||!!snapshot?.sqliteMigration;
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const json=p=>JSON.parse(readFileSync(p,'utf8'));
 const excluded=new Set(['chromium','crash-reports']);
@@ -100,15 +103,18 @@ export async function hasBusinessData(dataRoot){
  return (await readdir(dataRoot)).some(name=>!excluded.has(name)&&!temporary.has(name)&&name!==IMPORT_GUARD&&name!=='captures');
 }
 export async function importSummary(dataRoot,files){
- const companion=await inspectSnapshot(join(dataRoot,companionArchive),{protectExisting:true});
+ const hasSqlite=files.some(file=>file.path===companionDatabase);
+ const companion=hasSqlite?null:await inspectSnapshot(join(dataRoot,companionArchive),{protectExisting:true});
+ const sqlite=hasSqlite||usesSqlite(companion)?await inspectCompanionDataRoot(dataRoot):null;
  const global=await inspectSnapshot(join(dataRoot,globalArchive),{protectExisting:true});
  const models=await inspectSnapshot(join(dataRoot,'model-connections.json'));
  const cgs=await inspectSnapshot(join(dataRoot,'cg-jobs.json'));
- if(!companion&&!global&&!models&&!files.some(f=>/^(settings\.json|.*\.sqlite(?:3)?$|api-usage\.jsonl$)/.test(f.path)))throw Error('所选目录没有可识别的 AI 酱存档，请选择旧程序或实际存档目录');
+ if(!sqlite&&!companion&&!global&&!models&&!files.some(f=>/^(settings\.json|.*\.sqlite(?:3)?$|api-usage\.jsonl$)/.test(f.path)))throw Error('所选目录没有可识别的 AI 酱存档，请选择旧程序或实际存档目录');
  const values=o=>Object.values(o??{}),conversations=values(companion?.conversations),groups=values(companion?.groups);
- return {characters:values(companion?.cards??global?.characters).length,personas:values(companion?.personas).length,
+ const counts=sqlite??{characters:values(companion?.cards??global?.characters).length,personas:values(companion?.personas).length,
   conversations:conversations.length,messages:conversations.reduce((n,c)=>n+(c.messages?.length??0),0)||values(global?.characters).reduce((n,c)=>n+(c.chatLines?.length??0),0),groups:groups.length,
-  memoryEvents:values(companion?.lives).reduce((n,l)=>n+values(l.memory?.events).length,0),lifeArchives:files.filter(f=>/\.zip$/i.test(f.path)&&/life|人生|archive/.test(f.path)).length,
+  memoryEvents:values(companion?.lives).reduce((n,l)=>n+values(l.memory?.events).length,0)};
+ return {...counts,lifeArchives:files.filter(f=>/\.zip$/i.test(f.path)&&/life|人生|archive/.test(f.path)).length,
   cgs:cgs?.jobs?.length??0,connections:models?.profiles?.length??0};
 }
 
@@ -130,11 +136,13 @@ async function sourceStopped(source,query=requestLocalControl){
 }
 
 export async function pauseImportedWork(dataRoot,{planId,sourceIdentity,now=Date.now()}={}){
- const companionPath=join(dataRoot,companionArchive),companion=await inspectSnapshot(companionPath,{protectExisting:true});
+ const companionPath=join(dataRoot,companionArchive),hasSqlite=existsSync(join(dataRoot,companionDatabase));
+ const companion=hasSqlite?null:await inspectSnapshot(companionPath,{protectExisting:true});
+ const sqlite=hasSqlite||usesSqlite(companion)?await interruptImportedCompanion(dataRoot,planId):null;
  const original=await inspectSnapshot(join(dataRoot,'cg-jobs.json'));let pausedCgs=0;
  if(original){const jobs=structuredClone(original);for(const job of jobs.jobs??[])if(['queued','planning','generating'].includes(job.status)){job.pausedFrom=job.status;job.status='paused';job.pauseReason='import';job.pausedAt=now;pausedCgs++;}
   if(pausedCgs)await createSnapshotStorage(join(dataRoot,'cg-jobs.json'),{retention:false}).writeText(JSON.stringify(jobs));}
- let interruptedRequests=0;
+ let interruptedRequests=sqlite?.interruptedRequests??0;
  if(companion){const next=structuredClone(companion);for(const conversation of Object.values(next.conversations??{}))for(const message of conversation.messages??[])if(message.presentation==='pending'||['pending','pending-presentation','generating','draft'].includes(message.status)){message.status='interrupted';if(message.presentation==='pending')message.presentation='discarded';message.interruptedByImport=planId;interruptedRequests++;}
   for(const group of Object.values(next.groups??{}))if(group.pending&&!group.pending.settlement){group.importedPending=group.pending;group.pending=null;interruptedRequests++;}
   if(interruptedRequests)await createSnapshotStorage(companionPath,{retention:false,protectExisting:true}).writeText(JSON.stringify(next));}
@@ -161,6 +169,7 @@ export function createDataImportService({root,dataRoot,build,pipe,manager,onboar
    if(canonical(targetDataRoot).startsWith(canonical(location.sourceDataRoot)+sep))throw Error('来源目录不能包含导入目标目录');
    await sourceStopped(location,query);
    const index=await importInventory(location.sourceDataRoot),summary=await importSummary(location.sourceDataRoot,index.files);
+   if(index.files.some(file=>file.path===companionDatabase)&&(await importInventory(location.sourceDataRoot)).sha256!==index.sha256)throw Error('来源存档已变化，请重新预览');
    const currentRecord=join(root,'local/installation.json');if(!existsSync(currentRecord))throw Error('安装记录尚未就绪，请先完成初始化');
    const recordSha=await fileSha(currentRecord);const identity=digest(JSON.stringify({source:location.sourceDataRoot,files:index.sha256}));
    const plan={schemaVersion:1,id,root,expectedBuild:relative(root,build).replaceAll('\\','/'),expectedInstallationSha256:recordSha,pipe,targetDataPath,sourceIdentity:identity,

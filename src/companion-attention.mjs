@@ -1,6 +1,8 @@
+import {lifeRecord,saveLifeRecord} from './companion-record-access.mjs';
+import {copyCompanionValue} from './companion-draft.mjs';
 import {assertSocialScope,r95LifeState,socialError} from './companion-presentation-state.mjs';
 
-const copy=value=>structuredClone(value),validId=value=>typeof value==='string'&&value.length>0&&value.length<=300;
+const copy=value=>copyCompanionValue(value),validId=value=>typeof value==='string'&&value.length>0&&value.length<=300;
 export function attentionAvailability(state,now=Date.now()){
  const value=state.r95?.availability??{};
  return {busy:Number.isFinite(value.busyUntil)&&value.busyUntil>now,busyUntil:value.busyUntil??null,doNotDisturb:value.doNotDisturb===true&&(!value.doNotDisturbUntil||value.doNotDisturbUntil>now),doNotDisturbUntil:value.doNotDisturbUntil??null,revision:value.revision??0};
@@ -12,11 +14,11 @@ export function createAttentionService({store,now=()=>Date.now(),getActiveContex
    if(!validId(eventId)||!validId(kind))throw socialError('ATTENTION_EVENT_INVALID','关注事件无效');
    if(source!=='user'||userInteraction!==true)return {recorded:false,reason:'not-user-attention'};
    const scopes=participantScopes??[scope];if(!Array.isArray(scopes)||!scopes.length||scopes.length>100)throw socialError('ATTENTION_SCOPE_INVALID','关注对象无效');
-   const seen=new Set();return store.mutate(state=>{const results=[];
-    for(const current of scopes){assertSocialScope(state,current);if(seen.has(current.characterId))continue;seen.add(current.characterId);const r95=r95LifeState(state,current),attention=r95.attention??={events:{},lastAt:null};
-     const previous=attention.events[eventId];if(previous){if(previous.personaId!==(current.personaId??null)||previous.channel!==(current.channel??'app')||previous.conversationId!==(current.conversationId??null))throw socialError('ATTENTION_EVENT_CONFLICT','关注事件ID已绑定其他会话');results.push({characterId:current.characterId,duplicate:true,event:copy(previous)});continue;}
+   const seen=new Set();return store.mutate((state,tx)=>{const results=[];
+    for(const current of scopes){assertSocialScope(state,current);if(seen.has(current.characterId))continue;seen.add(current.characterId);const r95=r95LifeState(state,current),attention=r95.attention??={lastAt:null};
+     const namespace='life.attention.events',path=['r95','attention','events'];const previous=lifeRecord(store,state,current.characterId,namespace,path,eventId,tx);if(previous){if(previous.personaId!==(current.personaId??null)||previous.channel!==(current.channel??'app')||previous.conversationId!==(current.conversationId??null))throw socialError('ATTENTION_EVENT_CONFLICT','关注事件ID已绑定其他会话');results.push({characterId:current.characterId,duplicate:true,event:copy(previous)});continue;}
      const event={eventId,kind,source:'user',at:now(),characterId:current.characterId,lifeId:current.lifeId,operationId:current.operationId,personaId:current.personaId??null,channel:current.channel??'app',conversationId:current.conversationId??null};
-     attention.events[eventId]=event;attention.lastAt=event.at;attention.lastEventId=eventId;results.push({characterId:current.characterId,duplicate:false,event:copy(event)});
+     saveLifeRecord(state,current.characterId,namespace,path,eventId,event,tx);attention.lastAt=event.at;attention.lastEventId=eventId;results.push({characterId:current.characterId,duplicate:false,event:copy(event)});
     }return {recorded:true,results};
    });
   },

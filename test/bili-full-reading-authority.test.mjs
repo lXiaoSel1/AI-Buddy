@@ -1,3 +1,4 @@
+import {fullReadingCues} from '../src/buddy-plugin-services/bili-full-reading.mjs';
 import {biliResponseLimit} from '../src/buddy-plugin-services/social-transport.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,3 +16,16 @@ test('image transport supports eight verified images without weakening size or M
 
 test('metadata-only preparation reconstructs the full observed subtitle text without a large return RPC',()=>{const r=rows(),text='complete tail '+ '字'.repeat(1100000);r[2].body=JSON.stringify({body:[{from:0,to:20,content:text}]});const p={...payload(),subtitleTracks:[{cid:1,language:'zh-CN'}]},v=fullReadingAuthority(p,r);assert.ok(JSON.stringify(p).length<1000);assert.equal(v.subtitleTracks[0].items[0].text,text);assert.equal(v.subtitleTracks[0].items[0].id,'subtitle:1');});
 test('large subtitle response allowance needs a same-scope observed player link and a credential-free GET',()=>{const u=new URL(url),p={method:'GET',maxResponseBytes:128*1024*1024};assert.equal(biliResponseLimit(p,u,rows()),64*1024*1024);assert.equal(biliResponseLimit(p,u,[]),4*1024*1024);assert.equal(biliResponseLimit({...p,method:'POST'},u,rows()),4*1024*1024);assert.equal(biliResponseLimit({...p,credentialBinding:{connectionRef:'x'}},u,rows()),4*1024*1024);assert.equal(biliResponseLimit({...p,maxResponseBytes:1024},u,rows()),1024);});
+
+test('a proven malformed subtitle track reports P-level diagnostics without changing provenance checks',()=>{
+ const p={...payload(),subtitleTracks:[{cid:1,language:'zh-CN'}]},r=rows();
+ r[2].body=JSON.stringify({body:[]});
+ assert.throws(()=>fullReadingAuthority(p,r),{code:'BILI_FULL_CUES_INVALID',details:{cid:1,page:1,reason:'empty-track'}});
+ r[2].body=JSON.stringify({body:[{from:0,to:1,content:''}]});
+ assert.throws(()=>fullReadingAuthority(p,r),{code:'BILI_FULL_CUES_INVALID',details:{cid:1,page:1,reason:'invalid-text'}});
+ r[2].body=JSON.stringify({body:[{from:-2,to:-1,content:'Observed negative range'}]});
+ const authorized=fullReadingAuthority(p,r);
+ assert.deepEqual(fullReadingCues(authorized.subtitleTracks,authorized.parts),[]);
+ r[2].url='https://other.hdslb.com/a.json';
+ assert.throws(()=>fullReadingAuthority(p,r),{code:'SOCIAL_UNOBSERVED_MATERIAL'});
+});

@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fsPromises from 'node:fs/promises';
+import {syncBuiltinESMExports} from 'node:module';
 import {mkdtemp,readFile,writeFile,rename,rm,readdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -11,6 +13,30 @@ test('async atomic write yields and retries only the same fsynced original temp 
  const f=await fixture(t),calls=[],waits=[];let yielded=false;
  await atomic.writeAtomicAsync(f.target,'new complete',{platform:'win32',sleepImpl:async ms=>{waits.push(ms);await new Promise(setImmediate);yielded=true;},renameImpl:async(source,target)=>{calls.push([source,target]);assert.equal(await readFile(source,'utf8'),'new complete');assert.equal(await readFile(target,'utf8'),'old durable');if(calls.length===1)throw fault('EPERM');assert.equal(yielded,true);await rename(source,target);}});
  assert.equal(calls.length,2);assert.deepEqual(calls[0],calls[1]);assert.deepEqual(waits,[50]);assert.equal(await readFile(f.target,'utf8'),'new complete');assert.deepEqual(await readdir(f.directory),['state.json']);
+});
+
+for(const [guard,code] of [['candidate','EBUSY'],['destination','EPERM']])test(`a transient ${code} in the ${guard} guard retries before publication`,async t=>{
+ const {directory,target}=await fixture(t),sources=[],waits=[];
+ const original=fsPromises.readFile;
+ let reads=0,failures=0;
+ const mock=t.mock.method(fsPromises,'readFile',(path,...args)=>{
+  const guardedRead=guard==='candidate'?path.startsWith(target+'.')&&path.endsWith('.partial'):path===target&&++reads===2;
+  if(guardedRead&&failures===0){failures++;throw fault(code);}
+  return original(path,...args);
+ });
+ syncBuiltinESMExports();
+ t.after(()=>{mock.mock.restore();syncBuiltinESMExports();});
+ await atomic.writeAtomicAsync(target,'new complete',{platform:'win32',sleepImpl:async ms=>{waits.push(ms);},renameImpl:async(source,dest)=>{
+  sources.push(source);
+  assert.equal(await readFile(source,'utf8'),'new complete');
+  assert.equal(await readFile(dest,'utf8'),'old durable');
+  await rename(source,dest);
+ }});
+ assert.equal(failures,1);
+ assert.deepEqual(waits,[50]);
+ assert.equal(sources.length,1);
+ assert.equal(await readFile(target,'utf8'),'new complete');
+ assert.deepEqual(await readdir(directory),['state.json']);
 });
 
 test('permanent async publication failure is bounded and retains old target plus the original owned temp evidence',async t=>{

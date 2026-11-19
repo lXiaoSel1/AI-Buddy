@@ -189,12 +189,12 @@ function capture(stream,logPath){
 }
 function compactError(e){return e?{name:e.name||'Error',message:String(e.message||e),code:e.code||null}:null;}
 
-export function ownedTestCommand(sourceRoot,selected){
+export function ownedTestCommand(sourceRoot,selected,{serial=false}={}){
  const source=path.resolve(sourceRoot),files=selected.map(file=>{const relative=path.relative(source,file);if(!relative||path.isAbsolute(relative)||relative==='..'||relative.startsWith('..'+path.sep))throw Error('Test command input is outside source');return relative;});
- return ['--test','--test-reporter=tap',...files];
+ return ['--test','--test-reporter=tap',...(serial?['--test-concurrency=1']:[]),...files];
 }
 
-export async function runOwnedTests({sourceRoot,testFiles,selectionRoots,receiptDirectory,tempBase,nodeExecutable=process.execPath,signal,retentionLimits:configuredLimits}={}){
+export async function runOwnedTests({sourceRoot,testFiles,selectionRoots,receiptDirectory,tempBase,nodeExecutable=process.execPath,signal,serial=false,environment={},retentionLimits:configuredLimits}={}){
  const source=fs.realpathSync(path.resolve(sourceRoot)),selected=testSelection(source,testFiles,selectionRoots);
  const receipts=path.resolve(receiptDirectory);
  noLinkedAncestors(receipts);fs.mkdirSync(receipts,{recursive:true});
@@ -209,14 +209,14 @@ export async function runOwnedTests({sourceRoot,testFiles,selectionRoots,receipt
  const owner={kind:KIND,runId,ownerPid:process.pid,ownerBirthUtcApprox:new Date(Date.now()-process.uptime()*1000).toISOString(),ownerBirthSource:'node process.uptime',root,rootIdentity:identity(root),sourceRoot:source,createdAt:now};
  const marker=path.join(root,'.owner.json'),receipt=path.join(receipts,runId+'.json');
  jsonFile(marker,owner);
- const result={schemaVersion:1,kind:'ai-buddy-owned-test-run',runId,status:'starting',sourceRoot:source,testFiles:selected,root,owner,receipt,startedAt:now,nodeExecutable,command:ownedTestCommand(source,selected),logs:null,child:null,cleanup:null};
+ const result={schemaVersion:1,kind:'ai-buddy-owned-test-run',runId,status:'starting',sourceRoot:source,testFiles:selected,root,owner,receipt,startedAt:now,nodeExecutable,command:ownedTestCommand(source,selected,{serial}),logs:null,child:null,cleanup:null};
  jsonFile(receipt,result);
  retention.record(result);
  const logPaths={stdout:path.join(receipts,runId+'.stdout.tap'),stderr:path.join(receipts,runId+'.stderr.log')};
  let child=null,abortListener=null,spawnError=null,exitCode=null,exitSignal=null,stdout=null,stderr=null,exitPromise=null;
  try{
   updateJson(receipt,{...result,status:'launching'});
-  const childEnv={...process.env,TEMP:root,TMP:root,TMPDIR:root,AI_BUDDY_PLUGIN_TEST_ROOT:root,AI_BUDDY_WORK_TEST_ROOT:root};
+  const childEnv={...process.env,...environment,TEMP:root,TMP:root,TMPDIR:root,AI_BUDDY_PLUGIN_TEST_ROOT:root,AI_BUDDY_WORK_TEST_ROOT:root};
   delete childEnv.NODE_TEST_CONTEXT;
   delete childEnv.NODE_TEST_WORKER_ID;
   child=spawn(nodeExecutable,result.command,{cwd:source,shell:false,windowsHide:true,stdio:['ignore','pipe','pipe'],env:childEnv});

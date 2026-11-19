@@ -75,7 +75,8 @@ test('the controller preflight deadline fences a withheld fresh profile check af
   const {voice,events}=await controllerFixture(t,{preflightTimeoutMs:35,
     profiles:{async current(){if(++profileReads===5){entered.resolve();await release.promise;}return {id:'profile',version:1,characterId:'fixture',engine:'breeze'};}},
     onEvent:event=>{if(event.type==='segment'&&event.state==='failed')failed.resolve(event);},
-    runtime:{ready:async()=>({ready:true}),async *speak({signal}){references++;yield {type:'reference',style:'calm',source:'neutral-fallback'};signal.throwIfAborted();sent++;yield {type:'pcm',pcm:new Uint8Array([0,0]),sampleRate:24000};yield {type:'done'};}}});
+    runtime:{prepare:async()=>({ready:true}),ready:async()=>({ready:true}),async *speak({signal}){references++;yield {type:'reference',style:'calm',source:'neutral-fallback'};signal.throwIfAborted();sent++;yield {type:'pcm',pcm:new Uint8Array([0,0]),sampleRate:24000};yield {type:'done'};}}});
+  await voice.action('prepare',{target:'speech'});
   const turn={...scope,requestId:'held-authority',messageId:'message'},lease=await voice.admit(turn),envelope={...turn,...lease,index:0,segmentId:turn.requestId+':voice:0'};
   assert.equal(await voice.segment({envelope,text:'INERT_TEXT'}),true);await entered.promise;
   const beforeRelease=await Promise.race([failed.promise,delay(150,'still-waiting')]);release.resolve();await tick();

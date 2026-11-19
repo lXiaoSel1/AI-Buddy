@@ -27,7 +27,8 @@ export class PriceService{
  async tick(){if(this.state?.autoUpdate&&Date.now()-Date.parse(this.info().updatedAt)>86400000&&Date.now()-(this.lastAttempt||0)>3600000){this.lastAttempt=Date.now();await this.refresh();}}
  referenceRate(r){
   if(this.rateRevision!==this.revision){this.rateCache=new Map();this.rateRevision=this.revision;}
-  const key=JSON.stringify([r.serviceProvider,r.model,r.modelVendor,r.billingRoute]);if(this.rateCache.has(key))return this.rateCache.get(key);
+  const kimiChina=r.connectionIdentity?.address==='https://api.moonshot.cn';
+  const key=JSON.stringify([r.serviceProvider,r.model,r.modelVendor,r.billingRoute,kimiChina]);if(this.rateCache.has(key))return this.rateCache.get(key);
   const canonical=p=>providerAliases[p]||p,platform=canonical(r.serviceProvider),model=String(r.model||''),vendor=canonical(r.modelVendor&&r.modelVendor!=='unknown'?r.modelVendor:providerFor(model.split('/').at(-1))),route=r.billingRoute||'unknown';
   const candidates=[];if(platform&&platform!=='unknown')candidates.push({provider:platform,model,kind:'platform-api'});
   if(vendor&&vendor!=='unknown'){const referenceModel=model.split('/').at(-1);if(!candidates.some(c=>c.provider===vendor&&c.model===referenceModel))candidates.push({provider:vendor,model:referenceModel,kind:'model-api'});}
@@ -35,16 +36,46 @@ export class PriceService{
   for(const c of candidates){
    const overrides=(this.state?.overrides||[]).filter(p=>canonical(p.provider)===c.provider&&p.model===c.model);
    const override=overrides.find(p=>(p.billingRoute||'api')===route)||overrides.find(p=>(p.billingRoute||'api')==='api');
-   const id=c.provider+'/'+c.model,catalog=this.state?.catalog?.rows[id]?this.state.catalog:this.bundle,rate=override||catalog.rows[id];
-   if(rate){chosen={rate,priceProvider:c.provider,priceModel:c.model,priceBasis:override?'user':c.kind,source:override?'用户自定义':rate.source||catalog.source,version:override?'custom-'+this.revision:catalog.version};break;}
+   const id=c.provider+'/'+c.model,bundledRate=this.bundle.rows[id];
+   const catalog=this.state?.catalog?.rows[id]?this.state.catalog:this.bundle;
+   const publishedRate=catalog.rows[id];
+   let rate=override||publishedRate;
+   if(!override&&bundledRate?.chinaRate){
+    rate=kimiChina?{...bundledRate,...bundledRate.chinaRate}:{
+     ...publishedRate,cacheWrite:publishedRate.cacheWrite??bundledRate.cacheWrite,
+     cacheWrite1h:publishedRate.cacheWrite1h??bundledRate.cacheWrite1h,
+    };
+   }
+   if(rate){chosen={rate,priceProvider:c.provider,priceModel:c.model,priceBasis:override?'user':c.kind,source:override?'用户自定义':rate.source||catalog.source,version:override?'custom-'+this.revision:rate.retrievedAt??catalog.version};break;}
   }
   this.rateCache.set(key,chosen);return chosen;
  }
  estimate(r){const fail=reason=>({amount:null,reason}),reference=this.referenceRate(r);if(!reference)return fail('缺少该模型的参考价格');const {rate}=reference;
-  const u=r.usage;if(u.input===null||u.output===null)return fail('输入或输出口径不完整');
-  let inputTotal=u.input+(u.cacheRead||0)+(u.cacheWrite||0),chosen=rate;for(const t of [...(rate.tiers||[])].sort((a,b)=>a.threshold-b.threshold))if(inputTotal>t.threshold)chosen={...rate,...t};
-  let amount=0;for(const key of ['input','output','cacheRead','cacheWrite']){const n=u[key];if(n===null){if(key==='cacheWrite'&&r.cacheIncluded===true)continue;return fail('缺少缓存用量');}if(n>0&&!finite(chosen[key]))return fail('缺少缓存单价');amount+=(n||0)*(chosen[key]||0)/1e6;}
-  if(r.cacheWrite1h>0){if(!finite(chosen.cacheWrite1h))return fail('缺少一小时缓存写入价格');amount+=r.cacheWrite1h*(chosen.cacheWrite1h-chosen.cacheWrite)/1e6;}
+  const u=r.usage;
+  if(r.usageQuality?.some(issue=>['conflict','invalid-counter','invalid-cache-partition','incomplete-usage'].includes(issue)))return fail('缓存用量字段不完整或冲突');
+  if(u.input==null||u.output==null)return fail('输入或输出口径不完整');
+  const partitionTotal=u.input+(u.cacheRead??0)+(u.cacheWrite??0);
+  const inputTotal=r.usageSchemaVersion===2?u.totalInput??partitionTotal:partitionTotal;
+  let chosen=rate;for(const t of [...(rate.tiers||[])].sort((a,b)=>a.threshold-b.threshold))if(inputTotal>t.threshold)chosen={...rate,...t};
+  let amount=0;
+  for(const key of ['input','output','cacheRead']){
+   const count=u[key];
+   if(count==null)return fail('缺少缓存用量');
+   if(count>0&&!finite(chosen[key]))return fail('缺少缓存单价');
+   amount+=count*(chosen[key]??0)/1e6;
+  }
+  const ttlWrite=r.cacheWriteMode==='ttl';
+  if((r.cacheWrite5m??0)+(r.cacheWrite1h??0)>(u.cacheWrite??0))return fail('缓存用量字段不完整或冲突');
+  if(u.cacheWrite==null&&(r.cacheIncluded!==true||ttlWrite))return fail('缺少缓存用量');
+  if(u.cacheWrite>0){
+   if(ttlWrite&&r.cacheWrite5m==null&&r.cacheWrite1h==null)return fail('缺少缓存写入时长分档');
+   const write1h=r.cacheWrite1h??(r.cacheWrite5m==null?0:u.cacheWrite-r.cacheWrite5m);
+   const write5m=r.cacheWrite5m??u.cacheWrite-write1h;
+   if(write5m<0||write1h<0||write5m+write1h!==u.cacheWrite)return fail('缓存用量字段不完整或冲突');
+   if(write5m>0&&!finite(chosen.cacheWrite))return fail('缺少缓存单价');
+   if(write1h>0&&!finite(chosen.cacheWrite1h))return fail('缺少一小时缓存写入价格');
+   amount+=(write5m*(chosen.cacheWrite??0)+write1h*(chosen.cacheWrite1h??0))/1e6;
+  }
   const {rate:_,...provenance}=reference;return {amount,currency:rate.currency,...provenance};
  }
 }

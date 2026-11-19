@@ -10,7 +10,7 @@ from public_distribution_validation import no_links, require
 KIND = 'installed-plugin-runtime-release-gate'
 SCOPE = 'synthetic isolated validation only'
 TARGETS = {
-    'bilibili': ('@ai-buddy/bilibili-companion', '2.0.16', '9d585ffc887f9a274cb7f321b514fb0b60b400a38665d5563d216f67fdc73336'),
+    'bilibili': ('@ai-buddy/bilibili-companion', '2.0.18', 'b08988f630f4b49e784d32a7781f1f6c48fffd48d0075e7d17534d26b9bafa59'),
     'qq': ('@ai-buddy/qq-connect', '2.0.10', 'c58110307866f15a309bbb9ad2839e521ea61caf897bc7666e0353f582545a6d'),
     'card-games': ('@ai-buddy/card-games', '1.1.5', '7f2c6dcfff0bd3a2e0ad602fea03c1361490914e4764821b374bdd59f7eb086d'),
 }

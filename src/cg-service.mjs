@@ -22,10 +22,10 @@ function dailyMetadata(value){
  return {logicalDay:value.logicalDay,slot:value.slot,timeZone:value.timeZone,triggeredAt:value.triggeredAt,sourceEventId:value.sourceEventId??'daily:'+value.logicalDay+':'+value.slot.replace(':',''),materialEventIds:[...new Set(materialEventIds)],materialSourceHashes:structuredClone(materialSourceHashes),fictional:true,...(typeof value.coverageHash==='string'?{coverageHash:value.coverageHash}:{})};
 }
 export class CgService extends ModelRouter{
- constructor({codex,dataRoot,crypto,onChange=()=>{},onUsage=()=>{},onRewardFact=null,captureRewardScope=()=>null,validateDailyScope=()=>true,canViewDailyScope=()=>true,onActivity=()=>{},audit=()=>{},fetchImpl,imageCodec,themePlanner=null,resourceCheck=()=>{},referenceResolver=async()=>[],automaticWorkAllowed=()=>true,pollInterval=10000,timeoutMs=600000}){
+ constructor({codex,dataRoot,crypto,onChange=()=>{},onUsage=()=>{},onRewardFact=null,isRewardFactRecorded=null,captureRewardScope=()=>null,validateDailyScope=()=>true,canViewDailyScope=()=>true,onActivity=()=>{},audit=()=>{},fetchImpl,imageCodec,themePlanner=null,resourceCheck=()=>{},referenceResolver=async()=>[],automaticWorkAllowed=()=>true,pollInterval=10000,timeoutMs=600000}){
   super({codex,dataRoot,crypto,onChange,onUsage,onActivity,audit,fetchImpl,legacy:false,storeName:'cg-connections.json',presets:CG_PRESETS,protocols:CG_PROTOCOLS,timeoutMs});
   Object.assign(this,{imageCodec,referenceResolver,themePlanner,resourceCheck,automaticWorkAllowed,validateDailyScope,canViewDailyScope});this.jobs=[];this.tombstones={};this.listeners=new Set();this.sentJobs=new Map();this.enqueuing=new Set();this.jobTail=Promise.resolve();this.jobStore=createSnapshotStorage(join(dataRoot,'cg-jobs.json'));this.imageTransport=new CgTransport({fetchImpl,onUsage,pollInterval});this.started=false;this.closed=false;this.automaticGeneration=randomUUID();this.automaticAdmission=false;this.automaticControlVersion=0;
-  this.captureRewardScope=captureRewardScope;this.rewardFacts=createCgRewardFacts({dataRoot,onRewardFact});
+  this.captureRewardScope=captureRewardScope;this.rewardFacts=createCgRewardFacts({dataRoot,onRewardFact,isRewardFactRecorded,audit});
   const configurationReady=this.ready;
   this.ready=Promise.all([configurationReady,readJson(this.jobStore,{version:1,jobs:[]})]).then(async([,state])=>{
    this.enabled=this.state.autoEnabled===true;if(this.automaticControlVersion===0)this.automaticAdmission=this.enabled;this.jobs=state.jobs;this.tombstones=state.tombstones??{};

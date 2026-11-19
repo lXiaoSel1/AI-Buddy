@@ -11,15 +11,15 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
 async function fixture(t){
  const calls=[],events=[],settings=createVoiceSettings();await settings.update({enabled:true});
  const rows=[{id:'ai-buddy.voice-breeze',engine:'breeze',installed:true,enabled:true,usable:true,trusted:true,archiveSha256:'package-a'}];
- let game,engineReady=false,profileVersion=1,profileMissing=false,failPreparation=false,failCancellation=false,proof='asset-a',readiness=true;
+ let game,engineReady=false,profileVersion=1,selectedProfileId,profileMissing=false,failPreparation=false,failCancellation=false,proof='asset-a',readiness=true;
  const runtime={async prepare(){calls.push('prepare');if(failPreparation)throw Object.assign(Error('fixture preparation failed'),{code:'FIXTURE_PREPARE_FAILED'});engineReady=true;return {ready:true};},async ready(){calls.push('ready');return {ready:engineReady&&readiness};},async cancelCurrent(){calls.push('cancelCurrent');if(failCancellation)throw Error('fixture cancellation failed');},async cancelCapture(){calls.push('cancelCapture');},async stopEngine(){calls.push('stopEngine');engineReady=false;},async startCapture(){calls.push('startCapture');},async close(){}};
- const voice=createVoiceController({getScope:()=>game?.voiceScope(),settings,listPackages:()=>rows,runtime,profiles:{async current({characterId,engine}){return profileMissing?null:{id:'profile-'+characterId,version:profileVersion,characterId,engine};}},assets:{resolve:async()=>{calls.push('resolve');return {proof};},status:async()=>({state:'ready'})},submit:async()=>assert.fail('lifecycle transitions must never submit a chat turn'),send:event=>events.push(event)});
+ const voice=createVoiceController({getScope:()=>game?.voiceScope(),settings,listPackages:()=>rows,runtime,profiles:{async current({characterId,engine}){return profileMissing?null:{id:selectedProfileId??'profile-'+characterId,version:profileVersion,characterId,engine};},async select({characterId,engine,profileId}){selectedProfileId=profileId;profileVersion++;return this.current({characterId,engine});}},assets:{resolve:async()=>{calls.push('resolve');return {proof};},status:async()=>({state:'ready'})},submit:async()=>assert.fail('lifecycle transitions must never submit a chat turn'),send:event=>events.push(event)});
  const provider={enabled:true,currentSelection:()=>({provider:'fixture',model:'never-called'}),listProviders:()=>[],listModels:()=>[],runTurn:async()=>assert.fail('model calls prohibited'),async *stream(){assert.fail('model calls prohibited');}};
  game=await createGalgame({dataRoot:mkdtempSync(join(tmpdir(),'voice-page-r15-')),voice,provider,model:'never-called',automaticWorkAllowed:()=>false});
  const group=(await game.action('companion-group-save',{name:'Lifecycle fixture',memberIds:['deepseek','claude'],mode:'list'})).group;
  t.after(async()=>{await game.close();await voice.close().catch(()=>{});});
  const settled=async()=>{for(let i=0;i<80;i++){const state=await voice.state();if(!state.stopping)return state;await tick();}assert.fail('scope invalidation did not settle');};
- return {voice,game,settings,rows,events,calls,group,runtime,settled,get engineReady(){return engineReady;},setProfileVersion(value){profileVersion=value;},missProfile(){profileMissing=true;},failPreparation(){failPreparation=true;},failCancellation(){failCancellation=true;},changeAsset(){proof='asset-b';},unready(){readiness=false;}};
+ return {voice,game,settings,rows,events,calls,group,runtime,settled,get engineReady(){return engineReady;},missProfile(){profileMissing=true;},failPreparation(){failPreparation=true;},failCancellation(){failCancellation=true;},changeAsset(){proof='asset-b';},unready(){readiness=false;}};
 }
 function assertReady(state,f){assert.equal(state.settings.enabled,true,'navigation must preserve the user switch');assert.equal(f.engineReady,true,'navigation must preserve a resident engine');assert.deepEqual(state.preparation,{state:'ready',target:'speech'},'resident speech must remain usable without a new start gesture');assert.equal(state.live,false);assert.equal(state.capture,null);}
 
@@ -41,8 +41,22 @@ test('a scope switch cancels Live capture and rejects its stale microphone frame
  await assert.rejects(f.voice.action('capture-feed',{id:capture.id,pcm:new Uint8Array(32)}),{code:'VOICE_STALE_CAPTURE'});assert.equal(f.calls.filter(x=>x==='startCapture').length,1,'navigation must never reopen a microphone');
 });
 
-for(const invalidation of ['configuration-changed','profile-changed','user-stop'])test(`${invalidation} must not inherit scope-only readiness`,async t=>{
+for(const invalidation of ['configuration-changed','user-stop'])test(`${invalidation} must not inherit scope-only readiness`,async t=>{
  const f=await fixture(t);await f.voice.action('prepare',{target:'speech'});await f.voice.invalidate(invalidation);assert.deepEqual((await f.voice.state()).preparation,{state:'idle',target:null});
+});
+
+test('a profile selection preserves resident speech and admits the new profile',async t=>{
+ const f=await fixture(t);await f.voice.action('prepare',{target:'speech'});
+ const prepareCount=f.calls.filter(call=>call==='prepare').length,readinessCount=f.calls.filter(call=>call==='ready').length;
+ const profile=await f.voice.action('profile-select',{profileId:'replacement'});
+ assert.equal(profile.id,'replacement');
+ const state=await f.voice.state();assertReady(state,f);
+ assert.equal(f.calls.filter(call=>call==='ready').length,readinessCount+1,'profile selection rechecks the resident engine');
+ assert.equal(f.calls.filter(call=>call==='prepare').length,prepareCount,'profile selection does not reload the engine');
+ assert.equal(f.calls.includes('stopEngine'),false);
+ const lease=await f.voice.admit({...state.scope,requestId:'profile-selection-reply'});
+ assert.equal(lease?.voiceProfileVersion,2,'the next reply uses the new profile version');
+ await f.voice.finish({requestId:'profile-selection-reply'});
 });
 
 for(const change of ['disabled-package','changed-package','missing-profile','unready-runtime'])test(`scope retention does not invent readiness after ${change}`,async t=>{

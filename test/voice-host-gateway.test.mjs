@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
-import {VoiceChatControls} from '../src/voice/client.mjs';
+import {ensureVoiceSession,VoiceChatControls} from '../src/voice/client.mjs';
 import {createVoiceHost} from '../src/voice/host.mjs';
 import {createVoiceSettings} from '../src/voice/settings.mjs';
 import {createVoiceConversation} from '../src/voice/conversation.mjs';
@@ -15,7 +16,7 @@ const cardScope=()=>({channel:'card-table',tableId:'table-one',handId:'hand-one'
 const cardRequest=(eventId='card-one')=>({eventId,kind:'allin',text:'untrusted replacement words',scope:cardScope()});
 async function until(check){for(let i=0;i<100;i++){if(check())return;await new Promise(resolve=>setTimeout(resolve,5));}throw Error('voice host did not settle');}
 
-async function fixture(t,{packageId=ids[0],provider='local',hold=false,readiness={ready:true},assetsOverride={}}={}){
+async function fixture(t,{packageId=ids[0],provider='local',hold=false,readiness={ready:true},assetsOverride={},network}={}){
   const dataRoot=await mkdtemp(join(tmpdir(),'voice-host-gateway-'));
   const settings=createVoiceSettings();
   await settings.update({enabled:true,selectedPackageId:packageId,packages:{[packageId]:{ttsProvider:provider,credentialRef:'voice:test-key'}}});
@@ -37,11 +38,18 @@ async function fixture(t,{packageId=ids[0],provider='local',hold=false,readiness
   const game={voiceScope:()=>({...chatScope}),voiceCancel:()=>{cancelled++;},voiceReceipt:async value=>{gameReceipts.push(value);return {accepted:true};},voiceSubmit:async()=>{throw Error('card speech must not submit another model turn');}};
   const platform={voicePackageStatus:()=>packages,resolveVoicePackage:async(id,options)=>{leases.push({id,...options});return {assertCurrent(){}};},cardGames:{voiceScopeValid:scope=>valid&&scope.tableId==='table-one'&&scope.handId==='hand-one'&&scope.lifeId==='life-bob'}};
   const profiles={
+    async resolve({characterId,engine}){
+      const profile=profileRows.get(characterId+':'+engine);
+      const accountScope=createHash('sha256').update('minimax\0synthetic-network-key').digest('hex');
+      return {...profile,cloudBinding:{accountScope,provider:'minimax',voiceId:'fixture-voice',category:'system_voice'}};
+    },
     async current(scope){profileReads.push(scope);return structuredClone(profileRows.get(scope.characterId+':'+scope.engine));},
     async select({characterId,engine,profileId}){const key=characterId+':'+engine,old=profileRows.get(key),next={...old,id:profileId,version:old.version+1};profileRows.set(key,next);return next;}
   };
-  const host=createVoiceHost({dataRoot,build:'unused',getGame:()=>game,getPlatform:()=>platform,send:event=>events.push(event),
-    components:{settings,profiles,runtime,local:{},cloud:{async status(){return {state:'ready'};}},credentials:{},assets:{async prepareSelected(){return {state:'ready'};},async resolve(){return {};},async status(){return {state:'ready'};},...assetsOverride},supervisor:{async close(){}}}});
+  const host=createVoiceHost({dataRoot,build:'unused',getGame:()=>game,getPlatform:()=>platform,send:event=>events.push(event),network,
+    components:{settings,profiles,...(network?{local:{async stopEngine(){},async close(){},async cancelCapture(){}}}:{
+      runtime,local:{},cloud:{async status(){return {state:'ready'};}},
+    }),credentials:{async resolve(){return 'synthetic-network-key';}},assets:{async prepareSelected(){return {state:'ready'};},async resolve(){return {};},async status(){return {state:'ready'};},...assetsOverride},supervisor:{async close(){}}}});
   t.after(async()=>{release?.();try{await host.close();}finally{await rm(dataRoot,{recursive:true,force:true});}});
   return {host,game,settings,events,spoken,ready,stops,gameReceipts,profileReads,profileRows,leases,packages,channels,
     releaseSpeech:()=>release?.(),invalidateScope:()=>{valid=false;},cancelled:()=>cancelled};
@@ -427,4 +435,71 @@ test('official asset retry forwards only the chosen operation and preserves mirr
  await f.host.action('assets-prepare',{kind:'asr',packageId:ids[0]});assert.deepEqual(calls,[{kind:'asr',official:false},{kind:'asr',official:true},{kind:'asr',official:false}]);
  await assert.rejects(f.host.action('assets-prepare',{kind:'asr',packageId:ids[0],official:true,expectedProvider:'minimax'}),{code:'VOICE_ASSET_SELECTION_CHANGED'});
  assert.equal(calls.length,3);
+});
+
+test('R2 U7 host cloud speech configure and prepare skip the local component pipeline',async t=>{
+ const calls=[];
+ const f=await fixture(t,{provider:'minimax',assetsOverride:{async prepareSelected(){calls.push('prepare-selected');throw Error('ASR was checked');}}});
+ await f.host.action('configure',{enabled:true});
+ await f.host.action('prepare',{target:'speech'});
+ assert.deepEqual(calls,[]);
+});
+
+test('R2 U1 host publishes the trusted current group speaker readiness separately from the entry role',async t=>{
+ const f=await fixture(t,{provider:'minimax'});
+ f.game.voiceScope=()=>({channel:'app-group',characterId:'alice',personaId:'persona-one',conversationId:'group',lifeId:'life-alice',operationId:'operation-one'});
+ f.game.voiceGroupSpeaker=()=>'bob';
+ f.profileRows.delete('alice:breeze');
+ const state=await f.host.action('state');
+ assert.equal(state.cloudSpeech?.characterId,'bob');
+ assert.equal(state.cloudSpeech?.state,'ready');
+ assert.equal(state.cloud.state,'unbound');
+ await assert.rejects(f.host.action('state',{characterId:'bob'}),{code:'VOICE_SCOPE_FORGED'});
+});
+
+test('R2 U7 production host wiring streams cloud PCM with no ASR installed',async t=>{
+ const localAssetCalls=[],networkCalls=[];
+ const network={async fetch(url,request){
+  networkCalls.push({url:String(url),voice:JSON.parse(request.body).voice_setting.voice_id});
+  const events=[{data:{status:1,audio:'01000200'},base_resp:{status_code:0}},{data:{status:2},base_resp:{status_code:0}}];
+  return new Response(events.map(event=>'data: '+JSON.stringify(event)+'\n\n').join(''),{headers:{'content-type':'text/event-stream'}});
+ }};
+ const f=await fixture(t,{provider:'minimax',network,assetsOverride:{
+  async prepareSelected(){localAssetCalls.push('prepareSelected');throw Error('ASR unavailable');},
+  async resolve(kind){localAssetCalls.push(kind);throw Error('ASR unavailable');},
+ }});
+ const settings=await f.settings.get();
+ await f.settings.saveConnection({name:'Synthetic',provider:'minimax',model:'speech-2.8-turbo',credentialRef:settings.packages[ids[0]].credentialRef});
+ await f.host.action('configure',{enabled:true});
+ const scope={...f.game.voiceScope(),requestId:'native-cloud-turn'},lease=await f.host.controller.admit(scope);
+ assert.ok(lease);
+ const envelope={...scope,...lease,segmentId:scope.requestId+':voice:0',index:0};
+ assert.equal(await f.host.controller.segment({envelope,text:'Synthetic reply'}),true);
+ await until(()=>f.events.some(event=>event.type==='audio'&&event.phase==='end'||event.type==='segment'&&event.state==='failed'));
+ const pcm=f.events.find(event=>event.type==='audio'&&event.phase==='pcm');
+ assert.deepEqual(localAssetCalls,[],'ordinary speech never loads ASR');
+ assert.deepEqual([...pcm.pcm],[1,0,2,0]);
+ assert.equal(pcm.sampleRate,32000);
+ assert.deepEqual(networkCalls,[{url:'https://api.minimax.cn/v1/t2a_v2',voice:'fixture-voice'}]);
+ assert.deepEqual(f.leases,[{id:ids[0],provider:'minimax'}]);
+});
+
+test('R2 U7 ordinary mounted cloud voice session leaves ASR inventory to component management',async t=>{
+ const reads=[],calls=[];
+ const f=await fixture(t,{provider:'minimax',assetsOverride:{async status(kind,packageId){reads.push([kind,packageId]);return {state:'ready'};}}});
+ const api={onEvent(){return ()=>{};},action(op,payload){calls.push(op);return f.host.action(op,payload);}};
+ const session=ensureVoiceSession(api,{captureOptions:{workletURL:"fixture"}}),release=session.retain();let snapshot;
+ const off=session.subscribe(value=>{snapshot=value;});
+ try{
+  await session.refresh();
+  assert.equal(snapshot.state.cloudSpeech.state,'ready');
+  assert.deepEqual(reads.filter(([kind])=>kind==='asr'),[],'chat session must not check ASR for either plugin');
+  assert.equal(calls.includes('component-status'),false,'ordinary mount never requests component inventory');
+  const offManagement=session.manageComponents();
+  try{
+   await session.refresh();
+   assert.ok(snapshot.componentStatuses[ids[0]].ready);
+   assert.ok(reads.some(([kind,packageId])=>kind==='asr'&&packageId===ids[0]),'explicit management reads ASR');
+  }finally{offManagement();}
+ }finally{off();await release();}
 });

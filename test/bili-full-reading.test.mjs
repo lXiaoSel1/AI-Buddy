@@ -44,3 +44,73 @@ test('ACR1 private reconciliation cannot reopen an explicitly stopped reading',a
  const f=await fixture(t,{duration:6,text:'Original'}),p=await f.prepare();f.service.confirmForAccount({...owner,confirmed:true,planHash:p.planHash});const b=await f.service.read({scope,readingId:owner.readingId});f.service.claim({scope,readingId:owner.readingId,batchId:b.batchId,inputHash:b.inputHash});f.service.finish({scope,readingId:owner.readingId,batchId:b.batchId,status:'unknown'});f.service.stopForAccount(owner);
  assert.throws(()=>f.service.reconcile({scope,readingId:owner.readingId,batchId:b.batchId,inputHash:b.inputHash,providerRequestId:'original',result:{text:'{}'}}),{code:'BILI_FULL_BATCH_MISMATCH'});assert.equal(f.service.getForAccount(owner).phase,'cancelled');
 });
+
+test('observed hour-based subtitle times fit the frozen part without changing its frame grid',async t=>{
+ const f=await fixture(t,{duration:190});
+ const items=[{id:'first',start:3602.958,end:3604.25,text:'Synthetic first cue'},{id:'last',start:3755,end:3758.625,text:'Synthetic last cue'}];
+ const plan=await f.prepare({subtitleTracks:[{cid:123,language:'en',items}]});
+ assert.equal(plan.frameCount,380);
+ assert.equal(plan.cueCount,2);
+ assert.deepEqual(plan.subtitleNotices,[{cid:123,page:1,reason:'shifted',timebaseShiftSeconds:3600}]);
+ const raw=createBiliFullReadingStore({directory:join(f.directory,'full-v1')}).load(owner.readingId);
+ assert.equal(raw.cues[1].end,158.625);
+ assert.equal(raw.cues[1].originalEnd,3758.625);
+ assert.equal(raw.cues[1].text,items[1].text);
+ assert.equal(raw.cues[1].sourceCueSha256,fullReadingHash(items[1]));
+ assert.deepEqual(f.service.getForAccount(owner).subtitleNotices,plan.subtitleNotices);
+});
+
+test('out-of-range timing skips the entire affected track and retains its proof',async t=>{
+ const cases=[
+  {reason:'partial',duration:190,times:[[3,4],[3602,3603]]},
+  {reason:'out-of-range',duration:190,times:[[3602,4001]]},
+  {reason:'ambiguous',duration:7200,times:[[10800,10801]]}
+ ];
+ for(const {reason,duration,times} of cases){
+  const f=await fixture(t,{duration});
+  const track={cid:123,language:'en',items:times.map(([start,end],i)=>({id:'a'+i,start,end,text:'Synthetic cue'}))};
+  const plan=await f.prepare({config:{sampleSeconds:60,windowSeconds:60},subtitleTracks:[track]});
+  assert.equal(plan.frameCount,Math.ceil(duration/60));
+  assert.equal(plan.cueCount,0);
+  assert.deepEqual(plan.subtitleNotices,[{cid:123,page:1,reason}]);
+  assert.deepEqual(createBiliFullReadingStore({directory:join(f.directory,'full-v1')}).load(owner.readingId).subtitleSourceProofs,[{cid:123,sourceTrackSha256:fullReadingHash(track)}]);
+ }
+});
+
+test('empty or malformed cues cannot be treated as a subtitle timebase issue',async t=>{
+ const f=await fixture(t,{duration:190});
+ const good={id:'a',start:3602,end:3603,text:'Synthetic cue'};
+ for(const [items,reason] of [[[],'empty-track'],[[{...good,id:''}],'invalid-id'],[[{...good,text:''}],'invalid-text'],[[{...good,end:1}],'invalid-time'],[[good,good],'duplicate-cue']]){
+  await assert.rejects(f.prepare({subtitleTracks:[{cid:123,language:'en',items}]}),{code:'BILI_FULL_CUES_INVALID',details:{cid:123,page:1,reason}});
+ }
+ assert.deepEqual(f.calls,[]);
+});
+
+test('a skipped subtitle track sends the observed video description once alongside source frames',async t=>{
+ const f=await fixture(t,{duration:190}),description='Synthetic observed description';
+ const plan=await f.prepare({description,config:{sampleSeconds:6,windowSeconds:6},subtitleTracks:[{cid:123,language:'en',items:[{id:'a',start:3602,end:4001,text:'Synthetic out-of-range subtitle'}]}]});
+ assert.equal(plan.cueCount,0);
+ f.service.confirmForAccount({...owner,confirmed:true,planHash:plan.planHash});
+ await f.service.read({scope,readingId:owner.readingId});
+ const first=await f.service.read({scope,readingId:owner.readingId,shrink:true});
+ const observed=first.material.items.find(item=>item.source==='video-description');
+ assert.equal(observed?.text,description);
+ assert.ok(first.visualMaterialRefs.length);
+ assert.equal(f.service.verifyMaterial({scope,readingId:owner.readingId,batchId:first.batchId,material:first.material,visualMaterialRefs:first.visualMaterialRefs}).inputHash,first.inputHash);
+ f.service.claim({scope,readingId:owner.readingId,batchId:first.batchId,inputHash:first.inputHash});
+ f.service.finish({scope,readingId:owner.readingId,batchId:first.batchId,status:'completed',providerRequestId:'synthetic-good',result:{requestId:'synthetic-good',understanding:{summary:'Seen',notes:'Frame and description',evidenceRefs:[observed.id],completedMaterial:true,shareWorthy:false,shareText:'',interestTags:[],commentWorthy:false}}});
+ const second=await f.service.read({scope,readingId:owner.readingId,shrink:true});
+ assert.equal(second.material.items.some(item=>item.source==='video-description'),false);
+ assert.equal(second.coverage.cues.total,0);
+});
+
+test('a skipped track preserves the whole observed description across bounded Unicode spans',async t=>{
+ const f=await fixture(t,{duration:190}),description=' '.repeat(255)+'😀 retained description '.repeat(20);
+ const plan=await f.prepare({description,config:{sampleSeconds:6,windowSeconds:6},subtitleTracks:[{cid:123,language:'en',items:[{id:'a',start:3602,end:4001,text:'Synthetic out-of-range subtitle'}]}]});
+ f.service.confirmForAccount({...owner,confirmed:true,planHash:plan.planHash});
+ const batch=await f.service.read({scope,readingId:owner.readingId});
+ const rows=batch.material.items.filter(item=>item.source==='video-description');
+ assert.ok(rows.length>1);
+ assert.equal(rows.map(item=>item.text).join(''),description);
+ assert.ok(rows.every(item=>item.text.length<=256&&!/[\uD800-\uDBFF]$/.test(item.text)));
+});

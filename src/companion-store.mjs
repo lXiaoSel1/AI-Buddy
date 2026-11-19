@@ -1,13 +1,19 @@
-import {assertR95CompanionCompatible} from './r95-data-compatibility.mjs';
+import {copyCompanionValue} from './companion-draft.mjs';
+import {AsyncLocalStorage} from 'node:async_hooks';
+import {channel} from 'node:diagnostics_channel';
+import {enablePatches,Immer} from 'immer';
+import {openCompanionDatabase,reportSlowCompanionTransaction} from './companion-sqlite.mjs';
+import {acquireCompanionStorageReader,boundedMemoryRecordPlanBytes,createCompanionAutoArchivePublisher,createCompanionMemoryPublisher,prepareCompanionStorage,runCompanionStorageWorker} from './companion-storage-worker-client.mjs';
 import {join,resolve} from 'node:path';
+import {performance} from 'node:perf_hooks';
+import {setImmediate as yieldImmediate} from 'node:timers/promises';
 import {createEvidenceArchive} from './evidence-archive.mjs';
-import {compactAutoGroups} from './auto-evidence.mjs';
+import {createCompanionWalMaintenance} from './companion-wal-maintenance.mjs';
+import {startCompanionWriteTrace} from './companion-write-trace.mjs';
 import {randomUUID,createHash} from 'node:crypto';
-import {createSnapshotStorage,readJson} from './storage.mjs';
 import {currentLife} from './companion-life.mjs';
 import {normalizePhotoPlannerBinding} from './group-cg-planner.mjs';
 import {imageSlots,isMediaUrl} from './media-store.mjs';
-import {measureDesktopDiagnostic} from './desktop-diagnostics.mjs';
 
 export const DEFAULT_PERSONA_ID='default';
 export function companionId(value){if(typeof value!=='string'||!/^[a-zA-Z0-9_:.-]{1,200}$/.test(value)||value==='prototype'||Object.hasOwn(Object.prototype,value))throw Error('身份或记录 ID 格式无效');return value;}
@@ -21,7 +27,26 @@ export function migrateCharacterTalkativeness(state,at=Date.now()){
   state.characterTalkativenessMigration??={version:1,at,entries:[]};state.characterTalkativenessMigration.entries.push({characterId:card.id,value:card.talkativeness,sourceGroupId:legacy[0]?.groupId??null,legacy});
  }
 }
-const copy=value=>structuredClone(value);
+const memoryPublications=channel('ai-buddy.companion.memory-publisher');
+const copy=copyCompanionValue;
+enablePatches();
+const companionDraft=new Immer({autoFreeze:false});
+function fitsLifeMetadataDelta(value){
+ let remaining=512*1024;
+ function visit(item){
+  remaining-=8;
+  if(remaining<0)return false;
+  if(typeof item==='string'){remaining-=item.length*3;return remaining>=0;}
+  if(!item||typeof item!=='object')return true;
+  if(item instanceof Map){
+   for(const [key,value] of item)if(!visit(key)||!visit(value))return false;
+  }else if(item instanceof Set){
+   for(const value of item)if(!visit(value))return false;
+  }else for(const key in item)if(Object.hasOwn(item,key)&&(!visit(key)||!visit(item[key])))return false;
+  return true;
+ }
+ return visit(value);
+}
 // Guards may inspect a few live fields without copying the archive. Wrap lazily
 // so neither assignment nor descriptor access can change committed state.
 function readOnlyGuardState(state){
@@ -37,24 +62,556 @@ export const progress=(value={})=>({level:Math.max(1,Math.floor(Number(value.lev
 export const cap=level=>30+(Math.max(1,level)-1)*15;
 export function advanceProgress(value,delta){const next=progress(value);next.affection=Math.max(0,next.affection+delta);const levels=[];while(next.affection>=cap(next.level)){next.affection-=cap(next.level);next.level++;levels.push(next.level);}return {...next,levels};}
 function initial(){return {schema:1,migrated:false,activeCharacterId:'deepseek',activePersonaId:DEFAULT_PERSONA_ID,activeConversationId:null,activeGroupId:null,cards:{},personas:{[DEFAULT_PERSONA_ID]:{id:DEFAULT_PERSONA_ID,name:'默认身份',nickname:'你',createdAt:Date.now(),relationships:{}}},relationships:{},conversations:{},groups:{},touchQuotas:{},events:{},draftCards:{},settings:{allowUserMessageEdit:false}};}
-export async function openCompanionStore(dataRoot,{media=null,deferredSaveRegistry=null,audit}={}){
- const target=join(dataRoot,'galgame','companion.json'),scope=resolve(dataRoot),disk=createSnapshotStorage(target,{deferWrites:true,protectExisting:true,onAudit:audit});let state=await readJson(disk);if(state===undefined)state=initial();assertR95CompanionCompatible(state);
- if(state.schema===1){state={...state,schema:2,minimumWriter:'r95-social-core-v1',requiredCapabilities:['social-core-state-v1'],r95Migration:{from:1,to:2,at:Date.now(),minimumWriterCapability:'social-core-v1'}};await disk.writeText(JSON.stringify(state));}
- // One serialization per change (B4): the body is compared without the revision,
- // which is then written first.
- const body=value=>{const {revision,...rest}=value;return measureDesktopDiagnostic('companion-serialize',()=>JSON.stringify(rest));};
- let tail=Promise.resolve(),current=body(state);
- // A picture newly set as a data URL is stored as a media file and replaced by its
- // URL. Pictures already in the state stay until the T2 migration moves them.
- function storeImages(next){
-  if(!media)return;const before=new Map();for(const [holder,key,path]of imageSlots(state))before.set(path,holder[key]);
-  for(const [holder,key,path]of imageSlots(next)){const value=holder[key];if(typeof value!=='string'||!value.startsWith('data:image/')||before.get(path)===value)continue;const url=media.put(value);if(url)holder[key]=url;}
+const openCompanionWriters=new Map();
+
+export async function exportCompanionForRollback(dataRoot){
+ const directory=resolve(dataRoot,'galgame'),path=join(directory,'companion.sqlite');
+ if(openCompanionWriters.has(path))throw Error('Companion database is currently open');
+ return runCompanionStorageWorker({operation:'rollback',path,legacyPath:join(directory,'companion.json')});
+}
+
+function importWorker(dataRoot,operation,planId){
+ const directory=resolve(dataRoot,'galgame'),path=join(directory,'companion.sqlite');
+ if(operation==='import-interrupt'&&openCompanionWriters.has(path))return Promise.reject(Error('Companion database is currently open'));
+ return runCompanionStorageWorker({operation,path,legacyPath:join(directory,'companion.json'),planId});
+}
+export const inspectCompanionDataRoot=dataRoot=>importWorker(dataRoot,'import-inspect');
+export const interruptImportedCompanion=(dataRoot,planId)=>importWorker(dataRoot,'import-interrupt',planId);
+
+export async function openCompanionStore(dataRoot,{media=null,deferredSaveRegistry=null,audit,sqlClock,onMigrationProgress,interruptMigrationAfter,publishLifeRestoreTimeoutMs=30000,runLifeArchiveMetadata=runCompanionStorageWorker}={}){
+ const directory=resolve(dataRoot,'galgame'),sqlitePath=join(directory,'companion.sqlite');
+ const firstState={...initial(),schema:2,minimumWriter:'r95-social-core-v1',requiredCapabilities:['social-core-state-v1']};
+ const started=performance.now();
+ await prepareCompanionStorage(sqlitePath,join(directory,'companion.json'),firstState,{
+  interruptMigrationAfter,
+  cleanRestoreSources:!openCompanionWriters.has(sqlitePath),
+  onMigrationProgress:progress=>{
+   onMigrationProgress?.(progress);
+   if(['discovered','validated','database-published','ready'].includes(progress.phase)){
+    try{audit?.({type:'companion-migration',phase:progress.phase,count:progress.count??null,total:progress.total??null,elapsedMs:performance.now()-started});}catch{}
+   }
+  }
+ });
+ return openSqliteCompanionStore(dataRoot,sqlitePath,{media,deferredSaveRegistry,audit,sqlClock,publishLifeRestoreTimeoutMs,runLifeArchiveMetadata});
+}
+
+function memoryMetadataEffect(before,after){
+ if(before.memorySettings!==after.memorySettings)return 'memorySettings';
+ if(before.cards!==after.cards)return 'cards';
+ if(before.personas!==after.personas)return 'personas';
+ const changedField=(collection,fields)=>{
+  const oldRows=before[collection],newRows=after[collection];
+  if(oldRows===newRows)return null;
+  const oldIds=Object.keys(oldRows??{}),newIds=Object.keys(newRows??{});
+  if(oldIds.length!==newIds.length)return collection+'.membership';
+  for(const id of oldIds){
+   if(!Object.hasOwn(newRows,id))return collection+'.membership';
+   const field=fields.find(key=>oldRows[id][key]!==newRows[id][key]);
+   if(field)return collection+'.'+field;
+  }
+  return null;
+ };
+ const transactionFields=['id','characterId','operationId','phase'];
+ if(transactionFields.some(key=>before.lifeTransaction?.[key]!==after.lifeTransaction?.[key]))return 'lifeTransaction';
+ const lives=changedField('lives',[
+  'id','operationId','mode','startedAt','memory','growth','groupIntervals','restoredGroupEvidence',
+  'personalEvents','gameExperiences','workExperiences','socialExperiences'
+ ]);
+ if(lives)return lives;
+ if(before.lives!==after.lives&&Object.entries(before.lives??{}).some(([id,life])=>life.r95?.lines!==after.lives?.[id]?.r95?.lines))return 'life.r95.lines';
+ return changedField('conversations',['characterId','personaId','lifeId','importedFrom'])
+  ??changedField('groups',['personaId','importedFrom','intervals']);
+}
+
+const parkedForCheckpoint=Symbol('parkedForCheckpoint');
+
+const tracedMemoryOperations=new Set([
+ 'memory.sync','memory.tick','memory.consolidate','life-restore-prepare','life-restore-stage','life-restore-staged','life-restore-publish'
+]);
+const tracedMemoryNamespaces=new Set([
+ 'group.intervals','life.groupIntervals','life.personalEvents','life.gameExperiences','life.workExperiences','life.socialExperiences','life.r95.lines',
+ 'memory.events','memory.jobs','memory.summaries','memory.guides','memory.core','memory.branches','memory.working','memory.notices',
+ 'memory.coverageHeader.jobs','memory.coverageHeader.summaries','memory.coverage.cutoff','memory.coverage.eventIds',
+ 'memory.coverage.modelEventIds','memory.coverage.segments','growth.history','growth.observations','growth.batches','growth.evidenceUse',
+ 'growth.daily','growth.failures','growth.preferences.traits','growth.preferences.evidenceUseByTrait','growth.trait.evidence',
+ 'growth.trait.counterEvidence','growth.trait.versions'
+]);
+
+function memoryCommitEffects(staged,prepared,metadata){
+ const effects=new Set(metadata?[metadata]:[]);
+ const namespaceEffect=namespace=>tracedMemoryNamespaces.has(namespace)?namespace:
+  namespace.startsWith('memory.')?'memory.records':namespace.startsWith('growth.')?'growth.records':null;
+ if(prepared)effects.add(namespaceEffect(prepared.namespace)??'prepared-memory-record');
+ if(staged.memoryChanged){
+  const {owners,recordStages,messageMoves,recordMoves}=staged.plan();
+  if(messageMoves.length)effects.add('messages.move');
+  if(recordMoves.length)effects.add('records.move');
+  for(const owner of owners.values()){
+   if(!owner.type.startsWith('transaction-')&&(owner.deleted||[...owner.rows.values()].some(row=>!row||row.memoryChanged)))
+    effects.add(owner.type==='private'?'messages.private':owner.type==='group'?'messages.group':'messages.other');
+  }
+  for(const slot of recordStages.values()){
+   const effect=namespaceEffect(slot.namespace);
+   if(effect&&(slot.cleared||[...slot.rows.values()].some(row=>!row||row.memoryChanged)))effects.add(effect);
+   if(effects.size>=8)break;
+  }
  }
- const archive=createEvidenceArchive(join(dataRoot,'galgame','auto-evidence.sqlite'));compactAutoGroups(state,archive);
- const api={archive,get state(){return state;},async mutate(fn,{storeImages:convert=true,guard}={}){const task=tail.then(async()=>{if(guard){const proceed=guard(readOnlyGuardState(state));if(typeof proceed!=='boolean')throw TypeError('Companion mutation guards must return a boolean synchronously');if(!proceed)return;}const next=measureDesktopDiagnostic('companion-clone',()=>copy(state));const result=await fn(next);if(convert)storeImages(next);const text=body(next);if(text===current)return result;next.revision=(Number(state.revision)||0)+1;await disk.writeText('{"revision":'+next.revision+(text==='{}'?'}':','+text.slice(1)));state=next;current=text;return result;});tail=task.catch(()=>{});return task;},async flush(){await tail;if(deferredSaveRegistry)await deferredSaveRegistry.flushAll({scope});else await disk.flush();},async drain(){await tail;await disk.drain();},releaseDeferredSave:()=>release?.(),snapshot:()=>copy(state)};
- const release=deferredSaveRegistry?.register('companion',{target,scope,drain:()=>api.drain(),flushSync:()=>disk.flushSync()});
+ return [...effects].slice(0,8);
+}
+
+function verifyLifeRestoreCursor(before,after,batch,staged){
+ const transaction=before.lifeTransaction,staging=transaction?.staging;
+ const next=after.lifeTransaction,nextStage=next?.staging;
+ const sameExcept=(left,right,except)=>Object.keys(left).length===Object.keys(right).length&&
+  Object.keys(left).every(key=>except.includes(key)||Object.hasOwn(right,key)&&left[key]===right[key]);
+ if(staged.changed||transaction?.id!==batch.id||staging?.sha256!==batch.sha256||staging.cursor!==batch.start||
+  nextStage?.cursor!==batch.end||!sameExcept(before,after,['revision','lifeTransaction'])||
+  !sameExcept(transaction,next,['staging'])||!sameExcept(staging,nextStage,['cursor']))
+  throw Error('Companion life restore batch can only advance its own staging cursor');
+}
+
+function openSqliteCompanionStore(dataRoot,path,{media,deferredSaveRegistry,audit,sqlClock=()=>performance.now(),publishLifeRestoreTimeoutMs,runLifeArchiveMetadata}){
+ const sql=openCompanionDatabase(path,{audit,clock:sqlClock}),scope=resolve(dataRoot);
+ let state=sql.load(),memorySourceRevision=sql.memorySourceRevision(),tail=Promise.resolve(),closing=null,publishing=null,authorityError=null;
+ openCompanionWriters.set(path,(openCompanionWriters.get(path)??0)+1);
+ const evidence=createEvidenceArchive(join(dataRoot,'galgame','auto-evidence.sqlite'),{readOnly:true});
+ let authorizationRevision=0;
+ const archive={...evidence,get authorizationRevision(){return authorizationRevision;}};
+ const reads=new Set(),reader=acquireCompanionStorageReader(path),memoryPublisher=createCompanionMemoryPublisher(path);
+ const autoArchivePublisher=createCompanionAutoArchivePublisher(path);
+ async function publishArchiveEvidence(rows){
+  const acknowledged=await autoArchivePublisher.publish({rows},{timeoutMs:publishLifeRestoreTimeoutMs});
+  if(acknowledged!==true)throw Error('Companion Auto archive acknowledgement mismatch');
+ }
+ const workerOwnedMedia=media?.directory&&resolve(media.directory)===join(scope,'galgame','media');
+ const maintenance=createCompanionWalMaintenance(path,{lastWrite:reader.lastWrite,audit});
+ let memoryPublisherAuthorityError=null;
+ const syncRecords=Object.fromEntries(Object.entries(sql.records).map(([name,readRecord])=>[name,(...args)=>{
+  if(memoryPublisherAuthorityError)throw memoryPublisherAuthorityError;
+  return readRecord(...args);
+ }]));
+ const memorySourceTrace=process.env.AI_BUDDY_R16_MEMORY_SOURCE_TRACE==='1'?[]:null;
+ const traceWrites=process.env.AI_BUDDY_R17_COMPANION_WRITE_TRACE==='1',lifeWriteScope=new AsyncLocalStorage();
+ async function publishMemoryRecord(record,revision,waitFor,commitTrace){
+  const releaseSnapshot=sql.pinReadSnapshot();
+  let releasePublishing;
+  publishing=new Promise(resolve=>{releasePublishing=resolve;});
+  const timeout={timeoutMs:publishLifeRestoreTimeoutMs};
+  try{
+   const result=await waitFor(reader.read({operation:'write-prepared-memory',record,currentRevision:revision,commitTrace},timeout));
+   if(result.revision!==revision+1||result.sha256!==record.sha256)throw Error('Companion memory record acknowledgement mismatch');
+   return result;
+  }catch(commitError){
+   try{
+    const actual=await waitFor(reader.read({operation:'verify-prepared-memory',record},timeout));
+    if(actual.revision===revision)throw commitError;
+    if(actual.revision!==revision+1||actual.memorySourceRevision!==actual.revision||actual.sha256!==record.sha256)
+     throw Error('Companion memory record commit state mismatch');
+    return {...actual,rows:1};
+   }catch(error){
+    if(error===commitError)throw error;
+    authorityError=Object.assign(Error('Companion memory record state changed outside the current store; reopen it'),{code:'COMPANION_STORE_REOPEN_REQUIRED',cause:error});
+    throw authorityError;
+   }
+  }finally{
+   try{releaseSnapshot();}
+   catch(error){
+    authorityError=Object.assign(Error('Companion memory record snapshot could not be released; reopen the store'),{code:'COMPANION_STORE_REOPEN_REQUIRED',cause:error});
+    throw authorityError;
+   }finally{publishing=null;releasePublishing();}
+  }
+ }
+ async function publishRecordPlan(plan,operation,revision,memoryChanged,commitTrace,waitFor){
+  const id=randomUUID(),releaseSnapshot=sql.pinReadSnapshot();
+  function unpin(){
+   try{releaseSnapshot();}
+   catch(error){
+    authorityError=memoryPublisherAuthorityError=Object.assign(Error('Companion memory record snapshot could not be released; reopen the store'),{code:'COMPANION_STORE_REOPEN_REQUIRED',cause:error});
+    throw authorityError;
+   }
+  }
+  let failure,stopped=true;
+  try{
+   const result=await waitFor(memoryPublisher.publish({id,operation,plan,currentRevision:revision,writeMemoryRevision:memoryChanged,commitTrace},
+    {timeoutMs:publishLifeRestoreTimeoutMs}));
+   if(result?.id!==id||result.revision!==revision+1)throw Error('Companion memory record acknowledgement mismatch');
+   return {result,unpin};
+  }catch(error){
+   failure=error;
+   try{await waitFor(memoryPublisher.stop(true));}
+   catch(stopError){
+    stopped=false;
+    failure=new AggregateError([error,stopError],'Companion memory publisher did not stop',{cause:error});
+   }finally{unpin();}
+  }
+  if(stopped){
+   let actual;
+   try{actual=sql.readRevision();}
+   catch(error){failure=new AggregateError([failure,error],'Companion memory record revision could not be read',{cause:failure});}
+   if(actual===revision)throw failure;
+  }
+  authorityError=memoryPublisherAuthorityError=Object.assign(Error('Companion memory record commit could not be confirmed; reopen the store'),{code:'COMPANION_STORE_REOPEN_REQUIRED',cause:failure});
+  throw authorityError;
+ }
+ function writeLifeMetadata(run,data,payload){
+  const options={timeoutMs:publishLifeRestoreTimeoutMs};
+  if(fitsLifeMetadataDelta(payload))return run({...data,...payload},undefined,options);
+  return run(data,undefined,{...options,streamLifeMetadata:payload});
+ }
+ function read(input,options){
+  if(closing||authorityError)return Promise.reject(authorityError??Error('Companion store is closing'));
+  if(publishing)return publishing.then(()=>read(input,options));
+  const task=input.operation==='seal-life-restore-source'&&!fitsLifeMetadataDelta(input)
+   ?runCompanionStorageWorker({operation:input.operation,path},undefined,{...options,timeoutMs:publishLifeRestoreTimeoutMs,streamLifeMetadata:input})
+   :reader.read(input,options);
+  reads.add(task);void task.finally(()=>reads.delete(task)).catch(()=>{});
+  return task;
+ }
+ async function drain(){
+  await tail;
+  while(reads.size)await Promise.allSettled([...reads]);
+  // A completed read can enqueue its final write as it settles.
+  await tail;
+ }
+ const api={
+  archive,
+  archivedAutoAuthorization:(groupId,authorizationId)=>read({operation:'auto-authorization-exists',groupId,authorizationId}),
+  records:{...syncRecords,query:(namespace,owner,options)=>read({operation:'records',namespace,owner,options})},
+  messages:{...sql.messages,
+    history:(type,ownerId,options)=>read({operation:'history',type,ownerId,options}),
+    query:options=>read({operation:'query',options}),
+    searchOwners:(type,search,language)=>read({operation:'search-owners',type,search,language})
+  },
+  withLifeArchiveWrites(perform){
+   if(lifeWriteScope.getStore()?.open)return perform();
+   const scope={open:true};
+   return lifeWriteScope.run(scope,async()=>{try{return await perform();}finally{scope.open=false;}});
+  },
+  get state(){return state;},
+  get memorySourceRevision(){return memorySourceRevision;},
+  ...(memorySourceTrace?{memorySourceChanges:after=>memorySourceTrace.filter(row=>row.revision>after)}:{}),
+  mutate(fn,{storeImages:convert=true,guard,receipt=false,operation='mutate',publishLifeRestore=false,clearLifeRestore=false,prepareLegacyLife=null,lifeRestoreBatch=null,memoryRecordBatch=null,publishMemoryRecords=false,waitForScheduledCheckpoint=false}={}){
+   if(closing||authorityError)return Promise.reject(authorityError??Error('Companion store is closing'));
+   const writeTrace=traceWrites?startCompanionWriteTrace(operation):null,commitTrace=writeTrace?.marks;
+   const scopedLifeWrite=lifeWriteScope.getStore()?.open===true||publishLifeRestore||clearLifeRestore||!!prepareLegacyLife;
+   const restoreCheckpoint=publishLifeRestore||clearLifeRestore?'restore-finish':lifeRestoreBatch?.end%640===0?'restore-stage':null;
+   let committedRestoreCheckpoint=false,tracedRows=0,tracedWorkerWait=0;
+   let parked=false;
+   const waitsForCheckpoint=operation==='memory.tick'&&waitForScheduledCheckpoint;
+   const commit=async()=>{
+    if(waitsForCheckpoint&&!closing&&!authorityError){
+     const flight=maintenance.timerFlight;
+     if(flight){
+      parked=true;
+      return {[parkedForCheckpoint]:flight};
+     }
+    }
+    writeTrace?.enter();
+    if(authorityError)throw authorityError;
+    if(parked&&closing)throw Error('Companion store is closing');
+    if(guard){
+     const proceed=guard(readOnlyGuardState(state));
+     if(typeof proceed!=='boolean')throw TypeError('Companion mutation guards must return a boolean synchronously');
+     if(!proceed)return;
+    }
+    const started=sqlClock(),archiveRows=[],archiveArtwork=[];
+    let staged,workerAttempted=false,workerWaitMs=0,publication,releaseMemoryPublication;
+    try{
+     const draft=companionDraft.createDraft(state);staged=sql.stage();
+     let result,next,finished=false,patches;
+     try{
+      result=await fn(draft,{...staged.api,
+       archiveEvidence(rows){for(const row of rows)archiveRows.push(copy(row));},
+       archiveArtwork(archiveId,locator){archiveArtwork.push({archiveId,locator});}
+      });
+      if(convert&&media){
+       const images=[...changedCompanionImages(state,draft)];
+       if(workerOwnedMedia&&images.length){
+        workerAttempted=scopedLifeWrite;
+        const writing=writeLifeMetadata(runCompanionStorageWorker,{operation:'store-life-media',path},{
+         images:images.map(([, ,value])=>value)
+        });
+        const beforeWait=sqlClock();
+        let urls;
+        try{urls=await writing;}
+        finally{workerWaitMs+=sqlClock()-beforeWait;}
+        if(!Array.isArray(urls)||urls.length!==images.length||urls.some(value=>value!==null&&!isMediaUrl(value)))
+         throw Error('Companion life media acknowledgement mismatch');
+        for(const [index,[holder,key]] of images.entries())if(urls[index])holder[key]=urls[index];
+       }else for(const [holder,key,value] of images){
+        const url=media.put(value);
+        if(url)holder[key]=url;
+       }
+      }
+      if(result&&typeof result==='object')result=copy(result);
+      finished=true;
+      next=companionDraft.finishDraft(draft,scopedLifeWrite?changes=>{patches=changes;}:undefined);
+     }finally{
+      if(!finished)companionDraft.finishDraft(draft);
+     }
+     if(next===state&&!staged.changed&&!memoryRecordBatch)return receipt?{value:result,memorySourceRevision}:result;
+     const changed=next!==state,revision=state.revision;
+     const memoryPlan=publishMemoryRecords&&!changed&&staged.changed?staged.plan():null;
+     next={...next,revision:revision+1};
+     // A records-only commit still updates the revision of the same large SQL row.
+     const delta=patches?{patches,plan:staged.plan(),archiveArtwork}:null;
+     if(archiveArtwork.length&&(!delta||memoryRecordBatch||publishLifeRestore||clearLifeRestore||prepareLegacyLife||lifeRestoreBatch))
+      throw Error('操作失败。');
+     if(lifeRestoreBatch)verifyLifeRestoreCursor(state,next,lifeRestoreBatch,staged);
+     const stagedMemoryChanged=!!memoryRecordBatch||staged.memoryChanged;
+     const metadataEffect=changed&&(!stagedMemoryChanged||memorySourceTrace)?memoryMetadataEffect(state,next):null;
+     const memoryChanged=stagedMemoryChanged||metadataEffect!==null;
+     if(archiveRows.length){
+      // The archive can safely have a duplicate if the primary transaction
+      // fails. It must never be missing a row whose primary deletion commits.
+      const writing=publishArchiveEvidence(archiveRows);
+      const beforeWait=sqlClock();
+      try{await writing;}
+      finally{workerWaitMs+=sqlClock()-beforeWait;}
+      if(archiveRows.some(row=>row.namespace.startsWith('auto-authorizations:')))authorizationRevision++;
+     }
+     if(memoryRecordBatch){
+      if(changed||staged.changed)throw Error('Prepared companion memory writes can only update their record');
+      publication=await publishMemoryRecord(memoryRecordBatch,revision,async writing=>{
+       const beforeWait=sqlClock();
+       try{return await writing;}
+       finally{workerWaitMs+=sqlClock()-beforeWait;}
+      },commitTrace);
+     }else if(publishLifeRestore||clearLifeRestore||prepareLegacyLife||lifeRestoreBatch){
+      const releaseSnapshot=sql.pinReadSnapshot();
+      let releasePublishing;
+      publishing=new Promise(resolve=>{releasePublishing=resolve;});
+      let committed,commitError;
+      try{
+       workerAttempted=true;
+       const writing=lifeRestoreBatch
+        ?reader.read({operation:'write-life-restore-batch',batch:lifeRestoreBatch,currentRevision:revision,commitTrace})
+        :writeLifeMetadata(runCompanionStorageWorker,{
+          operation:prepareLegacyLife?'prepare-legacy-life-restore':clearLifeRestore?'clear-life-restore':'publish-life-restore',
+          path,clearLifeRestore,currentRevision:revision,writeMemoryRevision:memoryChanged,commitTrace
+         },{...delta,prepareLegacyLife});
+       // Worker construction and postMessage belong to main-thread time.
+       const beforeWait=sqlClock();
+       try{committed=await writing;}
+       finally{workerWaitMs+=sqlClock()-beforeWait;}
+       if(committed.revision!==next.revision||prepareLegacyLife&&!/^[a-f0-9]{64}$/.test(committed.sha256))
+        throw Error('Life restore acknowledgement mismatch');
+       if(prepareLegacyLife)next.lifeTransaction.staging.sha256=committed.sha256;
+      }catch(error){commitError=error;}
+      finally{
+       try{releaseSnapshot();}
+       catch(error){
+        authorityError=Object.assign(Error('Life restore snapshot could not be released; reopen the store'),{code:'COMPANION_STORE_REOPEN_REQUIRED',cause:error});
+        throw authorityError;
+       }finally{publishing=null;releasePublishing();}
+      }
+      if(commitError){
+       try{
+        const actual=sql.load();
+        if(actual.revision===revision)throw commitError;
+        const expected=next.lastLifeTransaction,received=actual.lastLifeTransaction;
+        const actualStage=actual.lifeTransaction?.staging;
+        const matching=lifeRestoreBatch
+         ?actual.lifeTransaction?.id===lifeRestoreBatch.id&&actualStage?.sha256===lifeRestoreBatch.sha256&&actualStage.cursor===lifeRestoreBatch.end
+         :prepareLegacyLife
+          ?actual.lifeTransaction?.id===next.lifeTransaction.id&&actual.lifeTransaction.phase===next.lifeTransaction.phase&&
+           actualStage?.cursor===0&&!actualStage.complete&&actualStage.planVersion===2&&/^[a-f0-9]{64}$/.test(actualStage.sha256)
+          :expected?.id&&received?.id===expected.id&&received.status===expected.status&&actual.lifeTransaction?.phase===next.lifeTransaction?.phase;
+        if(actual.revision!==next.revision||!matching)throw Error('Life restore commit state mismatch');
+        if(prepareLegacyLife)next=actual;
+       }catch(error){
+        if(error===commitError)throw error;
+        authorityError=Object.assign(Error('Life restore state changed outside the current store; reopen it'),{code:'COMPANION_STORE_REOPEN_REQUIRED',cause:error});
+        throw authorityError;
+       }
+      }else publication=committed;
+     }else if(memoryPlan&&(operation==='memory.tick'||boundedMemoryRecordPlanBytes(memoryPlan)!==null)){
+      publishing=new Promise(resolve=>{releaseMemoryPublication=resolve;});
+      const committed=await publishRecordPlan(memoryPlan,operation,revision,memoryChanged,commitTrace,async writing=>{
+       const beforeWait=sqlClock();
+       try{return await writing;}
+       finally{workerWaitMs+=sqlClock()-beforeWait;}
+      });
+      publication=committed.result;
+      // Synchronous record readers and RAM must advance in the same turn.
+      committed.unpin();
+     }else if(delta){
+      const releaseSnapshot=sql.pinReadSnapshot(),id=randomUUID();
+      let releasePublishing,committed,commitError;
+      publishing=new Promise(resolve=>{releasePublishing=resolve;});
+      try{
+       workerAttempted=true;
+       const writing=writeLifeMetadata(runLifeArchiveMetadata,{
+        operation:'write-life-archive-metadata',writeOperation:operation,path,id,
+        currentRevision:revision,writeMemoryRevision:memoryChanged,commitTrace
+       },delta);
+       const beforeWait=sqlClock();
+       try{committed=await writing;}
+       finally{workerWaitMs+=sqlClock()-beforeWait;}
+       if(committed.id!==id||committed.revision!==next.revision)throw Error('Life metadata commit acknowledgement mismatch');
+      }catch(error){commitError=error;}
+      finally{
+       try{releaseSnapshot();}
+       catch(error){
+        authorityError=Object.assign(Error('Life metadata snapshot could not be released; reopen the store'),{code:'COMPANION_STORE_REOPEN_REQUIRED',cause:error});
+        throw authorityError;
+       }finally{publishing=null;releasePublishing();}
+      }
+      if(commitError){
+       try{if(sql.readRevision()===revision)throw commitError;}
+       catch(error){
+        if(error===commitError)throw error;
+        commitError=new AggregateError([commitError,error],'Life metadata commit could not be confirmed',{cause:commitError});
+       }
+       authorityError=Object.assign(Error('Life metadata commit could not be confirmed; reopen the store'),{code:'COMPANION_STORE_REOPEN_REQUIRED',cause:commitError});
+       throw authorityError;
+      }
+      publication=committed;
+     }else try{sql.commit(staged,next,revision,changed,memoryChanged,operation,commitTrace);}
+     catch(error){
+      if(error.code==='COMPANION_STORE_REOPEN_REQUIRED')authorityError=error;
+      throw error;
+     }
+     if(writeTrace)tracedWorkerWait=workerWaitMs;
+     state=next;
+     reader.noteWrite();
+     if(!closing&&!authorityError){
+      maintenance.schedule();
+      committedRestoreCheckpoint=restoreCheckpoint!==null;
+     }
+     if(memoryChanged){
+      memorySourceRevision=next.revision;
+      if(memorySourceTrace){
+       const effects=memoryCommitEffects(staged,memoryRecordBatch,metadataEffect);
+       memorySourceTrace.push({revision:next.revision,operation:tracedMemoryOperations.has(operation)?operation:'mutate',effects});
+       if(memorySourceTrace.length>8)memorySourceTrace.shift();
+      }
+     }
+     return receipt?{value:result,memorySourceRevision}:result;
+    }finally{
+     const elapsedMs=sqlClock()-started,rows=publication?.rows??staged?.rowsWritten??0;
+     const mainThreadMs=elapsedMs-workerWaitMs;
+     if(writeTrace){tracedRows=rows;if(releaseMemoryPublication||!Atomics.load(commitTrace,2))tracedWorkerWait=workerWaitMs;}
+     if(releaseMemoryPublication){
+      publishing=null;releaseMemoryPublication();
+      if(memoryPublications.hasSubscribers)memoryPublications.publish({operation,rows,recordBytes:publication?.recordBytes??null,
+       elapsedMs,mainThreadMs,workerWaitMs,workerElapsedMs:publication?.elapsedMs??null,workerCommitMs:publication?.commitMs??null});
+     }
+     if(workerAttempted&&!lifeRestoreBatch)try{audit?.({type:'companion-life-restore-worker',operation,rows,elapsedMs,mainThreadMs,workerElapsedMs:publication?.elapsedMs??null,workerWaitMs});}catch{}
+     reportSlowCompanionTransaction(audit,{operation,rows,elapsedMs:mainThreadMs,scope:'mutate',...(workerAttempted||releaseMemoryPublication||archiveRows.length||archiveArtwork.length?{mainThreadMs,workerWaitMs}:{})});
+    }
+   };
+   function enqueue(){
+    let queued=tail.then(commit);
+    if(writeTrace)queued=queued.then(value=>{
+     if(!value?.[parkedForCheckpoint])writeTrace.finish(false,tracedRows,tracedWorkerWait);
+     return value;
+    },error=>{
+     writeTrace.finish(true,tracedRows,tracedWorkerWait);throw error;
+    });
+    queued=queued.finally(yieldImmediate);
+    tail=queued.catch(()=>{});
+    return queued;
+   }
+   const task=enqueue();
+   if(waitsForCheckpoint)return task.then(async value=>{
+    // Keep the admitted batch and its trace, leaving the tail available for
+    // normal writes until the timer's checkpoint has finished.
+    while(value?.[parkedForCheckpoint]){
+     await value[parkedForCheckpoint];
+     value=await enqueue();
+    }
+    return value;
+   });
+   if(!restoreCheckpoint)return task;
+   // Staging and publication wait for their checkpoint before continuing.
+   // The committed write has already left the writer queue.
+   return task.then(async value=>{
+    if(committedRestoreCheckpoint&&!closing&&!authorityError){
+     try{await maintenance.flush(restoreCheckpoint);}
+     catch{/* The maintenance worker reports failures. The write has committed. */}
+    }
+    return value;
+   });
+  },
+  async flush(){
+   await drain();
+   const task=tail.then(async()=>({checkpoint:await maintenance.flush()}));
+   tail=task.catch(()=>{});
+   return task;
+  },
+  drain,
+  drainReads:()=>reader.drain(),
+  releaseDeferredSave:()=>release?.(),
+  snapshot:()=>copy(state),
+  snapshotAsync:scope=>read({operation:'snapshot',scope}),
+  snapshotLifeArchive:(input,options)=>read({operation:'snapshot-life-archive',...input},options),
+  prepareArchiveRestore:(input,options)=>read({operation:'prepare-archive-restore',...input},options),
+  readLifePreview:(input,options)=>read({operation:'read-life-preview',...input},options),
+  prepareLifeExport:(input,options)=>read({operation:'prepare-life-export',...input},options),
+  prepareLifeImport:(input,options)=>read({operation:'prepare-life-import',...input},options),
+  readStagedLife:(input,options)=>read({operation:'read-staged-life',...input},options),
+  projectStagedLife:input=>read({operation:'project-staged-life',...input}),
+  stageLifeRestore:(input,onBatch)=>read({operation:'stage-life-restore',...input},{onBatch}),
+  readLifeArchiveContent:(id,sha256,{archiveInput,...options})=>read({operation:'read-life-archive-content',id,sha256,...archiveInput},options),
+  sealLifeRestoreSource:(id,target,resetPersonas,resetArtwork)=>read({operation:'seal-life-restore-source',id,target,resetPersonas,resetArtwork}),
+  removeLifeRestoreSource:id=>read({operation:'remove-life-restore-source',id}),
+  privateStartupRows:after=>read({operation:'private-startup-rows',after}),
+  pendingMood:(characterId,scope)=>read({operation:'pending-mood',characterId,scope}),
+  groupSavedPhoto:(groupId,range,characterIds)=>read({operation:'group-saved-photo',groupId,range,characterIds}),
+  groupReplySource:options=>read({operation:'group-reply-source',options}),
+  exportConversations:(options,readMedia)=>read({operation:'portable-conversations',...options},{onModel:(_,input)=>readMedia(input)}),
+  planMaintenance:(name,options)=>read({operation:'maintenance-plan',name,options}),
+  exportMaintenanceBackup:(target,{revision})=>read({operation:'maintenance-backup',target,revision}),
+  readMemory:(method,args,options,onModel,onBatch)=>read({operation:'memory',method,args,...options,stream:!!onBatch},{
+   onModel,onBatch,onArchive:publishArchiveEvidence
+  }),
+  close(){
+   if(!closing)closing=(async()=>{
+    await tail;
+    try{
+     const closingReader=reader.close();
+     const closingArchive=closingReader.catch(()=>{}).then(()=>autoArchivePublisher.stop());
+     const lanes=await Promise.allSettled([closingReader,memoryPublisher.stop(),closingArchive]);
+     const failures=lanes.filter(row=>row.status==='rejected').map(row=>row.reason);
+     const checkpoint=await maintenance.close({truncate:failures.length===0});
+     if(checkpoint)try{audit?.({type:'companion-wal-close',...checkpoint,commits:Number(Atomics.load(reader.lastWrite,1))});}catch{}
+     if(failures.length===1)throw failures[0];
+     if(failures.length>1)throw new AggregateError(failures,'Companion worker cleanup failed');
+     return {checkpoint};
+    }finally{release?.();sql.close();const remaining=openCompanionWriters.get(path)-1;if(remaining)openCompanionWriters.set(path,remaining);else openCompanionWriters.delete(path);}
+   })();
+   return closing;
+  }
+ };
+ let deferredCheckpoint;
+ const release=deferredSaveRegistry?.register('companion',{target:path,scope,
+  async drain(){
+   const commitCount=Atomics.load(reader.lastWrite,1);
+   deferredCheckpoint={commitCount,...await api.flush()};
+  },
+  flushSync(){
+   if(publishing||maintenance.busy)return {checkpoint:{status:'busy'}};
+   if(deferredCheckpoint?.commitCount===Atomics.load(reader.lastWrite,1))return {checkpoint:deferredCheckpoint.checkpoint};
+   // The OS session-end notification cannot await a worker. Its synchronous
+   // fallback can checkpoint committed pages, but must never truncate a WAL.
+   return {checkpoint:sql.checkpoint({truncate:false})};
+  },
+  skipAutomatic:true
+ });
  return api;
 }
+
+function* changedCompanionImages(state,next){
+ const before=new Map();
+ for(const [holder,key,path] of imageSlots(state))before.set(path,holder[key]);
+ for(const [holder,key,path] of imageSlots(next)){
+  const value=holder[key];
+  if(typeof value!=='string'||!value.startsWith('data:image/')||before.get(path)===value)continue;
+  yield [holder,key,value];
+ }
+}
+
 export function makeCard(raw,previous=null,{draft=false}={}){
  if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('角色卡格式无效');const name=text(raw.name??previous?.name??'',80).trim();if(!name&&!draft)throw Error('角色名称必填');
  const id=previous?.id??raw.id??'custom-'+randomUUID();if(!/^[a-zA-Z0-9_-]{1,100}$/.test(id)||id==='prototype'||Object.hasOwn(Object.prototype,id))throw Error('角色身份格式无效');
@@ -68,9 +625,9 @@ export function effectiveCard(card){const value={...(card.defaults??{})};for(con
 // Same values as relationshipFor would return on a throwaway copy.
 export function relationshipView(state,characterId,personaId=state.activePersonaId){const entry=state.relationships?.[characterId];if(!entry)return {level:1,affection:0};if(entry.mode==='shared')return entry.shared??{level:1,affection:0};return entry.byPersona?.[personaId]??{level:1,affection:0};}
 export function relationshipFor(state,characterId,personaId=state.activePersonaId){const entry=state.relationships[characterId]??={mode:'independent',byPersona:{}};if(entry.mode==='shared')return entry.shared??={level:1,affection:0};return entry.byPersona[personaId]??={level:1,affection:0};}
-export function conversationFor(state,characterId=state.activeCharacterId,personaId=state.activePersonaId,{fresh=false,title=''}={}){
+export function conversationFor(state,characterId=state.activeCharacterId,personaId=state.activePersonaId,{fresh=false,title='',tx}={}){
  if(!Object.hasOwn(state.cards,characterId)||!Object.hasOwn(state.personas,personaId))throw Error('角色或身份不存在');const lifeId=state.lives?.[characterId]?.id;let row=!fresh&&Object.values(state.conversations).filter(row=>row.characterId===characterId&&row.personaId===personaId&&(!lifeId||row.lifeId===lifeId)&&!row.archived).sort((a,b)=>b.updatedAt-a.updatedAt)[0];
- if(!row){const at=Date.now();row={id:'conversation-'+randomUUID(),characterId,personaId,...(lifeId?{lifeId}:{}),title:title||state.cards[characterId].name,createdAt:at,updatedAt:at,archived:false,draft:'',messages:[]};state.conversations[row.id]=row;}
+ if(!row){const at=Date.now();row={id:'conversation-'+randomUUID(),characterId,personaId,...(lifeId?{lifeId}:{}),title:title||state.cards[characterId].name,createdAt:at,updatedAt:at,archived:false,draft:'',...(tx?.messages?{}:{messages:[]})};state.conversations[row.id]=row;if(tx?.messages)tx.messages.define('private',row.id,['conversations',row.id]);}
  return row;
 }
 // Times read from a file are kept only when they are real dates: inside the Date
@@ -101,7 +658,7 @@ export function restoreCompanionExport(state,data){
  for(const raw of data.conversations){
   const characterId=companionId(raw.characterId),personaId=companionId(raw.personaId);if(!Object.hasOwn(state.cards,characterId)||!Object.hasOwn(state.personas,personaId)||!Array.isArray(raw.messages))throw Error('会话的角色、身份或消息缺失');
   const importDigest=createHash('sha256').update(JSON.stringify(raw)).digest('hex');if(Object.values(state.conversations).some(row=>row.importDigest===importDigest))continue;let id=companionId(raw.id??randomUUID());if(Object.hasOwn(state.conversations,id)){if(JSON.stringify(state.conversations[id])===JSON.stringify(raw))continue;id='import-'+randomUUID();}
-  const owner={characterId,personaId,conversationId:id},messages=raw.messages.map(row=>({...safeMessage(row,owner),conversationId:id}));if(new Set(messages.map(row=>row.id)).size!==messages.length)throw Error('会话消息身份重复');
+  const owner={characterId,personaId,conversationId:id},messages=raw.messages.map(row=>({...safeMessage(row,owner),conversationId:id}));
   state.conversations[id]={id,...owner,importedFrom:raw.importedFrom??raw.id,importDigest,choices:Array.isArray(raw.choices)?raw.choices.filter(c=>c&&typeof c.id==='string'&&typeof c.text==='string').map(c=>({id:companionId(c.id),text:text(c.text,20000),effect:[-1,0,1].includes(c.effect)?c.effect:0})):[],title:text(raw.title??'',300),draft:text(raw.draft??'',200000),createdAt:importTime(raw.createdAt),updatedAt:importTime(raw.updatedAt),archived:raw.archived===true,messages};
  }
  for(const raw of data.groups??[]){
@@ -113,7 +670,7 @@ export function restoreCompanionExport(state,data){
    intervals[member]=rows.map((row,index)=>{const start=Number(row.start),end=row.end===null?null:Number(row.end);if(!Number.isSafeInteger(start)||start<1||start>seq+1||start<=previousEnd||end!==null&&(!Number.isSafeInteger(end)||end<start-1||end>seq)||end===null&&(index!==rows.length-1||!members.includes(member)))throw Error('群参与区间重叠或越界');previousEnd=end??Infinity;return {start,end};});
   }
   let previousSeq=0;const messages=raw.messages.map(message=>{if(!Number.isSafeInteger(message.seq)||message.seq<=previousSeq||message.seq>seq)throw Error('群消息顺序无效');previousSeq=message.seq;const characterId=message.role==='assistant'?companionId(message.characterId):undefined;if(characterId&&!Object.hasOwn(state.cards,characterId))throw Error('群发言角色不存在');if(characterId&&!(intervals[characterId]??[]).some(row=>message.seq>=row.start&&(row.end===null||message.seq<=row.end)))throw Error('群发言不在角色参与区间');return {...safeMessage(message,{characterId,personaId}),seq:message.seq};});
-  if(new Set(messages.map(row=>row.id)).size!==messages.length)throw Error('群消息身份重复');if(Object.hasOwn(state.groups,id)){if(JSON.stringify(state.groups[id])===JSON.stringify(raw))continue;id='import-'+randomUUID();}
+  if(Object.hasOwn(state.groups,id)){if(JSON.stringify(state.groups[id])===JSON.stringify(raw))continue;id='import-'+randomUUID();}
   const mode=['natural','list','manual','pool'].includes(raw.mode)?raw.mode:'natural',talkativeness={};for(const member of members){const value=Number(raw.talkativeness?.[member]??.5);if(!Number.isFinite(value)||value<0||value>1)throw Error('群健谈程度无效');talkativeness[member]=value;}
   state.groups[id]={id,importedFrom:raw.importedFrom??raw.id,importDigest,...(raw.photoPlannerBinding!==undefined?{photoPlannerBinding:normalizePhotoPlannerBinding(raw.photoPlannerBinding)}:{}),name:text(raw.name??'恢复的群聊',200),personaId,memberIds:members,stageOrder:[...new Set([...(Array.isArray(raw.stageOrder)?raw.stageOrder.map(companionId).filter(id=>Object.hasOwn(state.cards,id)):[]),...members])],sceneTemplate:raw.sceneTemplate==='plain'?'plain':'library',cameraMode:raw.cameraMode==='wide'?'wide':'focus',autoPhoto:raw.autoPhoto===true,lastEndedSeq:Math.min(seq,Math.max(0,Math.floor(Number(raw.lastEndedSeq)||0))),photos:Array.isArray(raw.photos)?raw.photos.map(photo=>({...copy(photo),cgId:companionId(photo.cgId)})):[],scene:text(raw.scene??'',20000),background:text(raw.background??'',26000000),mode,talkativeness,poolIndex:Number.isSafeInteger(raw.poolIndex)&&raw.poolIndex>=0?raw.poolIndex:0,...(typeof raw.poolLastSpeakerId==='string'&&Object.hasOwn(state.cards,raw.poolLastSpeakerId)?{poolLastSpeakerId:raw.poolLastSpeakerId}:{}),mutedIds:(raw.mutedIds??[]).filter(id=>members.includes(id)),createdAt:importTime(raw.createdAt),updatedAt:importTime(raw.updatedAt),seq,intervals,messages,entryCharacterId:members.includes(raw.entryCharacterId)?raw.entryCharacterId:members[0]};
  }

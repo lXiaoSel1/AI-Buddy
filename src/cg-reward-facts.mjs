@@ -1,7 +1,10 @@
+import {economyWriterPragmas,monitorEconomySql} from './companion-economy-sql.mjs';
 import {DatabaseSync} from 'node:sqlite';
+import {createEconomyWalMaintenance} from './companion-economy-wal.mjs';
 import {mkdirSync,existsSync} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {createHash} from 'node:crypto';
+import {setImmediate as yieldToEventLoop} from 'node:timers/promises';
 
 const json=JSON.stringify,parse=value=>value==null?null:JSON.parse(value);
 const digest=value=>createHash('sha256').update(json(value)).digest('hex');
@@ -33,19 +36,32 @@ function compatibility(db){
 
 // Core-only, durable reward projection. This is not the token/fee ledger and
 // does not publish activity. Actual accounting remains on the original path.
-export function createCgRewardFacts({dataRoot,onRewardFact=null,now=Date.now,ackTimeoutMs=5000}={}){
+export function createCgRewardFacts({dataRoot,onRewardFact=null,isRewardFactRecorded=null,now=Date.now,ackTimeoutMs=5000,audit,sqlClock,walMaintenanceIntervalMs}={}){
  if(!isAbsolute(dataRoot??''))throw Error('CG reward 资料目录须为绝对路径');
  const directory=join(dataRoot,'companion-economy-v1'),path=join(directory,'cg-reward-facts.sqlite');
- if(existsSync(path)){const reader=new DatabaseSync(path,{readOnly:true});try{compatibility(reader);}finally{reader.close();}}
- mkdirSync(directory,{recursive:true});const db=new DatabaseSync(path);try{compatibility(db);}catch(error){db.close();throw error;}let closed=false,closing=false,draining=null,lastError=null;
- db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)');
+ const options={audit,sqlClock};
+ if(existsSync(path)){const reader=new DatabaseSync(path,{readOnly:true});try{compatibility(monitorEconomySql(reader,'cg-reward-facts',options).connection);}finally{reader.close();}}
+ mkdirSync(directory,{recursive:true});
+ let maintenance;
+ const sql=monitorEconomySql(new DatabaseSync(path),'cg-reward-facts',{...options,onCommit:()=>maintenance?.recordWrite()}),db=sql.connection;
+ try{compatibility(db);}catch(error){db.close();throw error;}let closed=false,closing=false,draining=null,lastError=null;
+ db.exec(economyWriterPragmas+' CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)');
  const version=db.prepare("SELECT value FROM meta WHERE key='schemaVersion'").get();if(version&&parse(version.value)!==1){db.close();throw Error('Unsupported CG reward schema');}
  db.exec(`CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,scope TEXT,historical INTEGER NOT NULL,status TEXT,completed TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0,fingerprint TEXT,created_at INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS receipts(job_id TEXT NOT NULL,receipt_id TEXT NOT NULL,revision INTEGER NOT NULL,total INTEGER NOT NULL,fingerprint TEXT NOT NULL,provider TEXT,source_id TEXT,occurred_at TEXT,PRIMARY KEY(job_id,receipt_id));
  CREATE TABLE IF NOT EXISTS outbox(job_id TEXT NOT NULL,revision INTEGER NOT NULL,payload TEXT NOT NULL,ack INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(job_id,revision));`);
  db.prepare("INSERT OR IGNORE INTO meta VALUES('schemaVersion','1')").run();db.prepare("INSERT OR IGNORE INTO meta VALUES('minimumWriter','\"r95-cg-rewards-v1\"')").run();
+ maintenance=createEconomyWalMaintenance(path,{database:'cg-reward-facts',audit,walMaintenanceIntervalMs});
+ maintenance.recordWrite();
+ let closePromise;
  function check(){if(closed||closing)throw Error('CG reward journal 已关闭');}
- function transaction(fn){db.exec('BEGIN IMMEDIATE');try{const value=fn();db.exec('COMMIT');return value;}catch(error){db.exec('ROLLBACK');throw error;}}
+ function transaction(operation,fn){
+  return sql.transaction(operation,()=>{
+   db.exec('BEGIN IMMEDIATE');
+   try{const value=fn();sql.commit('COMMIT');return value;}
+   catch(error){db.exec('ROLLBACK');throw error;}
+  });
+ }
  const jobRow=jobId=>db.prepare('SELECT * FROM jobs WHERE id=?').get(jobId);
  function register(job,{historical=false}={}){
   const jobId=id(job?.id),scope=frozenScope(job.rewardScope),old=jobRow(jobId);
@@ -68,27 +84,78 @@ export function createCgRewardFacts({dataRoot,onRewardFact=null,now=Date.now,ack
   const completed=job.status==='ready'&&typeof job.sha256==='string'&&/^[a-f0-9]{64}$/i.test(job.sha256)&&typeof job.assetRef==='string'&&job.assetRef&&Number.isFinite(job.completedAt)?[job.id+':'+job.sha256]:parse(row.completed);
   db.prepare('UPDATE jobs SET status=?,completed=? WHERE id=?').run(job.status??row.status,json(completed),row.id);return project(jobRow(row.id));
  }
- async function drain(){
-  if(closed)return {pending:0,lastError};if(draining)return draining;
-  draining=(async()=>{
-   if(typeof onRewardFact!=='function')return {pending:pending().length,lastError};
-   while(!closed){const row=db.prepare('SELECT * FROM outbox WHERE ack=0 ORDER BY rowid LIMIT 1').get();if(!row)break;
-    let timer;try{const result=await Promise.race([Promise.resolve().then(()=>onRewardFact(parse(row.payload))),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('CG reward acknowledgement timeout')),ackTimeoutMs);})]);if(result?.accepted!==true){lastError='CG reward sink not ready';break;}db.prepare('UPDATE outbox SET ack=1 WHERE job_id=? AND revision=?').run(row.job_id,row.revision);lastError=null;}catch(error){lastError=String(error?.message??error).slice(0,300);break;}finally{clearTimeout(timer);}
+ const pendingCount=db.prepare('SELECT COUNT(*) AS total FROM outbox WHERE ack=0');
+ const rejectedCount=db.prepare('SELECT COUNT(*) AS total FROM outbox WHERE ack=2');
+ const state=()=>({pending:closed?0:pendingCount.get().total,rejected:closed?0:rejectedCount.get().total,lastError});
+ const batchSize=64;
+ let reconciled=typeof isRewardFactRecorded!=='function';
+ async function reconcileAcknowledgements(){
+  const read=db.prepare('SELECT rowid AS cursor,job_id,revision,payload FROM outbox WHERE rowid>? AND ack=1 ORDER BY rowid LIMIT ?');
+  const retry=db.prepare('UPDATE outbox SET ack=0 WHERE job_id=? AND revision=?');
+  let cursor=0;
+  for(;;){
+   const rows=read.all(cursor,batchSize),missing=[];
+   for(const row of rows){
+    const present=isRewardFactRecorded(parse(row.payload));
+    // CG starts before the economy in the host. Retry once the sink is ready.
+    if(present===undefined)return false;
+    if(!present)missing.push(row);
    }
-   return {pending:pending().length,lastError};
-  })().finally(()=>{draining=null;});return draining;
+   if(missing.length)transaction('reconcile-acknowledgements',()=>{
+    for(const row of missing)retry.run(row.job_id,row.revision);
+   });
+   if(rows.length<batchSize)return true;
+   cursor=rows.at(-1).cursor;
+   await yieldToEventLoop();
+  }
+ }
+ async function drain(){
+  if(closed)return state();
+  if(draining)return draining;
+  draining=(async()=>{
+   if(typeof onRewardFact!=='function')return state();
+   try{
+    if(!reconciled)reconciled=await reconcileAcknowledgements();
+    if(!reconciled)return state();
+    const next=db.prepare('SELECT * FROM outbox WHERE ack=0 ORDER BY rowid LIMIT 1');
+    const acknowledge=db.prepare('UPDATE outbox SET ack=? WHERE job_id=? AND revision=? AND ack=0');
+    let delivered=0;
+    while(!closed){
+     const row=next.get();
+     if(!row)break;
+     let timer,result,rejection;
+     try{
+      result=await Promise.race([
+       Promise.resolve().then(()=>onRewardFact(parse(row.payload))),
+       new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('CG reward acknowledgement timeout')),ackTimeoutMs);})
+      ]);
+      if(result?.accepted===false&&result.retryable!==true&&typeof result.reason==='string'&&result.reason)rejection=result.reason.slice(0,300);
+     }catch(error){
+      if(error?.code!=='REWARD_FACT_CONFLICT')throw error;
+      rejection=error.code;
+     }finally{clearTimeout(timer);}
+     if(!rejection&&result?.accepted!==true){lastError='CG reward sink not ready';break;}
+     transaction(rejection?'reject':'acknowledge',()=>acknowledge.run(rejection?2:1,row.job_id,row.revision));
+     if(rejection)try{audit?.({type:'cg-reward-rejected',jobId:row.job_id,revision:row.revision,reason:rejection});}catch{}
+     lastError=null;
+     if(++delivered%batchSize===0)await yieldToEventLoop();
+    }
+   }catch(error){lastError=String(error?.message??error).slice(0,300);}
+   return state();
+  })().finally(()=>{draining=null;});
+  return draining;
  }
  function pending(){if(closed)return [];return db.prepare('SELECT payload FROM outbox WHERE ack=0 ORDER BY rowid').all().map(row=>parse(row.payload));}
  return {
   path,
-  async initialize(jobs=[]){check();transaction(()=>{const first=!db.prepare("SELECT 1 FROM meta WHERE key='initializedAt'").get();for(const job of jobs){if(!jobRow(job.id))register(job,{historical:terminal(job.status)});observe(job);}if(first)db.prepare("INSERT INTO meta VALUES('initializedAt',?)").run(json(now()));});return drain();},
-  registerJob(job){check();return transaction(()=>{const row=register(job);return {id:row.id,scope:parse(row.scope),historical:!!row.historical};});},
-  async observeJob(job){check();const result=transaction(()=>observe(job));await drain();return result;},
+  async initialize(jobs=[]){check();transaction('initialize',()=>{const first=!db.prepare("SELECT 1 FROM meta WHERE key='initializedAt'").get();for(const job of jobs){if(!jobRow(job.id))register(job,{historical:terminal(job.status)});observe(job);}if(first)db.prepare("INSERT INTO meta VALUES('initializedAt',?)").run(json(now()));});return drain();},
+  registerJob(job){check();return transaction('register-job',()=>{const row=register(job);return {id:row.id,scope:parse(row.scope),historical:!!row.historical};});},
+  async observeJob(job){check();const result=transaction('observe-job',()=>observe(job));await drain();return result;},
   async recordUsage(value){check();const jobId=id(value?.cgJobId),row=jobRow(jobId);if(!row)return {accepted:false,reason:'unknown-cg-job'};
    if(value.scope!=null&&json(frozenScope(value.scope))!==json(parse(row.scope)))throw Error('CG usage scope 归属与任务不符');
    const receiptId=value.usageReceiptId;if(typeof receiptId!=='string'||!receiptId||receiptId.length>512)return {accepted:false,reason:'missing-request-identity'};
    const total=cgUsageTotal(value);if(total==null)return {accepted:false,reason:'usage-not-provided'};
-   const result=transaction(()=>{const old=db.prepare('SELECT * FROM receipts WHERE job_id=? AND receipt_id=?').get(jobId,receiptId),revision=value.usageRevision??(old?.revision??0)+1;
+   const result=transaction('record-usage',()=>{const old=db.prepare('SELECT * FROM receipts WHERE job_id=? AND receipt_id=?').get(jobId,receiptId),revision=value.usageRevision??(old?.revision??0)+1;
     if(!safe(revision))throw Error('CG usage revision 无效');const fingerprint=digest({total,provider:value.provider??null,sourceId:value.sourceId??null});
     if(old){if(revision<old.revision)return {accepted:true,duplicate:true,ignoredRevision:true};if(fingerprint===old.fingerprint){if(revision>old.revision&&value.usageRevision!=null)db.prepare('UPDATE receipts SET revision=? WHERE job_id=? AND receipt_id=?').run(revision,jobId,receiptId);return {accepted:true,duplicate:true};}if(revision===old.revision)throw Error('CG usage revision 修订内容冲突');}
     db.prepare('INSERT INTO receipts VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(job_id,receipt_id) DO UPDATE SET revision=excluded.revision,total=excluded.total,fingerprint=excluded.fingerprint,provider=excluded.provider,source_id=excluded.source_id,occurred_at=excluded.occurred_at').run(jobId,receiptId,revision,total,fingerprint,value.provider??null,value.sourceId??null,value.timestamp??null);
@@ -96,8 +163,16 @@ export function createCgRewardFacts({dataRoot,onRewardFact=null,now=Date.now,ack
    });await drain();return result;
   },
   pending,drain,
-  inspect(jobId){const row=jobRow(id(jobId));return row?{id:row.id,historical:!!row.historical,scope:parse(row.scope),status:row.status,revision:row.revision,completedImageIds:parse(row.completed),receipts:db.prepare('SELECT receipt_id AS id,revision,total FROM receipts WHERE job_id=?').all(jobId)}:null;},
-  status(){return {pending:pending().length,lastError};},
-  async close(){if(closed)return;if(closing){await draining;return;}closing=true;await draining;db.exec('PRAGMA wal_checkpoint(TRUNCATE)');db.close();closed=true;}
+  inspect(jobId){const row=jobRow(id(jobId));return row?{id:row.id,historical:!!row.historical,scope:parse(row.scope),status:row.status,revision:row.revision,completedImageIds:parse(row.completed),receipts:db.prepare('SELECT receipt_id AS id,revision,total FROM receipts WHERE job_id=?').all(jobId),rejectedRevisions:db.prepare('SELECT revision FROM outbox WHERE job_id=? AND ack=2 ORDER BY revision').all(jobId).map(value=>value.revision)}:null;},
+  status:state,
+  close(){
+   if(closePromise)return closePromise;
+   closing=true;
+   closePromise=(async()=>{
+    await draining;
+    await maintenance.close(()=>{db.close();closed=true;});
+   })();
+   return closePromise;
+  }
  };
 }

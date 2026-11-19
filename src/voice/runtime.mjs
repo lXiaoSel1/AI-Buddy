@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import {voicePythonEnvironment,pythonFilePath} from './python-environment.mjs';
+import {BUILTIN_ASR_ID} from './builtin-asr-assets.mjs';
 import {waitVoiceOperation,voicePreflight,VOICE_PREFLIGHT_TIMEOUT_MS} from './operation-wait.mjs';
 
 const engines = new Set(['breeze', 'gpt']);
@@ -309,7 +310,10 @@ export function createVoiceRuntime({ supervisor, resolveAssets, resolveProfile,p
 
   function prepare({engine,packageId,engineId=packageId,target='speech',signal,onProgress} = {}) {
     assertOpen();
-    if (!engines.has(engine) || !['speech','live','asr'].includes(target)) throw fail('VOICE_PREPARE_INVALID','语音准备请求无效');
+    const builtinAsr = engineId === BUILTIN_ASR_ID;
+    if (builtinAsr ? target !== 'asr' : !engines.has(engine) || !['speech','live','asr'].includes(target)) {
+      throw fail('VOICE_PREPARE_INVALID','语音准备请求无效');
+    }
     if (preparation) {
       if (preparation.engine === engine && preparation.packageId === engineId && preparation.target === target) return preparation.task;
       throw fail('VOICE_PREPARE_BUSY','语音组件正在准备');

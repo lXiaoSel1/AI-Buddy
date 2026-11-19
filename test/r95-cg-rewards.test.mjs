@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync,readFileSync} from 'node:fs';
+import {mkdtempSync,rmSync,readFileSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
@@ -11,6 +11,35 @@ const scope={characterId:'deepseek',personaId:'persona-one',lifeId:'life-one',op
 const ready=id=>({id,status:'ready',sha256:'a'.repeat(64),assetRef:'cg-assets/'+id+'/image.png',completedAt:10,rewardScope:scope});
 function fixture(t,options={}){const dataRoot=mkdtempSync(join(tmpdir(),'r95-cg-rewards-')),services=[];t.after(async()=>{for(const s of services.reverse())await s.close();rmSync(dataRoot,{recursive:true,force:true});});return {dataRoot,closeAlso:service=>services.push(service),open(extra={}){const service=createCgRewardFacts({dataRoot,...options,...extra});services.push(service);return service;}};}
 const usage=(jobId,total,extra={})=>({cgJobId:jobId,usageReceiptId:'request:'+jobId,usage:{total_tokens:total},provider:'mock',...extra});
+
+test('a permanently rejected reconciliation row stays visible and lets the next reward commit',async t=>{
+ for(const rejection of ['unsupported-fact','REWARD_FACT_CONFLICT'])await t.test(rejection,async t=>{
+  const f=fixture(t);
+  const first=f.open({onRewardFact:fact=>({accepted:fact.canonicalRequestId==='cg:head'})});
+  await first.initialize([]);
+  for(const id of ['head','next']){first.registerJob({id});await first.recordUsage(usage(id,12000));}
+  assert.deepEqual(first.pending().map(fact=>fact.canonicalRequestId),['cg:next']);
+  await first.close();
+  const attempts=[];
+  const second=f.open({isRewardFactRecorded:()=>false,onRewardFact:fact=>{
+   attempts.push(fact.canonicalRequestId);
+   if(fact.canonicalRequestId==='cg:next')return {accepted:true};
+   if(rejection==='REWARD_FACT_CONFLICT')throw Object.assign(Error('Rejected fingerprint'),{code:rejection});
+   return {accepted:false,reason:rejection};
+  }});
+  await second.initialize([]);
+  assert.deepEqual(attempts,['cg:head','cg:next']);
+  assert.deepEqual(second.pending(),[]);
+  assert.equal(second.status().rejected,1);
+  assert.deepEqual(second.inspect('head').rejectedRevisions,[1]);
+  await second.close();
+  const checked=[];
+  const reopened=f.open({isRewardFactRecorded:fact=>{checked.push(fact.canonicalRequestId);return true;},onRewardFact:()=>assert.fail('terminal rejections must not redeliver')});
+  await reopened.initialize([]);
+  assert.deepEqual(checked,['cg:next']);
+  assert.equal(reopened.status().rejected,1);
+ });
+});
 
 test('completed fallback is durable, unique, and late actual replaces the same job key',async t=>{
  const f=fixture(t),facts=[],s=f.open({onRewardFact:fact=>{facts.push(fact);return {accepted:true};}});
@@ -53,4 +82,77 @@ test('unresponsive reward sink times out with durable pending state and closes w
 });
 for(const [key,value] of [['schemaVersion',99],['minimumWriter','future-cg-writer']])test('CG readonly preflight rejects unknown '+key+' without changing its bytes',async t=>{
  const f=fixture(t),s=f.open();await s.initialize([]);await s.close();const db=new DatabaseSync(s.path);db.prepare('UPDATE meta SET value=? WHERE key=?').run(JSON.stringify(value),key);db.close();const before=readFileSync(s.path);assert.throws(()=>f.open(),/writer|版本|schema/);assert.deepEqual(readFileSync(s.path),before);
+});
+
+
+test('startup restores missing and stale acknowledged rewards once, even outside the wallet view',async t=>{
+  const f=fixture(t);
+  let economy=createEconomyStore(f.dataRoot);
+  f.closeAlso({close:()=>economy.close()});
+  economy.initializeRewards();
+  let accept=true,economyReady=true;
+  const deliveries=[];
+  function openCg(){
+    return f.open({
+      isRewardFactRecorded:fact=>economyReady?economy.isRewardFactRecorded(fact):undefined,
+      onRewardFact(fact){
+        deliveries.push(fact.canonicalRequestId);
+        return accept?economy.ingestUsageFact(fact,{trusted:true}):{accepted:false};
+      }
+    });
+  }
+  let cg=openCg();
+  await cg.initialize([ready('historical')]);
+  cg.registerJob({id:'kept'});
+  await cg.recordUsage(usage('kept',10000));
+  cg.registerJob({id:'corrected'});
+  await cg.recordUsage(usage('corrected',5000));
+  economy.ingestUsageFacts(Array.from({length:105},(_,i)=>({canonicalRequestId:'unrelated:'+i,totalTokens:0})),{trusted:true});
+  assert.ok(!economy.view().rewardFacts.some(fact=>fact.id==='cg:kept'));
+
+  await economy.close();
+  const backedUp=readFileSync(economy.path);
+  economy=createEconomyStore(f.dataRoot);
+  await cg.recordUsage(usage('corrected',9000));
+  cg.registerJob({id:'lost'});
+  await cg.recordUsage(usage('lost',15000));
+  assert.equal(cg.status().pending,0);
+  assert.deepEqual(economy.wallet(),{balance:3,remainder:4000,debtUnits:0});
+  await cg.close();
+  await economy.close();
+  // Restore only the earlier economy commit. This leaves both CG acknowledgements intact.
+  writeFileSync(economy.path,backedUp);
+
+  economy=createEconomyStore(f.dataRoot);
+  deliveries.length=0;
+  accept=false;
+  economyReady=false;
+  cg=openCg();
+  assert.equal((await cg.initialize([ready('historical')])).pending,0);
+  assert.deepEqual(deliveries,[]);
+  economyReady=true;
+  assert.equal((await cg.drain()).pending,2,'reconciliation makes missing and stale acknowledgements retryable');
+  assert.deepEqual(deliveries,['cg:corrected']);
+  assert.deepEqual(economy.wallet(),{balance:1,remainder:5000,debtUnits:0});
+  accept=true;
+  assert.equal((await cg.drain()).pending,0);
+  assert.deepEqual(deliveries,['cg:corrected','cg:corrected','cg:lost']);
+  assert.deepEqual(economy.wallet(),{balance:3,remainder:4000,debtUnits:0});
+
+  await cg.close();
+  await economy.close();
+  economy=createEconomyStore(f.dataRoot);
+  deliveries.length=0;
+  cg=openCg();
+  assert.equal((await cg.initialize([ready('historical')])).pending,0);
+  assert.deepEqual(deliveries,[]);
+  assert.deepEqual(economy.wallet(),{balance:3,remainder:4000,debtUnits:0});
+
+  const trusted={trusted:true};
+  const actual={basis:'actual',totalTokens:0};
+  const fallback={basis:'cg-fallback',status:'ready',completedImageIds:['synthetic-image']};
+  economy.ingestUsageFact({canonicalRequestId:'mixed-basis',revision:1,...actual},trusted);
+  assert.equal(economy.isRewardFactRecorded({canonicalRequestId:'mixed-basis',revision:2,...fallback}),true,'an accepted actual fact takes precedence over a newer fallback');
+  economy.ingestUsageFact({canonicalRequestId:'mixed-revision',revision:2,...fallback},trusted);
+  assert.equal(economy.isRewardFactRecorded({canonicalRequestId:'mixed-revision',revision:1,...actual}),true,'a newer accepted revision takes precedence over an older actual fact');
 });

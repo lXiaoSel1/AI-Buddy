@@ -46,11 +46,11 @@ export function createBuddyPluginServices({resolveContext,getGame=()=>null,getPr
     return record;
   }
   async function once(key,fn){if(commits.has(key))return commits.get(key);const result=Promise.resolve().then(fn);commits.set(key,result);try{return await result;}catch(error){if(commits.get(key)===result)commits.delete(key);throw error;}}
-  async function dispatch({pluginId,contextToken,method,payload:raw={}},{signal,origin,observeResult}={}){
+  async function dispatch({pluginId,contextToken,method,payload:raw={}},{signal,origin,observeResult,expectedGrantGeneration}={}){
     if(observeResult!==undefined&&typeof observeResult!=='function')throw contextFailure('Result observation is host-only','BUDDY_REQUEST_INVALID');
     const extension=Object.hasOwn(hostServices,method)?hostServices[method]:null;
     const capability=methods[method]??extension?.capability;if(!capability)throw contextFailure('Unknown Buddy bridge method','BUDDY_METHOD_UNKNOWN');
-    const payload=safePayload(raw),auth=await authorize({pluginId,contextToken,capability,payload}),context=auth.context;
+    const payload=safePayload(raw),auth=await checkAuthorization({pluginId,contextToken,capability,payload,generation:expectedGrantGeneration}),context=auth.context;
     const check=()=>checkAuthorization({pluginId,contextToken,capability,generation:auth.generation,payload});
     if(signal?.aborted)throw contextFailure('Plugin call cancelled','ABORT_ERR');
     const controller=new AbortController(),abort=()=>controller.abort();signal?.addEventListener('abort',abort,{once:true});

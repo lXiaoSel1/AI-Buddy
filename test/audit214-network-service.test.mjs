@@ -26,6 +26,10 @@ test('real Electron Session and production network consumers preserve the networ
   await writeFile(join(output,'latest.json'),JSON.stringify({run,code,...result},null,2)+'\n');
   assert.equal(result.electron,'44.6.0');
   assert.equal(result.fatal,undefined,result.fatal);
+  const f6=result.checks.find(row=>row.name.startsWith('F6 '));
+  if(f6&&result.f6ProxyReadiness)t.diagnostic('F6 native proxy readiness '+JSON.stringify({
+    ...result.f6ProxyReadiness,sessionCalls:f6.sessionCalls,upstreamRequests:f6.requests
+  }));
   for(const row of result.checks)await t.test(row.name,{skip:row.skipped?row.skipReason:false},()=>assert.equal(row.ok,true,row.error));
   assert.equal(code,0,'Electron helper should exit normally after collecting all checks');
 });

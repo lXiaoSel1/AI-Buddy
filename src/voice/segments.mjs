@@ -1,4 +1,5 @@
-import {dialogueVisibleText, parseGroupReply} from '../output-events.mjs';
+import {parseGroupReply} from '../output-events.mjs';
+import {galgameEmotionInstruction, normalizeGalgameEmotion, parseGalgameReply} from '../galgame-expressions.mjs';
 
 const emotions = new Set(['neutral','happy','sad','angry','caring','worried','shy','relieved','surprised','serious','confused']);
 const strengths = new Set(['mild','moderate','strong']);
@@ -28,26 +29,46 @@ function controlFields(row) {
 export function voiceReplyInstruction({group=false, allowSilence=false}={}) {
   const decision = group ? '\n第一行只写 {"type":"decision","speak":true}。' + (allowSilence ? '选择沉默时 speak 为 false，只输出 decision 和 control，不写台词。' : '') : '';
   const control = group
-    ? '{"type":"control","emotion":"normal","interactionTarget":"user","affectionTarget":"user","affection":0,"topicEnded":false}'
-    : '{"type":"control","emotion":"normal"}';
+    ? '{"type":"control","interactionTarget":"user","affectionTarget":"user","affection":0,"topicEnded":false}'
+    : '{"type":"control"}';
   return '\n请改用逐行 JSON 输出。每行必须是完整对象。' + decision
-    + '\n按自然语义分段，每段一行，例如 {"type":"segment","text":"台词","performance":{"emotion":"neutral","strength":"mild","delivery":"语气方向"}}。'
+    + '\n每句台词单独一行，例如 {"type":"segment","text":"[[emotion:温柔]]我听着呢。","performance":{"emotion":"neutral","strength":"mild","delivery":"语气方向"}}。'
     + '\n表演只反映你对本段的实际表达。emotion 限 ' + [...emotions].join('/') + '。strength 限 mild/moderate/strong。'
-    + '\n相关两三句可放同一段，语段合起来要自然通顺，正文保留必要的空格和换行，优先保持声线稳定。输出正文总长度沿用原要求。末行只写控制对象 ' + control
-    + '，emotion 沿用原动画标签。正文和控制对象不使用 Markdown 围栏，不要在 text 中放入协议字段。';
+    + galgameEmotionInstruction() + '\n语段合起来要自然通顺，正文保留必要的空格和换行，优先保持声线稳定。输出正文总长度沿用原要求。末行只写控制对象 ' + control
+    + '。正文和控制对象不使用 Markdown 围栏，text 中除句首表情标签外只放台词。';
 }
 
 export function createVoiceSegmentDecoder({group=false, allowSilence=false, onSegment=()=>{}}={}) {
   let raw='', pending='', mode=null, decision, control, sealed=false, result=null,damaged=false;
   const parts=[];
-  const deliveries=[];
-  const drain=async()=>{const pending=deliveries.splice(0);await Promise.all(pending);};
+  let inheritedEmotion=null, lastTaggedEmotion, legacyEmotion;
+  let deliveryTail=null;
+  const drain=async()=>{if(deliveryTail){await deliveryTail;deliveryTail=null;}};
   const emit = row => {
-    const text=dialogueVisibleText(row.text);
-    if (!text.trim()) return;
-    parts.push(text);
-    const delivery=onSegment({text, performance:performance(row)});
-    if(delivery&&typeof delivery.then==='function')deliveries.push(delivery);
+    const style = performance(row);
+    const hasTags = /\[\[emotion:/iu.test(row.text);
+    // A legacy NDJSON control line can carry the whole-turn emotion, but
+    // it arrives after playback may have started. Keep untagged audio at the
+    // visual default until that control is known; TTS performance is separate.
+    const fallback = inheritedEmotion ?? normalizeGalgameEmotion(row.emotion);
+    const parsed = parseGalgameReply(row.text,fallback,{preserveWhitespace:true});
+    if (!parsed.text.trim()) return parsed;
+    lastTaggedEmotion = parsed.lastTaggedEmotion ?? lastTaggedEmotion;
+    legacyEmotion = parsed.legacyEmotion ?? legacyEmotion;
+    // Legacy unmarked lines keep the original audio boundaries. When a
+    // model places multiple tagged sentences in one line, give each its
+    // own playback marker without losing spaces between the sentences.
+    const rows = hasTags ? parsed.sentences : [{start:0,emotion:fallback}];
+    for (const [index,sentence] of rows.entries()) {
+      const text = parsed.text.slice(index===0 ? 0 : sentence.start, rows[index+1]?.start);
+      parts.push(text);
+      const marked = inheritedEmotion!==null || parsed.firstTaggedSentence!==undefined && index>=parsed.firstTaggedSentence;
+      const deliver = () => onSegment({text,performance:style,visualEmotion:sentence.emotion,marked});
+      const delivery = deliveryTail ? deliveryTail.then(deliver) : deliver();
+      if (delivery && typeof delivery.then==='function') deliveryTail=delivery;
+    }
+    if (parsed.firstTaggedSentence!==undefined) inheritedEmotion = parsed.sentences.at(-1).emotion;
+    return parsed;
   };
   function line(source) {
     const value=source.trim();
@@ -115,15 +136,17 @@ export function createVoiceSegmentDecoder({group=false, allowSilence=false, onSe
         result=group ? {...control,text,speak:decision} : {...control,text};
       } else if (group) {
         const old=parseGroupReply(raw,{allowSilence});
-        if (old.speak!==false) emit({text:old.text});
+        if (old.speak!==false) emit({text:old.text,emotion:old.emotion});
         result={...controlFields(old), text:parts.join(''), speak:old.speak!==false};
+        if (old.format==='plain') result.compatibility=true;
       } else {
         const source=raw.trim();
-        if (!source || /^(?:[{\[]|```(?:jsonl?|ndjson)\b)/i.test(source)) throw failed();
-        const emotion=source.match(/\[\[emotion:([a-z-]+)\]\]\s*$/i)?.[1];
-        emit({text:source});
+        if (!source || /^(?:[{\[]|```(?:jsonl?|ndjson)\b)/i.test(source) && !/^\[\[emotion:/iu.test(source)) throw failed();
+        const emotion=emit({text:source})?.legacyEmotion;
         result={text:parts.join(''), ...(emotion ? {emotion} : {})};
       }
+      if (lastTaggedEmotion!==undefined) result.lastTaggedEmotion=lastTaggedEmotion;
+      if (legacyEmotion!==undefined && result.emotion!==legacyEmotion) result.legacyEmotion=legacyEmotion;
       return result;
     }
   };

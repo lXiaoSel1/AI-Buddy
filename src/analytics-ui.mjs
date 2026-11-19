@@ -40,7 +40,8 @@ function UsageDetails({detail,onAttribution,settings}){
  const source=id=>settings?.tokenSources?.sources.find(s=>s.id===id)?.name||id;
  return h(React.Fragment,null,detail.path&&h('p',{className:'full-path ws-path'},detail.path),
   h('div',{className:'ws-mini-stats'},...[['total',t("总 Token")],['input',t("未缓存输入")],['output',t("输出")],['requests',t("请求")]].map(([k,name])=>h('div',{key:k,className:'ws-mini'},h('small',null,name),h('b',{title:amount(r.totals,k)},figure(amount(r.totals,k,true)))))),
-  h('dl',{className:'ws-dl stats-breakdown'},...Object.entries({cacheRead:t("缓存读取"),cacheWrite:t("缓存写入"),reasoning:t("推理（输出细分）")}).map(([k,name])=>h(React.Fragment,{key:k},h('dt',null,name),h('dd',null,amount(r.totals,k))))),
+  h('dl',{className:'ws-dl stats-breakdown'},...Object.entries({totalInput:t("总输入"),cacheRead:t("缓存读取"),cacheWrite:t("缓存写入"),reasoning:t("推理（输出细分）")}).map(([k,name])=>h(React.Fragment,{key:k},h('dt',null,name),h('dd',null,amount(r.totals,k))))),
+  (r.totals.fieldMissing?.input??0)>0&&(r.totals.fieldMissing?.totalInput??0)<r.totals.requests&&h('p',{className:'ws-muted'},t('部分请求只提供总输入，缓存拆分未知。')),
   (r.identities||[]).length>0&&h('h3',{className:'ws-sec'},t("服务归属")),
   ...(r.identities||[]).map((i,n)=>{const unknown=i.serviceProvider==='unknown';return h('section',{className:'ws-identity stats-identity'+(unknown?' unknown':''),key:n},
    h('div',{className:'ws-identity-head'},h('b',null,platformLabel(i.serviceProvider)),tag(unknown?t("待补充"):t(BILLING_ROUTES[i.billingRoute]||i.billingRoute)),h('span',{className:'spacer'}),unknown?h('button',{className:'ui-btn sm primary',onClick:()=>onAttribution(i.sourceId)},t("补充归属")):h('span',{className:'ws-muted ws-tabular'},fmt(i.usage.requests)+t(" 次请求"))),

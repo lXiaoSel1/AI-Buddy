@@ -1,12 +1,14 @@
 import {visibleCompanionText} from './companion-presentation.mjs';
-import {VoiceDialogueLine} from './voice/client.mjs';
-import {groupSpeakerState} from './group-stage.mjs';
+import {historyMessageKey,useCompanionHistoryPage} from './companion-history-page-client.mjs';
+import {VoiceDialogueLine,voiceDialogueState} from './voice/client.mjs';
+import {GalgameIcon,GalgamePaperHeading,GalgameInput,GalgameSentenceText,StageDialogueText,HistoryExpressionText,HistoryExpressionPreview,Ornament} from './galgame-redesign.mjs';
+import {groupSpeakerState,stableMembers} from './group-stage.mjs';
 import {affectionText} from './companion-display.mjs';
 import React,{useEffect,useRef,useState} from 'react';
 import {FullMessageButton,FullMessageCSS,needsFullView} from './full-message-viewer.mjs';
 import {t} from './i18n.mjs';
 import {createR95ActionClient,r95GroupInputPolicy} from './r95-core-page.mjs';
-import {AutoRoundStrip,AutoEndedSummary,ChatSpeechLines,MessageSources,sourceView,unreadLines,autoProgress,speechHistory,speechTag,clock} from './chat-r95-ui.mjs';
+import {AutoRoundStrip,AutoEndedSummary,autoRoundText,ChatSpeechLines,MessageSources,sourceView,unreadLines,autoProgress,speechKind,speechTag,clock} from './chat-r95-ui.mjs';
 import {CHARACTER_CATALOG} from './character-catalog.mjs';
 import {GroupMentionInput} from './group-mention-input.mjs';
 import {companionImage} from './companion-image.mjs';
@@ -28,8 +30,8 @@ const fieldGroups=[
 ];
 const imageFields=new Set(['sprite','backgroundImage','referenceImage']);
 const modes=[['inherit','继承默认'],['custom','自定义'],['empty','主动清空']];
-const groupModes=[['natural','自然接话'],['list','列表顺序'],['manual','手动点名'],['pool','轮换池']];
-const groupModeHelp={
+export const groupModes=[['natural','自然接话'],['list','列表顺序'],['manual','手动点名'],['pool','轮换池']];
+export const groupModeHelp={
  natural:'自然接话：按点名和角色卡的健谈程度选人，每位入选成员本轮回复一次；无人入选时随机选一位，所以 0% 不等于静音。',
  list:'列表顺序：所有在场且未静音的成员按列表依次回复，不受健谈程度影响。',
  manual:'手动点名：仅输入 @ 并选择的成员回复，不受健谈程度影响；未点名时不会自动选人。',
@@ -64,7 +66,7 @@ export function companionCharacterName(character){return String(character?.effec
 export {companionImage};
 // B2: a second truncation reaches the panel as MODEL_OUTPUT_TRUNCATED or its Chinese message.
 export const modelOutputTruncated=value=>/MODEL_OUTPUT_TRUNCATED|回复被截断/.test(String(value?.code||'')+' '+String(value?.message??value??''));
-export const modelErrorText=value=>modelOutputTruncated(value)?t('回复被截断，可以调高通用设置里的输出上限后重试'):String(value?.message??value??'');
+export const modelErrorText=value=>modelOutputTruncated(value)?t('回复被截断，可以调高通用设置里的输出上限后重试'):t(String(value?.message??value??''));
 // B3/B5: statuses in which the group round is still working and the panel keeps polling.
 export const GROUP_BUSY_STATUSES=['queued','waiting-model','waiting-life-save','generating','running','preparing','awaiting-presentation'];
 export function groupStatusText(runtime,name,now=Date.now()){
@@ -111,9 +113,13 @@ async function readImage(file){
  if(file.size>8*1024*1024)throw Error(t('图片不能超过 8 MiB。'));
  return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(Error(t('图片读取失败。')));reader.readAsDataURL(file);});
 }
-function downloadJson(data,name){
- const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
- const anchor=document.createElement('a');anchor.href=url;anchor.download=name;document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+async function saveConversationExport(request,action,id,setFeedback,success){
+ try{
+  const result=await request(action,{id});
+  if(result?.cancelled)return;
+  if(result?.ok===false||!result?.export?.path)throw Error(result?.error||t('读取中断，请重试。'));
+  setFeedback(t(success));
+ }catch(error){setFeedback(errorText(error),true);}
 }
 function TextField({label,value,onChange,multiline=false,wide=false,disabled=false,type='text',placeholder='',hint=''}){
  const id=React.useId();
@@ -199,9 +205,12 @@ function OldSkits({request,onBack,onGroups}){
     status==='ready'?h('span',{className:'gx-back'},Icon('gallery',{size:14}),t('合影已生成 · 在图鉴里')):status==='trashed'?h('span',{className:'ws-muted'},t('合影已移入回收站')):['queued','generating'].includes(status)?h('span',{className:'ws-muted'},t('合影绘制中…')):cgAvailable?h('button',{type:'button',className:'ui-btn ghost sm',disabled:busy===skit.id,onClick:async()=>{setBusy(skit.id);try{const result=await request('skit-cg',{skitId:skit.id});if(result?.ok===false)throw Error(result.error||t('合影生成暂时失败'));await load();}catch(e){setError(errorText(e));}finally{setBusy('');}}},Icon('brush',{size:14}),status==='failed'?t('重试这场的合影 CG'):t('补一张合影 CG')):null));}),
   log&&!skits.length&&empty('没有以前的小剧场。'));
 }
-function MessageHistory({state,request,setFeedback,onGroups,resolveArt}){
+const HistoryPortraitSlot=({selection,renderHistoryPortrait,onClose})=>selection&&h(HistoryExpressionPreview,{preview:selection,portrait:renderHistoryPortrait,onClose});
+function MessageHistory({state,request,setFeedback,onGroups,resolveArt,renderHistoryPortrait,historyOnly}){
+ const [historySelection,setHistorySelection]=useState(null);
+
  const [search,setSearch]=useState(''),[from,setFrom]=useState(''),[to,setTo]=useState(''),[archived,setArchived]=useState(false),[items,setItems]=useState(null),[editing,setEditing]=useState(null),[editText,setEditText]=useState(''),[saving,setSaving]=useState(false),[onlyFavorites,setOnlyFavorites]=useState(false),[title,setTitle]=useState(''),[renaming,setRenaming]=useState(false);
- const importRef=useRef(null),[skitCount,setSkitCount]=useState(0),[showSkits,setShowSkits]=useState(false),[viewId,setViewId]=useState(state.activeConversationId||''),[preview,setPreview]=useState(null);
+ const importRef=useRef(null),[skitCount,setSkitCount]=useState(0),[showSkits,setShowSkits]=useState(false),[viewId,setViewId]=useState(state.activeConversationId||'');
  useEffect(()=>{let live=true;request('side-story-log').then(result=>{if(live)setSkitCount(Array.isArray(result?.skits)?result.skits.length:0);}).catch(()=>{});return()=>{live=false;};},[]);
  const conversations=items||state.conversations||[],listed=conversations.filter(row=>Boolean(row.archived)===archived);
  const active=state.activeConversationId,viewing=viewId||active||'',isActive=!!viewing&&viewing===active;
@@ -209,43 +218,66 @@ function MessageHistory({state,request,setFeedback,onGroups,resolveArt}){
  const characterOf=row=>state.characters?.find(c=>c.id===row?.characterId);
  useEffect(()=>{setViewId(active||'');},[active]);
  useEffect(()=>{setTitle(current?.title||'');setEditing(null);setRenaming(false);},[current?.id,current?.title]);
- // Another conversation is read through its export, which never switches the active one.
- useEffect(()=>{if(isActive||!viewing){setPreview(null);return;}let live=true;setPreview('loading');request('companion-conversation-export',{id:viewing}).then(result=>{const row=(result?.data||result?.export||result)?.conversations?.[0];if(live)setPreview(Array.isArray(row?.messages)?row.messages:[]);}).catch(error=>{if(live){setPreview([]);setFeedback(errorText(error),true);}});return()=>{live=false;};},[viewing,isActive]);
  useEffect(()=>{let active=true;const timer=setTimeout(()=>request('companion-conversation-list',{search,from,to,archived}).then(result=>{if(active)setItems(result.conversations||result.items||result.companion?.conversations||[]);}).catch(error=>{if(active)setFeedback(errorText(error),true);}),250);return()=>{active=false;clearTimeout(timer);};},[search,from,to,archived,state.activeConversationId,state.conversations?.length]);
- const messages=isActive?(state.messages||[]):Array.isArray(preview)?preview:[];
- const shown=messages.filter(row=>!onlyFavorites||row.favorite);
+ const messageSearch=current?.title?.toLocaleLowerCase().includes(search.toLocaleLowerCase())?'':search;
+ const page=useCompanionHistoryPage({request,ownerType:'private',ownerId:current?.id,search:messageSearch,favorites:onlyFavorites,initial:isActive?state.messages:[],currentRevision:state.revision});
+ const messages=page.messages;
+ const editMessage=async row=>{
+  setSaving(true);
+  const nextText=editText.trim(),result=await mutate('companion-message-edit',{conversationId:viewing,id:row.id,occurrenceId:row.occurrenceId,text:nextText},'更正已保存，下次正常聊天时提供给模型。');
+  setSaving(false);
+  if(result){
+   const saved=result.message??result.companion?.messages?.find(message=>historyMessageKey(message)===historyMessageKey(row));
+   page.updateMessage(historyMessageKey(row),saved??{text:nextText});
+   setEditing(null);
+  }
+ };
+ const toggleFavorite=async row=>{
+  const favorite=!row.favorite;
+  if(await mutate('companion-message-favorite',{conversationId:viewing,id:row.id,occurrenceId:row.occurrenceId,value:favorite},'收藏已更新。'))page.updateMessage(historyMessageKey(row),{favorite});
+ };
  // Her proactive / self-talk / dream lines stay in this conversation's history with what you said next (approved design C8).
- const lines=isActive&&!onlyFavorites&&state.r95?.scope?.conversationId===viewing?speechHistory(state.r95?.lines,messages):[],timeline=shown.map(row=>({row,at:row.createdAt}));
- for(const entry of lines){const index=timeline.findIndex(item=>Number.isFinite(item.at)&&item.at>entry.line.at);timeline.splice(index<0?timeline.length:index,0,{...entry,at:entry.line.at});}
- const historyLine=({line,kind,reply,read})=>h('article',{key:'line:'+line.messageId,className:'buddy-history-line '+kind,'data-history-line':line.messageId},h('span',{className:'r95-spk '+kind},Icon(speechTag(kind)[0],{size:12}),[t(speechTag(kind)[1]),clock(line.at)].filter(Boolean).join(' · ')),h('p',null,line.text),h('small',null,!read?t('还没回应'):reply?t('你：')+(reply.length>80?reply.slice(0,80)+'…':reply):t('已读')));
- const mutate=async(action,args,success)=>{try{const result=await request(action,args);setFeedback(t(success));return result;}catch(error){setFeedback(errorText(error),true);}};
+ const historyLine=({id,historySpeech:{line,reply,read}})=>{
+  const kind=speechKind(line),[icon,label]=speechTag(kind);
+  return h('article',{key:id,className:'buddy-history-line '+kind,'data-history-line':line.messageId,'data-history-message-id':id},h('span',{className:'r95-spk '+kind},Icon(icon,{size:12}),[t(label),clock(line.at)].filter(Boolean).join(' · ')),h('p',null,line.text),h('small',null,!read?t('还没回应'):reply?t('你：')+(reply.length>80?reply.slice(0,80)+'…':reply):t('已读')));
+ };
+ const mutate=async(action,args,success)=>{try{const result=await request(action,args);if(result?.ok===false)throw Error(result.error||t('读取中断，请重试。'));setFeedback(t(success));return result;}catch(error){setFeedback(errorText(error),true);}};
  const who=row=>row.role==='user'?(state.personas?.find(p=>p.id===row.personaId)?.nickname||t('你')):companionCharacterName(characterOf(row));
  if(showSkits)return h(OldSkits,{request,onBack:()=>setShowSkits(false),onGroups});
  const role=characterOf(current);
+ const createConversation=()=>void mutate('companion-conversation-new',{},'新会话已建立。');
  return h('div',{className:'buddy-columns buddy-history'},
+  renderHistoryPortrait&&h(HistoryPortraitSlot,{selection:historySelection,renderHistoryPortrait,onClose:()=>setHistorySelection(null)}),
   h('aside',{className:'buddy-sidebar'},
    h('label',{className:'buddy-searchbox'},Icon('search',{size:15}),h('input',{'aria-label':t('搜索会话与消息'),type:'search',placeholder:t('搜索会话与消息'),value:search,onChange:e=>setSearch(e.target.value)})),
    h('div',{className:'buddy-dates'},h('input',{'aria-label':t('开始日期'),type:'date',value:from,onChange:e=>setFrom(e.target.value)}),h('input',{'aria-label':t('结束日期'),type:'date',value:to,onChange:e=>setTo(e.target.value)})),
-   h('div',{className:'buddy-chips'},h('button',{type:'button',className:'buddy-chip','aria-pressed':archived,onClick:()=>setArchived(value=>!value)},Icon('archive',{size:13}),t('已归档'))),
-   newButton('新建会话',()=>void mutate('companion-conversation-new',{},'新会话已建立。')),
+   historyOnly
+    ? h('div',{className:'buddy-history-actions'},
+      h('span',{className:'grow'},t('已归档')),
+      h(Switch,{checked:archived,onChange:setArchived,label:t('已归档')}),
+      h('button',{type:'button',className:'b',onClick:createConversation},t('新建会话')))
+    : h(F,null,h('div',{className:'buddy-chips'},h('button',{type:'button',className:'buddy-chip','aria-pressed':archived,onClick:()=>setArchived(value=>!value)},Icon('archive',{size:13}),t('已归档'))),
+      newButton('新建会话',createConversation)),
    h('div',{className:'buddy-sidebar-list'},...listed.map(row=>{const c=characterOf(row);return sideItem({key:row.id,current:row.id===viewing,head:face(characterHead(c,resolveArt),companionCharacterName(c)),title:row.title||t('未命名会话'),sub:[row.title&&row.title!==companionCharacterName(c)?companionCharacterName(c):'',state.personas?.find(p=>p.id===row.personaId)?.name,dateLabel(row.updatedAt)].filter(Boolean).join(' · '),tag:row.id===active?t('正在聊'):'',onClick:()=>setViewId(row.id)});}),listed.length===0&&empty('没有匹配的会话。')),
    !archived&&skitCount>0&&h(F,null,h('p',{className:'buddy-side-h'},t('以前的小剧场')),sideItem({key:'skits','data-old-skits-entry':true,head:h('span',{className:'buddy-face blank','aria-hidden':true},Icon('ticket',{size:15})),title:t('以前的小剧场'),sub:skitCount+t(' 场 · 只读'),onClick:()=>setShowSkits(true)}))),
-  h('section',{className:'buddy-history-main'},
+  h('section',{className:'buddy-history-main',ref:page.scrollRef,onScroll:page.onScroll},
    current?h(F,null,
     h('div',{className:'buddy-form-title'},face(characterHead(role,resolveArt),companionCharacterName(role),'buddy-face lg'),
      h('div',{className:'spacer'},renaming?h('div',{className:'buddy-search'},h('input',{'aria-label':t('会话标题'),value:title,autoFocus:true,onChange:e=>setTitle(e.target.value)}),button('保存标题',async()=>{if(await mutate('companion-conversation-update',{id:current.id,title},'会话标题已保存。'))setRenaming(false);},{disabled:!title.trim()}),button('取消',()=>{setRenaming(false);setTitle(current.title||'');})):h('h3',null,current.title||t('未命名会话'),h('button',{type:'button',className:'buddy-icon','aria-label':t('改会话标题'),onClick:()=>setRenaming(true)},Icon('pencil',{size:14}))),
-      h('small',{className:'buddy-muted'},[state.personas?.find(p=>p.id===current.personaId)?.name,isActive||Array.isArray(preview)?messages.length+t(' 条消息'):'',current.updatedAt?t('最近 ')+dateLabel(current.updatedAt):''].filter(Boolean).join(' · '))),
-     ghost('download','导出',async()=>{const result=await mutate('companion-conversation-export',{id:current.id},'会话已导出。');if(result)downloadJson(result.data||result.export||result,'AI-Buddy-conversation-'+new Date().toISOString().slice(0,10)+'.json');}),
+      h('small',{className:'buddy-muted'},[state.personas?.find(p=>p.id===current.personaId)?.name,page.totalCount+t(' 条消息'),current.updatedAt?t('最近 ')+dateLabel(current.updatedAt):''].filter(Boolean).join(' · '))),
+     ghost('download','导出',()=>saveConversationExport(request,'companion-conversation-export',current.id,setFeedback,'会话已导出。')),
      ghost('archive',current.archived?'取消归档':'归档',async()=>{await mutate('companion-conversation-update',{id:current.id,archived:!current.archived},current.archived?'已取消归档。':'会话已归档，原文保留。');setItems(null);}),
      isActive?h('span',{className:'ws-tag'},t('正在聊')):button('继续这段对话',()=>void mutate('companion-conversation-select',{id:current.id},'已恢复会话。'),{className:'buddy-primary'})),
     h('div',{className:'buddy-history-filters'},h(Segmented,{size:'sm',label:t('消息筛选'),value:onlyFavorites?'favorite':'all',options:[['all',t('全部消息')],['favorite',t('仅收藏')]],onChange:value=>setOnlyFavorites(value==='favorite')}),h('span',{className:'spacer'}),h('span',{className:'buddy-switch-row'},t('允许更正我发的消息'),h(Switch,{checked:!!state.settings?.allowUserMessageEdit,label:t('允许更正我发的消息'),onChange:value=>void mutate('companion-settings',{allowUserMessageEdit:value},'消息更正设置已保存。')}))),
     !isActive&&h('div',{className:'ui-note'},Icon('info',{size:16}),h('div',null,t('这是只读预览；继续这段对话后可以收藏和更正。'))),
-    preview==='loading'?h('div',{className:'buddy-empty'},t('读取中…')):h('div',{className:'buddy-msgs'},...timeline.map(entry=>{if(entry.line)return historyLine(entry);const row=entry.row,mine=row.role==='user',c=characterOf(row);return h('article',{key:row.id,className:'buddy-message'+(mine?' me':''),'data-role':row.role},
+    page.hasMore&&h('button',{type:'button',className:'buddy-history-page-more b',disabled:page.pending,onClick:page.loadOlder},t(page.pending?'读取中…':'加载更早的消息')),
+    page.error&&h('div',{className:'buddy-error',role:'alert'},errorText(page.error),button('重试',page.retry)),
+    !messages.length&&page.pending?h('div',{className:'buddy-empty',role:'status'},t('读取中…')):h('div',{className:'buddy-msgs',ref:page.listRef},...messages.map(row=>{if(row.historySpeech)return historyLine(row);const mine=row.role==='user',c=characterOf(row);return h('article',{key:historyMessageKey(row),className:'buddy-message'+(mine?' me':''),'data-role':row.role,'data-history-message-id':historyMessageKey(row)},
      mine?personaFace(state.personas?.find(p=>p.id===row.personaId),resolveArt):face(characterHead(c,resolveArt),companionCharacterName(c)),
      h('div',{className:'buddy-message-main'},h('div',{className:'buddy-message-head'},h('strong',null,who(row)),h('small',{className:'buddy-muted'},dateLabel(row.createdAt))),
-      editing===row.id?h(F,null,h('div',{className:'buddy-field'},h('textarea',{'aria-label':t('更正消息'),value:editText,onChange:e=>setEditText(e.target.value),rows:4})),h('div',{className:'buddy-inline-actions'},button('保存更正',async()=>{setSaving(true);const result=await mutate('companion-message-edit',{conversationId:state.activeConversationId,id:row.id,text:editText},'更正已保存，下次正常聊天时提供给模型。');setSaving(false);if(result)setEditing(null);},{disabled:saving||!editText.trim(),className:'buddy-primary'}),button('取消',()=>setEditing(null),{disabled:saving}))):h('p',{className:'buddy-message-body'},visibleCompanionText(row,{messages})),
-      isActive&&h('div',{className:'buddy-message-actions'},h('button',{type:'button',className:'buddy-op','aria-pressed':!!row.favorite,onClick:()=>void mutate('companion-message-favorite',{conversationId:state.activeConversationId,id:row.id,value:!row.favorite},'收藏已更新。')},Icon('star',{size:13}),t(row.favorite?'已收藏':'收藏')),mine&&state.settings?.allowUserMessageEdit&&h('button',{type:'button',className:'buddy-op',onClick:()=>{setEditing(row.id);setEditText(row.text);}},Icon('pencil',{size:13}),t('更正'))),
-      (row.revisions?.length>0||row.originalText&&row.originalText!==row.text)&&h('details',{className:'buddy-revisions'},h('summary',null,h('span',{className:'ws-tag'},t('已更正')),t('原文与更正记录')),h('p',null,row.originalText),...(row.revisions||[]).map((revision,index)=>h('p',{key:index},dateLabel(revision.at||revision.updatedAt||revision.createdAt)+'\n'+(revision.text||revision.previousText||''))))));}),shown.length===0&&empty(onlyFavorites?'还没有收藏的消息。':'还没有消息。'))
+      editing===historyMessageKey(row)?h(F,null,h('div',{className:'buddy-field'},h('textarea',{'aria-label':t('更正消息'),value:editText,onChange:e=>setEditText(e.target.value),rows:4})),h('div',{className:'buddy-inline-actions'},button('保存更正',()=>void editMessage(row),{disabled:saving||!editText.trim(),className:'buddy-primary'}),button('取消',()=>setEditing(null),{disabled:saving}))):h('p',{className:'buddy-message-body'},mine?visibleCompanionText(row,{messages}):h(HistoryExpressionText,{message:row,text:visibleCompanionText(row,{messages}),onPreview:renderHistoryPortrait&&c?(sentence,text)=>setHistorySelection({character:c,emotion:sentence.emotion,text}):null})),
+      isActive&&h('div',{className:'buddy-message-actions'},h('button',{type:'button',className:'buddy-op','aria-pressed':!!row.favorite,onClick:()=>void toggleFavorite(row)},Icon('star',{size:13}),t(row.favorite?'已收藏':'收藏')),mine&&state.settings?.allowUserMessageEdit&&h('button',{type:'button',className:'buddy-op',onClick:()=>{setEditing(historyMessageKey(row));setEditText(row.text);}},Icon('pencil',{size:13}),t('更正'))),
+      (row.revisions?.length>0||row.originalText&&row.originalText!==row.text)&&h('details',{className:'buddy-revisions'},h('summary',null,h('span',{className:'ws-tag'},t('已更正')),t('原文与更正记录')),h('p',null,row.originalText),...(row.revisions||[]).map((revision,index)=>h('p',{key:index},dateLabel(revision.at||revision.updatedAt||revision.createdAt)+'\n'+(revision.text||revision.previousText||''))))));}),messages.length===0&&empty(onlyFavorites?'还没有收藏的消息。':'还没有消息。'))
    ):empty('选一段会话查看消息。'),
    h('div',{className:'buddy-inline-actions buddy-sticky-actions'},h('span',{className:'buddy-note spacer'},t('更正保留原文和版本，不重新请求模型、不改变好感。AI 台词不能修改。')),ghost('upload','恢复会话',()=>importRef.current?.click()),h('input',{type:'file',accept:'.json,application/json',hidden:true,ref:importRef,onChange:async e=>{const file=e.target.files?.[0];if(!file)return;try{if(file.size>50*1024*1024)throw Error(t('恢复文件不能超过 50 MiB。'));await mutate('companion-conversation-import',{data:JSON.parse(await file.text())},'会话已恢复。');}catch(error){setFeedback(errorText(error),true);}finally{e.target.value='';}}}))),
  );
@@ -280,28 +312,64 @@ export function GroupEditor({state,request,setFeedback,resolveArt,onClose,onCard
     others.length>0&&h('div',{className:'buddy-member-add'},...others.map(c=>h('button',{type:'button',key:c.id,disabled:saving,onClick:()=>selected?void updatePresent(c.id,'join'):toggleMember(c.id,true)},face(characterHead(c,resolveArt),companionCharacterName(c)),'+ '+label(c)))),
     note('新成员不知道加入之前的内容，离开期间也不会自动获知。再次加入保留原先已知内容。')),
    h('fieldset',{className:'buddy-section'},h('legend',null,t('舞台')),h('div',{className:'buddy-fields'},h('div',{className:'buddy-field'},h('span',{className:'buddy-field-label'},t('场景样式')),h(Segmented,{size:'sm',label:t('场景样式'),value:draft.sceneTemplate||'library',disabled:saving,options:[['library',t('图书室围桌')],['plain',t('普通背景')]],onChange:value=>setDraft(old=>({...old,sceneTemplate:value}))}),h('span',{className:'buddy-switch-row',style:{marginTop:10}},t('结束本次聊天时自动合影'),h(Switch,{checked:!!draft.autoPhoto,disabled:saving,label:t('结束本次聊天时自动合影'),onChange:value=>setDraft(old=>({...old,autoPhoto:value}))}))),h(ImageField,{label:'群聊背景',value:draft.background,onChange:value=>setDraft(old=>({...old,background:value})),resolveArt,disabled:saving,onError:message=>setFeedback(message,true)}))),
-   h('div',{className:'buddy-inline-actions buddy-sticky-actions'},h('span',{className:'buddy-note spacer'},t('群聊按当前身份保存。桌宠跟随进入时选中的角色，不随每条发言切换。')),selected&&ghost('download','导出群聊记录',async()=>{try{const result=await request('companion-group-export',{id:selected});downloadJson(result.data,'AI-Buddy-group-'+new Date().toISOString().slice(0,10)+'.json');setFeedback(t('群聊已导出；可在对话历史中恢复。'));}catch(error){setFeedback(errorText(error),true);}},{disabled:saving}),h('button',{type:'submit',disabled:saving||!draft.name.trim()||!draft.memberIds?.length},t('保存群聊')),button('保存并进入',()=>void save(true),{className:'buddy-primary',disabled:saving||!draft.name.trim()||!draft.memberIds?.length})),
+   h('div',{className:'buddy-inline-actions buddy-sticky-actions'},h('span',{className:'buddy-note spacer'},t('群聊按当前身份保存。桌宠跟随进入时选中的角色，不随每条发言切换。')),selected&&ghost('download','导出群聊记录',()=>saveConversationExport(request,'companion-group-export',selected,setFeedback,'群聊已导出；可在对话历史中恢复。'),{disabled:saving}),h('button',{type:'submit',disabled:saving||!draft.name.trim()||!draft.memberIds?.length},t('保存群聊')),button('保存并进入',()=>void save(true),{className:'buddy-primary',disabled:saving||!draft.name.trim()||!draft.memberIds?.length})),
  ));
 }
 
 /** All mutations use the application game-action bridge; this is not an isolated mock UI. */
-export function CompanionManager({state,request,panel='characters',onClose,resolveArt=()=>null}){
+export function CompanionManager({state,request,panel='characters',onClose,resolveArt=()=>null,historyOnly=false,renderHistoryPortrait,galgame=false}){
  const managerTabs=[['characters','管理角色','users'],['personas','我的身份','idcard'],['history','对话历史','clock'],['groups','群聊','chats'],['memory','长期记忆','memory'],['growth','人格自成长','sprout'],['lives','人生存档','archive']];
  const dialog=useRef(null),returnFocus=useRef(null),[active,setActive]=useState(panel),[cardFocus,setCardFocus]=useState(''),[feedback,setFeedbackState]=useState({text:'',error:false}),[connections,setConnections]=useState([]);
  const setFeedback=(text,error=false)=>setFeedbackState({text,error});
  useEffect(()=>{setActive(panel);},[panel]);
  useEffect(()=>{returnFocus.current=document.activeElement;dialog.current?.showModal();let live=true;window.whale?.models?.get?.().then(result=>{if(live)setConnections(result.profiles||[]);}).catch(()=>{});return()=>{live=false;dialog.current?.close();const target=returnFocus.current;if(target?.isConnected)target.focus({preventScroll:true});};},[]);
  if(!state)return null;
- return h('dialog',{id:'buddy-companion-dialog',ref:dialog,className:'buddy-dialog','aria-labelledby':'buddy-companion-title',onCancel:event=>{event.preventDefault();onClose();},onClick:event=>{if(event.target===dialog.current){const box=dialog.current.getBoundingClientRect();if(event.clientX<box.left||event.clientX>box.right||event.clientY<box.top||event.clientY>box.bottom)onClose();}},onWheel:event=>event.stopPropagation()},
-  h('div',{className:'buddy-dialog-shell'},h('header',{className:'buddy-dialog-head'},h('div',null,h('h2',{id:'buddy-companion-title'},t('角色与对话')),h('small',null,t('角色、身份和历史分别保存，取消关闭不应用草稿。'))),h('button',{type:'button',className:'buddy-dialog-close ui-icon-btn','aria-label':t('关闭'),onClick:onClose},Icon('close',{size:18}))),h('nav',{className:'buddy-tabs',role:'tablist','aria-label':t('角色与对话')},...managerTabs.map(([id,label,icon])=>h('button',{type:'button',onClick:()=>{setActive(id);setFeedback('');},key:id,role:'tab','aria-selected':active===id,'aria-controls':'buddy-manager-'+id,tabIndex:active===id?0:-1,onKeyDown:e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const ids=managerTabs.map(([id])=>id),index=ids.indexOf(active);const next=e.key==='Home'?0:e.key==='End'?ids.length-1:(index+(e.key==='ArrowRight'?1:ids.length-1))%ids.length;setActive(ids[next]);setTimeout(()=>dialog.current?.querySelector('[role=tab][aria-selected=true]')?.focus(),0);}},h('span',{className:'buddy-tab-icon','aria-hidden':true},Icon(icon,{size:15})),t(label)))),h('div',{className:'buddy-dialog-body',id:'buddy-manager-'+active,role:'tabpanel',key:active},h(LifeRecoveryBanner,{state,request,setFeedback}),active==='characters'?h(CharacterEditor,{state,request,setFeedback,resolveArt,connections,onClose,initial:cardFocus}):active==='personas'?h(PersonaEditor,{state,request,setFeedback,resolveArt}):active==='history'?h(MessageHistory,{state,request,setFeedback,resolveArt,onGroups:()=>{setActive('groups');setFeedback('');}}):active==='memory'?h(MemoryPanel,{state,request,setFeedback,resolveArt}):active==='growth'?h(GrowthPanel,{state,request,setFeedback,resolveArt}):active==='lives'?h(LifeArchivesPanel,{state,request,setFeedback,resolveArt}):h(GroupEditor,{state,request,setFeedback,resolveArt,onClose,onCard:id=>{setCardFocus(id);setActive('characters');setFeedback('');}})),h('footer',{className:'buddy-dialog-foot'},h('p',{className:'buddy-status'+(feedback.error?' buddy-error':''),role:feedback.error?'alert':'status'},feedback.text||t('保存不调用模型。未应用的草稿在关闭后丢弃。')),button('关闭',onClose))),
+ const paper=galgame&&{characters:['角色与对话','Characters'],personas:['我的身份','Identity'],groups:['群聊','Group'],history:['对话历史','Backlog']}[active];
+ return h('dialog',{id:'buddy-companion-dialog',ref:dialog,className:'buddy-dialog'+(paper?' gx-paper-dialog'+(active==='history'&&historyOnly?' gx-backlog':''):''),'aria-labelledby':'buddy-companion-title',onCancel:event=>{event.preventDefault();onClose();},onClick:event=>{if(event.target===dialog.current){const box=dialog.current.getBoundingClientRect();if(event.clientX<box.left||event.clientX>box.right||event.clientY<box.top||event.clientY>box.bottom)onClose();}},onWheel:event=>event.stopPropagation()},
+  h('div',{className:'buddy-dialog-shell'},h('header',{className:'buddy-dialog-head'+(paper?' gx-paper-head':'')},paper?h(GalgamePaperHeading,{id:'buddy-companion-title',title:t(paper[0]),subtitle:paper[1],onClose}):h(F,null,h('div',null,h('h2',{id:'buddy-companion-title'},t('角色与对话')),h('small',null,t('角色、身份和历史分别保存，取消关闭不应用草稿。'))),h('button',{type:'button',className:'buddy-dialog-close ui-icon-btn','aria-label':t('关闭'),onClick:onClose},Icon('close',{size:18}))),paper&&historyOnly&&h('span',{className:'gx-paper-crumb'},[companionCharacterName(state.characters?.find(row=>row.id===state.activeCharacterId)),t('当前身份：')+(state.personas?.find(row=>row.id===state.activePersonaId)?.nickname||t('你'))].filter(Boolean).join(' · '))),(!historyOnly||active!=='history')&&h('nav',{className:'buddy-tabs',role:'tablist','aria-label':t('角色与对话')},...managerTabs.map(([id,label,icon])=>h('button',{type:'button',onClick:()=>{setActive(id);setFeedback('');},key:id,role:'tab','aria-selected':active===id,'aria-controls':'buddy-manager-'+id,tabIndex:active===id?0:-1,onKeyDown:e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const ids=managerTabs.map(([id])=>id),index=ids.indexOf(active);const next=e.key==='Home'?0:e.key==='End'?ids.length-1:(index+(e.key==='ArrowRight'?1:ids.length-1))%ids.length;setActive(ids[next]);setTimeout(()=>dialog.current?.querySelector('[role=tab][aria-selected=true]')?.focus(),0);}},h('span',{className:'buddy-tab-icon','aria-hidden':true},Icon(icon,{size:15})),t(label)))),h('div',{className:'buddy-dialog-body',id:'buddy-manager-'+active,role:'tabpanel',key:active},h(LifeRecoveryBanner,{state,request,setFeedback}),active==='characters'?h(CharacterEditor,{state,request,setFeedback,resolveArt,connections,onClose,initial:cardFocus}):active==='personas'?h(PersonaEditor,{state,request,setFeedback,resolveArt}):active==='history'?h(MessageHistory,{state,request,setFeedback,resolveArt,renderHistoryPortrait,historyOnly,onGroups:()=>{setActive('groups');setFeedback('');}}):active==='memory'?h(MemoryPanel,{state,request,setFeedback,resolveArt}):active==='growth'?h(GrowthPanel,{state,request,setFeedback,resolveArt}):active==='lives'?h(LifeArchivesPanel,{state,request,setFeedback,resolveArt}):h(GroupEditor,{state,request,setFeedback,resolveArt,onClose,onCard:id=>{setCardFocus(id);setActive('characters');setFeedback('');}})),(!historyOnly||active!=='history'||feedback.text)&&h('footer',{className:'buddy-dialog-foot'},h('p',{className:'buddy-status'+(feedback.error?' buddy-error':''),role:feedback.error?'alert':'status'},feedback.text||t('保存不调用模型。未应用的草稿在关闭后丢弃。')),button('关闭',onClose))),
  );
 }
 
 export {CompanionGroupStage} from './group-stage-ui.mjs';
 
-export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onToggleChat,onApi,voiceControls,voiceSubtitle,voicePresentation,voiceClient}){
+function GroupRoundPopover({roundNumber,rows,nameOf,characterOf,canContinue,canStop,onContinue,onStop}){
+ const [open,setOpen]=useState(false),trigger=useRef(null),panel=useRef(null),panelId=React.useId();
+ function dismiss(focus=false){setOpen(false);if(focus)trigger.current?.focus({preventScroll:true});}
+ useEffect(()=>{
+  if(!open)return;
+  const outside=event=>{if(!panel.current?.contains(event.target)&&!trigger.current?.contains(event.target))dismiss();};
+  const escape=event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();dismiss(true);}};
+  document.addEventListener('pointerdown',outside,true);
+  document.addEventListener('keydown',escape,true);
+  return()=>{document.removeEventListener('pointerdown',outside,true);document.removeEventListener('keydown',escape,true);};
+ },[open]);
+ const labels={done:t('已发言'),busy:t('正在回复'),next:t('下一位'),muted:t('静音 · 跳过'),failed:t('回复失败'),waiting:t('候场')};
+ return h(F,null,h('button',{ref:trigger,type:'button',className:'b','data-group-round-toggle':true,'aria-expanded':open,'aria-controls':open?panelId:undefined,onClick:()=>setOpen(value=>!value)},t('展开进度')),
+  open&&h('section',{ref:panel,id:panelId,className:'q-roundpop','data-group-round-popover':true,role:'dialog','aria-label':t('本轮')},
+   h('h5',null,t('本轮'),Number.isSafeInteger(roundNumber)&&h('span',null,t('第 {n} 轮').replace('{n}',String(roundNumber)))),
+   h('ul',null,...rows.map(({id,status})=>h('li',{key:id,'data-group-round-member':id,'data-round-status':status},
+    face(characterHead(characterOf(id)),nameOf(id),'buddy-face sm'),h('span',{className:'q-round-name'},nameOf(id)),h('span',{className:'q-round-state'},labels[status])))),
+   h('div',{className:'acts'},h('button',{type:'button',className:'b',onClick:()=>dismiss(true)},t('收起进度')),
+    h('button',{type:'button',className:'b pri',disabled:!canContinue,'data-companion-group-continue':true,onClick:onContinue},t('继续 ▸')),
+    h('button',{type:'button',className:'b',disabled:!canStop,'data-companion-group-stop':true,onClick:()=>{dismiss(true);void onStop();}},t('停止本轮')))));
+}
+
+function nextRoundSpeaker(queue,status){
+ return queue[GROUP_BUSY_STATUSES.includes(status)?1:0];
+}
+
+function roundMembers(group,runtime,visibleSpoken){
+ const queue=runtime.queue??[],spoken=runtime.roundMembers?.length?runtime.spokenIds??[]:visibleSpoken,skipped=runtime.skippedIds??[],active=queue[0];
+ const order=runtime.roundMembers?.length?runtime.roundMembers:[...new Set([...spoken,...queue,...stableMembers(group)])];
+ const next=nextRoundSpeaker(queue,runtime.status);
+ return order.map(id=>({id,status:spoken.includes(id)?'done':id===active&&runtime.canRetry?'failed':
+  id===active&&GROUP_BUSY_STATUSES.includes(runtime.status)?'busy':skipped.includes(id)||group.mutedIds?.includes(id)||!group.memberIds.includes(id)?'muted':id===next?'next':'waiting'}));
+}
+
+export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onToggleChat,onApi,voiceControls,voiceSubtitle,voicePresentation,voiceClient,playback,stageUi={},classic=true,photoRequest,galgame=false}){
  const group=activeCompanionGroup(state),[text,setText]=useState(''),[bindings,setBindings]=useState([]),[busy,setBusy]=useState(false),[error,setError]=useState(''),[photoOpen,setPhotoOpen]=useState(false),[voiceDraft,setVoiceDraft]=useState(false);
- useEffect(()=>{setText('');setBindings([]);setError('');setVoiceDraft(false);},[group?.id]);
+ useEffect(()=>{setText('');setBindings([]);setError('');setVoiceDraft(false);setPhotoOpen(false);},[group?.id]);
+ useEffect(()=>{if(photoRequest?.groupId===group?.id&&photoRequest?.nonce)setPhotoOpen(true);},[photoRequest]);
  useEffect(()=>{const append=event=>{if(event.detail?.scope?.conversationId!==group?.id)return;setVoiceDraft(true);setText(old=>old+(old&&event.detail.text?'\n':'')+event.detail.text);};window.addEventListener('ai-buddy:voice-draft',append);return()=>window.removeEventListener('ai-buddy:voice-draft',append);},[group?.id]);
  const operationRef=useRef(null),requestRef=useRef(request),r95Client=useRef(null);requestRef.current=request;if(!r95Client.current)r95Client.current=createR95ActionClient((...args)=>requestRef.current(...args));
  const inputActive=useRef(false),inputScope=useRef(state?.r95?.scope);inputScope.current=state?.r95?.scope;
@@ -311,8 +379,10 @@ export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onTo
  useEffect(()=>{if(!group||!GROUP_BUSY_STATUSES.includes(runtime.status))return;const timer=setInterval(()=>request('companion-state',{}).catch(()=>{}),900);return()=>clearInterval(timer);},[group?.id,runtime.status]);
  const [,setTick]=useState(0);
  useEffect(()=>{if(runtime.status!=='waiting-life-save'||!runtime.waitDeadline)return;const timer=setInterval(()=>setTick(v=>v+1),1000);return()=>clearInterval(timer);},[runtime.status,runtime.waitDeadline]);
+ const message=groupCurrentMessage(state),member=state.characters?.find(c=>c.id===(message?.characterId||message?.speaker));
+ const voiceRequestId=runtime.streaming?.requestId??runtime.pendingMessage?.requestId??runtime.pendingMessage?.id??message?.requestId??message?.id;
  if(!group)return null;
- const message=groupCurrentMessage(state),member=state.characters?.find(c=>c.id===(message?.characterId||message?.speaker)),isRunning=busy||GROUP_BUSY_STATUSES.includes(runtime.status),canContinue=!!runtime.canContinue,canRetry=!!runtime.canRetry,hasQueue=!!runtime.queue?.length;
+ const isRunning=busy||GROUP_BUSY_STATUSES.includes(runtime.status),canContinue=!!runtime.canContinue,canRetry=!!runtime.canRetry,hasQueue=!!runtime.queue?.length;
  const perform=async(action,args={})=>{if(operationRef.current&&action!=='companion-group-stop')return;const token={action};if(action!=='companion-group-stop')operationRef.current=token;setError('');if(action!=='companion-group-stop')setBusy(true);try{await request(action,{id:group.id,...args,...(action==='companion-group-send'?{clientRequestId:crypto.randomUUID()}: {})});if(action==='companion-group-send'){setText('');setBindings([]);setVoiceDraft(false);setInputActive(false);}return true;}catch(error){setError(errorText(error));return false;}finally{if(operationRef.current===token){operationRef.current=null;setBusy(false);}}};
  const characterOf=id=>state.characters?.find(c=>c.id===id),nameOf=id=>companionCharacterName(characterOf(id))||t('成员');
  // This round: who already spoke since the last user message, who is next, who is still waiting.
@@ -323,16 +393,18 @@ export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onTo
  const roundDone=!isRunning&&!canContinue&&!canRetry&&!queue.length&&spoken.length>0;
  const offline=chat?chat.enabled===false:false,blocked=isRunning||canContinue||canRetry||offline,locked=isRunning||canContinue;
  const {autoSession,inputBlocked,sendBlocked}=r95GroupInputPolicy(state.r95,{offline,busy:isRunning,canContinue,canRetry});
+ const stageRound=!classic&&galgame;
  const turn=step=>h('span',{key:step.key,className:'buddy-turn'+(step.kind?' '+step.kind:'')},step.kind==='busy'?h('span',{className:'ui-spinner','aria-hidden':true}):face(characterHead(characterOf(step.id)),nameOf(step.id),'buddy-face sm'),step.kind==='next'?t('下一位 ')+nameOf(step.id):step.kind==='busy'?nameOf(step.id)+t(' 正在回复'):nameOf(step.id),step.kind==='done'&&Icon('check',{size:13}));
- const round=(steps.length>0||isRunning||canContinue||canRetry||hasQueue)&&h('div',{className:'buddy-round','data-group-round':true},
-  h('span',{className:'buddy-round-k'},t('本轮')),
-  h('span',{className:'buddy-round-current'},current?(isRunning?nameOf(current)+' '+t('正在回复'):canRetry?nameOf(current)+' '+t('回复失败'):t('下一位 ')+nameOf(current)):t('已发言')+' '+spoken.length),
-  h('details',{key:group.id+':'+(log[lastUser]?.id??'round'),className:'buddy-progress','data-group-progress-details':group.id},h('summary',null,h('span',{className:'buddy-progress-collapsed'},t('展开进度')),h('span',{className:'buddy-progress-expanded'},t('收起进度'))),h('div',{className:'buddy-progress-body buddy-round-steps'},...steps.flatMap((step,i)=>i?[h('span',{key:'a'+i,className:'buddy-round-arrow','aria-hidden':true},'›'),turn(step)]:[turn(step)]))),
+ const round=(steps.length>0||isRunning||canContinue||canRetry||hasQueue||stageRound&&runtime.spokenIds?.length>0)&&h('div',{className:classic?'buddy-round':'gx-group-round-controls','data-group-round':true},
+  classic&&h('span',{className:'buddy-round-k'},t('本轮')),
+  classic&&h('span',{className:'buddy-round-current'},current?(isRunning?nameOf(current)+' '+t('正在回复'):canRetry?nameOf(current)+' '+t('回复失败'):t('下一位 ')+nameOf(current)):t('已发言')+' '+spoken.length),
+  stageRound?h(GroupRoundPopover,{key:group.id+':'+runtime.roundId,roundNumber:runtime.roundNumber,rows:roundMembers(group,runtime,spoken),nameOf,characterOf,canContinue:canContinue&&!isRunning,canStop:isRunning||canContinue||canRetry||hasQueue,onContinue:()=>void perform('companion-group-continue'),onStop:()=>perform('companion-group-stop')}):
+   h('details',{key:group.id+':'+(log[lastUser]?.id??'round'),className:'buddy-progress','data-group-progress-details':group.id},h('summary',{className:classic?undefined:'b'},h('span',{className:'buddy-progress-collapsed'},t('展开进度')),h('span',{className:'buddy-progress-expanded'},t('收起进度'))),h('div',{className:'buddy-progress-body buddy-round-steps'},...steps.flatMap((step,i)=>i?[h('span',{key:'a'+i,className:'buddy-round-arrow','aria-hidden':true},'›'),turn(step)]:[turn(step)]))),
   isRunning&&h('span',{className:steps.length?'buddy-sr':'buddy-muted',role:'status'},groupStatusText(runtime,nameOf(current))),
-  h('span',{className:'spacer'}),
+  classic&&h('span',{className:'spacer'}),
   roundDone?h('span',{className:'buddy-round-end'},t('本轮结束，发新消息开始下一轮')):h(F,null,
-   (canContinue||isRunning)&&h('button',{type:'button',className:'gx-gbtn pri',disabled:isRunning,onClick:()=>void perform('companion-group-continue'),'data-companion-group-continue':true},t('继续 ▸')),
-   !canRetry&&h('button',{type:'button',className:'gx-gbtn',disabled:!isRunning&&!canContinue&&!hasQueue,onClick:()=>void perform('companion-group-stop'),'data-companion-group-stop':true},Icon('stop',{size:13}),t('停止本轮'))));
+   (canContinue||isRunning)&&h('button',{type:'button',className:classic?'gx-gbtn pri':'b pri',disabled:isRunning,onClick:()=>void perform('companion-group-continue'),'data-companion-group-continue':true},t('继续 ▸')),
+   !canRetry&&h('button',{type:'button',className:classic?'gx-gbtn':'b',disabled:!isRunning&&!canContinue&&!hasQueue,onClick:()=>void perform('companion-group-stop'),'data-companion-group-stop':true},classic&&Icon('stop',{size:13}),t('停止本轮'))));
  const problem=error||runtime.error,truncated=problem&&modelOutputTruncated(problem);
  const alert=problem||canRetry?h('div',{className:'gx-alert',role:'alert','data-group-error':true},Icon('alert',{size:16}),h('span',{className:'grow'},canRetry&&h('b',null,nameOf(current)+t(' 回复失败')),canRetry&&problem?' · ':'',problem?modelErrorText(problem):''),
    canRetry&&h('button',{type:'button',className:'gx-gbtn',disabled:isRunning,onClick:()=>void perform('companion-group-retry')},Icon('retry',{size:14}),t('重试 ')+nameOf(current)),
@@ -344,31 +416,51 @@ export function CompanionGroupDialogue({state,request,onManage,onPhoto,chat,onTo
  // A reply to her line counts as reading it (approved design C8); only a presented line can be read.
  const speech=unreadLines(state.r95);
  const send=()=>{if(!text.trim()||sendBlocked)return;const line=speech[0];void perform('companion-group-send',{text,mentionBindings:bindings}).then(sent=>{if(sent&&line?.status==='presented')void r95Client.current('speech-read',{messageId:line.messageId}).catch(e=>setError(e.message));});};
- const focusInput=()=>document.querySelector('#whg-panel[data-companion-group-dialogue] textarea:not(:disabled)')?.focus({preventScroll:true});
+ const focusInput=()=>{if(!classic&&!stageUi.inputOpen)stageUi.openInput();else document.querySelector('#whg-panel[data-companion-group-dialogue] textarea:not(:disabled)')?.focus({preventScroll:true});};
  const autoStrip=autoProgress(state.r95?.auto),queued=runtime.queuedUserMessages>0?runtime.queuedUserMessages:0;
  const ordinaryRuntime=typeof runtime.mode==='string'?runtime.mode!=='auto':!(runtime.pendingMessage?.autoRequestId||runtime.currentMessage?.autoRequestId)&&(canContinue||autoStrip?.status!=='active'&&(isRunning||canRetry||hasQueue));
  const endedAuto=state.r95?.auto?.status==='ended'?state.r95.auto:null,lastUserMessage=log[lastUser],lastAutoIndex=log.map(m=>!!m.autoRequestId).lastIndexOf(true),newOrdinaryUser=lastUser>=0&&(Number.isFinite(endedAuto?.endedAt)&&Number.isFinite(lastUserMessage?.createdAt)?lastUserMessage.createdAt>endedAuto.endedAt:lastAutoIndex>=0&&lastUser>lastAutoIndex)||!!endedAuto&&state.groupRuntime?.currentMessage?.role==='user'&&(isRunning||hasQueue||canContinue),showEnded=!!endedAuto&&!newOrdinaryUser&&!ordinaryRuntime;
  const partial=!!message?.transient&&!isRunning,speakerName=message?.role==='assistant'?(message.characterName||(member?companionCharacterName(member):'')):'';
  const displayMessageText=visibleCompanionText(message,{messages:state.groupMessages??[]}),fullText=!isRunning&&displayMessageText?displayMessageText:'';
- return h('section',{id:'whg-panel',className:'whg-panel gx-dlg buddy-group-panel','aria-label':t('群聊对话'),'data-companion-group-dialogue':group.id},
-  h('div',{className:'whg-plate gx-plate'+(who==='character'?'':' '+who),style:plateVars({who,characterId:member?.id,color:member?.color})},message?.role==='user'?(message?.personaName||message?.personaSnapshot?.nickname||state.personas?.find(p=>p.id===group.personaId)?.nickname||t('你')):(message?.characterName||(member?companionCharacterName(member):t('群聊'))),voiceClient?.speaking&&(voiceClient.subtitle?.envelope?.characterId??member?.id)===member?.id?voiceClient.speakingIndicator:null),
-  h('div',{className:'buddy-group-meta'},h('button',{type:'button',className:'gx-gbtn',disabled:locked,title:locked?t('本轮结束后可用'):undefined,onClick:()=>setPhotoOpen(true)},Icon('camera',{size:13}),t('合影 CG')),h('button',{type:'button',className:'gx-gbtn',disabled:locked,title:locked?t('本轮结束后可用'):undefined,onClick:()=>void perform('companion-group-end')},t('结束本次聊天'))),
-  // Approved designs C6 / C9: mood and Auto chips are in the toolbar now; while Auto runs, one strip says who is
-  // talking, round n / total, who is next and whether your message waits behind hers.
-  h(AutoRoundStrip,{view:state.r95?{...state.r95,groupId:state.r95.groupId??group.id}:null,onAction:r95Client.current,nameOf,busy:isRunning&&!ordinaryRuntime,speaker:isRunning&&!ordinaryRuntime&&identity.activeId?nameOf(identity.activeId):'',queued}),
-  h(VoiceDialogueLine,{presentation:voicePresentation,requestId:runtime.streaming?.requestId??runtime.pendingMessage?.requestId??runtime.pendingMessage?.id??message?.requestId??message?.id,className:'whg-line-now'+(message?'':' narrator'),key:message?.id||group.id,'aria-live':'polite','data-group-message-id':!runtime.streaming?.text?message?.id:undefined,'data-auto-request-id':!runtime.streaming?.text?message?.autoRequestId:undefined},(!voicePresentation&&voiceSubtitle?.text)||((isRunning||canRetry)&&runtime.streaming?.text)||displayMessageText||t('说点什么，开始这一轮群聊。')),
-  h(ChatSpeechLines,{view:state.r95,onAction:r95Client.current,onReply:focusInput}),
-  runtime.streaming?.interrupted&&h('p',{className:'buddy-muted',role:'status'},t('上次回复已中断，以下仅为保留的部分正文，未结算。')),
-  (sourceView(message)||needsFullView(fullText))&&h('div',{className:'gx-foot'},h(MessageSources,{message}),h('span',{className:'grow'}),fullText&&h(FullMessageButton,{text:fullText,messageId:group.id+':'+message.id,title:message?.characterName||member?.name||message?.personaName,name:speakerName||undefined,at:message?.createdAt??message?.at,interrupted:partial})),
+ const speakerLabel=message?.role==='user'?(message?.personaName||message?.personaSnapshot?.nickname||state.personas?.find(p=>p.id===group.personaId)?.nickname||t('你')):(message?.characterName||(member?companionCharacterName(member):t('群聊')));
+ const speaking=voiceClient?.speaking&&(voiceClient.subtitle?.envelope?.characterId??member?.id)===member?.id;
+ const actionControls=h('div',{className:'buddy-group-meta'},h('button',{type:'button',className:'gx-gbtn',disabled:locked,title:locked?t('本轮结束后可用'):undefined,onClick:()=>setPhotoOpen(true)},Icon('camera',{size:13}),t('合影 CG')),h('button',{type:'button',className:'gx-gbtn',disabled:locked,title:locked?t('本轮结束后可用'):undefined,onClick:()=>void perform('companion-group-end')},t('结束本次聊天')));
+ const auto=h(AutoRoundStrip,{view:state.r95?{...state.r95,groupId:state.r95.groupId??group.id}:null,onAction:r95Client.current,nameOf,busy:isRunning&&!ordinaryRuntime,speaker:isRunning&&!ordinaryRuntime&&identity.activeId?nameOf(identity.activeId):'',queued});
+ const currentSubtitle=voiceDialogueState(voicePresentation,voiceRequestId)?.subtitle;
+ const follow=!!currentSubtitle||!!runtime.streaming?.text&&!runtime.streaming.interrupted;
+ const renderedText=!runtime.streaming?.text&&message?.status==='presented'&&message?.autoRequestId;
+ const textBody=playback?.progressive&&!renderedText?h(GalgameSentenceText,{playback}):(!voicePresentation&&voiceSubtitle?.text)||((isRunning||canRetry)&&runtime.streaming?.text)||displayMessageText||t('说点什么，开始这一轮群聊。');
+ const line=h(VoiceDialogueLine,{presentation:voicePresentation,requestId:voiceRequestId,className:'whg-line-now'+(message?'':' narrator'),key:message?historyMessageKey(message):group.id,'aria-live':'polite','data-group-message-id':!runtime.streaming?.text?message?.id:undefined,'data-group-message-occurrence':!runtime.streaming?.text?message?.occurrenceId:undefined,'data-auto-request-id':!runtime.streaming?.text?message?.autoRequestId:undefined},textBody);
+ const speechLine=h(ChatSpeechLines,{view:state.r95,onAction:r95Client.current,onReply:focusInput,frameless:stageRound});
+ const fullMessage=(sourceView(message)||needsFullView(fullText))&&h('div',{className:'gx-foot'},h(MessageSources,{message}),h('span',{className:'grow'}),fullText&&h(FullMessageButton,{text:fullText,messageId:group.id+':'+message.id,title:message?.characterName||member?.name||message?.personaName,name:speakerName||undefined,at:message?.createdAt??message?.at,interrupted:partial}));
+ const extra=h(F,null,
+  runtime.streaming?.interrupted&&(classic?h('p',{className:'buddy-muted',role:'status'},t('上次回复已中断，以下仅为保留的部分正文，未结算。')):null),
+  classic&&fullMessage,
   !message&&!round&&h('p',{className:'buddy-group-hint'},t('发送后第一位会自动回复，后续成员点击“继续”接话。')),
   alert,autoStrip&&!ordinaryRuntime?null:showEnded?h(AutoEndedSummary,{view:state.r95,nameOf}):round,
   queued>0&&!autoStrip&&h('p',{role:'status',className:'r95-queued','data-r95-queued-user':queued},Icon('clock',{size:13}),t('你的消息排在她后面'),' · ',queued),
-  voiceClient?.speaking&&h('div',{className:'gx-foot vx-saying'},h('span',{className:'gx-foot-st'},voiceClient.subtitle? t('正在读第 {n} 句').replace('{n}',String(voiceClient.subtitle.envelope.index+1)):t('正在准备配音…')),h('span',{className:'grow'}),voiceClient.stopReading),
-  voiceClient?.alerts??voiceControls,
-  voiceClient?.replacingInput?voiceClient.inputReplacement:h('div',{className:'whg-input-row gx-say mk-ginput vx-ginput',onFocusCapture:()=>setInputActive(true),onBlurCapture:e=>{if(!e.currentTarget.contains(e.relatedTarget))setInputActive(false);}},voiceClient?.inputLeft,h('div',{className:'gx-ta'+(inputBlocked?' dis':'')},h(GroupMentionInput,{value:text,bindings,placeholder:autoSession?t('插一句…（Auto 进行中也可以说话）'):placeholder,onChange:(value,nextBindings)=>{setText(value);setBindings(nextBindings);setInputActive(!!value);},members:group.memberIds.map(id=>characterOf(id)).filter(Boolean),disabled:inputBlocked,onSubmit:send}),h('small',{'aria-hidden':true},voiceDraft?h(F,null,h('span',{className:'ws-tag'},t('来自录音')),' · ',t('可以先改再发')):t('Enter 发送 · Shift+Enter 换行'))),
+  voiceClient?.speaking&&h('div',{className:'gx-foot vx-saying'},h('span',{className:'gx-foot-st'},voiceClient.subtitle?t('正在读第 {n} 句').replace('{n}',String(voiceClient.subtitle.envelope.index+1)):t('正在准备配音…')),classic&&h('span',{className:'grow'}),classic&&voiceClient.stopReading),
+  classic&&(voiceClient?.alerts??voiceControls));
+ const draftSource=voiceDraft?h('small',{className:'gx-draft-source',role:'status'},h('span',{className:'ws-tag'},t('来自录音')),' · ',t('可以先改再发')):null;
+ const input=voiceClient?.replacingInput?voiceClient.inputReplacement:h('div',{className:classic?'whg-input-row gx-say mk-ginput vx-ginput':'ibar mk-ginput vx-ginput',onFocusCapture:()=>setInputActive(true),onBlurCapture:e=>{if(!e.currentTarget.contains(e.relatedTarget))setInputActive(false);}},voiceClient?.inputLeft,h('div',{className:'gx-ta'+(inputBlocked?' dis':'')},h(GroupMentionInput,{value:text,bindings,placeholder:autoSession?t('插一句…（Auto 进行中也可以说话）'):placeholder,onChange:(value,nextBindings)=>{setText(value);setBindings(nextBindings);setInputActive(!!value);},members:group.memberIds.map(id=>characterOf(id)).filter(Boolean),disabled:inputBlocked,onSubmit:send,describedBy:classic?undefined:'gx-stage-keyboard-hint'}),voiceDraft?(classic?draftSource:null):h('small',{className:'gx-keyboard-hint','aria-hidden':true},t('Enter 发送 · Shift+Enter 换行'))),
+   !classic&&draftSource,
    voiceClient?.inputRight,
-   h('button',{type:'button',className:'whg-send gx-send',disabled:sendBlocked||!text.trim(),onClick:send},isRunning&&!autoSession?h('span',{className:'ui-spinner','aria-hidden':true}):Icon('send',{size:15}),autoSession?t('插话'):t('发送'))),
-  photoOpen&&h(GroupPhotoDialog,{state,request,chat,onToggleChat,onApi,onClose:()=>setPhotoOpen(false),onPhoto}));
+   h('button',{type:'button',className:classic?'whg-send gx-send':'ib pri gx-send',disabled:sendBlocked||!text.trim(),onClick:send},isRunning&&!autoSession?h('span',{className:'ui-spinner','aria-hidden':true}):GalgameIcon('send'),autoSession?t('插话'):t('发送')));
+ const photo=photoOpen&&h(GroupPhotoDialog,{galgame,state,request,chat,onToggleChat,onApi,onClose:()=>setPhotoOpen(false),onPhoto});
+ const attrs={id:'whg-panel','aria-label':t('群聊对话'),'data-companion-group-dialogue':group.id,inert:stageUi.hidden};
+ if(classic)return h('section',{...attrs,className:'whg-panel gx-dlg gx-classic-content buddy-group-panel'},
+  h('div',{className:'whg-plate gx-plate'+(who==='character'?'':' '+who),style:plateVars({who,characterId:member?.id,color:member?.color})},speakerLabel,speaking&&voiceClient.speakingIndicator),
+  actionControls,auto,line,speechLine,extra,input,photo);
+ const next=nextRoundSpeaker(queue,runtime.status),roundLabel=autoStrip&&!ordinaryRuntime?[autoRoundText(autoStrip),autoStrip.next?t('下一位 ')+nameOf(autoStrip.next):null].filter(Boolean).join(' · '):steps.length?[t('本轮'),t('第 {n} 位 / 共 {total} 位').replace('{n}',String(Math.min(steps.length,spoken.length+1))).replace('{total}',String(steps.length)),next?t('下一位 ')+nameOf(next):null].filter(Boolean).join(' · '):null;
+ return h('section',{...attrs,className:'dialogue-shell'},
+  h('div',{className:'say'},
+   h('div',{className:'nm'},speaking&&GalgameIcon('wave'),Ornament(),speakerLabel,h('span',{className:'rule','aria-hidden':true}),roundLabel&&h('span',{className:'lv gx-round-meta'},roundLabel)),
+   h(StageDialogueText,{scope:group.id,replyId:voiceRequestId,follow},line),speechLine,
+   h('div',{className:'gx-stage-details'},
+    h('div',{className:'st'},runtime.streaming?.interrupted&&h('span',{className:'gx-foot-st stopped',role:'status'},Icon('stop',{size:12}),t('已停止 · 保留了已生成的部分')),fullMessage,voiceClient?.stageAlerts??voiceControls),
+    h('div',{className:'acts gx-round-actions'},auto,extra))),
+  h(GalgameInput,{open:stageUi.inputOpen,onOpen:stageUi.openInput,trigger:stageUi.trigger,label:t('说点什么，开始这一轮群聊。'),input,help:!voiceClient?.replacingInput}),photo);
+
 }
 
 const groupPhotoPlannerValue=binding=>binding?.enabled===true?String(binding.connectionId||''):'';
@@ -402,22 +494,42 @@ export function GroupPhotoPlannerFields({planner,value,onChange,disabled=false,o
   note('新合影使用所选策划模型；已有任务和重试保留原任务的模型与提示词。'),
  );
 }
-function GroupPhotoDialog({state,request,onClose,onPhoto,chat,onToggleChat,onApi}){
+function GroupPhotoDialog({state,request,onClose,onPhoto,chat,onToggleChat,onApi,galgame}){
  const dialog=useRef(null),focus=useRef(null),token=useRef(null),operation=useRef(null),first=useRef(true),[preview,setPreview]=useState(null),[selected,setSelected]=useState([]),[plannerValue,setPlannerValue]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
  const group=activeCompanionGroup(state),chatOn=chat?chat.enabled!==false:null;
- const existing=preview&&[...(group.photos||[])].reverse().find(p=>p.range?.start===preview.range.start&&p.range?.end===preview.range.end&&p.characterIds?.length===selected.length&&p.characterIds.every(id=>selected.includes(id)));
+ const castKey=ids=>[...ids].sort().join('\u001f'),selectionKey=castKey(selected);
+ const [savedPhoto,setSavedPhoto]=useState(null);
+ const existing=savedPhoto?.selection===selectionKey?savedPhoto.photo:null;
+ const range=preview?.range,previewCast=preview?.characterIds;
  const options=preview?.planner?.options||[],usable=value=>!value||options.some(row=>row.id===value&&row.available!==false);
  const plannerInvalid=!usable(plannerValue),plannerOffline=preview?.planner?.enabled===false&&!!plannerValue;
  useEffect(()=>{focus.current=document.activeElement;dialog.current.showModal();return()=>{dialog.current?.close();focus.current?.isConnected&&focus.current.focus();};},[]);
  // Turning online chat on changes which planner applies, so the planner part is read again; the cast stays as chosen.
- useEffect(()=>{let live=true;request('companion-group-photo-preview',{id:group.id}).then(r=>{if(r.ok===false)throw Error(r.error);if(!live)return;if(first.current){first.current=false;setPreview(r.photo);setSelected(r.photo.characterIds);setPlannerValue(groupPhotoPlannerValue(r.photo.planner?.binding));}else setPreview(old=>old?{...old,planner:r.photo.planner}:r.photo);}).catch(e=>{if(live)setError(errorText(e));});return()=>{live=false;};},[group.id,chatOn]);
+ useEffect(()=>{let live=true;request('companion-group-photo-preview',{id:group.id}).then(r=>{if(r.ok===false)throw Error(r.error);if(!live)return;if(first.current){first.current=false;setPreview(r.photo);setSelected(r.photo.characterIds);setSavedPhoto({selection:castKey(r.photo.characterIds),photo:r.photo.existingPhoto});setPlannerValue(groupPhotoPlannerValue(r.photo.planner?.binding));}else setPreview(old=>old?{...old,planner:r.photo.planner}:r.photo);}).catch(e=>{if(live)setError(errorText(e));});return()=>{live=false;};},[group.id,chatOn]);
+ // Only query the selected cast and range. Ignore a result arriving after another cast choice.
+ const [checkingPhoto,setCheckingPhoto]=useState(false);
+ useEffect(()=>{
+  if(!range||!selected.length)return;
+  if(selectionKey===castKey(previewCast)){
+   setSavedPhoto({selection:selectionKey,photo:preview.existingPhoto});
+   setCheckingPhoto(false);
+   return;
+  }
+  let live=true;
+  setCheckingPhoto(true);
+  request('companion-group-photo-preview',{id:group.id,range,characterIds:selected}).then(result=>{
+   if(result.ok===false)throw Error(result.error);
+   if(live)setSavedPhoto({selection:selectionKey,photo:result.photo.existingPhoto});
+  }).catch(error=>{if(live)setError(errorText(error));}).finally(()=>{if(live)setCheckingPhoto(false);});
+  return()=>{live=false;};
+ },[group.id,range,selectionKey]);
  // A planner choice is saved for this group as soon as it is made.
  const savePlanner=async value=>{if(operation.current||!preview||!usable(value))return;operation.current='save';setBusy(true);setError('');try{const r=await request('companion-group-photo-planner',{id:group.id,binding:groupPhotoPlannerBinding(value)});if(r.ok===false)throw Error(r.error);if(!r.photoPlanner)throw Error(t('提示词模型选择未返回，请重试。'));setPreview(old=>({...old,planner:r.photoPlanner}));setPlannerValue(groupPhotoPlannerValue(r.photoPlanner.binding));}catch(e){setError(errorText(e));}finally{operation.current=null;setBusy(false);}};
  const choosePlanner=value=>{token.current=null;setPlannerValue(value);setError('');void savePlanner(value);};
  const submit=async(regenerate=false)=>{if(operation.current||!preview||plannerInvalid)return;operation.current='submit';setBusy(true);setError('');token.current??=crypto.randomUUID();try{const r=await request('companion-group-photo',{id:group.id,characterIds:selected,range:preview.range,regenerate,clientRequestId:token.current,plannerBinding:groupPhotoPlannerBinding(plannerValue)});if(r.ok===false)throw Error(r.error);onClose();onPhoto?.(r.photo?.cgId);}catch(e){setError(errorText(e));}finally{operation.current=null;setBusy(false);}};
  const close=()=>{if(!operation.current)onClose();};
- return h('dialog',{ref:dialog,className:'buddy-dialog buddy-group-modal buddy-group-photo','aria-label':t('群聊合影 CG'),onKeyDownCapture:e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();close();}},onCancel:e=>{e.preventDefault();close();}},
-  h('header',null,h('h2',null,t('群聊合影 CG')),h('button',{type:'button',className:'buddy-dialog-close ui-icon-btn','aria-label':t('关闭')+' · '+t('群聊合影 CG'),disabled:busy,onClick:close},Icon('close',{size:18}))),
+ return h('dialog',{ref:dialog,className:'buddy-dialog buddy-group-modal buddy-group-photo'+(galgame?' gx-paper-dialog gx-paper-medium':''),'aria-label':t('群聊合影 CG'),onKeyDownCapture:e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();close();}},onCancel:e=>{e.preventDefault();close();}},
+  h('header',{className:galgame?'gx-paper-head':undefined},galgame?h(GalgamePaperHeading,{title:t('群聊合影 CG'),subtitle:'Group photo',onClose:close,busy}):h(F,null,h('h2',null,t('群聊合影 CG')),h('button',{type:'button',className:'buddy-dialog-close ui-icon-btn','aria-label':t('关闭')+' · '+t('群聊合影 CG'),disabled:busy,onClick:close},Icon('close',{size:18})))),
   h('div',{className:'buddy-group-modal-body'},
    note('依据本次已呈现的群聊内容设计。所选人物都使用自己的参考图，镜头外的参与者也在名单中。'),
    preview?h(F,null,
@@ -430,5 +542,5 @@ function GroupPhotoDialog({state,request,onClose,onPhoto,chat,onToggleChat,onApi
    busy&&h('p',{role:'status',className:'buddy-muted'},t(operation.current==='save'?'正在保存选择…':'正在提交合影任务…')),
    error&&h('p',{className:'buddy-error',role:'alert'},error)),
   h('footer',{className:'buddy-group-modal-foot'},existing&&h('button',{type:'button',className:'whg-btn buddy-ghost',disabled:busy,onClick:()=>{if(operation.current)return;onClose();onPhoto?.(existing.cgId);}},t('查看已有合影')),h('span',{className:'spacer'}),h('button',{type:'button',className:'whg-btn',disabled:busy,onClick:close},t('取消')),
-   h('button',{type:'button',className:'whg-btn buddy-primary',disabled:busy||!preview||!selected.length||plannerInvalid||plannerOffline,title:plannerOffline?t('先开启联网聊天'):undefined,onClick:()=>void submit(!!existing)},Icon('camera',{size:15}),t(busy&&operation.current==='submit'?'正在提交…':existing?'重新生成一张':'生成合影'))));
+   h('button',{type:'button',className:'whg-btn buddy-primary',disabled:busy||checkingPhoto||savedPhoto?.selection!==selectionKey||!preview||!selected.length||plannerInvalid||plannerOffline,title:plannerOffline?t('先开启联网聊天'):undefined,onClick:()=>void submit(!!existing)},Icon('camera',{size:15}),t(busy&&operation.current==='submit'?'正在提交…':existing?'重新生成一张':'生成合影'))));
 }

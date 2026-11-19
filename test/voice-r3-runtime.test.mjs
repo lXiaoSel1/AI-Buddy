@@ -96,7 +96,7 @@ test('a timed out shared-runtime waiter does not bypass its active chat owner or
 });
 
 test('the real inert pipe through host and player persists scoped phases through actual playback receipts',async t=>{
-  const f=await fixture(t),settings=createVoiceSettings();await settings.update({enabled:true});await f.runtime.prepare({engine:'breeze'});
+  const f=await fixture(t),settings=createVoiceSettings();await settings.update({enabled:true});
   const scope={characterId:'fixture',lifeId:'life',operationId:'operation',personaId:'persona',channel:'app-private',conversationId:'conversation'};
   const listeners=new Set(),audits=[],events=[],contexts=[];
   const shared=createSpeechRuntime({local:f.runtime});
@@ -104,22 +104,35 @@ test('the real inert pipe through host and player persists scoped phases through
     getPlatform:()=>({voicePackageStatus:()=>[{id:'ai-buddy.voice-breeze',engine:'breeze',installed:true,enabled:true,usable:true}]}),
     send:event=>{events.push(event);for(const listener of listeners)void listener(event);},audit:event=>audits.push(event),
     components:{settings,credentials:{},runtime:shared,local:f.runtime,cloud:{},supervisor:{async close(){}},
-      assets:{status:async()=>({state:'ready'}),resolve:async()=>({proof:'breeze'}),async close(){}},
+      assets:{prepareSelected:async()=>({state:'ready'}),status:async()=>({state:'ready'}),resolve:async()=>({proof:'breeze'}),async close(){}},
       profiles:{current:async()=>({id:'profile',version:1,characterId:'fixture',engine:'breeze'})}}});
   const api={action:(...args)=>host.action(...args),onEvent:listener=>{listeners.add(listener);return()=>listeners.delete(listener);}};
   const output=ensureVoiceOutput(api,{createContext:({sampleRate})=>{const context={sampleRate,currentTime:0,state:'running',destination:{},resume:async()=>{},close:async()=>{},createBuffer:(_,length,rate)=>({duration:length/rate,getChannelData:()=>new Float32Array(length)}),createBufferSource:()=>({connect(){},disconnect(){},start(){},stop(){}})};contexts.push(context);return context;}}),release=output.retain();
   let presentation;const off=output.subscribe(scope,value=>{presentation=value;});
   const until=async predicate=>{for(let i=0;i<250;i++){if(predicate())return;await delay(2);}assert.fail('inert host phase did not arrive');};
   try{
+    await host.action('prepare',{target:'speech'});
     const turn={...scope,requestId:'inert-request',messageId:'inert-message'},lease=await host.controller.admit(turn),envelope={...turn,...lease,index:0,segmentId:turn.requestId+':voice:0'};
     assert.equal(await host.controller.segment({envelope,text:'INERT_SECRET_TEXT'}),true);await host.controller.finish({requestId:turn.requestId});
     await until(()=>events.some(row=>row.type==='audio'&&row.phase==='end'));
     assert.equal(voiceDialogueState(presentation,turn.requestId).status,'已收到音频，等待播放…');
     contexts[0].currentTime=1;await until(()=>audits.some(row=>row.type==='voice-phase'&&row.stage==='done'));
     const phases=audits.filter(row=>row.type==='voice-phase');
-    assert.deepEqual(phases.map(row=>row.stage),['queue','reference-check','component-check','model-loading','component-check','speak-sent','first-pcm','playback-start','done']);
+    assert.deepEqual(phases.map(row=>row.stage),['queue','reference-check','component-check','speak-sent','first-pcm','playback-start','done']);
     assert.ok(phases.every(row=>row.requestId===turn.requestId&&row.segmentId===envelope.segmentId&&row.index===0&&row.engine==='breeze'));
     assert.ok(phases.every(row=>Object.keys(row).every(key=>['type','requestId','segmentId','index','engine','stage','elapsedMs','code'].includes(key))));
     assert.doesNotMatch(JSON.stringify(phases),/INERT_SECRET_TEXT|INERT_REFERENCE|inert\.mjs|characterId|credential|[A-Z]:\\/);
   }finally{off();await release();await host.close();}
+});
+
+test('built-in cloud Live prepares and captures with only the shared recognition worker',async t=>{
+  const f=await fixture(t);
+  const selection={packageId:'builtin-asr',target:'asr'};
+  assert.equal((await f.runtime.prepare(selection)).ready,true);
+  await f.runtime.startCapture({engineId:'builtin-asr'});
+  await f.runtime.cancelCapture();
+  assert.equal(f.spawns.length,1);
+  assert.ok(f.spawns.every(id=>id.startsWith('voice:asr:')));
+  assert.deepEqual((await f.operations()).slice(0,2),['initialize','capture']);
+  assert.throws(()=>f.runtime.prepare({...selection,target:'speech'}),{code:'VOICE_PREPARE_INVALID'});
 });

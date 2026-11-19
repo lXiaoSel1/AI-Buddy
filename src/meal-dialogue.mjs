@@ -1,12 +1,12 @@
 import {FOODS} from './food-catalog.mjs';
 import {t} from './i18n.mjs';
 const foods=new Map(FOODS.map(f=>[f.id,f.name]));
-export function mealDialogue(state,conversation,language='zh-CN'){
+export function mealDialogue(state,conversation,language='zh-CN',evidence){
  if(!conversation)return [];
  const {id,characterId,personaId,lifeId}=conversation,life=state.lives?.[characterId],name=state.cards?.[characterId]?.name;
  if(!name||life?.id!==lifeId||!state.personas?.[personaId])return [];
  const rows=[];
- for(const event of Object.values(life.r95?.evidence??{})){
+ for(const event of evidence??Object.values(life.r95?.evidence??{})){
   const s=event.scope;
   if(event.sourceKind!=='meal'||event.actual!==true||!s||s.channel!=='app-private'||s.characterId!==characterId||s.personaId!==personaId||s.lifeId!==lifeId||s.operationId!==life.operationId||s.conversationId!==id)continue;
   let v;try{v=JSON.parse(event.text);}catch{continue;}

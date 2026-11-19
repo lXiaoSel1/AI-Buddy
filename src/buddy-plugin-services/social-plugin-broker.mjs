@@ -18,7 +18,7 @@ export const SOCIAL_RUNTIME_METHODS=Object.freeze(['social.context.read','activi
 
 /** Adapt native plugin requests to the existing Core authority. This module
  * observes transport/model results itself: plugin claims never mint evidence. */
-export function createSocialPluginBroker({dataRoot,accounts,transport,bridge,getR95,getProvider,onBubble=async()=>{},onEvent=()=>{},onSetup=null,verifyBilibiliAccount=null,biliVision=null,requireBiliMedia=null,onReadingOpen=async()=>({opened:false}),automaticWorkAllowed=()=>true,now=Date.now}={}){
+export function createSocialPluginBroker({dataRoot,accounts,transport,bridge,getR95,getProvider,onBubble=async()=>{},onEvent=()=>{},onSetup=null,verifyBilibiliAccount=null,biliVision=null,requireBiliMedia=null,onReadingOpen=async()=>({opened:false}),automaticWorkAllowed=()=>true,resolveBiliRecoveryActivation=()=>null,onBiliRecoveryAudit=()=>{},now=Date.now}={}){
  const journal=createSocialRuntimeJournal({dataRoot});
   const offers=new Map(),deliveryAdapters=new Map(),candidateAdmissions=new Map(),coreCalls=new WeakMap(),deferredEvidenceReleases=new WeakMap(),activityAttempts=new WeakMap(),activityAdmissions=new WeakMap(),pendingAdmissions=new Set();
  const contexts=new Map(),management=new Map(),operators=new Map(),operatorBindings=new Map(),qqReplyObservations=new Map();let closed=false;
@@ -260,6 +260,31 @@ export function createSocialPluginBroker({dataRoot,accounts,transport,bridge,get
   return publicContext(row);
  }
  async function checkLease(row,payload,options){if(!r95().socialProfile(row.characterId,{channel:row.channel,conversationId:row.conversationId}).available)throw fail('SOCIAL_ACTIVITY_DEFERRED');return core(row,'activity.check',{leaseId:payload.leaseId,generation:payload.generation??row.account.generation},options);}
+ function authorizeFullReadingRecovery(original,identity,account,{paid=false,generation}={}){
+  if(identity.packageName!=='@ai-buddy/bilibili-companion'||original?.channel!=='bilibili'||
+    original.actorId!=='app-owner'||original.visibilityScope!=='conversation'||!Number.isSafeInteger(original.grantGeneration))throw fail('BILI_VISION_SCOPE_DENIED');
+  const current=accounts.forPlugin(identity.packageName);
+  if(!current?.enabled||current.ref!==account.ref||current.accountId!==account.accountId||current.generation!==account.generation||
+    original.account.ref!==current.ref||original.account.accountId!==current.accountId||original.account.generation!==current.generation||
+    original.accountBindingId!==current.accountId||original.bindingGeneration!==current.generation)throw fail('SOCIAL_ACCOUNT_CHANGED');
+  verify(original,identity);
+  const live=bridge.grants.require(identity.pluginId,'models.request',{permissionScope:['models.request']});
+  bridge.grants.assertGeneration(identity.pluginId,generation??live);
+  if(live!==original.grantGeneration){
+   if(!paid||live<original.grantGeneration)throw fail('BUDDY_PLUGIN_DISABLED');
+   // Legacy journal contexts have the durable, source-qualified host plugin ID.
+   // The platform supplies activation provenance from its trusted package publication.
+   const activation=resolveBiliRecoveryActivation(identity);
+   if(activation?.official!==true||activation.enabled!==true||activation.pluginId!==original.pluginId||
+     activation.packageName!==original.packageName||activation.exactVersion!==identity.exactVersion||
+     activation.sourceDigest!==identity.sourceDigest)throw fail('BUDDY_PLUGIN_DISABLED');
+  }
+  return live;
+ }
+ function auditPaidRecovery(original,currentGeneration,result){
+  if(currentGeneration===original.grantGeneration)return;
+  try{onBiliRecoveryAudit({originalGeneration:original.grantGeneration,currentGeneration,result});}catch{}
+ }
  const handlers={'social.context.read':readContext};
   async function recoverFullReading(identity,owner,{signal,check}){
    const api=biliVision.fullReading;let reading=api.getForAccount(owner);const latest=reading.calls?.at(-1)?.stepId;
@@ -269,39 +294,43 @@ export function createSocialPluginBroker({dataRoot,accounts,transport,bridge,get
      const unsent=journal.notSentModels({pluginId:identity.pluginId,accountBindingId:currentAccount.accountId,bindingGeneration:currentAccount.generation,readingId:owner.readingId,stepId:latest});
      for(const record of unsent){
       if(record.input.readingId!==owner.readingId||record.input.stepId!==latest||hash(record.input)!==record.digest)continue;
-      const original=journal.recoveryContext(record.scope);let proof;
+      const original=journal.recoveryContext(record.scope);let proof,generation;
       try{
-       if(!original||original.account.ref!==owner.accountRef||original.account.accountId!==owner.accountBindingId||!Number.isSafeInteger(original.grantGeneration))continue;
-       bridge.grants.assertGeneration(identity.pluginId,original.grantGeneration);bridge.grants.require(identity.pluginId,'models.request',{permissionScope:['models.request']});verify(original,identity);
+       generation=authorizeFullReadingRecovery(original,identity,currentAccount);
        const exact=api.get({scope:visionScope(original),readingId:owner.readingId});if(exact.phase==='cancelled'||exact.planHash!==reading.planHash||record.input.material?.readRange?.planHash!==exact.planHash||exact.calls?.at(-1)?.stepId!==latest||exact.calls.at(-1).status!=='not-sent'||exact.needsReview)continue;
        assertFullReadingModel(exact,capturedModel(original));proof=api.verifyRecoveryMaterial({scope:visionScope(original),readingId:owner.readingId,batchId:latest,material:record.input.material,visualMaterialRefs:record.input.visualMaterialRefs});if(proof.stepKind!==record.input.stepKind)continue;
       }catch{continue;}
-      await check();signal?.throwIfAborted();verify(original,identity);bridge.grants.assertGeneration(identity.pluginId,original.grantGeneration);
-      const accountNow=accounts.forPlugin(identity.packageName),current=api.getForAccount(owner);if(accountNow.ref!==currentAccount.ref||accountNow.generation!==currentAccount.generation||current.phase==='cancelled'||current.calls?.at(-1)?.stepId!==latest||current.calls.at(-1).status!=='not-sent'||current.needsReview)return current;
+      await check();signal?.throwIfAborted();
+      try{authorizeFullReadingRecovery(original,identity,currentAccount,{generation});}catch{return api.getForAccount(owner);}
+      const current=api.getForAccount(owner);if(current.phase==='cancelled'||current.calls?.at(-1)?.stepId!==latest||current.calls.at(-1).status!=='not-sent'||current.needsReview)return current;
       return {...current,notSentResults:[{readingId:owner.readingId,planHash:current.planHash,stepId:latest,inputHash:proof.inputHash}]};
      }
     }
    for(const record of records){
     if(record.input.readingId!==owner.readingId||record.input.stepId!==latest||record.result.hostReadingMode!=='full-v1'||hash(record.input)!==record.digest||hash(record.input.material)!==hash(record.result.hostMaterial))continue;
-    const original=journal.recoveryContext(record.scope);let proof,understanding,schemaValid;
+    const original=journal.recoveryContext(record.scope);let proof,understanding,schemaValid,fullReadingValidation,generation;
+    const {hostMaterial,hostVideo,hostReadingMode,hostReadingId,completedAt,...result}=record.result;
     try{
-     if(!original||original.account.ref!==owner.accountRef||original.account.accountId!==owner.accountBindingId||!Number.isSafeInteger(original.grantGeneration))continue;
-     bridge.grants.assertGeneration(identity.pluginId,original.grantGeneration);bridge.grants.require(identity.pluginId,'models.request',{permissionScope:['models.request']});verify(original,identity);
+     generation=authorizeFullReadingRecovery(original,identity,currentAccount,{paid:true});
      const exact=api.get({scope:visionScope(original),readingId:owner.readingId});if(exact.phase==='cancelled'||exact.planHash!==reading.planHash||record.input.material?.readRange?.planHash!==exact.planHash)continue;
      assertFullReadingModel(exact,capturedModel(original));proof=api.verifyRecoveryMaterial({scope:visionScope(original),readingId:owner.readingId,batchId:latest,material:record.input.material,visualMaterialRefs:record.input.visualMaterialRefs});
-     if(proof.stepKind!==record.input.stepKind)continue;understanding=parseFullReadingUnderstanding(record.result);
-     schemaValid=validFullReadingUnderstanding(understanding,new Set(record.input.material.items.map(item=>item.id)));
+     if(proof.stepKind!==record.input.stepKind)continue;
+     if(typeof api.inspectReceipt==='function')({understanding,schemaValid,fullReadingValidation}=api.inspectReceipt({scope:visionScope(original),readingId:owner.readingId,batchId:latest,inputHash:proof.inputHash,providerRequestId:result.requestId,result}));
+     else {understanding=parseFullReadingUnderstanding(result);schemaValid=validFullReadingUnderstanding(understanding,new Set(record.input.material.items.map(item=>item.id)));}
     }catch{continue;}
-    await check();signal?.throwIfAborted();verify(original,identity);bridge.grants.assertGeneration(identity.pluginId,original.grantGeneration);
-    const accountNow=accounts.forPlugin(identity.packageName);if(accountNow.ref!==currentAccount.ref||accountNow.generation!==currentAccount.generation||api.getForAccount(owner).phase==='cancelled')return api.getForAccount(owner);
-    const {hostMaterial,hostVideo,hostReadingMode,hostReadingId,completedAt,...result}=record.result;
+    await check();signal?.throwIfAborted();
+    try{authorizeFullReadingRecovery(original,identity,currentAccount,{paid:true,generation});}catch{return api.getForAccount(owner);}
+    if(api.getForAccount(owner).phase==='cancelled')return api.getForAccount(owner);
     const processed=!!(schemaValid&&understanding.completedMaterial===true),existing=api.get({scope:visionScope(original),readingId:owner.readingId}),completed=existing.calls?.find(call=>call.stepId===latest&&call.status==='completed');
     if(completed&&(completed.providerRequestId!==result.requestId||completed.processed!==processed&&!(completed.processed===false&&processed)))continue;
     if(completed?.processed===processed)reading=existing;
     else reading=api.reconcile({scope:visionScope(original),readingId:owner.readingId,batchId:latest,inputHash:proof.inputHash,providerRequestId:result.requestId,result});
     if(!reading.calls?.some(call=>call.stepId===latest&&call.status==='completed'&&call.processed===processed&&call.providerRequestId===result.requestId))return reading;
+    const accepted=fullReadingValidation&&api.receiptValidation?.({scope:visionScope(original),readingId:owner.readingId,batchId:latest,providerRequestId:result.requestId});
+    if(processed&&fullReadingValidation&&!accepted)return reading;
     journal.markReconciled({id:record.id,input:record.input,scope:record.scope});
-    return {...reading,recoveredResults:[{readingId:owner.readingId,planHash:reading.planHash,stepId:latest,stepKind:proof.stepKind,inputHash:proof.inputHash,providerRequestId:result.requestId,material:copy(record.input.material),understanding:safeModelResult(original,understanding),...(!processed?{receiptKind:'invalid',schemaInvalid:!schemaValid,result:safeModelResult(original,result)}:{})}]};
+    if(completed?.processed!==processed||!record.reconciled)auditPaidRecovery(original,generation,'receipt-projected');
+    return {...reading,recoveredResults:[{readingId:owner.readingId,planHash:reading.planHash,stepId:latest,stepKind:proof.stepKind,inputHash:proof.inputHash,providerRequestId:result.requestId,material:copy(record.input.material),understanding:safeModelResult(original,understanding),...(accepted?{fullReadingValidation:accepted,result:safeModelResult(original,result)}:{}),...(!processed?{receiptKind:'invalid',schemaInvalid:!schemaValid,result:safeModelResult(original,result)}:{})}]};
    }
    return reading;
   }
@@ -424,22 +453,77 @@ export function createSocialPluginBroker({dataRoot,accounts,transport,bridge,get
    await check();await checkLease(row,payload,{signal});verify(row,identity);signal?.throwIfAborted();attemptFor(row,payload.leaseId)?.owner?.check();
    const {hostMaterial,hostVideo,hostReadingMode,hostReadingId,completedAt,...publicResult}=result;
    if(full&&typeof biliVision.fullReading.reconcile==='function')biliVision.fullReading.reconcile({scope:visionScope(row),readingId:payload.readingId,batchId:payload.stepId,inputHash:fullProof.inputHash,providerRequestId:publicResult.requestId,result:publicResult});
-   journal.completeObserved({id:requestKey,input:journalInput,scope:row});const safe=safeModelResult(row,publicResult);if(qqReply&&typeof safe.text==='string')safe.text=filterReplySourceLabels(safe.text,{requestText:messages.map(message=>{try{const envelope=JSON.parse(message.content);return envelope.kind==='qq-message'?envelope.segments.filter(part=>part.type==='text').map(part=>part.text).join('\n'):message.content;}catch{return message.content;}}).join('\n')});return safe;
+   journal.completeObserved({id:requestKey,input:journalInput,scope:row});const safe=safeModelResult(row,publicResult);
+   if(full){delete safe.fullReadingValidation;const accepted=biliVision.fullReading.receiptValidation?.({scope:visionScope(row),readingId:payload.readingId,batchId:payload.stepId,providerRequestId:publicResult.requestId});if(accepted)safe.fullReadingValidation=accepted;}
+   if(qqReply&&typeof safe.text==='string')safe.text=filterReplySourceLabels(safe.text,{requestText:messages.map(message=>{try{const envelope=JSON.parse(message.content);return envelope.kind==='qq-message'?envelope.segments.filter(part=>part.type==='text').map(part=>part.text).join('\n'):message.content;}catch{return message.content;}}).join('\n')});return safe;
   }catch(error){throw vision&&!enteredJournal?modelNotSubmittedError(error):error;}
  };
- handlers['experience.append']=async({identity,context:row,payload,signal})=>{
-  let owned=null;try{if(row?.recoveredEvidenceOnly&&row.channel.startsWith('qq-')&&contexts.get(row.persistedToken)!==row){const token=row.persistedToken;row=await restoreForEvidence(identity,token,{onCreated:value=>{owned={row:value,token};}});verify(row,identity);}
+ function resumedFullReadingEvidence(identity,row,payload,saved,generation){
+  if(!fullReady()||!saved||identity.packageName!=='@ai-buddy/bilibili-companion'||row.channel!=='bilibili'||row.actorId!=='app-owner'||row.visibilityScope!=='conversation'||payload.sourceKind==='bilibili-comment'||saved.result.hostReadingMode!=='full-v1'||saved.result.hostReadingId!==payload.activityId||saved.result.requestId!==payload.providerRequestId)return;
+  const original=journal.recoveryContext(saved.scope);
+  if(!original||!['pluginId','packageName','characterId','personaId','lifeId','operationId','channel','actorId','visibilityScope','accountBindingId','bindingGeneration','connectionRef','modelConnectionRef','modelFingerprint'].every(key=>original[key]===row[key]))return;
+  if(!Number.isSafeInteger(row.grantGeneration))throw fail('BUDDY_PLUGIN_DISABLED');
+  verify(row,identity);
+  const currentGeneration=authorizeFullReadingRecovery(original,identity,row.account,{paid:true,generation});
+  if(row.grantGeneration>currentGeneration)throw fail('BUDDY_PLUGIN_DISABLED');
+  const api=biliVision.fullReading,scope=visionScope(original),readingId=payload.activityId,reading=api.get({scope,readingId});
+  assertFullReadingModel(reading,capturedModel(original));
+  if(reading.phase!=='completed'||reading.coverage?.complete!==true||reading.finalProcessed!==true||reading.finalProviderRequestId!==payload.providerRequestId)return;
+  const providerRequestId=payload.providerRequestId,batchId=reading.finalBatchId;
+  const {hostMaterial,hostVideo,hostReadingMode,hostReadingId,completedAt,...result}=saved.result;
+  const proof=api.verifyRecoveryMaterial({scope,readingId,batchId,material:hostMaterial,visualMaterialRefs:[]});
+  const checked=api.inspectReceipt({scope,readingId,batchId,inputHash:proof.inputHash,providerRequestId,result});
+  if(!checked.schemaValid||checked.understanding.completedMaterial!==true)return;
+  const accepted=api.receiptValidation?.({scope,readingId,batchId,providerRequestId});
+  if(checked.fullReadingValidation&&(!accepted||hash(checked.fullReadingValidation)!==hash(accepted)))return;
+  return {original,generation:currentGeneration};
+ }
+ handlers['experience.append']=async({identity,context:row,payload,signal,check=async()=>{}})=>{
+  const caller=row;
+  let owned=null,resumedOriginal=null,expectedGrantGeneration;try{if(row?.recoveredEvidenceOnly&&row.channel.startsWith('qq-')&&contexts.get(row.persistedToken)!==row){const token=row.persistedToken;row=await restoreForEvidence(identity,token,{onCreated:value=>{owned={row:value,token};}});verify(row,identity);}
   let ref;
   if(row.channel==='bilibili'){
    let model=row.models.get(payload.providerRequestId);
-   if(!model){const saved=journal.result(payload.providerRequestId);if(saved&&['pluginId','characterId','personaId','lifeId','operationId','sessionId','accountBindingId','bindingGeneration'].every(k=>saved.scope[k]===row[k]))model={result:saved.result,material:saved.result.hostMaterial,video:saved.result.hostVideo};}
-   if(!model)throw fail('BUDDY_EVIDENCE_MISSING');const full=model.result.hostReadingMode==='full-v1'&&payload.sourceKind!=='bilibili-comment',parsed=full?parseFullReadingUnderstanding(model.result):parseModelResponseObject(model.result.text);if(!full&&!parsed)throw fail('SOCIAL_UNDERSTANDING_INVALID');
+   const saved=journal.result(payload.providerRequestId),sameSession=saved&&['pluginId','characterId','personaId','lifeId','operationId','sessionId','accountBindingId','bindingGeneration'].every(k=>saved.scope[k]===row[k]);
+   const staleFinal=saved?.result.hostReadingMode==='full-v1'&&payload.sourceKind!=='bilibili-comment'&&
+    (row.recoveredEvidenceOnly||bridge.grants&&bridge.grants.get(row.pluginId)?.generation!==row.grantGeneration);
+   if(staleFinal||(!model&&saved&&saved.scope.sessionId!==row.sessionId)){
+    const proof=resumedFullReadingEvidence(identity,row,payload,saved,staleFinal?undefined:row.grantGeneration);
+    if(!proof)throw fail('BUDDY_EVIDENCE_MISSING');
+    const {original,generation}=proof;
+    await check();signal?.throwIfAborted();
+    const token=original.persistedToken??original.contextToken;
+    const evidenceRow=sameSession?row:await restoreForEvidence(identity,token,{onCreated:value=>{owned={row:value,token};}});
+    await check();signal?.throwIfAborted();
+    const current=resumedFullReadingEvidence(identity,caller,payload,saved,generation);
+    if(!current||!evidenceRow||evidenceRow.contextRef!==current.original.contextRef||evidenceRow.sessionId!==current.original.sessionId)throw fail('BUDDY_EVIDENCE_MISSING');
+    resumedOriginal=original;expectedGrantGeneration=generation;row=evidenceRow;
+    model={result:saved.result,material:saved.result.hostMaterial,video:saved.result.hostVideo};
+   }else if(!model&&sameSession)model={result:saved.result,material:saved.result.hostMaterial,video:saved.result.hostVideo};
+   if(!model)throw fail('BUDDY_EVIDENCE_MISSING');const full=model.result.hostReadingMode==='full-v1'&&payload.sourceKind!=='bilibili-comment';let parsed=full?parseFullReadingUnderstanding(model.result):parseModelResponseObject(model.result.text);if(!full&&!parsed)throw fail('SOCIAL_UNDERSTANDING_INVALID');
    if(payload.sourceKind==='bilibili-comment'){
     const observed=(row.facts??[]).find(o=>{try{const body=JSON.parse(o.body);return o.method==='POST'&&body.code===0&&String(body.data?.rpid??body.data?.reply?.rpid)===payload.platformMessageId;}catch{return false;}});
     if(row.visibilityScope!=='public'||payload.deliveryState!=='sent'||!observed||parsed.text!==payload.text)throw fail('BUDDY_EVIDENCE_MISSING');
     ref=r95().socialHost.recordContextEvidence({pluginId:identity.pluginId,contextRef:row.contextRef,nativeEvidenceId:payload.platformMessageId,sourceKind:'bilibili-comment',stage:'sent',status:'completed',text:parsed.text,occurredAt:model.result.completedAt,deliveryState:'sent'}).eventRef;
    }else{
-   if(model.result.hostReadingMode==='full-v1'){const reading=biliVision.fullReading.get({scope:visionScope(row),readingId:model.result.hostReadingId});if(payload.activityId!==model.result.hostReadingId||reading.phase!=='completed'||reading.coverage?.complete!==true||reading.finalProcessed!==true||!validFullReadingUnderstanding(parsed,new Set(model.material.items.map(item=>item.id)))||reading.finalProviderRequestId!==payload.providerRequestId)throw fail('BILI_FULL_COVERAGE_INCOMPLETE');}
+   if(full){
+    if(!resumedOriginal&&bridge.grants){
+     if(!Number.isSafeInteger(row.grantGeneration))throw fail('BUDDY_PLUGIN_DISABLED');
+     bridge.grants.assertGeneration(identity.pluginId,row.grantGeneration);
+     expectedGrantGeneration=row.grantGeneration;
+    }
+    const api=biliVision.fullReading,scope=visionScope(row),readingId=model.result.hostReadingId,reading=api.get({scope,readingId});
+    if(payload.activityId!==readingId||reading.phase!=='completed'||reading.coverage?.complete!==true||reading.finalProcessed!==true||reading.finalProviderRequestId!==payload.providerRequestId)throw fail('BILI_FULL_COVERAGE_INCOMPLETE');
+    const accepted=api.receiptValidation?.({scope,readingId,batchId:reading.finalBatchId,providerRequestId:payload.providerRequestId});
+    if(accepted){
+     const proof=api.verifyRecoveryMaterial({scope,readingId,batchId:reading.finalBatchId,material:model.material,visualMaterialRefs:[]});
+     const {hostMaterial,hostVideo,hostReadingMode,hostReadingId,completedAt,...result}=model.result;
+     const checked=api.inspectReceipt({scope,readingId,batchId:reading.finalBatchId,inputHash:proof.inputHash,providerRequestId:payload.providerRequestId,result});
+     if(!checked.schemaValid||hash(checked.fullReadingValidation)!==hash(accepted))throw fail('BILI_FULL_COVERAGE_INCOMPLETE');
+     parsed=checked.understanding;
+    }
+    if(!validFullReadingUnderstanding(parsed,new Set(model.material.items.map(item=>item.id))))throw fail('BILI_FULL_COVERAGE_INCOMPLETE');
+   }
    if(parsed.summary!==payload.summaryCandidate||!Array.isArray(parsed.evidenceRefs)||!parsed.evidenceRefs.length||parsed.evidenceRefs.some(id=>!model.material.items.some(i=>i.id===id)))throw fail('BUDDY_EVIDENCE_CONFLICT');
    const evidence=r95().socialHost.recordContextEvidence({pluginId:identity.pluginId,contextRef:row.contextRef,nativeEvidenceId:model.result.requestId,sourceKind:'bilibili-watch',stage:'understood',status:'completed',text:parsed.summary,occurredAt:model.result.completedAt,evidenceRefs:parsed.evidenceRefs});ref=evidence.eventRef;
    }
@@ -448,7 +532,9 @@ export function createSocialPluginBroker({dataRoot,accounts,transport,bridge,get
    const saved=(row.outboundEvidenceRefs??[]).find(([nativeId])=>nativeId===observed.messageId)?.[1];if(saved){const actual=r95().socialHost.readEvidence(identity.pluginId,saved);if(actual.sourceKind!=='qq-outbound'||actual.nativeMessageId!==observed.messageId||actual.text!==observed.text||actual.status!=='completed'||actual.stage!=='sent'||['characterId','personaId','lifeId','operationId','channel','conversationId','accountBindingId','actorId'].some(key=>actual[key]!==row[key]))throw fail('BUDDY_EVIDENCE_CONFLICT');ref=saved;}else ref=r95().socialHost.recordContextEvidence({pluginId:identity.pluginId,contextRef:row.contextRef,nativeEvidenceId:observed.messageId,sourceKind:'qq-outbound',stage:'sent',status:'completed',text:observed.text,...(Number.isFinite(observed.occurredAt)?{occurredAt:observed.occurredAt}:{}),deliveryState:'sent'}).eventRef;
   }else{if(!row.inboundEvent)throw fail('BUDDY_EVIDENCE_MISSING');ref=row.inboundEvent.eventRef;}
   if(row.channel.startsWith('qq-')&&(payload.deliveryState==='sent'||payload.status==='sent')){row.outboundEvidenceRefs??=[];if(!row.outboundEvidenceRefs.some(([id])=>id===payload.sourceMessageId))row.outboundEvidenceRefs.push([payload.sourceMessageId,ref]);saveContext(row);}
-  const result=await core(row,'experience.append',{eventRef:ref},{signal});if(result?.recorded===true&&(payload.deliveryState==='sent'||payload.status==='sent')){const intent=transport.qqMemoryList?.({pluginId:row.pluginId,accountRef:row.account.ref,requestIds:[payload.providerRequestId],limit:1})?.find(value=>value.proof.messageId===payload.sourceMessageId);if(intent)transport.qqMemoryUpdate(intent.id,{state:'committed',eventRef:ref,nextAt:0});}if(payload.eventId)row.evidence.set(payload.eventId,ref);saveContext(row);return result;}finally{releaseOwnedEvidence(owned);}
+  const result=await core(row,'experience.append',{eventRef:ref},{signal,expectedGrantGeneration});
+  if(resumedOriginal&&result?.recorded===true&&!result.duplicate)auditPaidRecovery(resumedOriginal,expectedGrantGeneration,'experience-committed');
+  if(result?.recorded===true&&(payload.deliveryState==='sent'||payload.status==='sent')){const intent=transport.qqMemoryList?.({pluginId:row.pluginId,accountRef:row.account.ref,requestIds:[payload.providerRequestId],limit:1})?.find(value=>value.proof.messageId===payload.sourceMessageId);if(intent)transport.qqMemoryUpdate(intent.id,{state:'committed',eventRef:ref,nextAt:0});}if(payload.eventId)row.evidence.set(payload.eventId,ref);saveContext(row);return result;}finally{releaseOwnedEvidence(owned);}
  };
  handlers['proactive.offer']=async({context:row,payload,signal})=>{
   const ref=row.evidence.get(payload.eventId)??payload.eventId??row.inboundEvent?.eventRef;if(!ref)throw fail('BUDDY_EVIDENCE_MISSING');

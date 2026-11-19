@@ -77,10 +77,10 @@ test('Actual private/group/day-end paths share the 272000 default, bounded outpu
  const pending=snapshot.groupRuntime.pendingMessage;assert(pending);assertDefault(pending.request.capacity);await game.action('companion-group-present',{requestId:pending.id});
  await game.close();await delay(20);
  const disk=await openCompanionStore(dataRoot),day=new Date(Date.now()-86400000).toISOString().slice(0,10);let original;
- await disk.mutate(s=>{s.memorySettings.timeZone='UTC';const conversation=Object.values(s.conversations).find(row=>row.characterId==='deepseek'&&row.personaId==='default');original={id:'daily-capacity-source',role:'user',text:'昨日的完整原文与出处。',createdAt:Date.parse(day+'T12:00:00Z'),lifeId:conversation.lifeId,status:'sent'};conversation.messages.push(original);});await disk.flush();
+ try{await disk.mutate((s,tx)=>{s.memorySettings.timeZone='UTC';const conversation=Object.values(s.conversations).find(row=>row.characterId==='deepseek'&&row.personaId==='default');original={id:'daily-capacity-source',role:'user',text:'昨日的完整原文与出处。',createdAt:Date.parse(day+'T12:00:00Z'),lifeId:conversation.lifeId,status:'sent'};tx.messages.append('private',conversation.id,original);});}finally{await disk.close();}
  game=await createGalgame({dataRoot,provider,model:'local-model'});
  const result=await game.action('companion-memory-retry',{characterId:'deepseek',personaId:'default',day});assert.equal(result.memoryResult.status,'committed',result.memoryResult.error);
  const summary=result.memoryResult.summary;assertDefault(result.memory.capacity);assert.equal(summary.budget.capacity,272000);assert.equal(summary.budget.capacitySource,'application-default');assert.equal(summary.budget.capacityVerified,false);assert.equal(summary.budget.outputReserveTokens,8192);
  assert.equal(summary.cutoff.length,1);assert.match(summary.cutoff[0].hash,/^[a-f0-9]{64}$/);assert.equal(summary.eventIds.length,1);assert.equal(calls.filter(row=>row.purpose==='memory-daily').length,1);
- const stored=(await state()).messages.find(row=>row.id===original.id);assert.deepEqual(stored,original);
+ const stored=(await state()).messages.find(row=>row.id===original.id);assert.ok(stored?.occurrenceId);const {occurrenceId,...contents}=stored;assert.deepEqual(contents,original);
 });

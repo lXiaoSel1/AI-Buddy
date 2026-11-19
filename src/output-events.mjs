@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {pendingGalgameEmotionMarker, parseGalgameReply} from './galgame-expressions.mjs';
 
 // One queue per request: consumers receive data before the producing turn ends.
 export function outputQueue({maxBytes=2*1024*1024}={}) {
@@ -23,6 +24,8 @@ function groupReplyKind(raw,partial=false){
  const body=String(raw??'').trimStart();if(!body)return partial?'pending':'json';
  if(body[0]==='`'||body[0]==='"')return 'json';
  if(body[0]==='{')return /^\{[^{}:"'\r\n]{1,40}\}/.test(body)?'plain':'json';
+ if(/^\[\[emotion:/iu.test(body))return 'plain';
+ if(partial&&body.startsWith('[[')&&pendingGalgameEmotionMarker(body))return 'pending';
  if(body[0]==='['){const rest=body.slice(1).trimStart();return !rest?(partial?'pending':'json'):/^[\[\]{}"\d-]|^(?:true|false|null)(?:\s|,|\]|$)/.test(rest)?'json':'plain';}
  return /^(?:null|true|false)\s*$/.test(body)?'json':'plain';
 }
@@ -50,6 +53,7 @@ export function groupTextDecoder(){
 }
 
 export function dialogueVisibleText(raw){
-  const index=raw.lastIndexOf('[[');if(index<0)return raw;
-  const tail=raw.slice(index);if('[[emotion:'.startsWith(tail)||/^\[\[emotion:[a-z-]*(?:\]?)$/i.test(tail)||/^\[\[emotion:[a-z-]+\]\]\s*$/i.test(tail))return raw.slice(0,index).trimEnd();return raw;
+  if(!/\[\[emotion:|\[\[[a-z]*$/iu.test(raw))return raw;
+  const parsed=parseGalgameReply(raw,undefined,{streaming:true,preserveWhitespace:true});
+  return parsed.text.endsWith(' ')&&!raw.endsWith(' ') ? parsed.text.trimEnd() : parsed.text;
 }

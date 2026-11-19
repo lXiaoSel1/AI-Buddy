@@ -1,3 +1,4 @@
+import {readCompanionExport} from './support/companion-export-file.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,renameSync,existsSync,readFileSync} from 'node:fs';
@@ -33,7 +34,7 @@ test('Group export carries actual CG bytes and restores with the original root u
  const base=mkdtempSync(join(tmpdir(),'buddy-portable-')),sourceRoot=join(base,'source'),f=await withPhoto(sourceRoot);
  const original=(await f.game.action('cg-data',{id:f.photo.cgId})).dataUrl;
  const sourceLives=Object.fromEntries((await f.game.action('companion-state')).companion.characters.map(card=>[card.id,card.life.id]));
- const data=(await f.game.action('companion-group-export',{id:f.group.id})).data;
+ const data=(await readCompanionExport(f.game,'companion-group-export',{id:f.group.id}));
  assert.equal(data.media.cgs[0].kind,'group');assert.equal(Object.hasOwn(data.media.cgs[0],'lifeIds'),false,'Legacy photos must not retain source-machine life UUIDs');
  await f.close();renameSync(sourceRoot,join(base,'source-unavailable'));assert.equal(existsSync(sourceRoot),false);
  const targetRoot=join(base,'另一台电脑 with space'),g=await fixture(targetRoot);
@@ -41,7 +42,12 @@ test('Group export carries actual CG bytes and restores with the original root u
   const targetLives=Object.fromEntries((await g.game.action('companion-state')).companion.characters.map(card=>[card.id,card.life.id]));
   for(const characterId of ['deepseek','claude'])assert.notEqual(targetLives[characterId],sourceLives[characterId],'A different machine owns a different current life');
   await g.game.action('companion-conversation-import',{data});
-  const state=(await g.game.action('companion-state')).companion,group=state.groups.find(x=>x.id===f.group.id||x.importedFrom===f.group.id),id=group.photos[0].cgId;
+  const state=(await g.game.action('companion-state')).companion,group=state.groups.find(x=>x.id===f.group.id||x.importedFrom===f.group.id);
+  const preview=(await g.game.action('companion-group-photo-preview',{id:group.id,range:f.photo.range,characterIds:f.photo.characterIds})).photo;
+  assert.ok(preview.existingPhoto?.cgId,'The restored cast and range expose the imported CG id');
+  assert.deepEqual(preview.existingPhoto.range,f.photo.range);
+  assert.deepEqual(preview.existingPhoto.characterIds,f.photo.characterIds);
+  const id=preview.existingPhoto.cgId;
   const restored=await g.game.action('cg-data',{id});assert.equal(restored.ok,true,restored.error);assert.equal(restored.dataUrl,original);
   for(const characterId of ['deepseek','claude'])assert.ok((await g.game.action('cg-gallery',{characterId})).items.some(x=>x.id===id));
   assert.equal(g.draws(),0);
@@ -50,12 +56,12 @@ test('Group export carries actual CG bytes and restores with the original root u
   assert.equal((await g.game.action('companion-state')).companion.groups.length,state.groups.length);
   await g.game.action('cg-restore',{id});assert.equal((await g.game.action('cg-data',{id})).dataUrl,original);
  }finally{await g.close();}
- const reopened=await fixture(targetRoot);try{const group=(await reopened.game.action('companion-state')).companion.groups.find(x=>x.id===f.group.id||x.importedFrom===f.group.id);assert.equal((await reopened.game.action('cg-data',{id:group.photos[0].cgId})).dataUrl,original);assert.equal(reopened.draws(),0);}finally{await reopened.close();}
+ const reopened=await fixture(targetRoot);try{const group=(await reopened.game.action('companion-state')).companion.groups.find(x=>x.id===f.group.id||x.importedFrom===f.group.id);const preview=(await reopened.game.action('companion-group-photo-preview',{id:group.id,range:f.photo.range,characterIds:f.photo.characterIds})).photo;assert.equal((await reopened.game.action('cg-data',{id:preview.existingPhoto.cgId})).dataUrl,original);assert.equal(reopened.draws(),0);}finally{await reopened.close();}
 });
 test('Tampered media or invalid conversation rejects the entire import before changing chat history',async()=>{
  const base=mkdtempSync(join(tmpdir(),'buddy-portable-invalid-')),f=await withPhoto(join(base,'source')),g=await fixture(join(base,'target'));
  try{
-  const data=(await f.game.action('companion-group-export',{id:f.group.id})).data;
+  const data=(await readCompanionExport(f.game,'companion-group-export',{id:f.group.id}));
   assert.ok(data.media?.cgs?.length,'Export must include portable CG records');
   const before=(await g.game.action('companion-state')).companion.groups;
   const broken=structuredClone(data);broken.media.files[0].sha256='0'.repeat(64);
@@ -84,14 +90,14 @@ test('Legacy portable metadata retains its original whitelist and import identit
 test('Legacy JPEG bytes survive restore and re-export without a misleading PNG MIME type',async()=>{
  const base=mkdtempSync(join(tmpdir(),'buddy-portable-jpeg-')),f=await withPhoto(join(base,'source')),g=await fixture(join(base,'target'));
  try{
-  const data=(await f.game.action('companion-group-export',{id:f.group.id})).data;
+  const data=(await readCompanionExport(f.game,'companion-group-export',{id:f.group.id}));
   // The fixture codec is intentionally identity; native codec coverage lives
   // in the separate Electron test with a complete JPEG image.
   const bytes=Buffer.from([255,216,255,224,1,2,3,255,217]),hash=createHash('sha256').update(bytes).digest('hex');
   data.media.files=[{key:hash,sha256:hash,bytes:bytes.length,dataUrl:'data:image/jpeg;base64,'+bytes.toString('base64')}];
   data.media.cgs[0].image=hash;
   await g.game.action('companion-conversation-import',{data});
-  const restored=(await g.game.action('companion-group-export',{id:f.group.id})).data;
+  const restored=(await readCompanionExport(g.game,'companion-group-export',{id:f.group.id}));
   assert.equal(restored.media.files[0].dataUrl,data.media.files[0].dataUrl);
   assert.equal(restored.media.files[0].sha256,hash);
  }finally{await f.close();await g.close();}
@@ -100,7 +106,7 @@ test('Legacy JPEG bytes survive restore and re-export without a misleading PNG M
 test('An undecodable but correctly hashed image is rejected before importing cards or history',async()=>{
  const base=mkdtempSync(join(tmpdir(),'buddy-portable-decode-')),f=await withPhoto(join(base,'source')),g=await fixture(join(base,'target'));
  try{
-  const data=(await f.game.action('companion-group-export',{id:f.group.id})).data;
+  const data=(await readCompanionExport(f.game,'companion-group-export',{id:f.group.id}));
   const before=(await g.game.action('companion-state')).companion;
   g.cg.imageCodec=()=>{throw Error('CG 图片无法解码');};
   await assert.rejects(()=>g.game.action('companion-conversation-import',{data}),/无法解码/);

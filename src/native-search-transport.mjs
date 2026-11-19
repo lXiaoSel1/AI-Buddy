@@ -1,3 +1,4 @@
+import {CHAT_FINISH_IDLE_MS,isUsageObject,readSseEvents} from './api-sse.mjs';
 import {randomUUID} from 'node:crypto';
 import {connectionIdentity} from './service-identity.mjs';
 import {readApiHttpError} from './api-http-error.mjs';
@@ -12,12 +13,19 @@ async function readBounded(response,signal,limit){
  try{for(;;){const {done,value}=await reader.read();if(signal?.aborted)throw fail('联网搜索已取消','ABORT_ERR');if(done)break;bytes+=value.byteLength;if(bytes>limit)throw fail('联网响应过大','NATIVE_SEARCH_RESPONSE_LIMIT');result+=decoder.decode(value,{stream:true});}return result+decoder.decode();}
  finally{signal?.removeEventListener('abort',abort);await reader.cancel().catch(()=>{});reader.releaseLock();}
 }
-async function* jsonPayloads(response,signal){
- if(!response.headers.get('content-type')?.includes('text/event-stream')){const raw=await readBounded(response,signal,16*1024*1024);let value;try{value=JSON.parse(raw);}catch{throw fail('模型返回了无效数据','NATIVE_SEARCH_PROTOCOL');}yield value;return;}
- const reader=response.body.getReader(),decoder=new TextDecoder(),abort=()=>{void reader.cancel(signal?.reason).catch(()=>{});};let buffer='',lines=[],bytes=0;
- signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
- try{for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.byteLength;if(bytes>16*1024*1024)throw fail('模型响应过大','NATIVE_SEARCH_RESPONSE_LIMIT');buffer+=decoder.decode(value,{stream:true});let at;while((at=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,at).replace(/\r$/,'');buffer=buffer.slice(at+1);if(!line){if(lines.length){const data=lines.join('\n');lines=[];if(data!=='[DONE]'){let item;try{item=JSON.parse(data);}catch{throw fail('模型返回了无效数据','NATIVE_SEARCH_PROTOCOL');}yield item;}else yield {type:'native-stream-done'};}}else if(line.startsWith('data:'))lines.push(line.slice(5).trimStart());}}buffer+=decoder.decode();if(buffer.startsWith('data:'))lines.push(buffer.slice(5).trim());if(lines.length){const data=lines.join('\n');if(data!=='[DONE]')yield JSON.parse(data);else yield {type:'native-stream-done'};}}
- finally{signal?.removeEventListener('abort',abort);await reader.cancel().catch(()=>{});reader.releaseLock();}
+async function* jsonPayloads(response,signal,tail,onActivity){
+ if(!response.headers.get('content-type')?.includes('text/event-stream')){
+  const raw=await readBounded(response,signal,16*1024*1024);
+  try{yield JSON.parse(raw);}catch{throw fail('模型返回了无效数据','NATIVE_SEARCH_PROTOCOL');}
+  return;
+ }
+ const onLimit=()=>fail('模型响应过大','NATIVE_SEARCH_RESPONSE_LIMIT');
+ for await(const raw of readSseEvents(response,{signal,tail,onActivity,limit:16*1024*1024,onLimit})){
+  if(raw==='[DONE]'){yield {type:'native-stream-done'};return;}
+  let value;
+  try{value=JSON.parse(raw);}catch{throw fail('模型返回了无效数据','NATIVE_SEARCH_PROTOCOL');}
+  yield value;
+ }
 }
 function route(profile){return profile.protocol==='gemini'?'/models/'+encodeURIComponent(profile.model.replace(/^models\//,''))+':streamGenerateContent?alt=sse':profile.protocol==='anthropic'?'/messages':profile.protocol==='responses'?'/responses':'/chat/completions';}
 function publicTool(item,state){
@@ -77,7 +85,7 @@ async function restTool(profile,capability,call,options,environment,state){
  const toolId=randomUUID(),started=Date.now(),root=new URL(profile.baseUrl).origin,path=fetchPage?'/v1/tools/fetch':name==='native_web_search_pro'?'/v1/tools/search_pro':'/v1/tools/search',wireBody=!fetchPage&&capability.restProvider==='kimi'?{text_query:body.query}:body;let response,data,submitted=false,httpError=null;
  publicTool({id:call.id,name,status:'started',input:body},state);
  try{const init={method:'POST',headers:environment.headers(profile),body:JSON.stringify(wireBody),signal:options.signal,redirect:'error'};await checkNativeSearch(options);await environment.submission?.beforeSend({providerRequestId:toolId,requestKind:'native-search-tool'});environment.submission?.attempt();submitted=true;response=await environment.fetch(root+path,init);await environment.submission?.confirm({status:response.status});if(!response.ok){const error=await readApiHttpError(response,{signal:options.signal,secrets:[profile.key]});httpError=error.httpError;throw error;}const text=await readBounded(response,options.signal,8*1024*1024);try{data=JSON.parse(text);}catch{throw fail('搜索服务返回了无效数据','NATIVE_SEARCH_PROTOCOL');}await checkNativeSearch(options);if(fetchPage){if(typeof data.content!=='string'&&typeof data.markdown!=='string'&&typeof data.data?.content!=='string')throw fail('抓取服务未返回有效正文','NATIVE_SEARCH_FETCH_EMPTY');source({url:body.url,title:data.title??data.data?.title},state,{evidenceType:'official-fetch-api'});}else collectRestSources(data,state);state.completedCalls.add(call.id);publicTool({id:call.id,name,status:'completed'},state);return data;}
- finally{if(submitted)environment.onUsage({requestId:toolId,profileId:profile.id,provider:profile.kind,connectionIdentity:connectionIdentity(profile),model:profile.model,purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId,timestamp:new Date().toISOString(),usage:environment.normalizeUsage({},profile.protocol),serviceUsage:{kind:fetchPage?'fetch':name==='native_web_search_pro'?'search-pro':'search',requests:response?.ok&&data?1:null,state:data?'completed':options.signal?.aborted?'cancelled':'unknown'},usageEvidence:'official-search-api-no-token-counter'});environment.audit({type:'native-search-api',requestId:toolId,traceId:options.traceId,provider:profile.kind,status:response?.status??null,...(httpError?{httpError}:{}),durationMs:Date.now()-started});}
+ finally{if(submitted)environment.onUsage({requestId:toolId,profileId:profile.id,provider:profile.kind,protocol:profile.protocol,connectionIdentity:connectionIdentity(profile),model:profile.model,purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId,scope:options.scope,timestamp:new Date().toISOString(),usage:environment.normalizeUsage(null,profile.protocol,{requestedCacheTtl:null,cacheWriteMode:null}),serviceUsage:{kind:fetchPage?'fetch':name==='native_web_search_pro'?'search-pro':'search',requests:response?.ok&&data?1:null,state:data?'completed':options.signal?.aborted?'cancelled':'unknown'},usageEvidence:'official-search-api-no-token-counter'});environment.audit({type:'native-search-api',requestId:toolId,traceId:options.traceId,provider:profile.kind,status:response?.status??null,...(httpError?{httpError}:{}),durationMs:Date.now()-started});}
 }
 export async function* streamNativeSearch(profile,options,environment){
  const capability=nativeSearchCapability(profile);if(!capability.supported||capability.mode==='codex')throw fail(capability.reason);
@@ -87,27 +95,40 @@ export async function* streamNativeSearch(profile,options,environment){
  if(capability.mode==='qwen'){baseBody.enable_search=true;baseBody.include_tool_usage=true;baseBody.search_options={enable_source:true};}else baseBody.tools=nativeSearchTools(capability);
  let requestRound=0,totalText=0,progressSignature=null;
  for(;;){
-  await checkNativeSearch(options);const body={...baseBody,...(['client-rest','anthropic'].includes(capability.mode)?{messages:copy(messages)}:{})},requestId=randomUUID(),started=Date.now();let response,submitted=false,finished=false,output='',httpError=null;
+  await checkNativeSearch(options);const body={...baseBody,...(['client-rest','anthropic'].includes(capability.mode)?{messages:copy(messages)}:{})},requestId=randomUUID(),started=Date.now();let response,submitted=false,finished=false,output='',httpError=null,usageComplete=false,finalUsage=false;
   Object.assign(state,{usage:null,truncated:false,stopReason:null,calls:new Map(),reasoning:'',blocks:[],responseId:null,reportedModel:null});
   try{
-   const url=profile.baseUrl+route(profile),init={method:'POST',headers:environment.headers(profile),body:JSON.stringify(body),signal:options.signal,redirect:'error'};
-   await checkNativeSearch(options);await environment.submission?.beforeSend({providerRequestId:requestId,requestKind:'native-search-model',round:requestRound});environment.submission?.attempt();options.onTiming?.({name:'request-submitted'});submitted=true;
+   const url=profile.baseUrl+route(profile),init={method:'POST',headers:environment.modelHeaders?.()??environment.headers(profile),body:JSON.stringify(body),signal:options.signal,redirect:'error'};
+   await checkNativeSearch(options);await environment.submission?.beforeSend({providerRequestId:requestId,requestKind:'native-search-model',round:requestRound});environment.submission?.attempt();options.observeWireInput?.(requestRound===0);options.onTiming?.({name:'request-submitted'});submitted=true;
    response=await environment.fetch(url,init);await environment.submission?.confirm({status:response.status});options.onTiming?.({name:'response-headers'});if(!response.ok){const error=await readApiHttpError(response,{signal:options.signal,secrets:[profile.key]});httpError=error.httpError;throw error;}
-   for await(const value of jsonPayloads(response,options.signal)){
-    const reportedUsage=value.response?.usage??value.usage??value.message?.usage??value.usageMetadata;if(reportedUsage)state.usage={...state.usage,...reportedUsage};
+   const chatTail=profile.protocol==='chat-completions'&&response.headers.get('content-type')?.includes('text/event-stream')
+    ?{deadline:0,timedOut:false}:null;
+   for await(const value of jsonPayloads(response,options.signal,chatTail,options.onStreamActivity)){
+    if(value.type==='native-stream-done'){
+     if(!chatTail)finished=true;
+     break;
+    }
+    const reportedUsage=value.response?.usage??value.usage??value.message?.usage??value.usageMetadata;if(isUsageObject(reportedUsage))state.usage={...state.usage,...reportedUsage};
     if(options.signal?.aborted)throw fail('联网搜索已取消','ABORT_ERR');state.reportedModel=value.model??value.message?.model??value.response?.model??state.reportedModel;currentModel(value,profile);evidence(value,state);
     if(capability.mode==='anthropic')anthropicAccumulate(value,state);
     if(capability.mode==='client-rest')chatCalls(value,state);
-    let parsed;if(value.type==='native-stream-done'){finished=true;parsed={};}
-    else if(capability.mode==='client-rest'&&value.choices?.[0]?.finish_reason==='tool_calls')parsed=environment.parsePayload({...value,choices:value.choices.map(c=>({...c,finish_reason:null}))},profile,state);
+    const toolFinished=capability.mode==='client-rest'&&value.choices?.[0]?.finish_reason==='tool_calls';
+    let parsed;
+    if(toolFinished)parsed=environment.parsePayload({...value,choices:value.choices.map(c=>({...c,finish_reason:null}))},profile,state);
     else parsed=environment.parsePayload(value,profile,state);
-    finished||=!!parsed.done;
+    finished||=!!parsed.done||toolFinished;
+    if(chatTail&&finished){
+     chatTail.deadline=performance.now()+CHAT_FINISH_IDLE_MS;
+     if(isUsageObject(value.usage)&&(parsed.done||toolFinished||Array.isArray(value.choices)&&value.choices.length===0))finalUsage=true;
+    }
     if(parsed.text){if(!totalText)options.onTiming?.({name:'first-delta'});totalText+=parsed.text.length;output+=parsed.text;if(totalText>1024*1024)throw fail('模型回复过长','NATIVE_SEARCH_RESPONSE_LIMIT');yield {type:'text-delta',text:parsed.text};}
     while(state.pending.length)yield state.pending.shift();
    }
-   if(!finished&&!(capability.mode==='client-rest'&&state.stopReason==='tool_calls'))throw fail('联网模型连接中断，未自动重复提交','NATIVE_SEARCH_INTERRUPTED');
+   if(options.signal?.aborted)throw fail('联网搜索已取消','ABORT_ERR');
+   if(!finished)throw fail('联网模型连接中断，未自动重复提交','NATIVE_SEARCH_INTERRUPTED');
+   usageComplete=!chatTail||finalUsage||!chatTail.timedOut;
   }catch(error){if(environment.submission&&!environment.submission.attempted)throw error;if(options.signal?.aborted)throw fail('联网搜索已取消','ABORT_ERR');if(error?.code||/^(?:API|模型|当前账户|服务地址|请求受限)/.test(error?.message??''))throw error;throw Object.assign(fail('无法连接联网模型服务，请检查地址或网络','NATIVE_SEARCH_NETWORK'),{cause:error});}
-  finally{if(submitted)environment.onUsage({requestId,providerRequestId:response?.ok?response.headers.get('x-request-id')??state.responseId??null:httpError?.requestId??null,profileId:profile.id,provider:profile.kind,connectionIdentity:connectionIdentity(profile),model:profile.model,purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId,timestamp:new Date().toISOString(),usage:environment.normalizeUsage(state.usage??{},profile.protocol),actualModel:state.reportedModel,nativeSearchUsage:copy(state.usage?.server_tool_use??state.usage?.server_side_tool_usage_details??state.usage?.x_tools??state.usage?.plugins??null),completionState:finished?'completed':options.signal?.aborted?'cancelled':'interrupted'});environment.audit({type:'native-search-model-request',requestId,traceId:options.traceId,provider:profile.kind,model:profile.model,status:response?.status??null,...(httpError?{httpError}:{}),round:requestRound++,completed:finished,durationMs:Date.now()-started});}
+  finally{if(submitted)environment.onUsage({requestId,providerRequestId:response?.ok?response.headers.get('x-request-id')??state.responseId??null:httpError?.requestId??null,profileId:profile.id,provider:profile.kind,protocol:profile.protocol,connectionIdentity:connectionIdentity(profile),model:profile.model,purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId,scope:options.scope,timestamp:new Date().toISOString(),usage:environment.normalizeUsage(state.usage,profile.protocol,{complete:usageComplete||finalUsage,headers:response?.ok?response.headers:null,providerRequestId:requestId}),actualModel:state.reportedModel,nativeSearchUsage:copy(state.usage?.server_tool_use??state.usage?.server_side_tool_usage_details??state.usage?.x_tools??state.usage?.plugins??null),completionState:finished?'completed':options.signal?.aborted?'cancelled':'interrupted'});environment.audit({type:'native-search-model-request',requestId,traceId:options.traceId,provider:profile.kind,model:profile.model,status:response?.status??null,...(httpError?{httpError}:{}),round:requestRound++,completed:finished,durationMs:Date.now()-started});}
   if(state.truncated){yield {type:'finish',reason:{kind:'length'}};return;}
   if(capability.mode==='client-rest'&&state.calls.size){
    const calls=[...state.calls.values()];messages.push({role:'assistant',content:output||null,...(state.reasoning?{reasoning_content:state.reasoning}:{}),tool_calls:copy(calls)});

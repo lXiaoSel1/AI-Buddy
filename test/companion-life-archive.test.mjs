@@ -72,6 +72,14 @@ test('manifest rejects undeclared, missing, unsupported version, conflicting ima
 test('portable JSON cannot bypass decoder/reference checks using raw embedded image data or local file paths',t=>{
  const {repo}=setup(t),good=repo.prepare(snapshot());for(const change of [state=>{state.card.avatar='data:image/png;base64,aW52YWxpZA==';},state=>{state.content.cgs=[{assetRef:'cg-assets/exists-only-on-source-machine.png'}];}])assert.throws(()=>repo.decode(changedArchive(good,(_files,state)=>change(state),{reindex:true})),/包内引用/);
 });
+test('a literal private asset projection object cannot enter or leave a portable ZIP',t=>{
+ const {repo}=setup(t),raw=snapshot(),good=repo.prepare(raw);
+ const forged={$assetImage:image};
+ raw.content.cgs=[{assetRef:forged}];
+ assert.throws(()=>repo.prepare(raw),/包内引用/);
+ const changed=changedArchive(good,(_files,state)=>{state.content.cgs=[{assetRef:forged}];},{reindex:true});
+ assert.throws(()=>repo.decode(changed),/包内引用/);
+});
 test('invalid archive IDs and character identifiers do not write outside repository',t=>{
  const {repo}=setup(t);for(const id of ['../outside','archive-../outside','constructor'])assert.throws(()=>repo.read(id),/ID 无效/);
  const good=repo.prepare(snapshot());const rows=unpack(changedArchive(good,(_files,state)=>{state.characterId='__proto__';state.card.id='__proto__';},{reindex:true}));const changed=rows.map(([name,raw])=>[name,name==='manifest.json'?Buffer.from(JSON.stringify({...JSON.parse(raw),characterId:'__proto__'})):raw]);assert.throws(()=>repo.decode(pack(changed)),/不完整/);

@@ -1,3 +1,4 @@
+import {readCompanionExport} from './support/companion-export-file.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
@@ -66,7 +67,7 @@ test('Custom card instructions and full multi-paragraph messages survive reload 
  const state=await presentedState(f.game),id=state.activeConversationId;
  assert.equal(state.characters.find(c=>c.id===card.id).fields.personality.value,custom);
  assert.ok(f.calls.find(c=>!c.purpose).system.includes(custom));
- const exported=(await f.game.action('companion-conversation-export',{id})).data;
+ const exported=(await readCompanionExport(f.game,'companion-conversation-export',{id}));
  assert.equal(exported.conversations[0].messages.at(-1).text,longReply);
  await f.reopen();const reopened=await presentedState(f.game);
  const savedReply=reopened.messages.filter(m=>m.role==='assistant').at(-1);

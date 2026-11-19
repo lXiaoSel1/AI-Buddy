@@ -25,8 +25,10 @@ async function installedFixture(t) {
   assert.ok(resolve(parent).startsWith(resolve(tmpdir()) + sep));
   t.after(() => rm(parent, {recursive: true, force: true}));
   const root = join(parent, '安装 中文 (candidate)'), build = join(root, 'builds', 'v2.0.14-contract');
-  const files = ['main.cjs', 'preload.cjs', 'plugin-client-preload.cjs', 'dsh-network-bootstrap.mjs', 'dsh-platform/native-bridge-host.mjs', 'dsh-platform/inert-bootstrap.mjs', 'dsh-component-worker.mjs', 'ffmpeg-component-worker.mjs', 'work-archive-cursor-worker.mjs', 'voice-assets-worker.cjs', 'bili-full-media-worker.mjs', 'monitor-worker.cjs', 'plugin-maintenance.cjs', 'index.html'];
+  const files = ['main.cjs', 'preload.cjs', 'plugin-client-preload.cjs', 'companion-life-image-preload.cjs', 'companion-economy-worker.mjs', 'companion-economy-wal-worker.mjs', 'companion-wal-worker.mjs', 'dsh-network-bootstrap.mjs', 'dsh-platform/native-bridge-host.mjs', 'dsh-platform/inert-bootstrap.mjs', 'dsh-component-worker.mjs', 'ffmpeg-component-worker.mjs', 'work-archive-cursor-worker.mjs', 'voice-assets-worker.cjs', 'bili-full-media-worker.mjs', 'monitor-worker.cjs', 'plugin-maintenance.cjs', 'index.html'];
   for (const file of files) { await mkdir(dirname(join(build, file)), {recursive: true}); await writeFile(join(build, file), 'synthetic contract bytes: ' + file); }
+  await writeFile(join(build, 'companion-storage-worker.mjs'), 'export const fixture=1;');
+  await writeFile(join(build, 'export-companion-for-rollback.mjs'), 'export const fixture=1;');
   await writeFile(join(build, 'package.json'), JSON.stringify({version: '2.0.14', main: 'main.cjs'}));
   await mkdir(join(root, 'local'), {recursive: true});
   const installation = {version: '2.0.14', build: 'builds/v2.0.14-contract', pipe: 'audit214-candidate', manifestSha256: 'b'.repeat(64), edition: '30fps', packageHashes: {'app-30fps': 'c'.repeat(64)}};
@@ -35,6 +37,18 @@ async function installedFixture(t) {
   await mkdir(status.dataRoot, {recursive: true});
   return {parent, root, build, status, installation, options: {allowedRoot: parent, installRoot: root, pipe: 'audit214-candidate', expectedVersion: '2.0.14', expectedMainSha256: sha(await readFile(join(build, 'main.cjs')))}};
 }
+test('the native installation gate rejects a one-byte change in the companion storage worker', async t => {
+  const f = await installedFixture(t), before = await inspectCandidateIdentity(f.options, f.status);
+  await writeFile(join(f.build, 'companion-storage-worker.mjs'), 'export const fixture=2;');
+  const after = await inspectCandidateIdentity(f.options, f.status);
+  assert.notEqual(after.codeDirectorySha256, before.codeDirectorySha256, 'a mutated worker must fail the installed gate identity comparison');
+});
+test('the native installation identity includes the economy writer worker', async t => {
+  const f = await installedFixture(t), before = await inspectCandidateIdentity(f.options, f.status);
+  await writeFile(join(f.build, 'companion-economy-worker.mjs'), 'synthetic changed economy worker bytes');
+  const after = await inspectCandidateIdentity(f.options, f.status);
+  assert.notEqual(after.codeDirectorySha256, before.codeDirectorySha256);
+});
 test('ready flags cannot replace matching installed build bytes and manifest identity', async t => {
   const f = await installedFixture(t), evidence = await inspectCandidateIdentity(f.options, f.status);
   assert.match(evidence.codeDirectorySha256, /^[a-f0-9]{64}$/);

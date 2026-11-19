@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve,sep} from 'node:path';
 import {createGalgame} from '../src/galgame-host.mjs';
 import {openCompanionStore} from '../src/companion-store.mjs';
+import {createLifeArchiveRepository} from '../src/companion-life-archive.mjs';
 import {presentedState} from './support/presented-state.mjs';
 
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -13,6 +14,7 @@ const until=async(fn)=>{for(let i=0;i<300;i++){const value=await fn();if(value)r
 function textInput(options){return options.messages.map(row=>row.text??row.content?.map(item=>item.text??'').join('')??'').join('\n');}
 const PNG=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6nWQAAAAASUVORK5CYII=','base64');
 const image='data:image/png;base64,'+PNG.toString('base64');
+const imageCodec=bytes=>{if(!bytes.equals(PNG))throw Error('Fixture PNG decoder rejected image');return {width:1,height:1};};
 function modelFixture({growth=false}={}){
  const calls=[],profileCalls=[],provider={enabled:true,currentSelection:()=>({provider:'fixture',model:'local-only-model'}),listProviders:()=>[{id:'fixture',name:'Local test'}],listModels:()=>[{id:'local-only-model'}],resolveContextCapacity:()=>({tokens:128000,source:'local-fixture',verified:true}),resolveConnection:binding=>({model:binding.enabled?'role-model':'local-only-model',connectionId:binding.connectionId??'global'}),runTurn:async fn=>fn(),runProfile:async(id,fn)=>{profileCalls.push(id);return fn();},async *stream(options){
   const {signal,onText,onTiming,...recordable}=options;calls.push(structuredClone(recordable));let output;
@@ -30,8 +32,8 @@ function modelFixture({growth=false}={}){
 }
 async function setup(t,options={}){
  const dataRoot=mkdtempSync(join(tmpdir(),'ai-buddy-r30-integration-')),fixture=modelFixture(options);let game;
- const create=()=>createGalgame({dataRoot,provider:fixture.provider,model:'local-only-model',cg:{enabled:false,available:()=>false,job:()=>null,subscribe:()=>()=>{},imageCodec:bytes=>{if(!bytes.equals(PNG))throw Error('Fixture PNG decoder rejected image');return {width:1,height:1};}}});
- game=await create();const api={dataRoot,...fixture,get game(){return game;},async restart(mutate){await game.close();await delay(10);if(mutate){const disk=await openCompanionStore(dataRoot);await disk.mutate(mutate);await disk.flush();}game=await create();return game;}};
+ const create=()=>createGalgame({dataRoot,provider:fixture.provider,model:'local-only-model',cg:{enabled:false,available:()=>false,job:()=>null,subscribe:()=>()=>{},imageCodec}});
+ game=await create();const api={dataRoot,...fixture,get game(){return game;},async restart(mutate){await game.close();await delay(10);if(mutate){const disk=await openCompanionStore(dataRoot);try{await disk.mutate(mutate);}finally{await disk.close();}}game=await create();return game;}};
  t.after(async()=>{await game.close();await delay(15);assert(resolve(dataRoot).startsWith(resolve(tmpdir())+sep+'ai-buddy-r30-integration-'));rmSync(dataRoot,{recursive:true,force:true});});return api;
 }
 async function groupSettled(game,id){return until(async()=>{const s=await raw(game);if(s.groupRuntime?.pendingMessage)await game.action('companion-group-present',{id,requestId:s.groupRuntime.pendingMessage.id});const next=await raw(game);return ['idle','awaiting-continue','failed'].includes(next.groupRuntime?.status)?next:false;});}
@@ -56,11 +58,40 @@ test('R30 blank reset archives whole life; restore preserves each Persona value 
  await f.game.action('companion-life-restore',{id:saved.id});s=await raw(f.game);assert.equal(s.characters.find(c=>c.id==='claude').life.id,original.life.id);assert.deepEqual(s.relationship,secondBefore);await f.game.action('companion-persona-select',{id:'default'});assert.equal((await raw(f.game)).relationship.affection,1);assert((await raw(f.game)).messages.some(m=>m.text==='喜欢旧人生甲'));await f.game.action('companion-persona-select',{id:persona.id});await f.game.action('companion-character-select',{id:'chatgpt'});assert.deepEqual((await raw(f.game)).relationship,gptRelation);assert((await f.game.action('companion-life-list',{characterId:'claude'})).archives.length>=3);
 });
 test('R30 portable image export/import adds independent archives and never activates imported state',async t=>{
- const f=await setup(t);const custom=(await f.game.action('companion-character-save',{name:'可迁移角色',avatar:image,fields:{sprite:{mode:'custom',value:image},personality:{mode:'custom',value:'保持温和'}}})).card;await f.game.action('companion-character-select',{id:custom.id});await f.game.action('chat',{text:'保留可迁移原文'});await presentedState(f.game);const saved=(await f.game.action('companion-life-save',{characterId:custom.id})).archive,exported=(await f.game.action('companion-life-export',{id:saved.id})).archive,before=await raw(f.game);const one=(await f.game.action('companion-life-import',{base64:exported.base64})).archive,two=(await f.game.action('companion-life-import',{base64:exported.base64})).archive;assert.notEqual(one.id,two.id);assert.notEqual(one.id,saved.id);let after=await raw(f.game);assert.deepEqual(after.characters.map(c=>[c.id,c.life]),before.characters.map(c=>[c.id,c.life]));assert.deepEqual(after.messages,before.messages);const preview=(await f.game.action('companion-life-preview',{id:one.id})).preview;assert.equal(preview.card.avatar,image);assert.equal(preview.card.fields.sprite.value,image);await assert.rejects(f.game.action('companion-life-import',{base64:'invalid ZIP'}),/编码|ZIP/);after=await raw(f.game);assert.equal(after.activeCharacterId,before.activeCharacterId);assert.equal(after.characters.find(c=>c.id===custom.id).life.id,before.characters.find(c=>c.id===custom.id).life.id);
+ const f=await setup(t);
+ const custom=(await f.game.action('companion-character-save',{name:'可迁移角色',avatar:image,fields:{sprite:{mode:'custom',value:image},personality:{mode:'custom',value:'保持温和'}}})).card;
+ await f.game.action('companion-character-select',{id:custom.id});
+ await f.game.action('chat',{text:'保留可迁移原文'});
+ await presentedState(f.game);
+ const saved=(await f.game.action('companion-life-save',{characterId:custom.id})).archive;
+ const exported=(await f.game.action('companion-life-export',{id:saved.id})).archive;
+ const before=await raw(f.game);
+ const one=(await f.game.action('companion-life-import',{base64:exported.base64})).archive;
+ const two=(await f.game.action('companion-life-import',{base64:exported.base64})).archive;
+ assert.notEqual(one.id,two.id);
+ assert.notEqual(one.id,saved.id);
+ let after=await raw(f.game);
+ assert.deepEqual(after.characters.map(c=>[c.id,c.life]),before.characters.map(c=>[c.id,c.life]));
+ assert.deepEqual(after.messages,before.messages);
+ const preview=(await f.game.action('companion-life-preview',{id:one.id})).preview;
+ assert.equal(preview.avatar,undefined);
+ assert.equal(preview.card.avatar,undefined);
+ assert.equal(preview.card.fields.sprite,undefined);
+ assert.equal(preview.card.fields.personality.value,'保持温和');
+ const reexported=(await f.game.action('companion-life-export',{id:one.id})).archive;
+ assert.equal(reexported.base64,exported.base64);
+ const repository=createLifeArchiveRepository({dataRoot:f.dataRoot,imageCodec});
+ const {snapshot}=repository.decode(Buffer.from(reexported.base64,'base64'));
+ assert.equal(snapshot.card.avatar,image);
+ assert.equal(snapshot.card.fields.sprite.value,image);
+ await assert.rejects(f.game.action('companion-life-import',{base64:'invalid ZIP'}),/编码|ZIP/);
+ after=await raw(f.game);
+ assert.equal(after.activeCharacterId,before.activeCharacterId);
+ assert.equal(after.characters.find(c=>c.id===custom.id).life.id,before.characters.find(c=>c.id===custom.id).life.id);
 });
 test('R30 real private/group requests use current grown personality after daily commit and restart',async t=>{
  const f=await setup(t,{growth:true});await f.game.action('companion-character-select',{id:'claude'});await f.game.action('companion-character-save',{id:'claude',fields:{tone:{mode:'custom',value:'平静，言语简洁。'}}});await f.game.action('companion-growth-mode',{characterId:'claude',mode:'seed'});let days;
- await f.restart(state=>{state.memorySettings.timeZone='UTC';const today=new Date().toISOString().slice(0,10);days=[3,2].map(offset=>new Date(Date.parse(today+'T12:00:00Z')-offset*86400000).toISOString().slice(0,10));const conv=Object.values(state.conversations).find(c=>c.characterId==='claude'&&c.personaId==='default');for(let i=0;i<3;i++){const at=Date.parse(days[i===2?1:0]+'T12:0'+i+':00Z'),requestId='experience-'+i;conv.messages.push({id:requestId+':u',requestId,role:'user',text:'讨论共同熟悉的话题'+i,createdAt:at,lifeId:conv.lifeId,status:'sent'},{id:requestId+':a',requestId,role:'assistant',text:'我会在熟悉话题中逐渐主动表达想法'+i,createdAt:at+1,lifeId:conv.lifeId,presentation:'presented',status:'presented'});}});
+ await f.restart((state,tx)=>{state.memorySettings.timeZone='UTC';const today=new Date().toISOString().slice(0,10);days=[3,2].map(offset=>new Date(Date.parse(today+'T12:00:00Z')-offset*86400000).toISOString().slice(0,10));const conv=Object.values(state.conversations).find(c=>c.characterId==='claude'&&c.personaId==='default');for(let i=0;i<3;i++){const at=Date.parse(days[i===2?1:0]+'T12:0'+i+':00Z'),requestId='experience-'+i;tx.messages.append('private',conv.id,{id:requestId+':u',requestId,role:'user',text:'讨论共同熟悉的话题'+i,createdAt:at,lifeId:conv.lifeId,status:'sent'});tx.messages.append('private',conv.id,{id:requestId+':a',requestId,role:'assistant',text:'我会在熟悉话题中逐渐主动表达想法'+i,createdAt:at+1,lifeId:conv.lifeId,presentation:'presented',status:'presented'});}});
  for(const day of days){const result=await f.game.action('companion-memory-retry',{characterId:'claude',personaId:'default',day});assert.equal(result.memoryResult.status,'committed',result.memoryResult.error);}
  let card=(await raw(f.game)).characters.find(c=>c.id==='claude');assert(card.effective.tone.includes('更主动表达'));assert.equal(card.growth.history.length,1);await f.game.action('chat',{text:'现在怎么表达呢？'});await presentedState(f.game);const request=f.calls.filter(c=>!c.purpose&&!/情绪分类器|选项生成器/.test(c.system)).at(-1);assert(request.system.includes('更主动表达'));const group=(await f.game.action('companion-group-save',{name:'新人格群聊',memberIds:['claude'],mode:'list'})).group;await f.game.action('companion-group-select',{id:group.id});await f.game.action('companion-group-send',{id:group.id,text:'请聊聊今天'});const state=await groupSettled(f.game,group.id);assert.equal(state.groupRuntime.status,'idle',state.groupRuntime.error);const grouped=f.calls.filter(c=>c.purpose==='group-chat').at(-1);assert(grouped.system.includes('更主动表达'));await f.restart();card=(await raw(f.game)).characters.find(c=>c.id==='claude');assert(card.effective.tone.includes('更主动表达'));assert.equal(card.growth.history.length,1);
 });

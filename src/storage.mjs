@@ -243,7 +243,7 @@ export function createSnapshotStorage(logicalPath, {retainText=true, compactRece
     }
     return {dropped:droppedCount,orphans,rewritten,archived:state.archived};
   }
-  return { target:logicalPath, stat, readText, drain:()=>tail, flush:()=>queue(()=>publishPending(false)), flushSync, reload, prune:now=>{const run=tail.then(()=>prune(now),()=>prune(now));tail=run.then(()=>undefined,()=>undefined);return run;}, writeText(content,expected) {
+  return { target:logicalPath, stat, readText, committedPath(){load();return cached?.path;}, drain:()=>tail, flush:()=>queue(()=>publishPending(false)), flushSync, reload, prune:now=>{const run=tail.then(()=>prune(now),()=>prune(now));tail=run.then(()=>undefined,()=>undefined);return run;}, writeText(content,expected) {
     if(deferWrites){try{return Promise.resolve(accept(content,expected));}catch(error){return Promise.reject(error);}}
     return queue(()=>publish(content,expected));
   } };

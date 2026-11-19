@@ -10,8 +10,8 @@ const main=await readFile(new URL('../src/main.mjs',import.meta.url),'utf8');
 const start=main.indexOf("ipcMain.handle('game:action',");
 const end=main.indexOf("ipcMain.handle('pet:story-feedback'",start);
 assert(start>=0&&end>start,'actual game IPC extraction anchors must exist');
-const gateDeclarations=['gameReads','gameStops'].map(name=>{
-  const line=main.split(/\r?\n/).find(line=>line.startsWith(`const ${name}=`));
+const gateDeclarations=['const gameReads','const gameStops','let companionStorageStatus'].map(name=>{
+  const line=main.split(/\r?\n/).find(line=>line.startsWith(`${name}=`));
   assert(line,`actual ${name} declaration must exist`);
   return line;
 }).join('\n');

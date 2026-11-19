@@ -27,12 +27,12 @@ function Thumb({item,request}){
  const waiting=activeGroupCg(item);
  return h('div',{ref,className:'buddy-group-cg-thumb','data-status':item.status},src?h('img',{src,alt:'',loading:'lazy'}):h('span',{className:'buddy-group-cg-wait'},waiting?h('span',{className:'ui-spinner','aria-hidden':true}):item.status==='failed'?Icon('alert',{size:20}):null,groupCgLabel(item)),src&&h('span',{className:'ws-tag'},groupCgLabel(item)));
 }
-export function GroupCgGallery({catalog,request,loadImage,onClose,Dialog,selectedId}){
+export function GroupCgGallery({catalog,request,loadImage,onClose,Dialog,selectedId,galgame=false}){
  const [selected,setSelected]=useState(selectedId||null),[detail,setDetail]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[reading,setReading]=useState(false);
  const item=catalog.items.find(row=>row.id===selected);
  useEffect(()=>{setSelected(selectedId||null);},[selectedId]);
  useEffect(()=>{let live=true;setDetail(null);setError('');setReading(false);if(item?.status==='ready'){setReading(true);loadImage(item.id).then(r=>{if(live)setDetail(r);}).catch(e=>{if(live)setError(e.message);}).finally(()=>{if(live)setReading(false);});}return()=>{live=false;};},[item?.id,item?.status]);
- return h(Dialog,{title:'群聊 CG 图鉴',onClose,kind:'gallery',busy,wide:true,footer:h(React.Fragment,null,h('span',{className:'spacer'}),h('button',{type:'button',className:'whg-btn',onClick:onClose},t('关闭')))},
+ return h(Dialog,{galgame,title:'群聊 CG 图鉴',onClose,kind:'gallery',busy,wide:true,footer:h(React.Fragment,null,h('span',{className:'spacer'}),h('button',{type:'button',className:'whg-btn',onClick:onClose},t('关闭')))},
   h('div',{className:'buddy-group-cg-tools'},h('span',null,t('只显示本群合影，含历史生成与重试记录。')),h('button',{type:'button',className:'whg-btn buddy-ghost',onClick:catalog.refresh},Icon('refresh',{size:14}),t('刷新'))),
   (catalog.error||error)&&h('p',{role:'alert',className:'buddy-error'},catalog.error||error),
   catalog.loading&&h('p',{role:'status'},t('正在读取 CG…')),

@@ -325,7 +325,10 @@ export async function createCommunityService({root, dataRoot, legacyManager, dsh
   const packagePublications = new Map(), pendingPublications = new Set(), pendingInvalidations = new Set(); let runtimeInvalidationGeneration = 0;
   function throwCleanupFailures(results) { const failures = results.filter(row => row.status === 'rejected').map(row => row.reason); if (failures.length === 1) throw failures[0]; if (failures.length) throw Object.assign(new AggregateError(failures, 'Plugin runtime cleanup failed'), {code: 'COMMUNITY_RUNTIME_CLEANUP_FAILED'}); }
   function publishPackage(record) {
-    const value = copy({...record, sourceProof: undefined, backendPlan: undefined}), key = value.pluginId ?? value.packageKey, previous = packagePublications.get(key);
+    const official = record.sourceId === 'official' &&
+      record.pluginId === pluginIdentity({sourceId: 'official', packageName: record.packageName}) &&
+      officialFingerprints.has(record.sourceProof?.sourceFingerprint);
+    const value = copy({...record, official, sourceProof: undefined, backendPlan: undefined}), key = value.pluginId ?? value.packageKey, previous = packagePublications.get(key);
     const publish = () => { if (value.enabled && (closed || registry.packages[value.packageKey]?.generation !== value.generation)) fail('Package changed before host activation', 'COMMUNITY_INSTALLATION_CHANGED'); return onPackageState(value); };
     let completion; if (previous) completion = (value.enabled ? previous : previous.catch(() => {})).then(publish); else try { completion = Promise.resolve(publish()); } catch (cause) { completion = Promise.reject(cause); }
     packagePublications.set(key, completion); pendingPublications.add(completion); const done = () => pendingPublications.delete(completion); completion.then(done, done); return completion;

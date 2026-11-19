@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {createCompanionMemory,collectMemoryEvents,memoryRequestTokens,dailyMemoryOutputReserve} from '../src/companion-memory.mjs';
+import {createEvidenceArchive} from '../src/evidence-archive.mjs';
 
 const DAY='2026-10-20',NOW=Date.parse('2026-10-21T12:00:00Z');
 function fixture(count=15,{group=false,largeCard=false}={}){
@@ -13,9 +17,10 @@ function fixture(count=15,{group=false,largeCard=false}={}){
  return state;
 }
 function memoryStore(initial){let value=structuredClone(initial),tail=Promise.resolve();return {get state(){return value;},snapshot:()=>structuredClone(value),mutate(fn){const task=tail.then(async()=>{const next=structuredClone(value),result=await fn(next);value=next;return result;});tail=task.catch(()=>{});return task;}};}
-function setup(initial,{summaryCharacters=120,override,onGrowth=()=>[],capacity=8192,capacityInfo={}}={}){
+function setup(initial,{summaryCharacters=120,override,onGrowth=()=>[],capacity=8192,capacityInfo={},archive,now=()=>NOW}={}){
  const store=memoryStore(initial),calls=[];
- const memory=createCompanionMemory({store,autoStart:false,now:()=>NOW,getCapacity:()=>({tokens:capacity,source:'fixture-8192',verified:true,...capacityInfo}),onGrowth,runModel:async(characterId,request)=>{
+ if(archive)store.archive=archive;
+ const memory=createCompanionMemory({store,autoStart:false,now,getCapacity:()=>({tokens:capacity,source:'fixture-8192',verified:true,...capacityInfo}),onGrowth,runModel:async(characterId,request)=>{
   const input=JSON.parse(request.messages[0].text);calls.push({characterId,request:structuredClone(request),input});assert(memoryRequestTokens(request.system,input,request.maxTokens)<=capacity,'every full normalized payload plus reply must fit');
   const custom=await override?.({characterId,request,input,store});if(custom!==undefined)return typeof custom==='string'?custom:JSON.stringify(custom);
   if(request.purpose==='memory-daily-segment'){const first=input.events[0].id;return JSON.stringify({coverageHash:input.coverageHash,items:[{text:'段'.repeat(summaryCharacters),eventIds:[first]}]});}
@@ -23,6 +28,76 @@ function setup(initial,{summaryCharacters=120,override,onGrowth=()=>[],capacity=
   return JSON.stringify({coverageHash:input.coverageHash,summary:{text:'按原文和范围完成日终。',eventIds:input.todayEventIds},guide:{text:'',eventIds:[]},core:[],branches:[],growthCandidates:[]});
  }});return {store,memory,calls};
 }
+async function temporaryArchive(t){
+ const root=await mkdtemp(join(tmpdir(),'memory-resume-'));
+ t.after(()=>rm(root,{recursive:true,force:true}));
+ return ()=>createEvidenceArchive(join(root,'evidence.sqlite'));
+}
+const dailyArgs={characterId:'a',personaId:'p',day:DAY};
+test('daily checkpoint resumes only unfinished segments after reopening and keeps the raw messages',async t=>{
+ const archive=await temporaryArchive(t),initial=fixture(100);let submitted=0;
+ const first=setup(initial,{archive:archive(),override:({request,input})=>{
+  if(request.purpose==='memory-daily-segment'&&++submitted===2)return {coverageHash:input.coverageHash,items:[{text:'bad reference',eventIds:['forged']}]};
+ }});
+ assert.equal((await first.memory.consolidate(dailyArgs)).status,'failed');
+ const completed=first.calls[0].input.coverageHash;await first.memory.close();
+ const restarted=setup(first.store.snapshot(),{archive:archive(),now:()=>NOW+300000});
+ const result=await restarted.memory.consolidate(dailyArgs);assert.equal(result.status,'committed',result.error);
+ assert(!restarted.calls.some(call=>call.input.coverageHash===completed),'already accepted segment is not resubmitted');
+ assertCoverage(restarted.store,initial,'persona:p',100);
+});
+test('editing an early source does not repack an unrelated accepted segment',async t=>{
+ const archive=await temporaryArchive(t),initial=fixture(100);let submitted=0;
+ const first=setup(initial,{archive:archive(),override:({request,input})=>{
+  if(request.purpose==='memory-daily-segment'&&++submitted===3)return {coverageHash:input.coverageHash,items:[{text:'bad reference',eventIds:['forged']}]};
+ }});
+ assert.equal((await first.memory.consolidate(dailyArgs)).status,'failed');
+ const unrelated=first.calls[1].input.coverageHash,changed=first.store.snapshot();
+ const message=changed.conversations.c1.messages[0];
+ message.revisions=[{text:message.text,at:message.createdAt}];
+ message.text='修订'.repeat(1700);message.editedAt=message.createdAt+1;
+ const restarted=setup(changed,{archive:archive(),now:()=>NOW+300000});
+ const result=await restarted.memory.consolidate(dailyArgs);assert.equal(result.status,'committed',result.error);
+ assert(!restarted.calls.some(call=>call.input.coverageHash===unrelated));
+ const originallyAccepted=first.calls[1].input.events.map(row=>row.text);
+ assert(!restarted.calls.filter(call=>call.request.purpose==='memory-daily-segment').some(call=>call.input.events.some(row=>originallyAccepted.includes(row.text))),'edit must not cause unrelated sources to be resubmitted in new chunks');
+ assertCoverage(restarted.store,changed,'persona:p',101);
+});
+test('daily checkpoint splits only a segment with a confirmed truncated response',async t=>{
+ const archive=await temporaryArchive(t),initial=fixture(100);let rejected;
+ const {memory,calls,store}=setup(initial,{archive:archive(),override:({request,input})=>{
+  if(request.purpose==='memory-daily-segment'&&!rejected){rejected=input;throw Object.assign(Error('confirmed output length'),{code:'MODEL_OUTPUT_TRUNCATED'});}
+ }});
+ const result=await memory.consolidate(dailyArgs);assert.equal(result.status,'committed',result.error);
+ assert.equal(calls.filter(call=>call.input.coverageHash===rejected.coverageHash).length,1);
+ const children=calls.slice(1,3).map(call=>call.input.events.map(event=>event.text));
+ assert.deepEqual(children.flat(),rejected.events.map(event=>event.text));
+ assertCoverage(store,initial,'persona:p',100);
+});
+test('unknown daily delivery is held across restart and does not resubmit on automatic tick',async t=>{
+ const archive=await temporaryArchive(t),initial=fixture(100);
+ const first=setup(initial,{archive:archive(),override:()=>{throw Object.assign(Error('transport lost after submission'),{code:'CODEX_REQUEST_TIMEOUT'});}});
+ assert.equal((await first.memory.consolidate(dailyArgs)).status,'unknown');await first.memory.close();
+ const restarted=setup(first.store.snapshot(),{archive:archive(),now:()=>NOW+300000});
+ await restarted.memory.tick();assert.equal(restarted.calls.filter(call=>call.input.scope==='persona:p').length,0);
+ assert.equal((await restarted.memory.consolidate({...dailyArgs,retry:true})).status,'unknown');
+ assert.equal(restarted.calls.filter(call=>call.input.scope==='persona:p').length,0);
+ assert.deepEqual(restarted.store.state.conversations,initial.conversations);
+});
+test('an interrupted final submission blocks a differently packed attempt for the same day',async t=>{
+ const archive=await temporaryArchive(t),initial=fixture(6);let started,release;
+ const dispatched=new Promise(resolve=>{started=resolve;}),paused=new Promise(resolve=>{release=resolve;});
+ const first=setup(initial,{archive:archive(),capacity:13000,override:async({request})=>{
+  if(request.purpose==='memory-daily'){started();await paused;}
+ }});
+ const original=first.memory.consolidate(dailyArgs);
+ await dispatched;
+ try{
+  const reopened=setup(first.store.snapshot(),{archive:archive(),capacity:7500,now:()=>NOW+300000});
+  assert.equal((await reopened.memory.consolidate(dailyArgs)).status,'unknown');
+  assert.equal(reopened.calls.length,0);
+ }finally{release();await original;}
+});
 function assertCoverage(store,state,scope,count){
  const summary=store.state.lives.a.memory.summaries[scope+'|'+DAY];assert(summary);assert.equal(summary.cutoff.length,count);assert.equal(new Set(summary.eventIds).size,count);assert(summary.eventIds.every(id=>id.startsWith('event-')));assert.equal(summary.budget.protocol,'daily-source-alias-v1');
  assert.deepEqual(store.state.conversations,state.conversations);assert.deepEqual(store.state.groups,state.groups);

@@ -12,7 +12,7 @@ const scope={characterId:'deepseek',personaId:'default',lifeId:'life-a',operatio
 const fact=(id,units=10000,revision=1)=>({canonicalRequestId:id,totalTokens:units,revision,origin:'native-ledger'});
 function fixture(t,create=createEconomyStore){
  const root=mkdtempSync(join(tmpdir(),'ledger-cache-')),stores=[],open=(create=createEconomyStore)=>{const s=create(root);stores.push(s);return s;};
- t.after(()=>{for(const s of stores)s.close();rmSync(root,{recursive:true,force:true});});return {root,open,store:open(create)};
+ t.after(async()=>{for(const s of stores)await s.close();rmSync(root,{recursive:true,force:true});});return {root,open,store:open(create)};
 }
 function scans(t){
  const prepare=DatabaseSync.prototype.prepare;let calls=0;
@@ -23,8 +23,9 @@ function external(store,fn){const db=new DatabaseSync(store.path);try{return fn(
 const actual=store=>external(store,db=>db.prepare('SELECT count(seq) n FROM ledger').get().n);
 
 test('idle feeding ticks scan the entire ledger only once despite hunger writes',async t=>{
- const count=scans(t),f=fixture(t);let time=0;const service=createFeedingService({store:f.store,monotonicNow:()=>time});t.after(()=>service.close());
- service.activeScope(scope);for(let i=0;i<50;i++){time+=1000;await service.tick();assert.equal(service.view().ledgerTotal,0);}
+ let time=0,service;t.after(()=>service.close());
+ const count=scans(t),f=fixture(t);service=createFeedingService({store:f.store,monotonicNow:()=>time});
+ await service.activeScope(scope);for(let i=0;i<50;i++){time+=1000;await service.tick();assert.equal(service.view().ledgerTotal,0);}
  assert.equal(count(),1);
 });
 
@@ -67,10 +68,10 @@ test('external insert followed by own insert before a view does not hide the ext
  assert.equal(s.ledgerPage().total,2);assert.equal(actual(s),2);for(let i=0;i<10;i++)assert.equal(s.ledgerPage().total,2);assert.equal(count(),2);
 });
 
-test('migrate legacy rewards, refuse a stale writer and reopen with exact totals and idempotency',t=>{
+test('migrate legacy rewards, refuse a stale writer and reopen with exact totals and idempotency',async t=>{
  const f=fixture(t,createOld),old=f.store;old.initializeRewards();old.ingestUsageFact(fact('first',25000),trusted);assert.equal(old.ledgerPage().total,1);old.close();
  const current=f.open();assert.equal(current.ledgerPage().total,1);current.ingestUsageFact(fact('second',15000),trusted);
- const schema=external(current,db=>db.prepare('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').all());current.close();
+ const schema=external(current,db=>db.prepare('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').all());await current.close();
  const bytes=readFileSync(current.path);
  assert.throws(()=>f.open(createOld),{code:'ECONOMY_SCHEMA_UNSUPPORTED'});assert.deepEqual(readFileSync(current.path),bytes);
  const next=f.open();assert.equal(next.ledgerPage().total,2);assert.equal(next.wallet().balance,4);next.ingestUsageFact(fact('second',15000),trusted);assert.equal(next.ledgerPage().total,2);

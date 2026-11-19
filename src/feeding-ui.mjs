@@ -1,5 +1,6 @@
 import React,{useState,useEffect,useRef} from 'react';
 import {t,locale} from './i18n.mjs';
+import {cleanIpcMessage} from './ipc-message.mjs';
 import {Icon} from './ui-icons.mjs';
 import {Tabs,CheckSwitch,Segmented,EmptyState} from './ui-controls.mjs';
 import {themeAsset} from './appearance.mjs';
@@ -8,6 +9,7 @@ import {TOOL_NAMES} from './token-types.mjs';
 import {zoneOptions,zoneDay,intlTimeZone} from './preferences.mjs';
 const h=React.createElement;
 const requestId=()=>globalThis.crypto.randomUUID();
+const displayError=message=>t(cleanIpcMessage(message));
 const english=()=>locale()==='en',lang=()=>english()?'en-US':'zh-CN',L=(zh,en)=>english()?en:zh;
 // Built-in characters show their name; a custom character shows the name Core sends (characterName), never a raw id.
 export const characterName=id=>{const row=PET_CHARACTERS.find(c=>c.id===id);return row?t(row.name):null;};
@@ -74,9 +76,9 @@ export function FeedingPage({view,onAction,initialTab='shop',timeZone,onPage,now
  const preferences=view?.settings??{},toastTimer=useRef(null);
  useEffect(()=>{setUnlimited(preferences.dailyAutoPurchaseLimit==='unlimited');setCap(preferences.dailyAutoPurchaseLimit==='unlimited'?'':String(preferences.dailyAutoPurchaseLimit??''));},[preferences.dailyAutoPurchaseLimit]);
  useEffect(()=>()=>clearTimeout(toastTimer.current),[]);
- const act=async(name,args={})=>{if(pending)return false;setPending(true);setError('');try{await onAction(name,args);return true;}catch(cause){setError(cause.message??String(cause));return false;}finally{setPending(false);}};
+ const act=async(name,args={})=>{if(pending)return false;setPending(true);setError('');try{await onAction(name,args);return true;}catch(cause){setError(cause?.message??String(cause));return false;}finally{setPending(false);}};
  const save=async args=>{setSaved(false);if(await act('settings',args)){setSaved(true);clearTimeout(toastTimer.current);toastTimer.current=setTimeout(()=>setSaved(false),2400);}};
- const loadLedger=async page=>{if(pending)return;setPending(true);setError('');try{const result=await onAction('ledger',{page,pageSize:100});if(!result||!Array.isArray(result.rows))throw Error(t('积分流水返回格式无效'));setLedger(result);}catch(cause){setError(cause.message??String(cause));}finally{setPending(false);}};
+ const loadLedger=async page=>{if(pending)return;setPending(true);setError('');try{const result=await onAction('ledger',{page,pageSize:100});if(!result||!Array.isArray(result.rows))throw Error('积分流水返回格式无效');setLedger(result);}catch(cause){setError(cause?.message??String(cause));}finally{setPending(false);}};
  if(!view)return h('div',{className:'ws-page feed-page','aria-busy':true},h('div',{className:'feed-loading',role:'status'},h('span',{className:'ui-spinner','aria-hidden':true}),t('正在读取商店与背包…')));
  const catalog=view.catalog??[],active=!!view.activeScope&&!view.paused,inventory=view.inventory??{},hunger=roundedFullness(view),full=hunger!=null&&hunger>=100,balance=view.wallet?.balance??0;
  const owned=catalog.filter(food=>(inventory[food.id]??0)>0),ownedCount=owned.reduce((n,food)=>n+(inventory[food.id]??0),0);
@@ -108,11 +110,21 @@ export function FeedingPage({view,onAction,initialTab='shop',timeZone,onPage,now
   // 「今天吃过」 lists today's meals only, by the app time zone.
   const lifeMeals=(view.meals??[]).filter(meal=>meal.scope?.characterId===view.activeScope?.characterId&&meal.scope?.lifeId===view.activeScope?.lifeId),today=zoneDay(now,timeZone),todays=lifeMeals.filter(meal=>Number.isFinite(meal.at)&&zoneDay(meal.at,timeZone)===today),meals=todays.slice(0,8);
   const preview=current&&hunger!=null?Math.min(100,hunger+current.restore):null,foodName=meal=>{const food=catalog.find(row=>row.id===meal.foodId);return food?t(food.name):t('一份食物');};
+  const modelAvailable=view.modelAvailable!==false;
   const side=h('aside',{className:'ws-card feed-side'},h('div',{className:'feed-row'},view.activeScope?face(view.activeScope.characterId):h('span',{className:'feed-face empty'},Icon('person',{size:20})),h('div',null,h('b',null,view.activeScope?t('喂给 {name}').replace('{name}',displayName(view)):t('还没有选角色')),h('small',null,t('只喂当前角色和当前人生')))),
    hunger!=null&&h('div',{className:'feed-sat'},h('span',{className:'ws-meter'},h('b',{style:{width:Math.min(100,hunger)+'%'}}),preview!=null&&preview>hunger&&h('i',{className:'feed-sat-add',style:{left:Math.min(100,hunger)+'%',width:(preview-hunger)+'%'}})),h('small',null,preview!=null&&preview>hunger?t('饱食 {a} → {b}').replace('{a}',hunger).replace('{b}',preview):t('饱食 {n} / 100').replace('{n}',hunger))),
    meals.length>0&&h(React.Fragment,null,h('h4',{className:'ws-sub-h'},t('今天吃过')),...meals.map(meal=>{const food=catalog.find(row=>row.id===meal.foodId),pend=meal.affectionState==='pending',restored=Number.isFinite(meal.restored)?meal.restored:food?.restore;return h('div',{key:meal.id,className:'feed-meal'+(pend?' pend':'')},h('small',{className:'feed-tnum'},clock(meal.at,timeZone)),food&&h(FoodArt,{food,size:30}),h('span',{className:'feed-trunc'},foodName(meal),restored!=null&&h(React.Fragment,null,' ',h('span',{className:'feed-ok'},'+'+restored))),h('span',{className:'feed-stamp'+(pend?' pend':'')},pend?t('好感结算中'):t('好感已结算')));}),
     todays.length>meals.length&&h('small',{className:'feed-more'},plural(todays.length-meals.length,'今天还有 1 餐没列出','今天还有 {n} 餐没列出'))),
-   ...lifeMeals.filter(meal=>meal.affectionState==='pending').map(meal=>h('div',{key:'r'+meal.id,className:'ui-note',role:'status',title:meal.error?String(meal.error):undefined},Icon('clock',{size:16}),h('div',null,h('b',null,t('{food}已经吃下了，好感还没算上。').replace('{food}',foodName(meal))),' ',t('通常几秒内完成；连接恢复后会自动再试。'),' ',h('button',{type:'button',className:'ui-btn sm ghost',disabled:pending||!active,onClick:()=>act('retry-meal',{mealId:meal.id})},t('现在重试'))))));
+   ...lifeMeals.filter(meal=>meal.affectionState==='pending').map(meal=>{
+    const exhausted=meal.attempts>=3,reason=meal.error?displayError(meal.error):undefined;
+    const status=modelAvailable
+     ?(exhausted?'自动重试已用完。':'通常几秒内完成，没成功会自动再试。')
+     :(exhausted?'联网聊天关着。自动重试已用完，开启后点「现在重试」。':'联网聊天关着，开启后会自动结算。');
+    return h('div',{key:'r'+meal.id,className:'ui-note',role:'status',title:reason},Icon('clock',{size:16}),h('div',null,
+     h('b',null,t('{food}已经吃下了，好感还没算上。').replace('{food}',foodName(meal))),' ',t(status),
+     modelAvailable&&exhausted&&reason&&h(React.Fragment,null,' ',h('span',null,reason)),
+     modelAvailable&&h(React.Fragment,null,' ',h('button',{type:'button',className:'ui-btn sm ghost',disabled:pending||!active,onClick:()=>act('retry-meal',{mealId:meal.id})},t('现在重试')))));
+   }));
   body=owned.length?h('div',{className:'feed-inv'},h('div',{className:'feed-foods inv'},...owned.map(food=>h('article',{key:food.id,className:'feed-food inv'+(current?.id===food.id?' sel':''),'data-food':food.id,onClick:()=>setPicked(food.id)},h('span',{className:'feed-badge'},'×'+inventory[food.id]),h(FoodArt,{food,size:80}),h('b',{className:'feed-food-n'},t(food.name)),h('span',{className:'feed-chips'},h('span',{className:'feed-chip ok','aria-label':t('单份恢复')+' +'+food.restore},'+'+food.restore)),
     h('button',{type:'button',className:'ui-btn sm'+(current?.id===food.id?' primary':''),disabled:pending||!active||full,title:reason??undefined,onClick:event=>{event.stopPropagation();void feed(food);}},Icon('heart',{size:14}),full?t('她吃饱了'):t('喂她一份'))))),side)
    :h('div',{className:'feed-inv'},h('div',{className:'ws-card'},h(EmptyState,{icon:'nav-bag',title:t('背包里还没有食物'),action:h('button',{type:'button',className:'ui-btn primary',onClick:()=>setTab('shop')},Icon('nav-shop',{size:16}),t('去商店'))},t('去商店买点什么，买到的会放在这里。'))),side);
@@ -128,7 +140,7 @@ export function FeedingPage({view,onAction,initialTab='shop',timeZone,onPage,now
    h('div',{className:'ws-srow'},h('div',null,h('b',null,t('每天自动买东西最多花')),h('small',null,t('只算自动采购，自己买的不算。'))),h('div',{className:'feed-row'},h(Segmented,{label:t('每日自动采购积分上限'),value:unlimited?'unlimited':'cap',disabled:pending,options:[['unlimited',t('不限')],['cap',L('最多','Up to')]],onChange:value=>{const next=value==='unlimited';setUnlimited(next);if(next)void save({dailyAutoPurchaseLimit:'unlimited'});}}),
     !unlimited&&h('label',{className:'ws-inp feed-num'},h('input',{type:'number',min:0,step:1,value:cap,'aria-label':t('每日自动采购积分上限'),disabled:pending,onChange:e=>setCap(e.target.value),onBlur:saveCap,onKeyDown:e=>{if(e.key==='Enter')saveCap();}}),h('span',null,pointWord(Number(cap)))))),
    (saved||!capValid)&&h('div',{className:'ws-srow ws-end'},saved&&h('span',{className:'ws-saved',role:'status'},Icon('check',{size:14}),t('已保存')),!capValid&&h('small',{className:'feed-err'},t('上限要是 0 或正整数')))),
-  h('div',{className:'feed-col'},session?.state==='blocked'&&h('div',{className:'ui-alert warn',role:'status','data-feed-paused':session.reason??'',title:session.error?String(session.error):undefined},Icon('alert',{size:16}),h('div',null,h('b',null,t('这一餐暂停了')),h('p',null,autoPauseText(session,view)),
+  h('div',{className:'feed-col'},session?.state==='blocked'&&h('div',{className:'ui-alert warn',role:'status','data-feed-paused':session.reason??'',title:session.error?displayError(session.error):undefined},Icon('alert',{size:16}),h('div',null,h('b',null,t('这一餐暂停了')),h('p',null,autoPauseText(session,view)),
     h('div',{className:'ws-row-btns'},h('button',{type:'button',className:'ui-btn sm',disabled:recheckBlocked,title:!preferences.autoEat?t('先打开「饿了自己吃」'):reason??undefined,onClick:()=>act('auto')},Icon('refresh',{size:14}),t('重新检查这一餐'))))),
    h('article',{className:'ws-card ws-set'},h('div',{className:'feed-between'},h('h3',{className:'ws-sec'},t('允许自动吃的食物')),h('span',{className:'ws-tag'},t('已选 {n} / {m}').replace('{n}',catalog.filter(food=>allowed.has(food.id)).length).replace('{m}',catalog.length))),
     ...CATEGORIES.map(([key,label])=>{const foods=catalog.filter(food=>foodCategory(food)===key);return h('div',{key,className:'feed-allow'},h('div',{className:'feed-between'},h('b',null,t(label)),h('span',{className:'feed-row'},h('button',{type:'button',className:'ui-btn ghost sm',disabled:pending,onClick:()=>setAllowed([...allowed,...foods.map(food=>food.id)])},t('全选')),h('button',{type:'button',className:'ui-btn ghost sm',disabled:pending,onClick:()=>setAllowed([...allowed].filter(id=>!foods.some(food=>food.id===id)))},t('清空')))),
@@ -153,6 +165,6 @@ export function FeedingPage({view,onAction,initialTab='shop',timeZone,onPage,now
  }
  return h('div',{className:'ws-page feed-page'},head,h(Wallet,{view,compact:tab==='settings'||tab==='ledger',spent:bought?{n:bought.food.price,at:bought.at}:null}),h(Notices,{view}),
   h(Tabs,{tabs,active:tab,onSelect:setTab,label:t('商店与背包'),idPrefix:'feed-tab'}),
-  error&&h('div',{className:'ui-alert warn',role:'alert'},Icon('alert',{size:16}),h('div',null,error)),
+  error&&h('div',{className:'ui-alert warn',role:'alert'},Icon('alert',{size:16}),h('div',null,displayError(error))),
   h('section',{className:'feed-panel',role:'tabpanel',id:'feed-tab-'+tab},body));
 }

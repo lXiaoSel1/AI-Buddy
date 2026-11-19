@@ -2,7 +2,7 @@ export function privatePresentationKey({sessionId,companion}={}){
  const message=companion?.messages?.at(-1),characterId=companion?.activeCharacterId??companion?.characterId;
  if(!companion?.activeConversationId||!message?.id)return null;
  const token=message.lifeToken,lifeId=token?.lifeId??message.lifeId??companion.characters?.find(row=>row.id===characterId)?.life?.id;
- return JSON.stringify([sessionId,companion.activeConversationId,companion.activePersonaId??companion.personaId,characterId,lifeId,token?.operationId,message.id,message.requestId]);
+ return JSON.stringify([sessionId,companion.activeConversationId,companion.activePersonaId??companion.personaId,characterId,lifeId,token?.operationId,message.occurrenceId??message.id,message.requestId]);
 }
 
 // A render may refresh callbacks, but only a changed presentation target or
@@ -19,7 +19,7 @@ export function createPrivatePresentation({schedule=requestAnimationFrame,cancel
   frame=schedule(()=>{
    frame=null;
    if(captured!==generation||!current?.visible||current.isVisible?.()===false)return;
-   const task=Promise.resolve().then(()=>input.present({conversationId:input.companion.activeConversationId,id:message.id}));
+   const task=Promise.resolve().then(()=>input.present({conversationId:input.companion.activeConversationId,id:message.id,...(message.occurrenceId?{occurrenceId:message.occurrenceId}:{})}));
    inFlight.set(key,task);
    void task.then(result=>{
     if(result?.presentationDeferred||result?.ok===false||!result?.view||captured!==generation||current?.key!==key||!current.visible||current.isVisible?.()===false||privatePresentationKey({sessionId:input.sessionId,companion:result.view.companion})!==key)return;

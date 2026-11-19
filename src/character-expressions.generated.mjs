@@ -1,2 +1,3513 @@
-// Q95 RGB; alpha, dimensions and registration preserved. Original PNGs retained.
-export const CHARACTER_EXPRESSIONS={"claude":{"version":"1.7.10-q95","viewport":[24,6,1008,1525],"normal":{"src":"./assets/characters/v167/claude/portrait.png","sha256":"c959ff95be4c3be24c474e71b936c67d584e5dcd1eda83250704b5c4dac52dae","registration":{"scale":0.9041717049576784,"x":80.25801088270856,"y":9.14993954050783}},"expressions":{"cheerful":{"src":"./assets/characters/v1710/claude/expressions/cheerful.webp","sha256":"7ca62299062f049f23545aa9106c815db8a2c69f4a1c9f4721d7e3382303376d","registration":{"scale":1,"x":0,"y":0}},"shy":{"src":"./assets/characters/v1710/claude/expressions/shy.webp","sha256":"e2cab38eba1d0020ab623571f193d39cac98e606104389d727e3627ab5d16379","registration":{"scale":1,"x":0,"y":0}},"serious":{"src":"./assets/characters/v1710/claude/expressions/serious.webp","sha256":"6bd0deda16444c71b90321e83b356aa8fd0db5ff1ff39568b70a953152f7e9a8","registration":{"scale":1,"x":0,"y":0}},"confused":{"src":"./assets/characters/v1710/claude/expressions/confused.webp","sha256":"a11b5e298ac04bb0d742617ce2c05d3840cdd8cf4d8dd85bf82bfdc86f81819b","registration":{"scale":1,"x":0,"y":0}},"angry":{"src":"./assets/characters/v1710/claude/expressions/angry.webp","sha256":"09a3c34d656e6bd3ad33325689124450d5db2ed7c759018121659af21c1c64b6","registration":{"scale":1,"x":0,"y":0}},"frightened":{"src":"./assets/characters/v1710/claude/expressions/frightened.webp","sha256":"70b10adcee1a3aedaf86ac7dba668437491edc69296cd9e6dba9c694db643bec","registration":{"scale":1,"x":0,"y":0}},"exasperated":{"src":"./assets/characters/v1710/claude/expressions/exasperated.webp","sha256":"f8deaea0f58f36f18d8852002a62051da8a79691295e31b9429c823534dc7c1f","registration":{"scale":1,"x":0,"y":0}},"starry":{"src":"./assets/characters/v1710/claude/expressions/starry.webp","sha256":"9628133c279bd4bdde837f153c7a5077527784f9d8e08cf53673543a96db7970","registration":{"scale":1,"x":0,"y":0}}}},"grok":{"version":"1.7.10-q95","viewport":[46,0,1013,1529],"normal":{"src":"./assets/characters/v167/grok/portrait.png","sha256":"b01eabeb29fa4611913b6c0eb6d605107517d0a3d5589ca15d9cc56e494384d1","registration":{"scale":0.9405439595192916,"x":67.12270714737508,"y":-6.894686907020969}},"expressions":{"cheerful":{"src":"./assets/characters/v1710/grok/expressions/cheerful.webp","sha256":"5dab5d8890308505b620e3ca6c918a7e2cf43bdba174c8e052477bd9bfb92cfb","registration":{"scale":1,"x":0,"y":0}},"shy":{"src":"./assets/characters/v1710/grok/expressions/shy.webp","sha256":"9b0c781d112a6bd49f80fe2b35d9dc8918ac6bdfdd161033b8cf1e28d53cd48e","registration":{"scale":1,"x":0,"y":0}},"serious":{"src":"./assets/characters/v1710/grok/expressions/serious.webp","sha256":"4328de168fc8860a51b7506a9a20ba4f85c45189174b88909f3e9e76a45d5a12","registration":{"scale":1,"x":0,"y":0}},"confused":{"src":"./assets/characters/v1710/grok/expressions/confused.webp","sha256":"4c9b01c648f7a3d6bf5f1850c7cce010dd7dc390ca42e2255b6488941157fa9e","registration":{"scale":1,"x":0,"y":0}},"angry":{"src":"./assets/characters/v1710/grok/expressions/angry.webp","sha256":"ba8e2dad089606472ae70e9ee8aa680166df9919adbf4bc2e419894ea49a4a2e","registration":{"scale":1,"x":0,"y":0}},"frightened":{"src":"./assets/characters/v1710/grok/expressions/frightened.webp","sha256":"22e45666afe8ac6e4bb2179779655384f808cd6e76b15c9ac69f1c72b71134f1","registration":{"scale":1,"x":0,"y":0}},"exasperated":{"src":"./assets/characters/v1710/grok/expressions/exasperated.webp","sha256":"b2d6a7cef0759beb6c7f6078211c56168c3eb81e1c47522b2c4fbddbd251f681","registration":{"scale":1,"x":0,"y":0}},"starry":{"src":"./assets/characters/v1710/grok/expressions/starry.webp","sha256":"a575cb4cf8d66aaaaa55180f163c05cba13c3907d81791e01ab7e4177d408045","registration":{"scale":1,"x":0,"y":0}}}},"seed":{"version":"1.7.10-q95","viewport":[109,-1,929,1528],"normal":{"src":"./assets/characters/v167/seed/portrait.png","sha256":"36fd9ace9301d7022e1e9c7defa0c82ce97a12d3d2ba3e14bf8b681864eee79e","registration":{"scale":0.9372239747634069,"x":59.78943217665619,"y":-20.17507886435328}},"expressions":{"cheerful":{"src":"./assets/characters/v1710/seed/expressions/cheerful.webp","sha256":"5902a2cb81de0e83ff4342a5d6de29484a6e6386e93c2556babe0dfc298dce51","registration":{"scale":1,"x":0,"y":0}},"shy":{"src":"./assets/characters/v1710/seed/expressions/shy.webp","sha256":"9c7977e6011ada3a78e7be6a93c6b5437906e1fbec8e4c66853e48a33ad8d074","registration":{"scale":1,"x":0,"y":0}},"serious":{"src":"./assets/characters/v1710/seed/expressions/serious.webp","sha256":"fce541f9377b3a19b62be4027323d623ff128020505c8178e86b9c877f441db0","registration":{"scale":1,"x":0,"y":0}},"confused":{"src":"./assets/characters/v1710/seed/expressions/confused.webp","sha256":"485521fe88d26764f14935d10412b716ae28ccc4827693be980380e7e8ce00ce","registration":{"scale":1,"x":0,"y":0}},"angry":{"src":"./assets/characters/v1710/seed/expressions/angry.webp","sha256":"9f127294fe80ee137e1d5acc5437156307b20914e6223cc3c64a54e81a6f7622","registration":{"scale":1,"x":0,"y":0}},"frightened":{"src":"./assets/characters/v1710/seed/expressions/frightened.webp","sha256":"57989b7ac5ee8b9a9db3282d39cc12a7e592c317c025bb3e7dfef6ebb8d8c2b3","registration":{"scale":1,"x":0,"y":0}},"exasperated":{"src":"./assets/characters/v1710/seed/expressions/exasperated.webp","sha256":"be7d118185b28c42d38a17641eafc3d21e752e391ca9d6fbf3608c1177de9368","registration":{"scale":1,"x":0,"y":0}},"starry":{"src":"./assets/characters/v1710/seed/expressions/starry.webp","sha256":"95f2c4a78cbf134da2c3e3958b2ca402bcff12f5530ed85a1355e52287f1cc23","registration":{"scale":1,"x":0,"y":0}}}},"kimi":{"version":"1.7.10-q95","viewport":[40,4,1014,1523],"normal":{"src":"./assets/characters/v167/kimi/portrait.png","sha256":"c28f503db1a22be6f86add6e83c024c1a9ccf3deb64c14e8737408d702efaef0","registration":{"scale":1.3613906678865508,"x":-283.7328453796889,"y":-226.82753888380603}},"expressions":{"cheerful":{"src":"./assets/characters/v1710/kimi/expressions/cheerful.webp","sha256":"e3e2004d4a80dd659bd89708c9a5be5d7a6cb160797428f9d83f700c0567a1b7","registration":{"scale":1,"x":0,"y":0}},"shy":{"src":"./assets/characters/v1710/kimi/expressions/shy.webp","sha256":"4717feff9ae87a4e563eb766c92e0c9dfea6646d11ee8ad2a6064dd879bca3eb","registration":{"scale":1,"x":0,"y":0}},"serious":{"src":"./assets/characters/v1710/kimi/expressions/serious.webp","sha256":"8c61ed0dc07a2b0c48076ade89600f94a280e5bff4c1092965a9e12a2b496882","registration":{"scale":1,"x":0,"y":0}},"confused":{"src":"./assets/characters/v1710/kimi/expressions/confused.webp","sha256":"e288e2d63fb9e2cb3cd13f62c223f6255dd6a701395778f5d73b7aea2dbc18a1","registration":{"scale":1,"x":0,"y":0}},"angry":{"src":"./assets/characters/v1710/kimi/expressions/angry.webp","sha256":"078d1520d133586441f56a07a7dba11bfc1317d55c2626850fa914bbf109f13c","registration":{"scale":1,"x":0,"y":0}},"frightened":{"src":"./assets/characters/v1710/kimi/expressions/frightened.webp","sha256":"b9e818dd5a5627233c864fefbd9b131d7b0a7c568602b6341912a727c2252c86","registration":{"scale":1,"x":0,"y":0}},"exasperated":{"src":"./assets/characters/v1710/kimi/expressions/exasperated.webp","sha256":"54499800db0fa877ca0d2b7e06c047ebca7ee0a2eb4894510f8c4ff5efcb5ff0","registration":{"scale":1,"x":0,"y":0}},"starry":{"src":"./assets/characters/v1710/kimi/expressions/starry.webp","sha256":"eb9ee284ce63c779823f6cf0138368bef2041c2eae8351b0195230e553fec56a","registration":{"scale":1,"x":0,"y":0}}}},"qwen":{"version":"1.7.10-q95","viewport":[86,2,971,1532],"normal":{"src":"./assets/characters/v167/qwen/portrait.png","sha256":"3ca487b41f32ac83c00db9dd0556b13f316fb4fc2c52500394ac27fde849cb18","registration":{"scale":0.9182926829268293,"x":65.25060975609756,"y":-4.784146341463384}},"expressions":{"cheerful":{"src":"./assets/characters/v1710/qwen/expressions/cheerful.webp","sha256":"78d2ac6abc7f5275891171f44b6dc5d4e97e935a6e559b8cfb29812f69bccb61","registration":{"scale":1,"x":0,"y":0}},"shy":{"src":"./assets/characters/v1710/qwen/expressions/shy.webp","sha256":"fe1cf0f6738ea610f5278d7ebd96117b902776647e0309627fe71dc02f544a43","registration":{"scale":1,"x":0,"y":0}},"serious":{"src":"./assets/characters/v1710/qwen/expressions/serious.webp","sha256":"54bc13b1ec6e7f032f4e35f75fc1e177b61b40248dbe2f6919132bf27ca1652d","registration":{"scale":1,"x":0,"y":0}},"confused":{"src":"./assets/characters/v1710/qwen/expressions/confused.webp","sha256":"d42b4a118c2521f3dffa1fd00f5f6bc322f702514d7729ff6a885125b27cb5e3","registration":{"scale":1,"x":0,"y":0}},"angry":{"src":"./assets/characters/v1710/qwen/expressions/angry.webp","sha256":"dd5308cb55095d92522803d7210bbe5910bed5332933ea55a5dccb504a06d9bd","registration":{"scale":1,"x":0,"y":0}},"frightened":{"src":"./assets/characters/v1710/qwen/expressions/frightened.webp","sha256":"47ca951ccafe2fa917f829506430f99f074809b89fa070f2739b2600fc445c0a","registration":{"scale":1,"x":0,"y":0}},"exasperated":{"src":"./assets/characters/v1710/qwen/expressions/exasperated.webp","sha256":"b0ac202d63de63319e00fc795526b06379d68c84a5cecee162d67da18d90c7a3","registration":{"scale":1,"x":0,"y":0}},"starry":{"src":"./assets/characters/v1710/qwen/expressions/starry.webp","sha256":"e462ea493c22635715d88bedd28831c4d27dde4aa9804880f152aba310a864fe","registration":{"scale":1,"x":0,"y":0}}}},"minimax":{"version":"1.7.10-q95","viewport":[121,4,921,1525],"normal":{"src":"./assets/characters/v167/minimax/portrait.png","sha256":"1ade508825ecac9d23d04ee60e447fdde35bb31abac1b77660352b7f7ed2ab19","registration":{"scale":0.9253407682775713,"x":99.76068773234198,"y":-1.081474597273882}},"expressions":{"cheerful":{"src":"./assets/characters/v1710/minimax/expressions/cheerful.webp","sha256":"1ef56edb05632133922951e382ef53fb2d5a31580e35b03e64bd3516ff98143d","registration":{"scale":1,"x":0,"y":0}},"shy":{"src":"./assets/characters/v1710/minimax/expressions/shy.webp","sha256":"e7531653e527fcf238b5670c6d10d00f58ad7c963c804f1043b1405f91933a88","registration":{"scale":1,"x":0,"y":0}},"serious":{"src":"./assets/characters/v1710/minimax/expressions/serious.webp","sha256":"7a90a6a8f64c999bf7e9388bbfc7ca46c3f56ebacf7b358c7564d3d51d00248e","registration":{"scale":1,"x":0,"y":0}},"confused":{"src":"./assets/characters/v1710/minimax/expressions/confused.webp","sha256":"1a7848d88118f09e2a307708786a25acbcaf34f433c345e1dfbe4be75bcffd03","registration":{"scale":1,"x":0,"y":0}},"angry":{"src":"./assets/characters/v1710/minimax/expressions/angry.webp","sha256":"fc8abf3eeb01fab6d6e413ddd1762781d51b327d33798b2476812404ff271016","registration":{"scale":1,"x":0,"y":0}},"frightened":{"src":"./assets/characters/v1710/minimax/expressions/frightened.webp","sha256":"0c5254d15b9ccc91fa2c82cb53fc45d2a6b4fb9b533f4179ab471792fb695f38","registration":{"scale":1,"x":0,"y":0}},"exasperated":{"src":"./assets/characters/v1710/minimax/expressions/exasperated.webp","sha256":"d9e7fd6c41f1980f80ba34b2f6f6f0e5b27fa9832e77491c423424868eca96fa","registration":{"scale":1,"x":0,"y":0}},"starry":{"src":"./assets/characters/v1710/minimax/expressions/starry.webp","sha256":"6444b3ee39f87e747317545885d0a431a0495af611314fbd28c3c74e1101b447","registration":{"scale":1,"x":0,"y":0}}}},"chatgpt":{"version":"1.7.10-q95","viewport":[9,-5,1022,1536],"normal":{"src":"./assets/characters/v167/gpt/portrait.png","sha256":"eea5dbca46c61dc8d090537ee50e0b28ebe5b5f49a055881fa49dfd4bbc4d6d9","registration":{"scale":0.9153567110036276,"x":74.91717049576783,"y":-2.1535671100364198}},"expressions":{"cheerful":{"src":"./assets/characters/v1710/chatgpt/expressions/cheerful.webp","sha256":"5ea1f26117e3e1ea652bdc49d68f36cf195a29f53665951ad73e80979dcf4a5c","registration":{"scale":1,"x":0,"y":0}},"shy":{"src":"./assets/characters/v1710/chatgpt/expressions/shy.webp","sha256":"8daeba3437b2ec4525108130ef99ae22cbc2feab05bfadb5029fa94200e3e91b","registration":{"scale":1,"x":0,"y":0}},"serious":{"src":"./assets/characters/v1710/chatgpt/expressions/serious.webp","sha256":"664163f045d6d9cdb48935985ff7e02d3694d46a932b120a160707f948a6b14e","registration":{"scale":1,"x":0,"y":0}},"confused":{"src":"./assets/characters/v1710/chatgpt/expressions/confused.webp","sha256":"33e48e3a9a5be178a6fb6abffdffa09e22555827f83667b18c6b4f48a72b711d","registration":{"scale":1,"x":0,"y":0}},"angry":{"src":"./assets/characters/v1710/chatgpt/expressions/angry.webp","sha256":"6a3d1f79e623313eb488552867b35e6875d5beeb8509ba67d89394c2dc161003","registration":{"scale":1,"x":0,"y":0}},"frightened":{"src":"./assets/characters/v1710/chatgpt/expressions/frightened.webp","sha256":"74285a604785e835b676a89490427f87e36758c9bf7bfe23c01c78be37a47ac6","registration":{"scale":1,"x":0,"y":0}},"exasperated":{"src":"./assets/characters/v1710/chatgpt/expressions/exasperated.webp","sha256":"eedea9ed8f35773b26936ce2b03ffd61075da8a0791c59bb0345394690094511","registration":{"scale":1,"x":0,"y":0}},"starry":{"src":"./assets/characters/v1710/chatgpt/expressions/starry.webp","sha256":"1d2f0df48426098ebc7a0bb9fa8efa26d44aa21faed5fd80520f17a621633ee1","registration":{"scale":1,"x":0,"y":0}}}},"gemini":{"version":"1.7.10-q95","viewport":[29.64623069936431,1,1019,1516],"normal":{"src":"./assets/characters/v167/gemini/portrait.png","sha256":"fe627b45e0b76add502eab27682516b6cae1636e3607b26ce891c57f72b2dcc6","registration":{"scale":1.34377838328792,"x":-262.01634877384186,"y":-210.0985467756584}},"expressions":{"cheerful":{"src":"./assets/characters/v1710/gemini/expressions/cheerful.webp","sha256":"1c0c19ffc6dcf84c441f33ef5b46e9842de3cba6b6ee7593421ca1d19cacc064","registration":{"scale":1,"x":0,"y":0}},"shy":{"src":"./assets/characters/v1710/gemini/expressions/shy.webp","sha256":"7432e978092f5a4dd13f8d749c7f513d6540adcae64c215ee455ca00090a01cd","registration":{"scale":1,"x":0,"y":0}},"serious":{"src":"./assets/characters/v1710/gemini/expressions/serious.webp","sha256":"ca1ced4f66bfb78e5cfe3c1b6a2504a569c268837609157be87e85afc9b66314","registration":{"scale":1,"x":0,"y":0}},"confused":{"src":"./assets/characters/v1710/gemini/expressions/confused.webp","sha256":"d519e3577749f34bc9e6e396638c012964fd2150cb805ae8787e3e89ce24aff0","registration":{"scale":1,"x":0,"y":0}},"angry":{"src":"./assets/characters/v1710/gemini/expressions/angry.webp","sha256":"00d00365bef378a4eebbf4b116ca7dda59aa600a0f234989073133745c1e4292","registration":{"scale":1,"x":0,"y":0}},"frightened":{"src":"./assets/characters/v1710/gemini/expressions/frightened.webp","sha256":"28c97b54deabb6cc693d25c3a99f846edebd24931fbc8d73f93b5f448b0175ad","registration":{"scale":1,"x":0,"y":0}},"exasperated":{"src":"./assets/characters/v1710/gemini/expressions/exasperated.webp","sha256":"0929bd85520d4ab6aec4d32e24b1bf7e0306d09098c492b9ad44fb0e10c00184","registration":{"scale":1,"x":0,"y":0}},"starry":{"src":"./assets/characters/v1710/gemini/expressions/starry.webp","sha256":"060123651a3d38ea633fe6b800d369d7925f1cadb18c42a3559171942f373177","registration":{"scale":1,"x":0,"y":0}}}},"glm":{"version":"1.7.10-q95","viewport":[29,-5,1023,1529],"normal":{"src":"./assets/characters/v167/glm/portrait.png","sha256":"422d25127ccdbd5b3d200dd688ed3e4d40390e4146dd1d4dfd8f4d7ad5a69cd4","registration":{"scale":0.9326505276225947,"x":60.13081936685285,"y":-20.142768466790812}},"expressions":{"cheerful":{"src":"./assets/characters/v1710/glm/expressions/cheerful.webp","sha256":"8779b1a136de5faf66a0c4392c1e326f233cbf7eef77e9a995846b0994faf2a2","registration":{"scale":1,"x":0,"y":0}},"shy":{"src":"./assets/characters/v1710/glm/expressions/shy.webp","sha256":"0cdd542509aba70df50b9bfcd3baeba3ee2cc836e9e8b9b0f5f07d1c55d53cd8","registration":{"scale":1,"x":0,"y":0}},"serious":{"src":"./assets/characters/v1710/glm/expressions/serious.webp","sha256":"f78463df3b0475cbcf5f2e95457d085ab50189f2733517a1d8bbfee9a376c7b2","registration":{"scale":1,"x":0,"y":0}},"confused":{"src":"./assets/characters/v1710/glm/expressions/confused.webp","sha256":"64b3162da2ec885a4e04b4f48957ddeb838d96ec017d3855ed4da0f9feb01175","registration":{"scale":1,"x":0,"y":0}},"angry":{"src":"./assets/characters/v1710/glm/expressions/angry.webp","sha256":"ebe4298f8c4cf85e05cd39bad0ec8e8777fff43532a12b7916c1aa51594fb7f4","registration":{"scale":1,"x":0,"y":0}},"frightened":{"src":"./assets/characters/v1710/glm/expressions/frightened.webp","sha256":"e2432b4d0973f4ae797ff132189726ef903a979e711078f904e1bb19281be57a","registration":{"scale":1,"x":0,"y":0}},"exasperated":{"src":"./assets/characters/v1710/glm/expressions/exasperated.webp","sha256":"b3a178d2561d1fbbf41bb28a0d54186e79c7c9e5c0cbccaa09bc5927d56097d1","registration":{"scale":1,"x":0,"y":0}},"starry":{"src":"./assets/characters/v1710/glm/expressions/starry.webp","sha256":"689db7140a89f6a846255d62d34e16fc3e2107aa8a4a7b2a04be3f2ec6f7f18b","registration":{"scale":1,"x":0,"y":0}}}},"hunyuan":{"version":"1.7.10-q95","viewport":[2,10,1031,1531],"normal":{"src":"./assets/characters/v167/hunyuan/portrait.png","sha256":"c116972cc356f2e59cf38028088aebc1af54e6251c27d054fb37fd12586f36ba","registration":{"scale":0.9468690702087287,"x":64.60436432637567,"y":-35.81214421252366}},"expressions":{"cheerful":{"src":"./assets/characters/v1710/hunyuan/expressions/cheerful.webp","sha256":"9f35621da8ec0a6df612f7125358fc675e3fef56b3108a93896a10d27034a0a6","registration":{"scale":1,"x":0,"y":0}},"shy":{"src":"./assets/characters/v1710/hunyuan/expressions/shy.webp","sha256":"b8061f05fc72bb85ada04b2c199990154ddc01abd28f3e9d369c168cc5beff0d","registration":{"scale":1,"x":0,"y":0}},"serious":{"src":"./assets/characters/v1710/hunyuan/expressions/serious.webp","sha256":"e5e23c086330382d8cf4407c71a576c4a7acecfdf73a92e0b2cf7608cdca3c5c","registration":{"scale":1,"x":0,"y":0}},"confused":{"src":"./assets/characters/v1710/hunyuan/expressions/confused.webp","sha256":"77e2f38d9af6d0d3eb12201f3c0e1907981436e6e65f67c3664d49579a791f1b","registration":{"scale":1,"x":0,"y":0}},"angry":{"src":"./assets/characters/v1710/hunyuan/expressions/angry.webp","sha256":"11a11eb5a7bd87189e722993385f68398f1ba92160b9dea960a9839aa0ee586c","registration":{"scale":1,"x":0,"y":0}},"frightened":{"src":"./assets/characters/v1710/hunyuan/expressions/frightened.webp","sha256":"d245704771b4be8f787ca3b286e98d0c372fe5ced51403305dfb1b8acd0d0379","registration":{"scale":1,"x":0,"y":0}},"exasperated":{"src":"./assets/characters/v1710/hunyuan/expressions/exasperated.webp","sha256":"95a7c4117833cb40f97f39619fcc942c8f38479fad188b9d87767baa552c8434","registration":{"scale":1,"x":0,"y":0}},"starry":{"src":"./assets/characters/v1710/hunyuan/expressions/starry.webp","sha256":"d53a1833144f9fe5279a3724784dfc9e5ba96c20f286a21ee4fe6544800b8e7f","registration":{"scale":1,"x":0,"y":0}}}}};
+// Generated by scripts/galgame-expression-resources.mjs from the approved x2 WebPs.
+export const CHARACTER_EXPRESSION_IDS=["normal","cheerful","shy","serious","confused","angry","frightened","exasperated","starry","gentle","flustered","smug","laugh","sleepy","sad","cry","asleep","thinking","playful","eating","surprised","coax"];
+export const CHARACTER_EXPRESSIONS={
+  "deepseek": {
+    "version": "2026-11-12-x2",
+    "viewport": [
+      0,
+      0,
+      1870,
+      3364
+    ],
+    "normal": {
+      "src": "./assets/characters/galgame-expressions/deepseek/normal.webp",
+      "size": [
+        2244,
+        4038
+      ],
+      "sha256": "63e6b497d69c40c16a7df996cde0172a8c0f820261f653b4d8af5baba6eeea06",
+      "registration": {
+        "scale": 0.8333333333333334,
+        "x": 0,
+        "y": 0
+      },
+      "source": "ex-normal"
+    },
+    "expressions": {
+      "cheerful": {
+        "src": "./assets/characters/galgame-expressions/deepseek/cheerful.webp",
+        "size": [
+          1870,
+          3364
+        ],
+        "sha256": "fc761a91c81dea7c2ba3e700956b55cf6df0aa409b7ba0b9466af6099c3e9176",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-cheerful"
+      },
+      "shy": {
+        "src": "./assets/characters/galgame-expressions/deepseek/shy.webp",
+        "size": [
+          1870,
+          3364
+        ],
+        "sha256": "a45535505e6592792c33ca5a6fbce292ac8ca0ccf9cc5f2974c2434a4c0023e5",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-shy"
+      },
+      "serious": {
+        "src": "./assets/characters/galgame-expressions/deepseek/serious.webp",
+        "size": [
+          1870,
+          3364
+        ],
+        "sha256": "bce80e84684d9667018988e7f6a56681867b7db6a40435739b7a579a920c25b4",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-serious"
+      },
+      "confused": {
+        "src": "./assets/characters/galgame-expressions/deepseek/confused.webp",
+        "size": [
+          1870,
+          3366
+        ],
+        "sha256": "f219569a624e6ebd47467190173af0c78f9bcef008c6f1b2211336088f019df0",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-confused"
+      },
+      "angry": {
+        "src": "./assets/characters/galgame-expressions/deepseek/angry.webp",
+        "size": [
+          1870,
+          3366
+        ],
+        "sha256": "c7206b78546fed7f2e119883ec2b94ca05eb62b9643850838fbe798a1257224b",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-angry"
+      },
+      "frightened": {
+        "src": "./assets/characters/galgame-expressions/deepseek/frightened.webp",
+        "size": [
+          1870,
+          3366
+        ],
+        "sha256": "c8ca5be04fee2ba2d2c46cb3cf6a46c42369066abc384d5984fb8836f955461d",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-frightened"
+      },
+      "exasperated": {
+        "src": "./assets/characters/galgame-expressions/deepseek/exasperated.webp",
+        "size": [
+          1870,
+          3364
+        ],
+        "sha256": "34c75408c7985be2e86577e3cf30c9ee5e57e6724720adf88c15e56fca97dc9b",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-exasperated"
+      },
+      "starry": {
+        "src": "./assets/characters/galgame-expressions/deepseek/starry.webp",
+        "size": [
+          1870,
+          3364
+        ],
+        "sha256": "5ddbb2fe2e8eb4849b448c18b2e314373f5afd694b7d4896ee1517d9b8f45e81",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-starry"
+      },
+      "gentle": {
+        "src": "./assets/characters/galgame-expressions/deepseek/gentle.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "025f10c82d67520d950a73b5d72a1f3da47dbf2df5ff2d585da0e377030d41f6",
+        "registration": {
+          "scale": 1.0757,
+          "x": -211.4,
+          "y": 18.4
+        },
+        "source": "new-gentle"
+      },
+      "flustered": {
+        "src": "./assets/characters/galgame-expressions/deepseek/flustered.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "dc2db49cf9693688db5eca7989648082468e226e7b829da1797ab3877f28c7f3",
+        "registration": {
+          "scale": 1.0757,
+          "x": -168.6,
+          "y": 22.6
+        },
+        "source": "new-flustered"
+      },
+      "smug": {
+        "src": "./assets/characters/galgame-expressions/deepseek/smug.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "c188be6982a96cdc212869a6b3bc79d9627229c6c4b2a4365e90c53962b33aa1",
+        "registration": {
+          "scale": 1.0757,
+          "x": -207.6,
+          "y": 22.6
+        },
+        "source": "new-smug"
+      },
+      "laugh": {
+        "src": "./assets/characters/galgame-expressions/deepseek/laugh.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "603dc153f6861f38ff279f431deda6588d9be7a39625d4b4d4a6305a5e69d1e5",
+        "registration": {
+          "scale": 1.0757,
+          "x": -112.8,
+          "y": 18.4
+        },
+        "source": "new-laugh"
+      },
+      "sleepy": {
+        "src": "./assets/characters/galgame-expressions/deepseek/sleepy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "74890af802dfb29a5a8fbe4eb6fd9aca2eae044e5edaf15d33aba3e0044c77b8",
+        "registration": {
+          "scale": 1.0757,
+          "x": -176,
+          "y": 14
+        },
+        "source": "new-sleepy"
+      },
+      "sad": {
+        "src": "./assets/characters/galgame-expressions/deepseek/sad.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "219617ca9c02a02a4f7ad6cdd3ff3ad8b6bdf96804c18acda51917e07523daae",
+        "registration": {
+          "scale": 1.0757,
+          "x": -136.6,
+          "y": 31.2
+        },
+        "source": "new-sad"
+      },
+      "cry": {
+        "src": "./assets/characters/galgame-expressions/deepseek/cry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "55c70c093eef3724ba3f98ce37c4f3cda27d881a56fe497e08f3ba58796c32fa",
+        "registration": {
+          "scale": 1.0757,
+          "x": -206.8,
+          "y": 31.2
+        },
+        "source": "new-cry"
+      },
+      "asleep": {
+        "src": "./assets/characters/galgame-expressions/deepseek/asleep.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "17a2b735b155e48134d9c2d6912dfbba816edf22c321be93dcf6c61d05b602d2",
+        "registration": {
+          "scale": 1.0757,
+          "x": -196.2,
+          "y": 27
+        },
+        "source": "new-asleep"
+      },
+      "thinking": {
+        "src": "./assets/characters/galgame-expressions/deepseek/thinking.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "55947e08c1dc104807c1973d828a8ae4758f8165932d0a3d799a4828dd648800",
+        "registration": {
+          "scale": 1.0757,
+          "x": -231.2,
+          "y": 29
+        },
+        "source": "new-thinking"
+      },
+      "playful": {
+        "src": "./assets/characters/galgame-expressions/deepseek/playful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "634f5aa23adc4eb7af2f2cae6e8df07fe0696cf79b41d299e3e7d65a86df5e85",
+        "registration": {
+          "scale": 1.0757,
+          "x": -44.6,
+          "y": 33.4
+        },
+        "source": "new-playful"
+      },
+      "eating": {
+        "src": "./assets/characters/galgame-expressions/deepseek/eating.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "4d28ebad9d45c7ef401f19fe0cd393ebfd9ad100b4117b0218318943c7b9de8a",
+        "registration": {
+          "scale": 1.0757,
+          "x": -201.2,
+          "y": 29
+        },
+        "source": "new-eating"
+      },
+      "surprised": {
+        "src": "./assets/characters/galgame-expressions/deepseek/surprised.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "7735d61f76fe1a62b604d74311a43b2d7a61b417190b91927e91afd118e4f68e",
+        "registration": {
+          "scale": 1.0757,
+          "x": -211.2,
+          "y": 24.8
+        },
+        "source": "new-surprised"
+      },
+      "coax": {
+        "src": "./assets/characters/galgame-expressions/deepseek/coax.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "b887482568e10fab2cdaa60324f3a2bbba0da5d3c1a08d2cf702e479b9cc741b",
+        "registration": {
+          "scale": 1.0757,
+          "x": -183.4,
+          "y": 31.2
+        },
+        "source": "new-coax-r2"
+      }
+    }
+  },
+  "chatgpt": {
+    "version": "2026-11-12-x2",
+    "viewport": [
+      18,
+      -10,
+      2044,
+      3072
+    ],
+    "normal": {
+      "src": "./assets/characters/galgame-expressions/chatgpt/normal.webp",
+      "size": [
+        1874,
+        3356
+      ],
+      "sha256": "2f51ca823d042072cb25e6637b4105fbfb3d30c3b2b4e6d89639d373f651df93",
+      "registration": {
+        "scale": 0.9153567110036276,
+        "x": 149.83434099153567,
+        "y": -4.3071342200728395
+      },
+      "source": "ex-normal"
+    },
+    "expressions": {
+      "cheerful": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/cheerful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "0bb81da615523188072efa7bbfe7aebc548fa459ff87bb8844db057815a0bd92",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-cheerful"
+      },
+      "shy": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/shy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "3b3ce3993e43f1f02aab62abb870cf5801c7feef7dfc1bc4e1d003a930115478",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-shy"
+      },
+      "serious": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/serious.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "f50efe45e66cfeb5ac1aabac2dfbe860259071e27669979ff9235ddfdf07fd5a",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-serious"
+      },
+      "confused": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/confused.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "bc24006fa3b380ac4280f535572e6905ab4e0c5e8189d81b43c441b981ce262b",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-confused"
+      },
+      "angry": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/angry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "2dcfdf8a339af899caa5da9ba827330f48243786374540dbf634226d3e9e67f4",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-angry"
+      },
+      "frightened": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/frightened.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "8dba9fb9e8cb2b983eb45871cc6f3c1cd262b19f97cf0f25f3c429c9391d1fbf",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-frightened"
+      },
+      "exasperated": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/exasperated.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "a061e5b9b6e18151810ff999c1c376c9ba55b4b8d729cdf7ca0a95969ec15d15",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-exasperated"
+      },
+      "starry": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/starry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "e4724119d9bf51ebf905a1e24d1aebc006c07c816d3203280d50da610a4cc144",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-starry"
+      },
+      "gentle": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/gentle.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "b9767ac1040e87b1140079d2de83e15eee0c2275d7d71ff2c87baf2b425efbdc",
+        "registration": {
+          "scale": 0.9915,
+          "x": 23.2,
+          "y": 18
+        },
+        "source": "new-gentle"
+      },
+      "flustered": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/flustered.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "fa982a40332b27278cfe9a02dc155471801c3f34192c234162596f4c167e4ced",
+        "registration": {
+          "scale": 0.9915,
+          "x": 77.8,
+          "y": 14
+        },
+        "source": "new-flustered"
+      },
+      "smug": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/smug.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "0af0781a965747f7fa3ad4490d79a899c344747733bbbce59102045205ef81d7",
+        "registration": {
+          "scale": 0.9915,
+          "x": 73,
+          "y": 0.2
+        },
+        "source": "new-smug"
+      },
+      "laugh": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/laugh.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "40a4d513b9b11bf9572d52995c53de99dc38372c7086d3f73b0899477657923b",
+        "registration": {
+          "scale": 0.9915,
+          "x": 77.6,
+          "y": 0.2
+        },
+        "source": "new-laugh"
+      },
+      "sleepy": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/sleepy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "76979f8640e7ab4bcaa5d4d214eb4eed555c99780c6eb76c80f59b56d4f20d58",
+        "registration": {
+          "scale": 0.9915,
+          "x": 47.6,
+          "y": 6
+        },
+        "source": "new-sleepy"
+      },
+      "sad": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/sad.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "55dea352e1392f6a3b276bb063912ff678f99adfdb575facd3300f98d57e6229",
+        "registration": {
+          "scale": 0.9915,
+          "x": 49,
+          "y": 8
+        },
+        "source": "new-sad"
+      },
+      "cry": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/cry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "44d7bd4bfacef0e8a17c5e5f3d66ce296a8d83780869681517a4c27644a509b3",
+        "registration": {
+          "scale": 0.9915,
+          "x": 52.8,
+          "y": 18
+        },
+        "source": "new-cry"
+      },
+      "asleep": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/asleep.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "ad79bc0f69bd0980185a533f34f68182419ecdfa3e5f5cb57b850eafc963f55e",
+        "registration": {
+          "scale": 0.9915,
+          "x": 41.2,
+          "y": -1.8
+        },
+        "source": "new-asleep"
+      },
+      "thinking": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/thinking.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "13947464959c95cb7a5803b67ec0d2929abfa480622ce2e101c6c7b7f7805213",
+        "registration": {
+          "scale": 0.9915,
+          "x": 33.6,
+          "y": 0.2
+        },
+        "source": "new-thinking"
+      },
+      "playful": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/playful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "8de6c14f74c73e61bc984eda6ab22c65089a1c39b8c60a230645b98c6a93f9cc",
+        "registration": {
+          "scale": 0.9915,
+          "x": 68,
+          "y": 4.2
+        },
+        "source": "new-playful"
+      },
+      "eating": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/eating.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "1548564a8c04c850ded73136df369cd0004a6a4ee817345827101b7fb17b9aef",
+        "registration": {
+          "scale": 0.9915,
+          "x": 82,
+          "y": 12
+        },
+        "source": "new-eating"
+      },
+      "surprised": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/surprised.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "696a4bef8b02fb7cb9a565f365ebb89fb7638ad42496afd005b39d7065a17f96",
+        "registration": {
+          "scale": 0.9915,
+          "x": 41.4,
+          "y": 10
+        },
+        "source": "new-surprised"
+      },
+      "coax": {
+        "src": "./assets/characters/galgame-expressions/chatgpt/coax.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "606438532f68d690568315617c0356553124b575858a9027e8e1490f7a12f1eb",
+        "registration": {
+          "scale": 0.9915,
+          "x": 54.4,
+          "y": 6
+        },
+        "source": "new-coax-r2"
+      }
+    }
+  },
+  "claude": {
+    "version": "2026-11-12-x2",
+    "viewport": [
+      48,
+      12,
+      2016,
+      3050
+    ],
+    "normal": {
+      "src": "./assets/characters/galgame-expressions/claude/normal.webp",
+      "size": [
+        1874,
+        3358
+      ],
+      "sha256": "a8930e88c2c54122f79515094de7a71c8cfafa9872cf77aea5d857cba92e53dc",
+      "registration": {
+        "scale": 0.9041717049576784,
+        "x": 160.51602176541712,
+        "y": 18.29987908101566
+      },
+      "source": "ex-normal"
+    },
+    "expressions": {
+      "cheerful": {
+        "src": "./assets/characters/galgame-expressions/claude/cheerful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "53310fde257382bb3b0757bbaf4230d6b1a625978e2a8b39c64f8d19b637240e",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-cheerful"
+      },
+      "shy": {
+        "src": "./assets/characters/galgame-expressions/claude/shy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "25f51f9ae9a890309d8f91357069f3ebdc388ba23ad9d1124184acd2c4fa6f53",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-shy"
+      },
+      "serious": {
+        "src": "./assets/characters/galgame-expressions/claude/serious.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "bc77e154d4d6e553ac9754b5f8218498438f8e00e459132281be452a5f7bbd9a",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-serious"
+      },
+      "confused": {
+        "src": "./assets/characters/galgame-expressions/claude/confused.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "0d27c1599fb4834dbea3bcd8d5055d68408b39185f2962f45824e894ece7b51c",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-confused"
+      },
+      "angry": {
+        "src": "./assets/characters/galgame-expressions/claude/angry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "5d4393616981599d64817e1ca4d95d31d19c05fd7e5f04c676017f2130b97e3d",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-angry"
+      },
+      "frightened": {
+        "src": "./assets/characters/galgame-expressions/claude/frightened.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "18429b6081a6471bb8eda1d336ae2dc8e45c7ecdf45a827b8572a2643edb74be",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-frightened"
+      },
+      "exasperated": {
+        "src": "./assets/characters/galgame-expressions/claude/exasperated.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "c33a36f71d3ef69adcfa1f313a8562aa2f4879f565216aab4a6835efe8557cb7",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-exasperated"
+      },
+      "starry": {
+        "src": "./assets/characters/galgame-expressions/claude/starry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "4f68d72b11ba6628cfceeb671f61c8b384879f9af0ce998bbab40c7ce8d8ccfb",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-starry"
+      },
+      "gentle": {
+        "src": "./assets/characters/galgame-expressions/claude/gentle.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "6fc7a63588798ba793fecae914d6a508e258ebfd1a2e77ca20190a55e4a91143",
+        "registration": {
+          "scale": 0.9868,
+          "x": 23,
+          "y": 10.4
+        },
+        "source": "new-gentle-r3"
+      },
+      "flustered": {
+        "src": "./assets/characters/galgame-expressions/claude/flustered.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "5191160fa7db8cc7f5295a59c4f8c0b9ed02ac306d884965664ae80a82725d3f",
+        "registration": {
+          "scale": 0.9868,
+          "x": 36,
+          "y": 20.4
+        },
+        "source": "new-flustered"
+      },
+      "smug": {
+        "src": "./assets/characters/galgame-expressions/claude/smug.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "18e90dc01b428f4492ddcb5d0483137bc30b0e6799f2cd32963dce4de6a29eb4",
+        "registration": {
+          "scale": 0.9868,
+          "x": 35.2,
+          "y": 14.4
+        },
+        "source": "new-smug"
+      },
+      "laugh": {
+        "src": "./assets/characters/galgame-expressions/claude/laugh.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "9089f1e780c8b491385c79af95fb9a6edf5ea584b184d71fcbe951d4dc00a68b",
+        "registration": {
+          "scale": 0.9868,
+          "x": 50.4,
+          "y": 20.4
+        },
+        "source": "new-laugh"
+      },
+      "sleepy": {
+        "src": "./assets/characters/galgame-expressions/claude/sleepy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "ffd35b614ee75077605d518eee05bffcbb68b5d29673666fd394122838e65054",
+        "registration": {
+          "scale": 0.9868,
+          "x": 23.6,
+          "y": 20.4
+        },
+        "source": "new-sleepy"
+      },
+      "sad": {
+        "src": "./assets/characters/galgame-expressions/claude/sad.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "503900e4ab69771eb252c55ff103564f3d14aa40ed402ebf32d022e50a8eb4d8",
+        "registration": {
+          "scale": 0.9868,
+          "x": 17,
+          "y": 24.2
+        },
+        "source": "new-sad"
+      },
+      "cry": {
+        "src": "./assets/characters/galgame-expressions/claude/cry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "3a9a81460f9d5767e34e05ed3922341bc04a73883eded6b17ad8d786d804a594",
+        "registration": {
+          "scale": 0.9868,
+          "x": 24.2,
+          "y": 26.2
+        },
+        "source": "new-cry"
+      },
+      "asleep": {
+        "src": "./assets/characters/galgame-expressions/claude/asleep.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "2a70c877413195028c042b2b7f31dd1d7eb22903c5cdc0e280b0f4084ba78652",
+        "registration": {
+          "scale": 0.9868,
+          "x": 29.8,
+          "y": 8.6
+        },
+        "source": "new-asleep"
+      },
+      "thinking": {
+        "src": "./assets/characters/galgame-expressions/claude/thinking.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "9c5a5e729a9663646a4b2b6aea06fa642ffe12fbacd07a9ed401a3a976e3f0f8",
+        "registration": {
+          "scale": 0.9868,
+          "x": 27,
+          "y": 16.4
+        },
+        "source": "new-thinking"
+      },
+      "playful": {
+        "src": "./assets/characters/galgame-expressions/claude/playful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "44687570c68c24e92af13bb71c5149c2ee32f34552fd42c1cf82ef0bf847f2b8",
+        "registration": {
+          "scale": 0.9868,
+          "x": 22.4,
+          "y": 18.4
+        },
+        "source": "new-playful"
+      },
+      "eating": {
+        "src": "./assets/characters/galgame-expressions/claude/eating.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "469d0b72cd943902da3d91650a2a5ef34154ebf0c957c22e2897328f0520752a",
+        "registration": {
+          "scale": 0.9868,
+          "x": 29.6,
+          "y": 18.4
+        },
+        "source": "new-eating"
+      },
+      "surprised": {
+        "src": "./assets/characters/galgame-expressions/claude/surprised.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "beeed78635873822d5e8773f62cf4401223713ad9bef7bf6462d45df36083b8d",
+        "registration": {
+          "scale": 0.9868,
+          "x": 25,
+          "y": 10.4
+        },
+        "source": "new-surprised"
+      },
+      "coax": {
+        "src": "./assets/characters/galgame-expressions/claude/coax.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "cd66423bc198d4d5615ab2df709b7ff615f2075ab1c5509c25fd7bf08e838a38",
+        "registration": {
+          "scale": 0.9868,
+          "x": 23.6,
+          "y": 18.4
+        },
+        "source": "new-coax-r2"
+      }
+    }
+  },
+  "gemini": {
+    "version": "2026-11-12-x2",
+    "viewport": [
+      59.29246139872862,
+      2,
+      2038,
+      3032
+    ],
+    "normal": {
+      "src": "./assets/characters/galgame-expressions/gemini/normal.webp",
+      "size": [
+        2244,
+        2804
+      ],
+      "sha256": "a52dc2a4ae51bd1a1789ff34eecb544caee3b5e5e264d0bab7b3ea1b4718c438",
+      "registration": {
+        "scale": 1.34377838328792,
+        "x": -524.0326975476837,
+        "y": -420.1970935513168
+      },
+      "source": "ex-normal"
+    },
+    "expressions": {
+      "cheerful": {
+        "src": "./assets/characters/galgame-expressions/gemini/cheerful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "c35ad16a2340a561db778ad26daa790bb25a36ebea13389b3a7b81551233adeb",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-cheerful"
+      },
+      "shy": {
+        "src": "./assets/characters/galgame-expressions/gemini/shy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "178a8df6989acb07795e4a50ddfc020ab8d46f673d54b4343727b1a361050f5b",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-shy"
+      },
+      "serious": {
+        "src": "./assets/characters/galgame-expressions/gemini/serious.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "0fcee33d340bbe752d7ba582abed60fa40c4504a06665a9986a602f63b9db76d",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-serious"
+      },
+      "confused": {
+        "src": "./assets/characters/galgame-expressions/gemini/confused.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "2dbf59244422ae455397ab3dc13f5441f3e51bd9fde5ba3bcc445c45fede1279",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-confused"
+      },
+      "angry": {
+        "src": "./assets/characters/galgame-expressions/gemini/angry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "764131f9fb42db79599c38fe0de6037c533621e5d32ce6dd859447633793fbc0",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-angry"
+      },
+      "frightened": {
+        "src": "./assets/characters/galgame-expressions/gemini/frightened.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "85af54717cf79ddff0a3a7f6f819f37132c860bd4c968c7720b4122e23895c1d",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-frightened"
+      },
+      "exasperated": {
+        "src": "./assets/characters/galgame-expressions/gemini/exasperated.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "bd8b70579ba183f5bc404c111c4889c14edd84ab4944bfc989a1771b6ba6c0b1",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-exasperated"
+      },
+      "starry": {
+        "src": "./assets/characters/galgame-expressions/gemini/starry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "34af85b9d94988567bcd1e3f906e5d9fdda342d033fc04596c7d4f4a8f08e87e",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-starry"
+      },
+      "gentle": {
+        "src": "./assets/characters/galgame-expressions/gemini/gentle.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "e5fa987854168cb04092cd4ac8b77046a2304e75b30d80202b49150643bc29c9",
+        "registration": {
+          "scale": 0.9742,
+          "x": 75.8,
+          "y": 42
+        },
+        "source": "new-gentle"
+      },
+      "flustered": {
+        "src": "./assets/characters/galgame-expressions/gemini/flustered.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "ea1cad2731206e1727d6a37086be12fcd5e4e2ce4fd4780b492a9b7368365d2d",
+        "registration": {
+          "scale": 0.9742,
+          "x": 209.4,
+          "y": 3
+        },
+        "source": "new-flustered"
+      },
+      "smug": {
+        "src": "./assets/characters/galgame-expressions/gemini/smug.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "c3a4349ad8297b9ab059beb9cd3d843a773622a617e721c171e02dc32a30beac",
+        "registration": {
+          "scale": 0.9742,
+          "x": 90,
+          "y": 24.4
+        },
+        "source": "new-smug"
+      },
+      "laugh": {
+        "src": "./assets/characters/galgame-expressions/gemini/laugh.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "2e6d4be639ceefb7c751b4368e1263dfb5cf5e4a2badd77a20fad954a6673807",
+        "registration": {
+          "scale": 0.9742,
+          "x": 190,
+          "y": -6.8
+        },
+        "source": "new-laugh"
+      },
+      "sleepy": {
+        "src": "./assets/characters/galgame-expressions/gemini/sleepy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "e4e2b13618088c7503d9413134041bf0618ae2542819c1fb600bec257c1fee7c",
+        "registration": {
+          "scale": 0.9742,
+          "x": 106.2,
+          "y": 22.4
+        },
+        "source": "new-sleepy"
+      },
+      "sad": {
+        "src": "./assets/characters/galgame-expressions/gemini/sad.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "4d4c358a7f2229078781a47f100ca830f33c1ed082f578f07e234e4ef5591319",
+        "registration": {
+          "scale": 0.9742,
+          "x": 164.4,
+          "y": 43.8
+        },
+        "source": "new-sad"
+      },
+      "cry": {
+        "src": "./assets/characters/galgame-expressions/gemini/cry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "2309288e53c0cbf8670909994b4be88d1fd2d27531d50aac1dcd1c12e7f3a15c",
+        "registration": {
+          "scale": 0.9742,
+          "x": 120,
+          "y": 20.6
+        },
+        "source": "new-cry"
+      },
+      "asleep": {
+        "src": "./assets/characters/galgame-expressions/gemini/asleep.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "6eca1597a6fe4e3c97c7754eabe9ba577c773a2b85b91da92494afba9665bf1c",
+        "registration": {
+          "scale": 0.9742,
+          "x": 136.6,
+          "y": 36.2
+        },
+        "source": "new-asleep"
+      },
+      "thinking": {
+        "src": "./assets/characters/galgame-expressions/gemini/thinking.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "718fbf6d17ffe9946b45a5f0dcdc86452b46633e44b4f948ae283c3b048218f0",
+        "registration": {
+          "scale": 0.9742,
+          "x": 139.8,
+          "y": 14.6
+        },
+        "source": "new-thinking"
+      },
+      "playful": {
+        "src": "./assets/characters/galgame-expressions/gemini/playful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "24377034087962bc7ab7bb39dca872f5b3297b955e62c45a1c8d8eaf143323ce",
+        "registration": {
+          "scale": 0.9742,
+          "x": 156.2,
+          "y": 3
+        },
+        "source": "new-playful"
+      },
+      "eating": {
+        "src": "./assets/characters/galgame-expressions/gemini/eating.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "e134f9699dd1d2964b15978a96bfc6430ee9dbd7dd7ed7d5a4759ff7d69c1349",
+        "registration": {
+          "scale": 0.9742,
+          "x": 148,
+          "y": -2.8
+        },
+        "source": "new-eating"
+      },
+      "surprised": {
+        "src": "./assets/characters/galgame-expressions/gemini/surprised.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "b8c139974950fe59c96467d18499bb5e3bce68af50734463e9b7b86fa553f366",
+        "registration": {
+          "scale": 0.9742,
+          "x": 47.8,
+          "y": 38
+        },
+        "source": "new-surprised"
+      },
+      "coax": {
+        "src": "./assets/characters/galgame-expressions/gemini/coax.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "d70ae90dbe6c232d2a219793a2e0a0a0a34929e20b61bbc7736949b9ecba2b5a",
+        "registration": {
+          "scale": 0.9742,
+          "x": 156.2,
+          "y": 36.2
+        },
+        "source": "new-coax-r2"
+      }
+    }
+  },
+  "glm": {
+    "version": "2026-11-12-x2",
+    "viewport": [
+      58,
+      -10,
+      2046,
+      3058
+    ],
+    "normal": {
+      "src": "./assets/characters/galgame-expressions/glm/normal.webp",
+      "size": [
+        1882,
+        3344
+      ],
+      "sha256": "79a13b7062ea8f38ab35a792781f14c235f0fc600229b20ed297484dd54dc713",
+      "registration": {
+        "scale": 0.9326505276225947,
+        "x": 120.2616387337057,
+        "y": -40.285536933581625
+      },
+      "source": "ex-normal"
+    },
+    "expressions": {
+      "cheerful": {
+        "src": "./assets/characters/galgame-expressions/glm/cheerful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "268667869021533169a1edce43ab7db45d05d5a1978691c96c81dd62bf76c3fc",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-cheerful"
+      },
+      "shy": {
+        "src": "./assets/characters/galgame-expressions/glm/shy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "6cc6186fd6218af3dbb17921b86c1056b18743f72f4d8c3c018e2dcb4433e88d",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-shy"
+      },
+      "serious": {
+        "src": "./assets/characters/galgame-expressions/glm/serious.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "cb62de4e975d73a6dfb3b99e7083210418642ce24e6bfc5ab26192fba312959c",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-serious"
+      },
+      "confused": {
+        "src": "./assets/characters/galgame-expressions/glm/confused.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "2c44beaf081c1f865c8b3353f10bf4e0f99988b0514b6a536501c65473482612",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-confused"
+      },
+      "angry": {
+        "src": "./assets/characters/galgame-expressions/glm/angry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "5f2c9049747fb10537b43a8072669eb0f1f2d39e312bcfd2cb8b304e3c219b0a",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-angry"
+      },
+      "frightened": {
+        "src": "./assets/characters/galgame-expressions/glm/frightened.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "e5432230cef213452eba79cdbcf581ae0972b270cdc661875a0c40458d84167d",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-frightened"
+      },
+      "exasperated": {
+        "src": "./assets/characters/galgame-expressions/glm/exasperated.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "e26bf092ce1a22944ef72490fe22d0894a797d9afb980f5ca1b46b8cb3f6d876",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-exasperated"
+      },
+      "starry": {
+        "src": "./assets/characters/galgame-expressions/glm/starry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "d0ac7a55cbc8058feafbd031071cd92058e4b1fa9d781fca96d8bb850184651d",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-starry"
+      },
+      "gentle": {
+        "src": "./assets/characters/galgame-expressions/glm/gentle.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "97f2c874d56996480af008dee5d54ab52f40e8555a4b192bb21326d00294db5a",
+        "registration": {
+          "scale": 0.9862,
+          "x": 34.6,
+          "y": 16
+        },
+        "source": "new-gentle"
+      },
+      "flustered": {
+        "src": "./assets/characters/galgame-expressions/glm/flustered.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "0a179a471c5623ff5938d806a19f83290cf2430bb7db3cbcd5ed88b24bb7928c",
+        "registration": {
+          "scale": 0.9862,
+          "x": 33.2,
+          "y": 29.8
+        },
+        "source": "new-flustered"
+      },
+      "smug": {
+        "src": "./assets/characters/galgame-expressions/glm/smug.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "4232caf7b2bbf04316ee943bfbf588fdf3e89878582ffec6a5dec44af5acc2c5",
+        "registration": {
+          "scale": 0.9862,
+          "x": 28.4,
+          "y": 6.2
+        },
+        "source": "new-smug"
+      },
+      "laugh": {
+        "src": "./assets/characters/galgame-expressions/glm/laugh.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "184b87d0112cb6de831d13dde7e98cef500e801586eaaf56ad0c1ce7ca7fe043",
+        "registration": {
+          "scale": 0.9862,
+          "x": 44.2,
+          "y": 6.2
+        },
+        "source": "new-laugh"
+      },
+      "sleepy": {
+        "src": "./assets/characters/galgame-expressions/glm/sleepy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "13c8b477305488a6905871702a4a04f573389695e762974898a13892f9819d69",
+        "registration": {
+          "scale": 0.9862,
+          "x": 31,
+          "y": 22
+        },
+        "source": "new-sleepy-r2"
+      },
+      "sad": {
+        "src": "./assets/characters/galgame-expressions/glm/sad.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "9a39d3e5eae9c5efc2695e7bd06a5e0aeccb5c61d220d0e23ff9fba2f024a3aa",
+        "registration": {
+          "scale": 0.9862,
+          "x": 22.6,
+          "y": 22
+        },
+        "source": "new-sad"
+      },
+      "cry": {
+        "src": "./assets/characters/galgame-expressions/glm/cry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "9894c6bab35aa9c0f323c9445ba882a785a8cd5de51463776dfa7e3566760657",
+        "registration": {
+          "scale": 0.9862,
+          "x": 33.6,
+          "y": 16
+        },
+        "source": "new-cry"
+      },
+      "asleep": {
+        "src": "./assets/characters/galgame-expressions/glm/asleep.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "26d678b717e8c9aedae320974448c1f40c7d92ddc09a195746f4f7acc168c065",
+        "registration": {
+          "scale": 0.9862,
+          "x": 40.2,
+          "y": 10.2
+        },
+        "source": "new-asleep"
+      },
+      "thinking": {
+        "src": "./assets/characters/galgame-expressions/glm/thinking.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "c07ab6384d6c984796ffb9e5f24e5ecba51a5867e0ac56a16b60c58ff84ca90e",
+        "registration": {
+          "scale": 0.9862,
+          "x": 27.8,
+          "y": 20
+        },
+        "source": "new-thinking"
+      },
+      "playful": {
+        "src": "./assets/characters/galgame-expressions/glm/playful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "8accd1689f9850f6597c271267cf555beedba61fae2fa3e18d1153d51528fb6f",
+        "registration": {
+          "scale": 0.9862,
+          "x": 28.2,
+          "y": 16
+        },
+        "source": "new-playful"
+      },
+      "eating": {
+        "src": "./assets/characters/galgame-expressions/glm/eating.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "cfbd6eba59b06b8d9cfab12038035e915b6bbcd4529b5d1b7db20a53d1160985",
+        "registration": {
+          "scale": 0.9862,
+          "x": 35.8,
+          "y": 10.2
+        },
+        "source": "new-eating"
+      },
+      "surprised": {
+        "src": "./assets/characters/galgame-expressions/glm/surprised.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "5c91e6dabdc624f7b3ab8c25a633ac9ab06f3d83de3930e22e020376ae1e111d",
+        "registration": {
+          "scale": 0.9862,
+          "x": 37.6,
+          "y": 6.2
+        },
+        "source": "new-surprised"
+      },
+      "coax": {
+        "src": "./assets/characters/galgame-expressions/glm/coax.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "19f90957134a8e60cb4e9171fd77699b1bb599b7202c1b0bf7281fddaccfd8db",
+        "registration": {
+          "scale": 0.9862,
+          "x": 44.4,
+          "y": 14.2
+        },
+        "source": "new-coax-r2"
+      }
+    }
+  },
+  "grok": {
+    "version": "2026-11-12-x2",
+    "viewport": [
+      92,
+      0,
+      2026,
+      3058
+    ],
+    "normal": {
+      "src": "./assets/characters/galgame-expressions/grok/normal.webp",
+      "size": [
+        1874,
+        3356
+      ],
+      "sha256": "2f71ede3617e9a8db619854fbaf95e534115a2bfdabebc0fb38eb49a7812898e",
+      "registration": {
+        "scale": 0.9405439595192916,
+        "x": 134.24541429475016,
+        "y": -13.789373814041937
+      },
+      "source": "ex-normal"
+    },
+    "expressions": {
+      "cheerful": {
+        "src": "./assets/characters/galgame-expressions/grok/cheerful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "a1575164d3d10d5b73ef75d0bcfd198053dad55825d1b94c1bd14607df4a278a",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-cheerful"
+      },
+      "shy": {
+        "src": "./assets/characters/galgame-expressions/grok/shy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "452964ea648d90b6ea1844b65f07946c90cba82a4176faae86f1ec44bfc2e4d6",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-shy"
+      },
+      "serious": {
+        "src": "./assets/characters/galgame-expressions/grok/serious.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "ebdafa0e4af93f1c7a958b005b30bbbcee8829440af0ef1947b7398336646075",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-serious"
+      },
+      "confused": {
+        "src": "./assets/characters/galgame-expressions/grok/confused.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "829354e917c0eb8a73537e772db711b70d82b751e2ec98e273692017a1f29ef2",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-confused"
+      },
+      "angry": {
+        "src": "./assets/characters/galgame-expressions/grok/angry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "06ead0fcef0e658cb1383ac0bf584088428f3a3779a24a60efbf797dce7e94ea",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-angry"
+      },
+      "frightened": {
+        "src": "./assets/characters/galgame-expressions/grok/frightened.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "f04aaa1df0c58faf1caff946fa3431e0d7a70ada3af955f4d9332b5b1c185a1f",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-frightened"
+      },
+      "exasperated": {
+        "src": "./assets/characters/galgame-expressions/grok/exasperated.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "8246be28f9aacf661d7868a1eae6fc585caf08218d65f48f4654e64f10a3cbc8",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-exasperated"
+      },
+      "starry": {
+        "src": "./assets/characters/galgame-expressions/grok/starry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "0271a87861d6c7ea2672cb73f5f1987ac1ccb3662e3117162cd61f8863d30d10",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-starry"
+      },
+      "gentle": {
+        "src": "./assets/characters/galgame-expressions/grok/gentle.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "84d98280ce48186e1e424ec38b8f50c3ef8ae9486bd9262d1560db2a5bdf14e9",
+        "registration": {
+          "scale": 0.9749,
+          "x": 80.8,
+          "y": 10.2
+        },
+        "source": "new-gentle"
+      },
+      "flustered": {
+        "src": "./assets/characters/galgame-expressions/grok/flustered.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "7c3f8b45235906a8d8a157c5a8faf0a007f9210075afb416acd4b4192b355ca6",
+        "registration": {
+          "scale": 0.9749,
+          "x": 120.8,
+          "y": 4.4
+        },
+        "source": "new-flustered-r2"
+      },
+      "smug": {
+        "src": "./assets/characters/galgame-expressions/grok/smug.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "3879e4756fab8786f8aeb6d1511195e4d9ef25b52b61b13e97d63715efde87fc",
+        "registration": {
+          "scale": 0.9749,
+          "x": 98,
+          "y": -7.2
+        },
+        "source": "new-smug-r2"
+      },
+      "laugh": {
+        "src": "./assets/characters/galgame-expressions/grok/laugh.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "fea6a33c9038df04c69e41a3c807553be30b6c225775da62244b69b21fa4eac3",
+        "registration": {
+          "scale": 0.9749,
+          "x": 65.2,
+          "y": 22
+        },
+        "source": "new-laugh"
+      },
+      "sleepy": {
+        "src": "./assets/characters/galgame-expressions/grok/sleepy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "e289f00c1b7016aa9b5405a2764371b7ea12bf1f5d2395fe6d79e24827c11ba6",
+        "registration": {
+          "scale": 0.9749,
+          "x": 112.4,
+          "y": -7.2
+        },
+        "source": "new-sleepy-r2"
+      },
+      "sad": {
+        "src": "./assets/characters/galgame-expressions/grok/sad.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "652a68b518af4e796267aa7f19210f3193a23c8fd0837954ef1f90afc0793247",
+        "registration": {
+          "scale": 0.9749,
+          "x": 77.4,
+          "y": -3.4
+        },
+        "source": "new-sad"
+      },
+      "cry": {
+        "src": "./assets/characters/galgame-expressions/grok/cry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "4a32c40d94e48cc7a94fe6432a6d6b25f234acabace41816cd1ce2c3742e2d5f",
+        "registration": {
+          "scale": 0.9749,
+          "x": 87.4,
+          "y": -17
+        },
+        "source": "new-cry"
+      },
+      "asleep": {
+        "src": "./assets/characters/galgame-expressions/grok/asleep.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "8f946a6503ccd61bc51966c855bc3024c05a3d31c4961131734f5b9d40fc79b3",
+        "registration": {
+          "scale": 0.9749,
+          "x": 79.6,
+          "y": -1.4
+        },
+        "source": "new-asleep"
+      },
+      "thinking": {
+        "src": "./assets/characters/galgame-expressions/grok/thinking.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "c41d83da41744c606c705bea75fe1fdf53153208ae681b8c94627ffcfd2f3fca",
+        "registration": {
+          "scale": 0.9749,
+          "x": 91.2,
+          "y": 16.2
+        },
+        "source": "new-thinking"
+      },
+      "playful": {
+        "src": "./assets/characters/galgame-expressions/grok/playful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "b6cdf7f3cd4c45151a6d08b1803c2d18ad90a2daa7f62880a81df55e6c832916",
+        "registration": {
+          "scale": 0.9749,
+          "x": 67.2,
+          "y": 6.4
+        },
+        "source": "new-playful"
+      },
+      "eating": {
+        "src": "./assets/characters/galgame-expressions/grok/eating.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "91e1dab39a62d8ac6e8b83c7307da3449a9837c374d86c2cc3358c8f06342cdd",
+        "registration": {
+          "scale": 0.9749,
+          "x": 61,
+          "y": 12.2
+        },
+        "source": "new-eating"
+      },
+      "surprised": {
+        "src": "./assets/characters/galgame-expressions/grok/surprised.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "3d33e31012259df0ec14daa4d5145c5ae1f3b0d81ea460bf0554be988ee939b1",
+        "registration": {
+          "scale": 0.9749,
+          "x": 81.2,
+          "y": 22
+        },
+        "source": "new-surprised-r2"
+      },
+      "coax": {
+        "src": "./assets/characters/galgame-expressions/grok/coax.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "fa81201093f9c6ecea9fa692f0c221e5f84c934f6d4301741178e9ad198c9d87",
+        "registration": {
+          "scale": 0.9749,
+          "x": 159,
+          "y": -11.2
+        },
+        "source": "new-coax-r2"
+      }
+    }
+  },
+  "hunyuan": {
+    "version": "2026-11-12-x2",
+    "viewport": [
+      4,
+      20,
+      2062,
+      3062
+    ],
+    "normal": {
+      "src": "./assets/characters/galgame-expressions/hunyuan/normal.webp",
+      "size": [
+        1882,
+        3344
+      ],
+      "sha256": "d78cf45f0a66d5966c6bca398ccbf14ad1f70b2b77cf2e136e42e9b2de98e52b",
+      "registration": {
+        "scale": 0.9468690702087287,
+        "x": 129.20872865275135,
+        "y": -71.62428842504733
+      },
+      "source": "ex-normal"
+    },
+    "expressions": {
+      "cheerful": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/cheerful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "2920dcbd6c123040f86c6840c046af442c9c5d58e0e3701e288010d6dffd1931",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-cheerful"
+      },
+      "shy": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/shy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "39c83b129a50dcc2f53fc8372072975fc48ef14b713a9f6b82cdf78ce5c0dd49",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-shy"
+      },
+      "serious": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/serious.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "f5a72ba1ab176cc66c29f044493acae2abff1d11ba0e95605693ea96981665dd",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-serious"
+      },
+      "confused": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/confused.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "48fb54119be82b3b0163cddf4fda561d4bf683eb1e5b2548b7c3b265812a3dd9",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-confused"
+      },
+      "angry": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/angry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "bd91546432f014b1448bc74f99025e7097b103d3fa7eddf59e94679631d043b4",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-angry"
+      },
+      "frightened": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/frightened.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "81d06d1707fb5b3048774ab4178eaa343c7df341c2c0c0e990ed8333ed0304d3",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-frightened"
+      },
+      "exasperated": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/exasperated.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "c5855e912d3ffa51016993b7b872de9146319f45256a8e95ecc6d32f9c68b96c",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-exasperated"
+      },
+      "starry": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/starry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "15ba77de301b1bfc05b7e749d974bca9cde314ee92a84eb053eab47eb4a98c23",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-starry"
+      },
+      "gentle": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/gentle.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "8888699eb328a3a270d474416469d2f2bc5f1e73a2bfdd334c69aab37a0303a5",
+        "registration": {
+          "scale": 0.9907,
+          "x": -5.4,
+          "y": 36
+        },
+        "source": "new-gentle"
+      },
+      "flustered": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/flustered.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "575df4e7ee9f4c1e936c25a98ed71cc9bbb974cb7105c7341184daafb1e5c131",
+        "registration": {
+          "scale": 0.9907,
+          "x": 92.2,
+          "y": 14.2
+        },
+        "source": "new-flustered"
+      },
+      "smug": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/smug.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "4d29fcd1d4566d7ce83956530aad6c214f063217e116c44ea326adace1da76a3",
+        "registration": {
+          "scale": 0.9907,
+          "x": 35.8,
+          "y": 0.4
+        },
+        "source": "new-smug"
+      },
+      "laugh": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/laugh.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "c8ee140ef360429db0c39f1f8551c154d6d562dc690dbaa47027ccc4bc98bdc3",
+        "registration": {
+          "scale": 0.9907,
+          "x": 49.2,
+          "y": 12.4
+        },
+        "source": "new-laugh"
+      },
+      "sleepy": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/sleepy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "285b564cb28b5870ecae87b81a6974533659270432987cec1c1a279333e9016b",
+        "registration": {
+          "scale": 0.9907,
+          "x": 38.4,
+          "y": 8.4
+        },
+        "source": "new-sleepy"
+      },
+      "sad": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/sad.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "96f6ca71181c67c5ef421be8111e1ebffcdcb6d200281b6413b647ff98f252df",
+        "registration": {
+          "scale": 0.9907,
+          "x": 69.4,
+          "y": 10.4
+        },
+        "source": "new-sad"
+      },
+      "cry": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/cry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "280056f1baae3f7f1c6a90d3297524ee3c890db51ab932294d7f58787216424b",
+        "registration": {
+          "scale": 0.9907,
+          "x": 55.6,
+          "y": 10.4
+        },
+        "source": "new-cry"
+      },
+      "asleep": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/asleep.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "b8125ab9dbe5a3165ef2dd3703818971d8338808dc3161e1036f6508c2316cc8",
+        "registration": {
+          "scale": 0.9907,
+          "x": 58.4,
+          "y": -5.6
+        },
+        "source": "new-asleep"
+      },
+      "thinking": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/thinking.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "ca5e322dd2058d1366fb43b307ba9120186ef87c5bc4b65e69f380c287d68232",
+        "registration": {
+          "scale": 0.9907,
+          "x": 64.6,
+          "y": -3.6
+        },
+        "source": "new-thinking"
+      },
+      "playful": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/playful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "63658ed3013c37c6235e52fab6ac504272cf4dfb45077cc4b8d8fa58bab0ac6c",
+        "registration": {
+          "scale": 0.9907,
+          "x": 5,
+          "y": 20.2
+        },
+        "source": "new-playful"
+      },
+      "eating": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/eating.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "4218f6ec218190ea092e08b51beba3b8278d9dfd2998e9ab2cdba0a73395b433",
+        "registration": {
+          "scale": 0.9907,
+          "x": 65,
+          "y": 4.4
+        },
+        "source": "new-eating"
+      },
+      "surprised": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/surprised.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "f3079b3ae1892ae584ecaf64db029a1468d7e1fe8767d14843e20af0308a8c67",
+        "registration": {
+          "scale": 0.9907,
+          "x": 31.8,
+          "y": 8.4
+        },
+        "source": "new-surprised"
+      },
+      "coax": {
+        "src": "./assets/characters/galgame-expressions/hunyuan/coax.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "47d183820a942f5a79b77aa028a958982bc7f7752c04d500afe8e86b78eb9937",
+        "registration": {
+          "scale": 0.9907,
+          "x": 50.6,
+          "y": 18.2
+        },
+        "source": "new-coax-r2"
+      }
+    }
+  },
+  "kimi": {
+    "version": "2026-11-12-x2",
+    "viewport": [
+      80,
+      8,
+      2028,
+      3046
+    ],
+    "normal": {
+      "src": "./assets/characters/galgame-expressions/kimi/normal.webp",
+      "size": [
+        2244,
+        2804
+      ],
+      "sha256": "fdc25e6938244a9326c3554bd09c910712170978342286148b9c85c30bf1e1c3",
+      "registration": {
+        "scale": 1.3613906678865508,
+        "x": -567.4656907593778,
+        "y": -453.65507776761206
+      },
+      "source": "ex-normal"
+    },
+    "expressions": {
+      "cheerful": {
+        "src": "./assets/characters/galgame-expressions/kimi/cheerful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "adde55a469f06e9c426df447062a5c2aad8d6596aab86ad341bcbf66b25cb096",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-cheerful"
+      },
+      "shy": {
+        "src": "./assets/characters/galgame-expressions/kimi/shy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "36e3429a2c7b140434d39d6c3b2c970b93370a7ebd59d80a107786f6095a39cc",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-shy"
+      },
+      "serious": {
+        "src": "./assets/characters/galgame-expressions/kimi/serious.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "fda66a45dd940c4baa89e5ca833ed74fec5cc3b228d0c1a2ba2908a529e82587",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-serious"
+      },
+      "confused": {
+        "src": "./assets/characters/galgame-expressions/kimi/confused.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "42c5e9ff04d9a21f4541ac63c0d97195b0c5e57d0c1adb94d64a7360e54d3dab",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-confused"
+      },
+      "angry": {
+        "src": "./assets/characters/galgame-expressions/kimi/angry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "f58bf8981f21ec0f0a161347e93a477027544a32d1bfab1f2fc2eb39551117c2",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-angry"
+      },
+      "frightened": {
+        "src": "./assets/characters/galgame-expressions/kimi/frightened.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "977b65a37243866f47968bb458b09a9972d47042cdd71c137f67fbc42b93d385",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-frightened"
+      },
+      "exasperated": {
+        "src": "./assets/characters/galgame-expressions/kimi/exasperated.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "8ca8df59b6b89d10c57032504a7bbdd36d17b6c9f47ea76814dc98cb7e8b13d9",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-exasperated"
+      },
+      "starry": {
+        "src": "./assets/characters/galgame-expressions/kimi/starry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "dde793eddf4c33609e4bf8006dd16ec3fc55857f16de38752e04acd74927f96d",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-starry"
+      },
+      "gentle": {
+        "src": "./assets/characters/galgame-expressions/kimi/gentle.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "96080025f4e831e73ef75baa89a5bcbf7ce9434107cc02c44f7253a39c65226c",
+        "registration": {
+          "scale": 0.9841,
+          "x": 14.2,
+          "y": 40
+        },
+        "source": "new-gentle-r2"
+      },
+      "flustered": {
+        "src": "./assets/characters/galgame-expressions/kimi/flustered.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "cf2d25c817040cc1c6af632ad115240f2207e6713ac7968aa26b1c8fa380aebf",
+        "registration": {
+          "scale": 0.9841,
+          "x": -2.2,
+          "y": 10.4
+        },
+        "source": "new-flustered"
+      },
+      "smug": {
+        "src": "./assets/characters/galgame-expressions/kimi/smug.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "3ccb686f18ca5001723b36b52f8f66304d19a805afb09088b64bb4fcbf8a4cfe",
+        "registration": {
+          "scale": 0.9841,
+          "x": 22.8,
+          "y": 6.6
+        },
+        "source": "new-smug"
+      },
+      "laugh": {
+        "src": "./assets/characters/galgame-expressions/kimi/laugh.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "ce8c270d2501530e409a7914798b2f3879e71072dfaf8769fc18522dbc35e097",
+        "registration": {
+          "scale": 0.9841,
+          "x": 9.2,
+          "y": 4.6
+        },
+        "source": "new-laugh"
+      },
+      "sleepy": {
+        "src": "./assets/characters/galgame-expressions/kimi/sleepy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "4d05bc1135c961ef32e48dd7de7bd584a8cb24b8fb264c7e72c252425d02416a",
+        "registration": {
+          "scale": 0.9841,
+          "x": 8.6,
+          "y": 18.4
+        },
+        "source": "new-sleepy"
+      },
+      "sad": {
+        "src": "./assets/characters/galgame-expressions/kimi/sad.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "1c442307e7facb104f6bce29e3edcadc1c0b992b98993164d8e9c6e34d47040e",
+        "registration": {
+          "scale": 0.9841,
+          "x": 3.4,
+          "y": 8.4
+        },
+        "source": "new-sad"
+      },
+      "cry": {
+        "src": "./assets/characters/galgame-expressions/kimi/cry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "8ee77ece4bdb1ec9f516d2ab1bfec8d9e904e2a50e18c7c505297704233a1e24",
+        "registration": {
+          "scale": 0.9841,
+          "x": 19.4,
+          "y": 22.2
+        },
+        "source": "new-cry"
+      },
+      "asleep": {
+        "src": "./assets/characters/galgame-expressions/kimi/asleep.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "90680750ac662a0b4088f95afb0eac2bb6bfcd62d544af120a6667bb0d0464eb",
+        "registration": {
+          "scale": 0.9841,
+          "x": -4,
+          "y": 4.6
+        },
+        "source": "new-asleep"
+      },
+      "thinking": {
+        "src": "./assets/characters/galgame-expressions/kimi/thinking.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "e468e16cc13c6206c2b8fe8cae3900389a567e5c1b75e658c979e7f51bf5b63e",
+        "registration": {
+          "scale": 0.9841,
+          "x": 8.2,
+          "y": 6.6
+        },
+        "source": "new-thinking"
+      },
+      "playful": {
+        "src": "./assets/characters/galgame-expressions/kimi/playful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "9e8ae875b97f32e9482ab6cbdcbbf81d2d25ae8ee684a8df7e321e48a488faac",
+        "registration": {
+          "scale": 0.9841,
+          "x": -16,
+          "y": -7.2
+        },
+        "source": "new-playful"
+      },
+      "eating": {
+        "src": "./assets/characters/galgame-expressions/kimi/eating.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "8b55e5de473ce3f3dbf4c95978dc854b7bfafe34d723e923eb0d0279ef7a063a",
+        "registration": {
+          "scale": 0.9841,
+          "x": 15.6,
+          "y": 36
+        },
+        "source": "new-eating"
+      },
+      "surprised": {
+        "src": "./assets/characters/galgame-expressions/kimi/surprised.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "4a47a90ae4b192160fac8b2585a785f6dbc194421e3deeeaa7c63d83a230e5a0",
+        "registration": {
+          "scale": 0.9841,
+          "x": 49.4,
+          "y": 59.6
+        },
+        "source": "new-surprised"
+      },
+      "coax": {
+        "src": "./assets/characters/galgame-expressions/kimi/coax.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "6ef05044e723243877d2e84db86130beda86fd7939d2a548b368eacdc37615e6",
+        "registration": {
+          "scale": 0.9841,
+          "x": -2,
+          "y": 28.2
+        },
+        "source": "new-coax-r2"
+      }
+    }
+  },
+  "minimax": {
+    "version": "2026-11-12-x2",
+    "viewport": [
+      242,
+      8,
+      1842,
+      3050
+    ],
+    "normal": {
+      "src": "./assets/characters/galgame-expressions/minimax/normal.webp",
+      "size": [
+        1874,
+        3358
+      ],
+      "sha256": "d9f54ad1dd197c9c48625be8108177dfbbaec7d5da6336ab4428cdacda15c8d3",
+      "registration": {
+        "scale": 0.9253407682775713,
+        "x": 199.52137546468396,
+        "y": -2.162949194547764
+      },
+      "source": "ex-normal"
+    },
+    "expressions": {
+      "cheerful": {
+        "src": "./assets/characters/galgame-expressions/minimax/cheerful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "313cb0020d9829dc15c7a236cbf307f3e3895f7a971b9ea832f806a76d8b78d4",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-cheerful"
+      },
+      "shy": {
+        "src": "./assets/characters/galgame-expressions/minimax/shy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "899d61f19ea741ef13b01c93e64ca9b38608a9387bd1ce70166ad87324555cee",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-shy"
+      },
+      "serious": {
+        "src": "./assets/characters/galgame-expressions/minimax/serious.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "ad4643f315d39cdd8f57867db4f209b640e017bed4eb49d53adca5dd0b0bb14f",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-serious"
+      },
+      "confused": {
+        "src": "./assets/characters/galgame-expressions/minimax/confused.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "3bc585e819fc5ba392fa5bb80095806f1c814b9dad7f4850bd5dc7e08c46a7b2",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-confused"
+      },
+      "angry": {
+        "src": "./assets/characters/galgame-expressions/minimax/angry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "c88cb1cdaf178f9b048e16da0f35379f43496babb37f74ada1c042677ff5c6a1",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-angry"
+      },
+      "frightened": {
+        "src": "./assets/characters/galgame-expressions/minimax/frightened.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "309caff67294fa101bd90c1d8b2a26ac67e6c83a417810308c6c45082ed850f2",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-frightened"
+      },
+      "exasperated": {
+        "src": "./assets/characters/galgame-expressions/minimax/exasperated.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "e98b8251e1aaa557c0ea10e64639b7142803a214c37471a9d4577f3d51736b87",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-exasperated"
+      },
+      "starry": {
+        "src": "./assets/characters/galgame-expressions/minimax/starry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "aa0b43e8756412e211189801bd302f6a1b53a8b43a4608f4e3fd576f1baddc35",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-starry"
+      },
+      "gentle": {
+        "src": "./assets/characters/galgame-expressions/minimax/gentle.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "a59594da789573c6ff45652e5513aef38d47f0105558b38400b37c7a018bc96c",
+        "registration": {
+          "scale": 0.9861,
+          "x": -26.2,
+          "y": 16.4
+        },
+        "source": "new-gentle"
+      },
+      "flustered": {
+        "src": "./assets/characters/galgame-expressions/minimax/flustered.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "a633b1228e6d866d5cbfe956b8693c72c6fd60088ee992dfe7b4c201136f4778",
+        "registration": {
+          "scale": 0.9861,
+          "x": 4,
+          "y": 6.6
+        },
+        "source": "new-flustered"
+      },
+      "smug": {
+        "src": "./assets/characters/galgame-expressions/minimax/smug.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "79d070989c9a9764880b064a791e982e1a11eb4a56f6cee9a6ead58c546fa803",
+        "registration": {
+          "scale": 0.9861,
+          "x": 7.8,
+          "y": -1.4
+        },
+        "source": "new-smug"
+      },
+      "laugh": {
+        "src": "./assets/characters/galgame-expressions/minimax/laugh.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "35acafdec334b52652c4cdd9b8d151734d7e4c94ef02655545b524387ee92d44",
+        "registration": {
+          "scale": 0.9861,
+          "x": 3.4,
+          "y": 4.6
+        },
+        "source": "new-laugh"
+      },
+      "sleepy": {
+        "src": "./assets/characters/galgame-expressions/minimax/sleepy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "9d6762131eceb3832435c2cbccac39d8ce734638a5e8ae82b9d69501263bc9f1",
+        "registration": {
+          "scale": 0.9861,
+          "x": -4.2,
+          "y": 18.4
+        },
+        "source": "new-sleepy"
+      },
+      "sad": {
+        "src": "./assets/characters/galgame-expressions/minimax/sad.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "e68e11cf57cbd2ca8ef13e215e8bfa01b261b3059e73fa6f566f95c2e137e5c2",
+        "registration": {
+          "scale": 0.9861,
+          "x": -49.4,
+          "y": 20.4
+        },
+        "source": "new-sad"
+      },
+      "cry": {
+        "src": "./assets/characters/galgame-expressions/minimax/cry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "e9940863d9fb9bd23134b6df094bc9852c13d0a6bacfd86e6b5e12ebd3910903",
+        "registration": {
+          "scale": 0.9861,
+          "x": -28.4,
+          "y": 28.2
+        },
+        "source": "new-cry"
+      },
+      "asleep": {
+        "src": "./assets/characters/galgame-expressions/minimax/asleep.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "ffa30896ea070b8ef2f281bcb78242219dc50a575498e839e0601197ecb6df19",
+        "registration": {
+          "scale": 0.9861,
+          "x": -0.6,
+          "y": 4.6
+        },
+        "source": "new-asleep"
+      },
+      "thinking": {
+        "src": "./assets/characters/galgame-expressions/minimax/thinking.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "2c9cfe6393b354b21918040e80a5f42a8148354e974e4264d1aa981f5797f39d",
+        "registration": {
+          "scale": 0.9861,
+          "x": -8.2,
+          "y": 18.4
+        },
+        "source": "new-thinking"
+      },
+      "playful": {
+        "src": "./assets/characters/galgame-expressions/minimax/playful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "50ec0acc9753a613cbf42961dd2ad1b095a26db3b4b70925666db5760159ecdf",
+        "registration": {
+          "scale": 0.9861,
+          "x": 27,
+          "y": 22.2
+        },
+        "source": "new-playful"
+      },
+      "eating": {
+        "src": "./assets/characters/galgame-expressions/minimax/eating.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "9a7ae863a879177dc3a50815bf4b7eb378d63514671d383511cd050c7a5938fc",
+        "registration": {
+          "scale": 0.9861,
+          "x": 18.4,
+          "y": 10.4
+        },
+        "source": "new-eating"
+      },
+      "surprised": {
+        "src": "./assets/characters/galgame-expressions/minimax/surprised.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "c50ae5b99975afe4971f623c800ce35abf01dd376ad6dff0b682b76a430d5754",
+        "registration": {
+          "scale": 0.9861,
+          "x": 25.8,
+          "y": 2.6
+        },
+        "source": "new-surprised"
+      },
+      "coax": {
+        "src": "./assets/characters/galgame-expressions/minimax/coax.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "ce7c16d2f5c698a7e0bc80f68498689163956652ac99054a19cb95ce317962cf",
+        "registration": {
+          "scale": 0.9861,
+          "x": 0,
+          "y": 36
+        },
+        "source": "new-coax-r2"
+      }
+    }
+  },
+  "qwen": {
+    "version": "2026-11-12-x2",
+    "viewport": [
+      172,
+      4,
+      1942,
+      3064
+    ],
+    "normal": {
+      "src": "./assets/characters/galgame-expressions/qwen/normal.webp",
+      "size": [
+        1874,
+        3358
+      ],
+      "sha256": "4cc38ab8a1276ddd5f432e1adcbbde8e26a50a19f7d213c976e3342d122325e4",
+      "registration": {
+        "scale": 0.9182926829268293,
+        "x": 130.50121951219512,
+        "y": -9.568292682926767
+      },
+      "source": "ex-normal"
+    },
+    "expressions": {
+      "cheerful": {
+        "src": "./assets/characters/galgame-expressions/qwen/cheerful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "5d26ccb4b2ff5fc3432f4d1412b1bcfa40cd31c4765168eec1021fc4161afaf0",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-cheerful"
+      },
+      "shy": {
+        "src": "./assets/characters/galgame-expressions/qwen/shy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "46b34da2c54a3132df036cea516d8ba2f88d919db1b2bb173821d84bfd620538",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-shy"
+      },
+      "serious": {
+        "src": "./assets/characters/galgame-expressions/qwen/serious.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "a00999f1ac7bda4c42916744e5db43c2d71960929ab492783afb1a8ee4afb9b8",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-serious"
+      },
+      "confused": {
+        "src": "./assets/characters/galgame-expressions/qwen/confused.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "89b71af4c7d721af6606e239e910760beb29a76741aae0607e9f69ad37eca2f3",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-confused"
+      },
+      "angry": {
+        "src": "./assets/characters/galgame-expressions/qwen/angry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "92bd90105f8c1c30806750e89885755587383ac5f8ae3ef3c45ca8403c56f113",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-angry"
+      },
+      "frightened": {
+        "src": "./assets/characters/galgame-expressions/qwen/frightened.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "3317fa4e6db0270ef1d65a9c039c306c87d9aeca9b23b5b76b88bb369e29312c",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-frightened"
+      },
+      "exasperated": {
+        "src": "./assets/characters/galgame-expressions/qwen/exasperated.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "9ec9017cc511f0ef9fa9c8c7eb98a76a07c4215a1c1b524dced0727d5c887fce",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-exasperated"
+      },
+      "starry": {
+        "src": "./assets/characters/galgame-expressions/qwen/starry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "2833051554fcd6e31ed414c97181b38e403d483d6b0c6066c826ae80c7165e08",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-starry"
+      },
+      "gentle": {
+        "src": "./assets/characters/galgame-expressions/qwen/gentle.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "c69e37ab4bf59bc9e143060260a234da016c8e864a5fb8740b4f0cac1ff7dc76",
+        "registration": {
+          "scale": 0.9921,
+          "x": 36.4,
+          "y": 6.2
+        },
+        "source": "new-gentle"
+      },
+      "flustered": {
+        "src": "./assets/characters/galgame-expressions/qwen/flustered.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "37e616ddb70fc31c0adb45437739038d2b5aebfce2a9897b737120964ef6d902",
+        "registration": {
+          "scale": 0.9921,
+          "x": 44,
+          "y": 16
+        },
+        "source": "new-flustered"
+      },
+      "smug": {
+        "src": "./assets/characters/galgame-expressions/qwen/smug.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "4b0480278238c45e1c12d46e773f2c19cc6f6664a6b30e0b757aa2da2f7608ef",
+        "registration": {
+          "scale": 0.9921,
+          "x": 50.6,
+          "y": 0.2
+        },
+        "source": "new-smug"
+      },
+      "laugh": {
+        "src": "./assets/characters/galgame-expressions/qwen/laugh.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "71956639e0435c9f71df426b7d8c408f31b9cb3a5ca9b1b88ebf5a2747ddc1d0",
+        "registration": {
+          "scale": 0.9921,
+          "x": 59.8,
+          "y": 4.2
+        },
+        "source": "new-laugh"
+      },
+      "sleepy": {
+        "src": "./assets/characters/galgame-expressions/qwen/sleepy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "f4aaf79da371f7744bc57fd4feeeb2912309f17d754afbb1a8a053d7d4eec0b1",
+        "registration": {
+          "scale": 0.9921,
+          "x": 18,
+          "y": 4.2
+        },
+        "source": "new-sleepy"
+      },
+      "sad": {
+        "src": "./assets/characters/galgame-expressions/qwen/sad.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "18ecf783ad352094946356851e48080be58647d27fa7acecf97ed1ad45219f42",
+        "registration": {
+          "scale": 0.9921,
+          "x": 35,
+          "y": 26
+        },
+        "source": "new-sad"
+      },
+      "cry": {
+        "src": "./assets/characters/galgame-expressions/qwen/cry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "2ea6f5ad9b40ca48a1a2264a736816672ab0ddc55ec890ab3161413228d3e26b",
+        "registration": {
+          "scale": 0.9921,
+          "x": 29.8,
+          "y": -1.8
+        },
+        "source": "new-cry-r2"
+      },
+      "asleep": {
+        "src": "./assets/characters/galgame-expressions/qwen/asleep.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "3227c26f5382c2e49927f27e99ae808393fd78e6e323172f2a36fe43492d6b77",
+        "registration": {
+          "scale": 0.9921,
+          "x": 48.6,
+          "y": 2.2
+        },
+        "source": "new-asleep"
+      },
+      "thinking": {
+        "src": "./assets/characters/galgame-expressions/qwen/thinking.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "b90132b36e741d9b835c379cbf4d50fa1b7e4877afbd8ded4c2365cddde7676e",
+        "registration": {
+          "scale": 0.9921,
+          "x": 34.8,
+          "y": 10.2
+        },
+        "source": "new-thinking"
+      },
+      "playful": {
+        "src": "./assets/characters/galgame-expressions/qwen/playful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "7a2700ac070fb2fbb84591ab586f6090a3e0c28069e857a7fa80e7e8784c4fb9",
+        "registration": {
+          "scale": 0.9921,
+          "x": 65.6,
+          "y": 4.2
+        },
+        "source": "new-playful"
+      },
+      "eating": {
+        "src": "./assets/characters/galgame-expressions/qwen/eating.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "b51bbb3a302cc4b6a326c341313a457d22ee1b144c65a6b78ad9065719f7ab97",
+        "registration": {
+          "scale": 0.9921,
+          "x": 43.4,
+          "y": 6.2
+        },
+        "source": "new-eating"
+      },
+      "surprised": {
+        "src": "./assets/characters/galgame-expressions/qwen/surprised.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "b33c00ec4e4fd07c4c422adaece00ed414c9dee8332e8ae0c464e6693d7a7c09",
+        "registration": {
+          "scale": 0.9921,
+          "x": 56.2,
+          "y": 10.2
+        },
+        "source": "new-surprised-r2"
+      },
+      "coax": {
+        "src": "./assets/characters/galgame-expressions/qwen/coax.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "2ac88918580a688b64c2517ed592fec739110d1ee9ad71acbe944133f4a73e64",
+        "registration": {
+          "scale": 0.9921,
+          "x": 48.8,
+          "y": 8.2
+        },
+        "source": "new-coax-r2"
+      }
+    }
+  },
+  "seed": {
+    "version": "2026-11-12-x2",
+    "viewport": [
+      218,
+      -2,
+      1858,
+      3056
+    ],
+    "normal": {
+      "src": "./assets/characters/galgame-expressions/seed/normal.webp",
+      "size": [
+        1874,
+        3358
+      ],
+      "sha256": "0bc64035fcc3f146febf2df7d6fc9844828d622dadfb4d245d7d42759b84a9a8",
+      "registration": {
+        "scale": 0.9372239747634069,
+        "x": 119.57886435331238,
+        "y": -40.35015772870656
+      },
+      "source": "ex-normal"
+    },
+    "expressions": {
+      "cheerful": {
+        "src": "./assets/characters/galgame-expressions/seed/cheerful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "49d921c2f0c786c5dd971da4b393d7e7a809499b495c1481bc01fa56f67f9c7f",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-cheerful"
+      },
+      "shy": {
+        "src": "./assets/characters/galgame-expressions/seed/shy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "23865227634196afa532edaea878ebe5ba3a777248dc208f9c2f70719cda9ae7",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-shy"
+      },
+      "serious": {
+        "src": "./assets/characters/galgame-expressions/seed/serious.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "8ad3b0dd6e577b1c825a378ef01c700ea41916214b981c13bbc94a98456f6c3b",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-serious"
+      },
+      "confused": {
+        "src": "./assets/characters/galgame-expressions/seed/confused.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "147ca71168b696926b6017ff21ab2d315c141d7ab70190ccbfe0017192059617",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-confused"
+      },
+      "angry": {
+        "src": "./assets/characters/galgame-expressions/seed/angry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "8f31e7d1c2a7338758597012e135fd7c48de3e56248b5aee24bda9cc135b1a94",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-angry"
+      },
+      "frightened": {
+        "src": "./assets/characters/galgame-expressions/seed/frightened.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "608635edd80c3b15aa086e053716e6f3ed21950c82532b68a8eabd5b415c1771",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-frightened"
+      },
+      "exasperated": {
+        "src": "./assets/characters/galgame-expressions/seed/exasperated.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "7246c49da70341650b8067d22428d203453148e25e18d52b4eb166d4e56b7984",
+        "registration": {
+          "scale": 1,
+          "x": 0,
+          "y": 0
+        },
+        "source": "ex-exasperated"
+      },
+      "starry": {
+        "src": "./assets/characters/galgame-expressions/seed/starry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "49ff98c54ba19c96f3f95167f72bab8a8eaec6bb6717317ef0d8d2d5482ffe11",
+        "registration": {
+          "scale": 0.9847,
+          "x": 180.2,
+          "y": 32.4
+        },
+        "source": "ex-starry-r2"
+      },
+      "gentle": {
+        "src": "./assets/characters/galgame-expressions/seed/gentle.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "70a5a07335d077d750b69516f167c0173bd40aab070ae9dd0dd2d36c4a021780",
+        "registration": {
+          "scale": 0.9847,
+          "x": 309,
+          "y": 6.8
+        },
+        "source": "new-gentle"
+      },
+      "flustered": {
+        "src": "./assets/characters/galgame-expressions/seed/flustered.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "bc06601e0ac2ab05f0db421a97f05bafbee7ee670ee2514842535d0ca79ad767",
+        "registration": {
+          "scale": 0.9847,
+          "x": 274.4,
+          "y": 24.6
+        },
+        "source": "new-flustered"
+      },
+      "smug": {
+        "src": "./assets/characters/galgame-expressions/seed/smug.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "7f55705729ab16a4236b3d051d3f7d1f1495a6e8bbfe92b114e6f48bf4b5e07e",
+        "registration": {
+          "scale": 0.9847,
+          "x": 152.6,
+          "y": 4.8
+        },
+        "source": "new-smug"
+      },
+      "laugh": {
+        "src": "./assets/characters/galgame-expressions/seed/laugh.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "a755eeab388ef89f8b688f3fa660f349d5d24fca3302b9042a92acb3aacc52ce",
+        "registration": {
+          "scale": 0.9847,
+          "x": 143.4,
+          "y": 14.6
+        },
+        "source": "new-laugh-r2"
+      },
+      "sleepy": {
+        "src": "./assets/characters/galgame-expressions/seed/sleepy.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "cb4d186e43600dc2922dcdb2f5a8985d1fd70e4d84fc2734c7e9de7da3b2efe1",
+        "registration": {
+          "scale": 0.9847,
+          "x": 210.6,
+          "y": 30.4
+        },
+        "source": "new-sleepy-r2"
+      },
+      "sad": {
+        "src": "./assets/characters/galgame-expressions/seed/sad.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "d14e268001781fa576be1b0ab2ac6294bb98e0a7df0183b21349d81b9268a0e3",
+        "registration": {
+          "scale": 0.9847,
+          "x": 238,
+          "y": 18.6
+        },
+        "source": "new-sad"
+      },
+      "cry": {
+        "src": "./assets/characters/galgame-expressions/seed/cry.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "acd285b88e9233d8bd327e7a26ac32cdcb310885a2bd917e68b11d20aa6b0fa6",
+        "registration": {
+          "scale": 0.9847,
+          "x": 248.2,
+          "y": 22.6
+        },
+        "source": "new-cry"
+      },
+      "asleep": {
+        "src": "./assets/characters/galgame-expressions/seed/asleep.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "5c095856ae44a2c808e3d6b614a73b8c14671b651d0c8d328e0a55ace3bb9154",
+        "registration": {
+          "scale": 0.9847,
+          "x": 306.6,
+          "y": 20.6
+        },
+        "source": "new-asleep"
+      },
+      "thinking": {
+        "src": "./assets/characters/galgame-expressions/seed/thinking.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "431d6e6fe42c5c87fc5f2bd4316d396fd4f6c42ab22b6882b282e3985c30efdd",
+        "registration": {
+          "scale": 0.9847,
+          "x": 322.2,
+          "y": 24.6
+        },
+        "source": "new-thinking"
+      },
+      "playful": {
+        "src": "./assets/characters/galgame-expressions/seed/playful.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "4a328530cf7542b67ebb2248e021fe8262e90bbaf64a29fdba76b1eacc486279",
+        "registration": {
+          "scale": 0.9847,
+          "x": 236.2,
+          "y": 12.8
+        },
+        "source": "new-playful"
+      },
+      "eating": {
+        "src": "./assets/characters/galgame-expressions/seed/eating.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "3ac5700ffb3fae51e033b46430d9e86243ff79d6d1f1fa6176d442dec941be03",
+        "registration": {
+          "scale": 0.9847,
+          "x": 297,
+          "y": 18.6
+        },
+        "source": "new-eating"
+      },
+      "surprised": {
+        "src": "./assets/characters/galgame-expressions/seed/surprised.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "fbbd256f3051a2f3b5f7c657afe8032ec8b46a209446461b0dd5b3c0644e6b7a",
+        "registration": {
+          "scale": 0.9847,
+          "x": 222.4,
+          "y": 16.6
+        },
+        "source": "new-surprised"
+      },
+      "coax": {
+        "src": "./assets/characters/galgame-expressions/seed/coax.webp",
+        "size": [
+          2048,
+          3072
+        ],
+        "sha256": "c00137b042e6b74f53d23ba2f99914c0c59577b8fd7c3551f403059e809cc2b5",
+        "registration": {
+          "scale": 0.9847,
+          "x": 245.4,
+          "y": 20.6
+        },
+        "source": "new-coax-r2"
+      }
+    }
+  }
+};

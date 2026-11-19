@@ -7,7 +7,10 @@ export async function deliverRewardFacts({facts,ingest,recordUsage,acknowledge,i
  if(!Array.isArray(facts)||facts.length>200||Array.from(facts).some(fact=>!fact||!Number.isSafeInteger(fact.seq)||fact.seq<1))throw Error('Invalid reward delivery batch');
  await yieldTurn();
  if(!isCurrent())return {committed:false,acknowledged:false,count:0};
- ingest(facts,{trusted:true});
+ const stale=Error('Reward sender changed before commit');
+ const guard=()=>{if(!isCurrent())throw stale;};
+ try{await ingest(facts,{trusted:true},{guard});}catch(error){if(error===stale)return {committed:false,acknowledged:false,count:0};throw error;}
+ if(!isCurrent())return {committed:true,acknowledged:false,count:facts.length};
  for(const fact of facts)recordUsage({originId:fact.activityOriginId,requestKey:fact.canonicalRequestId,totalTokens:fact.totalTokens,live:fact.live===true&&!fact.baseline});
  await yieldTurn();
  if(!isCurrent())return {committed:true,acknowledged:false,count:facts.length};

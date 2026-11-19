@@ -1,8 +1,10 @@
+import {normalizeGalgameEmotion} from '../galgame-expressions.mjs';
 import {randomUUID} from 'node:crypto';
 import {sameVoiceScope} from './conversation.mjs';
 import {createVoiceSettings,mergeVoiceSettings} from './settings.mjs';
 import {voiceSpeechText,voiceSpeechChunks as speechChunks} from './speech-text.mjs';
 import {waitVoiceOperation,voicePreflight,VOICE_PREFLIGHT_TIMEOUT_MS} from './operation-wait.mjs';
+import {MiniMaxSpeechError,minimaxSpeechStatus} from './minimax-speech-errors.mjs';
 
 const fault=(message,code)=>Object.assign(Error(message),{code});
 const normalizeEngine=engine=>engine==='gpt-sovits'?'gpt':engine;
@@ -11,9 +13,16 @@ const maxCaptureBytes=120*16000*2;
 const terminalReceipts=new Set(['audioCompleted','explicitlySkipped','interrupted','failed']);
 const speechText=voiceSpeechText;
 
+// Built-in routing is authoritative. Keep the plugin configuration readable by an older host.
+export function settingsForVoiceRoute(config,route){
+  if(!route?.route)return config;
+  const packages=Object.fromEntries(Object.entries(config.packages).map(([id,options])=>[id,{...options,ttsProvider:'local'}]));
+  const localPackage={'local:breeze':'ai-buddy.voice-breeze','local:gpt':'ai-buddy.voice-gpt-sovits'}[route.route];
+  return {...config,packages,...(localPackage?{selectedPackageId:localPackage,enabled:route.localEnabled??config.enabled}:{})};
+}
 
 /** Only the trusted companion service admits model turns; UI actions never supply identity. */
-export function createVoiceController({getScope,submit,skipPresentation,send=()=>{},listPackages,runtime,assets,profiles,settings=createVoiceSettings(),preflightTimeoutMs=VOICE_PREFLIGHT_TIMEOUT_MS}) {
+export function createVoiceController({getScope,submit,skipPresentation,send=()=>{},listPackages,runtime,assets,profiles,settings=createVoiceSettings(),preflightTimeoutMs=VOICE_PREFLIGHT_TIMEOUT_MS,getBuiltinChoice}) {
   let epoch=0,closed=false,stopping=null,capture=null,live=null;
   let lifecycle=new AbortController();
   let captureTail=Promise.resolve(),captureLifecycle=new AbortController(),captureStopping;
@@ -33,7 +42,13 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
   }
   function ensureOpen(){if(closed||stopping)throw fault('语音正在停止或已关闭','VOICE_STOPPING');}
   async function selected(signal,{management=false,packageId}={}){
-    const config=await waitVoiceOperation(()=>settings.get(),signal);
+    const saved=await waitVoiceOperation(()=>settings.get(),signal);
+    const builtin=await waitVoiceOperation(()=>getBuiltinChoice?.(),signal);
+    const config=settingsForVoiceRoute(saved,builtin);
+    if(!management&&builtin?.providerId){
+      if(!builtin.enabled)throw fault('语音尚未启用','VOICE_DISABLED');
+      return {config,row:{id:'builtin-asr',sourceId:builtin.providerId},engine:'cloud',builtin,options:{ttsProvider:'minimax',credentialRef:true}};
+    }
     const rows=await waitVoiceOperation(()=>listPackages(),signal);
     const requested=packageId??config.selectedPackageId;
     if(packageId!=null&&!['ai-buddy.voice-breeze','ai-buddy.voice-gpt-sovits'].includes(packageId))throw fault('选中的语音插件未安装、已停用或未通过校验','VOICE_PACKAGE_UNAVAILABLE');
@@ -45,43 +60,80 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
     return {config,row,engine,options:config.packages[row.id]};
   }
   const packageProof=chosen=>JSON.stringify([chosen.row.id,chosen.row.sourceId,chosen.row.version,chosen.row.archiveSha256,chosen.options]);
+  const profileFor=(chosen,characterId)=>chosen.builtin
+    ?{id:'builtin-cloud',version:1,characterId,engine:chosen.engine}
+    :profiles?.current({characterId,engine:chosen.engine});
+  const providerFor=chosen=>chosen.builtin?{providerId:chosen.builtin.providerId}:{};
   function hostScopeValid(scope,target){
     if(!scope||!target||!['characterId','lifeId','operationId','personaId','conversationId','channel'].every(key=>typeof scope[key]==='string'&&scope[key]))return false;
     return scope.channel==='app-group'?target.channel===scope.channel&&target.conversationId===scope.conversationId&&target.personaId===scope.personaId:sameVoiceScope(scope,target);
   }
   async function admit(scope,submissionId){
+    const signature=preparedSignature;
+    const generation=epoch;
+    const open=()=>!closed&&!stopping&&generation===epoch;
+    const localReady=()=>open()&&!preparationJob&&preparation.state==='ready'&&signature?.epoch===epoch&&signature===preparedSignature;
+    if(!open())return null;
+    let chosen;
     try{
-      ensureOpen();const target=current(),generation=epoch;
-      const signal=lifecycle.signal;
+      const target=current(),signal=lifecycle.signal;
       const session=submissionId==null?undefined:live;
       const pending=session?.pending;
       const validSubmission=()=>submissionId==null||live===session&&pending?.submissionId===submissionId&&(!pending.requestId||pending.requestId===scope.requestId);
-      if(preparationJob)return null;
-      if(!hostScopeValid(scope,target)||typeof scope.requestId!=='string'||!scope.requestId||turns.has(scope.requestId)||!validSubmission())return null;
-      if(scope.channel==='app-private'&&[...turns.values()].some(turn=>!turn.skipping&&sameVoiceScope(turn.scope,scope)))return null;
-      const chosen=await selected(signal);
-      const profile=await waitVoiceOperation(()=>profiles?.current({characterId:scope.characterId,engine:chosen.engine}),signal);
-      if(!profile||profile.characterId!==scope.characterId||profile.engine!==chosen.engine||profile.version==null)return null;
-      if(chosen.options.ttsProvider==='local'){
+      const available=()=>open()&&matches(target)&&validSubmission()&&!turns.has(scope.requestId)&&
+        (scope.channel!=='app-private'||![...turns.values()].some(turn=>!turn.skipping&&sameVoiceScope(turn.scope,scope)));
+      if(!hostScopeValid(scope,target)||typeof scope.requestId!=='string'||!scope.requestId||!available())return null;
+      chosen=await selected(signal);
+      const cloud=chosen.options.ttsProvider==='minimax',proof=packageProof(chosen);
+      const ready=()=>available()&&(cloud||localReady()&&proof===signature.proof);
+      if(!ready())return null;
+      const reportCloud=status=>emit({type:'cloud-speech-status',envelope:scope,packageId:chosen.row.id,status});
+      if(cloud&&!chosen.options.credentialRef){
+        reportCloud({state:'key-missing',code:'CLOUD_KEY_REQUIRED'});return null;
+      }
+      const profile=await waitVoiceOperation(()=>profileFor(chosen,scope.characterId),signal);
+      if(!ready())return null;
+      if(!profile||profile.characterId!==scope.characterId||profile.engine!==chosen.engine||profile.version==null){
+        if(cloud)reportCloud({state:'unbound',code:'CLOUD_VOICE_REQUIRED'});
+        return null;
+      }
+      if(!cloud){
         const verified=await waitVoiceOperation(()=>assets.resolve(chosen.engine,chosen.row.id,{signal}),signal);
+        if(!ready())return null;
         const readiness=await waitVoiceOperation(()=>runtime.ready?.({engine:chosen.engine,packageId:chosen.row.id,assetProof:verified.proof}),signal);
-        if(readiness?.ready!==true)return null;
+        if(readiness?.ready!==true){
+          if(readiness?.ready===false&&ready()){
+            preparedSignature=undefined;
+            publishPreparation({state:'idle',target:null});
+          }
+          return null;
+        }
+      }else{
+        const readiness=await waitVoiceOperation(()=>runtime.ready?.({engine:chosen.engine,packageId:chosen.row.id,characterId:scope.characterId,profileId:profile.id,profileVersion:profile.version,
+          speechProvider:chosen.options.ttsProvider,credentialRef:chosen.options.credentialRef,...providerFor(chosen)}),signal);
+        if(!ready())return null;
+        const checked=await selected(signal);
+        if(!ready()||packageProof(checked)!==proof)return null;
+        if(readiness?.ready!==true){
+          if(pending&&readiness?.suppressed)pending.speechSuppressed=true;
+          reportCloud(minimaxSpeechStatus({...readiness,state:readiness?.state??'unavailable',code:readiness?.code??'CLOUD_UNAVAILABLE'}));
+          return null;
+        }
+        reportCloud({state:'ready'});
       }
-      else{
-        if(!chosen.options.credentialRef)throw fault('请先在云配音配置中保存 MiniMax API Key','CLOUD_KEY_REQUIRED');
-        if(typeof runtime.ready!=='function')throw fault('云配音组件尚未准备','CLOUD_UNAVAILABLE');
-        const readiness=await waitVoiceOperation(()=>runtime.ready({engine:chosen.engine,packageId:chosen.row.id,characterId:scope.characterId,profileId:profile.id,profileVersion:profile.version,
-          speechProvider:chosen.options.ttsProvider,credentialRef:chosen.options.credentialRef}),signal);
-        if(readiness?.ready!==true)throw fault(readiness?.message??'当前角色的云声线尚未准备，请检查云配音设置',readiness?.code??'CLOUD_VOICE_REQUIRED');
-      }
-      if(generation!==epoch||!matches(target))return null;
-      const checked=await selected(signal);if(generation!==epoch||!matches(target)||packageProof(checked)!==packageProof(chosen)||!validSubmission())return null;
+      const checked=await selected(signal);
+      if(!ready()||packageProof(checked)!==proof)return null;
       const turn={scope:copy(scope),target,epoch:generation,profile:copy(profile),chosen,proof:packageProof(chosen),segments:new Map(),finished:false,abort:new AbortController()};
       turns.set(scope.requestId,turn);
       if(pending)pending.requestId=scope.requestId;
       emit({type:'turn',state:'admitted',requestId:scope.requestId,envelope:{...scope,epoch:generation,voiceProfileVersion:profile.version}});
       return {epoch:generation,voiceProfileVersion:profile.version};
-    }catch(error){emit({type:'status',state:'waiting-configuration',code:error.code??'VOICE_NOT_READY',message:String(error.message)});return null;}
+    }catch(error){
+      if(open()&&chosen?.options.ttsProvider==='minimax'&&hostScopeValid(scope,current()))
+        emit({type:'cloud-speech-status',envelope:scope,packageId:chosen.row.id,status:{state:'unavailable',code:error.code,message:String(error.message)}});
+      else if(localReady())emit({type:'status',state:'waiting-configuration',code:error.code??'VOICE_NOT_READY',message:String(error.message)});
+      return null;
+    }
   }
   function assertTurnIdentity(turn){
     ensureOpen();
@@ -91,7 +143,7 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
     assertTurnIdentity(turn);
     const chosen=await selected(signal);assertTurnIdentity(turn);
     if(packageProof(chosen)!==turn.proof)throw fault('语音插件配置已改变','VOICE_PACKAGE_CHANGED');
-    const profile=await waitVoiceOperation(()=>profiles.current({characterId:turn.scope.characterId,engine:turn.chosen.engine}),signal);assertTurnIdentity(turn);
+    const profile=await waitVoiceOperation(()=>profileFor(chosen,turn.scope.characterId),signal);assertTurnIdentity(turn);
     if(!profile||profile.id!==turn.profile.id||profile.version!==turn.profile.version)throw fault('角色声线已改变','VOICE_PROFILE_CHANGED');
   }
   function wakeCapacity(){for(const wake of capacityWaiters)wake();capacityWaiters.clear();}
@@ -144,7 +196,7 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
     return {accepted:true,playedMs};
   }
   function publishPhase(job,stage,code){
-    if(job.turn.epoch!==epoch||job.turn.abort.signal.aborted||!matches(job.turn.target)||!turns.has(job.turn.scope.requestId)||job.phase===stage)return;
+    if(job.turn.epoch!==epoch||job.turn.abort.signal.aborted||job.turn.cloudFailure||!matches(job.turn.target)||!turns.has(job.turn.scope.requestId)||job.phase===stage)return;
     if(!['queue','reference-check','component-check','model-loading','speak-sent','first-pcm','playback-start','done','error'].includes(stage))return;
     job.phase=stage;
     emit({type:'phase',envelope:job.envelope,requestId:job.envelope.requestId,segmentId:job.envelope.segmentId,index:job.envelope.index,
@@ -157,14 +209,14 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
     await assertTurn(turn,preflight.signal);
     const engine=turn.chosen.engine,speechProvider=turn.chosen.options.ttsProvider;
     // Announce metadata before the first PCM. The actual worker rate is repeated on every chunk.
-    emit({type:'audio',phase:'start',envelope,text:job.text,speech_text:job.speech,engine,speechProvider,
+    emit({type:'audio',phase:'start',envelope,text:job.text,speech_text:job.speech,visualEmotion:job.visualEmotion,engine,speechProvider,
       sampleRate:speechProvider==='minimax'?32000:engine==='breeze'?24000:48000});
     let lastRate,metrics;
     for(const part of job.parts){
       for(const text of speechChunks(part.text)){
         await assertTurn(turn,preflight.signal);
         for await(const event of runtime.speak({engine,packageId:turn.chosen.row.id,characterId:turn.scope.characterId,profileId:turn.profile.id,profileVersion:turn.profile.version,
-          text,performance:part.performance,instruction:part.performance?.delivery??'',speechProvider,credentialRef:turn.chosen.options.credentialRef,signal:preflight.signal,
+          text,performance:part.performance,instruction:part.performance?.delivery??'',speechProvider,credentialRef:turn.chosen.options.credentialRef,...providerFor(turn.chosen),signal:preflight.signal,
           onPhase:value=>{if(value.stage==='model-loading')preflight.pause();else if(value.stage==='component-check')preflight.resume();else if(value.stage==='speak-sent')preflight.sent();publishPhase(job,value.stage);}})){
           await assertTurn(turn,preflight.signal);
           if(job.terminal)return;
@@ -207,17 +259,24 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
       while(queued.length&&inflight.size<2&&!closed&&!stopping){
         const job=queued.shift();wakeCapacity();
         if(job.terminal||job.turn.abort.signal.aborted)continue;
+        if(job.turn.cloudFailure){stopReading(job.envelope.requestId);continue;}
         inflight.add(job);
-        try{
-          await play(job);
-          if(job.firstPcm&&!preparationJob&&preparation.state==='idle'&&preparedSignature?.epoch===epoch&&preparedSignature.proof===job.turn.proof){
-            preparedSignature={...preparedSignature,target:'speech'};
-            publishPreparation({state:'ready',target:'speech'});
-          }
-        }
+        try{await play(job);}
         catch(error){
           if(job.turn.abort.signal.aborted||job.turn.epoch!==epoch||!turns.has(job.turn.scope.requestId)){
             await checkCancelledWorker(job.turn,error);
+            continue;
+          }
+          if(error.suppressed===true){
+            stopReading(job.envelope.requestId);
+            continue;
+          }
+          if(error instanceof MiniMaxSpeechError){
+            const status=minimaxSpeechStatus(error);
+            job.turn.cloudFailure=true;
+            emit({type:'cloud-speech-status',envelope:job.envelope,packageId:job.turn.chosen.row.id,status});
+            emit({type:'segment',envelope:job.envelope,...status,state:'failed'});
+            if(live?.waiting){live=null;captureState('idle',null,{reason:'capture-stopped'});}
             continue;
           }
           publishPhase(job,'error',error.code??'VOICE_SYNTHESIS_FAILED');
@@ -240,10 +299,11 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
     pumping=true;
     const task=runPump();pumpTask=task;void task.catch(()=>{});return task;
   }
-  async function segment({envelope,text,speech_text,performance,performances}={}){
+  async function segment({envelope,text,speech_text,performance,performances,visualEmotion}={}){
     const turn=turns.get(envelope?.requestId);
     try{
       await assertTurn(turn);
+      if(turn.cloudFailure){stopReading(turn.scope.requestId);return true;}
       const expected={...turn.scope,epoch:turn.epoch,voiceProfileVersion:turn.profile.version,index:turn.segments.size,segmentId:turn.scope.requestId+':voice:'+turn.segments.size};
       if(turn.finished||!envelopeMatches(expected,envelope)||typeof text!=='string'||text.length>200000)throw fault('语段身份或顺序无效','VOICE_SEGMENT_INVALID');
       while(queued.length>=3){await new Promise(resolve=>capacityWaiters.add(resolve));await assertTurn(turn);}
@@ -252,9 +312,9 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
       const source=typeof speech_text==='string'?speech_text:text;
       const parts=Array.isArray(performances)&&performances.length&&performances.every(row=>typeof row?.text==='string')
         ?performances.map(row=>({text:speechText(row.text),performance:row.performance??performance})): [{text:speechText(source),performance}];
-      const job={turn,envelope:Object.freeze(copy(expected)),text,speech:parts.map(row=>row.text).join(''),parts,terminal:false,receipts:new Set(),queuedAt:globalThis.performance.now()};
+      const job={turn,envelope:Object.freeze(copy(expected)),text,speech:parts.map(row=>row.text).join(''),parts,terminal:false,receipts:new Set(),visualEmotion:normalizeGalgameEmotion(visualEmotion,null),queuedAt:globalThis.performance.now()};
       turn.segments.set(expected.segmentId,job);queued.push(job);
-      emit({type:'segment',state:'queued',envelope:job.envelope,text,speech_text:job.speech});
+      emit({type:'segment',state:'queued',envelope:job.envelope,text,speech_text:job.speech,visualEmotion:job.visualEmotion});
       publishPhase(job,'queue');
       void pump();return true;
     }catch(error){emit({type:'segment',state:'rejected',envelope,code:error.code??'VOICE_SEGMENT_INVALID'});return false;}
@@ -266,8 +326,8 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
       if(!failed||!session?.waiting||session.epoch!==epoch||!matches(session.scope)||!sameVoiceScope(scope,session.scope)||
          !pending||pending.submissionId!==submissionId||typeof requestId!=='string'||!requestId||pending.requestId&&pending.requestId!==requestId)return;
       live=null;
-      captureState('idle',null,{reason,requestId,submissionId,submitted:true});
-      emit({type:'status',state:'reply-unavailable',code:'VOICE_REPLY_UNAVAILABLE',message:'消息已保存，本次语音回复未能开始；请检查语音设置或聊天连接。'});
+      captureState('idle',null,{reason:pending.speechSuppressed?'capture-stopped':reason,requestId,submissionId,submitted:true});
+      if(!pending.speechSuppressed)emit({type:'status',state:'reply-unavailable',code:'VOICE_REPLY_UNAVAILABLE',message:'消息已保存，本次语音回复未能开始；请检查语音设置或聊天连接。'});
       try{await serialCapture(()=>runtime.cancelCapture?.());}catch(error){throw sealCleanup(error,true);}
       return;
     }
@@ -295,6 +355,7 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
   function prepare(target='speech') {
     ensureOpen();
     if(!['speech','live'].includes(target))throw fault('语音准备目标无效','VOICE_PREPARE_INVALID');
+
     if(preparationJob){
       if(preparationJob.target===target)return preparationJob.task;
       throw fault('语音组件正在准备','VOICE_PREPARE_BUSY');
@@ -368,7 +429,8 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
     if(!scope)throw fault('请先打开角色聊天','VOICE_SCOPE_CHANGED');
     const chosen=await selected(signal);ensureOpen();
     if(capture||live?.waiting)throw fault('麦克风正在使用或正在等待播放','VOICE_CAPTURE_BUSY');
-    if(mode==='live'&&typeof runtime.prepare==='function'&&(!preparedSignature||preparedSignature.epoch!==epoch||preparedSignature.target!=='live'||preparedSignature.proof!==packageProof(chosen)))await prepare('live');
+    if(chosen.builtin&&(await assets.status('asr','builtin-asr',{signal})).state!=='ready')throw fault('请先准备本机语音识别组件','VOICE_ASR_NOT_READY');
+    if(mode==='live'&&!chosen.builtin&&typeof runtime.prepare==='function'&&(!preparedSignature||preparedSignature.epoch!==epoch||preparedSignature.target!=='live'||preparedSignature.proof!==packageProof(chosen)))await prepare('live');
     await waitVoiceOperation(()=>assets.resolve('asr',chosen.row.id,{signal}),signal);
     ensureOpen();
     if(generation!==epoch||!matches(scope))throw fault('角色已切换','VOICE_SCOPE_CHANGED');
@@ -427,7 +489,7 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
       // rehashing components. Admission keeps its existing resolve() verification.
       if(chosen.options.ttsProvider==='local'&&(await waitVoiceOperation(()=>assets.status(chosen.engine,chosen.row.id,{signal}),signal))?.state!=='ready')return;
       const ready=await waitVoiceOperation(()=>runtime.ready({engine:chosen.engine,packageId:chosen.row.id,target:'speech',
-        characterId:scope.characterId,profileId:profile.id,profileVersion:profile.version,speechProvider:chosen.options.ttsProvider,credentialRef:chosen.options.credentialRef}),signal);
+        characterId:scope.characterId,profileId:profile.id,profileVersion:profile.version,speechProvider:chosen.options.ttsProvider,credentialRef:chosen.options.credentialRef,...providerFor(chosen)}),signal);
       const checked=await selected(signal),currentProfile=await waitVoiceOperation(()=>profiles?.current({characterId:scope.characterId,engine:chosen.engine}),signal);
       if(check()&&ready?.ready===true&&packageProof(checked)===signature.proof&&currentProfile?.id===profile.id&&currentProfile?.version===profile.version)
         return {epoch:generation,proof:signature.proof,scope,target:'speech'};
@@ -464,9 +526,9 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
     void task.finally(()=>{if(captureStopping===task)captureStopping=undefined;}).catch(()=>{});
     return task;
   }
-  function invalidate(reason='stopped',{retainEngine=['scope-changed','profile-changed'].includes(reason)}={}){
+  function invalidate(reason='stopped',{retainEngine=['scope-changed','profile-changed'].includes(reason),afterCleanup}={}){
     if(stopping)return stopping;
-    const canRestore=reason==='scope-changed'&&retainEngine&&typeof runtime.cancelCurrent==='function';
+    const canRestore=['scope-changed','profile-changed'].includes(reason)&&retainEngine&&typeof runtime.cancelCurrent==='function';
     const speechWasReady=!preparationJob&&preparation.state==='ready';
     const retained=canRestore&&speechWasReady&&preparedSignature?.epoch===epoch?preparedSignature:undefined;
     epoch++;live=null;const old=capture;capture=null;
@@ -487,6 +549,7 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
       const failure=results.find(row=>row.status==='rejected');
       if(failure){cleanupFailure=fault(String(failure.reason?.message??failure.reason),'VOICE_CLEANUP_FAILED');throw cleanupFailure;}
       cleanupFailure=undefined;captureCleanupFailed=false;
+      await afterCleanup?.();
       // Scope revocation rechecks the resident speech engine after cleanup.
       for(;;){
         const scope=current(),unchanged=()=>scope?sameVoiceScope(scope,current()):current()==null;
@@ -537,10 +600,10 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
     const check=()=>{if(signal.aborted||read.epoch!==epoch||!sameScope(current()))throw fault('旧语音状态查询已取消','VOICE_STATE_CANCELLED');};
     const wait=async operation=>{check();const result=await waitVoiceOperation(operation,signal);check();return result;};
     read.task=(async()=>{
-      const config=await wait(()=>settings.get()),packages=await wait(()=>listPackages());
+      const saved=await wait(()=>settings.get()),config=settingsForVoiceRoute(saved,await wait(()=>getBuiltinChoice?.())),packages=await wait(()=>listPackages());
       const row=packages.find(item=>item.id===config.selectedPackageId),options=config.packages[config.selectedPackageId];
       const ready=async kind=>{try{return await wait(()=>assets.status(kind,config.selectedPackageId,{signal}));}catch(error){check();return {state:'unavailable',code:error.code};}};
-      const asr=await ready('asr');check();
+      const asr=options.ttsProvider==='minimax'?undefined:await ready('asr');check();
       const tts=options.ttsProvider==='local'?await ready(normalizeEngine(row?.engine)):{state:'not-required'};check();
       return {epoch,closed,stopping:!!stopping,preparation:copy(preparation),capture:capture?{id:capture.id,mode:capture.mode}:null,live:!!live,
         settings:config,packages,selectedPackageId:config.selectedPackageId,engine:normalizeEngine(row?.engine),speechProvider:options.ttsProvider,
@@ -578,8 +641,20 @@ export function createVoiceController({getScope,submit,skipPresentation,send=()=
         if(payload.packageId==null)return rows;
         const active=await profiles.current(params);return rows.map(row=>({...row,selected:row.id===active?.id}));
       }
-      if(chosen.row.id===chosen.config.selectedPackageId)await invalidate('profile-changed');
-      return profiles.select({characterId:scope.characterId,engine:chosen.engine,profileId:payload.profileId});
+      const selectProfile=()=>profiles.select({characterId:scope.characterId,engine:chosen.engine,profileId:payload.profileId});
+      if(chosen.row.id!==chosen.config.selectedPackageId)return selectProfile();
+      if(stopping)await stopping;
+      ensureOpen();
+      if(!matches(scope))throw fault('角色已切换','VOICE_SCOPE_CHANGED');
+      let result,selectionError;
+      await invalidate('profile-changed',{afterCleanup:async()=>{
+        try{
+          if(!matches(scope))throw fault('角色已切换','VOICE_SCOPE_CHANGED');
+          result=await selectProfile();
+        }catch(error){selectionError=error;}
+      }});
+      if(selectionError)throw selectionError;
+      return result;
     }
     if(op==='capture-start'){
       if(!['record','live'].includes(payload.mode))throw fault('录音模式无效','VOICE_CAPTURE_INVALID');

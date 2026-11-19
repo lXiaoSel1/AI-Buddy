@@ -1,5 +1,5 @@
 import {resolveIdentity,platformCatalog} from './service-identity.mjs';
-const fields=['input','output','cacheRead','cacheWrite','reasoning','total'];
+export const usageFields=['input','totalInput','output','cacheRead','cacheWrite','reasoning','total'];
 const formatters=new Map();
 // Saved custom dates remain a draft; they only constrain a custom/explicit query.
 export function effectiveUsageOptions(options={}){
@@ -14,13 +14,25 @@ export function rangeOf(preset,zone,now=Date.now()){const to=dateInZone(now,zone
 export function normalizedRequest(row,identity=resolveIdentity(row)){
  const u=row.usage||{},known=row.knownFields;const read=k=>known&&!known.includes(k)?null:typeof u[k]==='number'&&Number.isFinite(u[k])?u[k]:null;
  const rawInput=read('input'),cacheRead=read('cacheRead'),cacheWrite=read('cacheWrite');
- // Optional cache fields are absent, not known zero. Inclusion is adapter evidence.
- const input=row.cacheIncluded===false?rawInput:rawInput===null||cacheRead===null?null:Math.max(0,rawInput-cacheRead-(row.cacheWriteIncluded===true?(cacheWrite??0):0));
+ const cacheExcluded=row.cacheIncluded===false;
+ const totalInput=cacheExcluded
+  ? rawInput!==null&&cacheRead!==null&&cacheWrite!==null?rawInput+cacheRead+cacheWrite:null
+  : rawInput;
+ const issues=new Set(row.usageQuality);
+ let input=rawInput;
+ if(!cacheExcluded){
+  const unknownWriteBasis=row.usageSchemaVersion===2&&cacheWrite>0&&row.cacheWriteIncluded==null;
+  if(rawInput===null||cacheRead===null||unknownWriteBasis)input=null;
+  else{
+   input=rawInput-cacheRead-(row.cacheWriteIncluded===true?(cacheWrite??0):0);
+   if(input<0){input=null;issues.add('invalid-cache-partition');}
+  }
+ }
  const output=read('output'),reasoning=read('reasoning');
- return {...row,...identity,tool:row.tool||row.provider,usage:{input,output:row.reasoningIncluded===false&&output!==null?output+(reasoning??0):output,cacheRead,cacheWrite,reasoning,total:read('total'),requests:u.requests??1},rawUsage:{...u},quality:row.totalQuality||u.quality||'calculated'};
+ return {...row,...identity,tool:row.tool||row.provider,usage:{input,totalInput,uncachedInput:input,output:row.reasoningIncluded===false&&output!==null?output+(reasoning??0):output,cacheRead,cacheWrite,reasoning,total:read('total'),requests:u.requests??1},rawUsage:row.rawUsage??{...u},usageQuality:[...issues],quality:row.totalQuality||u.quality||'calculated'};
 }
-export const emptyAggregate=()=>({...Object.fromEntries(fields.map(k=>[k,0])),requests:0,fieldMissing:{}});
-export function addUsage(a,u,sign=1){const n=u.requests??1;a.requests+=sign*n;for(const k of fields){if(u[k]===null||u[k]===undefined)a.fieldMissing[k]=(a.fieldMissing[k]||0)+sign*n;else a[k]+=sign*u[k];}return a;}
+export const emptyAggregate=()=>({...Object.fromEntries(usageFields.map(k=>[k,0])),requests:0,fieldMissing:{}});
+export function addUsage(a,u,sign=1){const n=u.requests??1;a.requests+=sign*n;for(const k of usageFields){if(u[k]===null||u[k]===undefined)a.fieldMissing[k]=(a.fieldMissing[k]||0)+sign*n;else a[k]+=sign*u[k];}return a;}
 const dimensions=r=>({tool:r.tool,provider:r.serviceProvider,modelVendor:r.modelVendor,model:r.model,workspace:r.workspace||'未记录项目',sourceId:r.sourceId,purpose:r.purpose,sessionId:r.sessionId});
 const collator=new Intl.Collator('zh-CN',{numeric:true,sensitivity:'base'});
 const projectName=p=>p.name.split(/[\\/]/).filter(Boolean).at(-1)||p.name;
@@ -58,5 +70,5 @@ export class UsageQuery {
   if(!c.result)c.result={timeZone:zone,group,...range,totals:c.totals,totalOrigins:c.origins,periods:[...c.periods.values()].sort((a,b)=>a.date.localeCompare(b.date)),tools:[...c.tools.values()],projects:[...c.projects.values()],sessions:c.sessions?[...c.sessions.values()].sort((a,b)=>b.lastActivity.localeCompare(a.lastActivity)):[],cost:{amounts:{...c.costs},allTokens:c.allTokens,pricedTokens:c.pricedTokens,missingTokenRequests:c.missingTokenRequests,tokenCoverage:c.allTokens>0?c.pricedTokens/c.allTokens:null,pricedRequests:c.pricedRequests,allRequests:c.allRequests,coverage:c.allRequests?c.pricedRequests/c.allRequests:null,unpriced:[...c.unpriced.values()],estimates:[...c.estimates.values()],basis:'按模型 API 单价估算 · 仅供参考，非实际账单',catalog:prices?.info()}};
   const result=c.result,paged=this.sessionPage?.(c,page,pageSize);return {...result,projects:sortProjects(result.projects,options.sortField,options.sortDirection),identities:[...c.identities.values()],platformCatalog:platformCatalog([...this.facets.provider.keys()]),revision:this.revision,facets:Object.fromEntries(Object.entries(this.facets).filter(([k])=>k!=='sessionId').map(([k,v])=>[k,[...v.keys()].sort()])),totalSessions:paged?.totalSessions??result.sessions.length,sessions:paged?.sessions??result.sessions.slice((page-1)*pageSize,page*pageSize),page,pageSize};
  }
- export(options={},format='json',prices){options=effectiveUsageOptions(options);const result=this.query({...options,page:1,pageSize:200},prices);const metadata={timeZone:result.timeZone,from:result.from,to:result.to,group:result.group,convention:'input=uncached; cacheRead/cacheWrite separate; reasoning is output subset; null=not provided',price:result.cost.catalog,filters:Object.fromEntries(Object.entries(options).filter(([k])=>!['page','pageSize','format'].includes(k)))};if(format==='json')return JSON.stringify({metadata,totals:result.totals,periods:options.view==='projects'?undefined:result.periods,projects:options.view==='history'?undefined:result.projects,identities:result.identities,cost:result.cost},null,2);const cell=v=>'"'+String(v??'').replaceAll('"','""')+'"';const rows=[[(options.view==='projects'?'project':'period'),'timezone',...fields,'requests','missingFields','convention'],...(options.view==='projects'?result.projects:result.periods).map(r=>[options.view==='projects'?r.name:r.date,result.timeZone,...fields.map(k=>r.usage.fieldMissing[k]>=r.usage.requests?null:r.usage[k]),r.usage.requests,JSON.stringify(r.usage.fieldMissing),metadata.convention])];return '\uFEFF'+rows.map(r=>r.map(cell).join(',')).join('\r\n');}
+ export(options={},format='json',prices){options=effectiveUsageOptions(options);const result=this.query({...options,page:1,pageSize:200},prices);const metadata={timeZone:result.timeZone,from:result.from,to:result.to,group:result.group,convention:'input=uncached; totalInput includes cacheRead/cacheWrite; cacheRead/cacheWrite separate; reasoning is output subset; null=not provided',price:result.cost.catalog,filters:Object.fromEntries(Object.entries(options).filter(([k])=>!['page','pageSize','format'].includes(k)))};if(format==='json')return JSON.stringify({metadata,totals:result.totals,periods:options.view==='projects'?undefined:result.periods,projects:options.view==='history'?undefined:result.projects,identities:result.identities,cost:result.cost},null,2);const cell=v=>'"'+String(v??'').replaceAll('"','""')+'"';const rows=[[(options.view==='projects'?'project':'period'),'timezone',...usageFields,'requests','missingFields','convention'],...(options.view==='projects'?result.projects:result.periods).map(r=>[options.view==='projects'?r.name:r.date,result.timeZone,...usageFields.map(k=>r.usage.fieldMissing[k]>=r.usage.requests?null:r.usage[k]),r.usage.requests,JSON.stringify(r.usage.fieldMissing),metadata.convention])];return '\uFEFF'+rows.map(r=>r.map(cell).join(',')).join('\r\n');}
 }

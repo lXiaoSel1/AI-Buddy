@@ -20,8 +20,10 @@ export function windowsSystemCAs(){return systemCAs??=Object.freeze([...new Set(
 export function createNodeNetworkFetch({resolveRoute=async()=>[{kind:'direct'}],ca=windowsSystemCAs,userAgent='node',connectTimeoutMs=10000,headersTimeoutMs=300000}={}){
   async function once(url,request,body,route,redirected){
     const secure=url.protocol==='https:',implementation=secure?https:http;
-    const proxyEnv=route.kind==='direct'?{}:{HTTP_PROXY:route.url,HTTPS_PROXY:route.url,NO_PROXY:''};
-    const agent=new implementation.Agent({keepAlive:false,proxyEnv,ca:typeof ca==='function'?ca():ca});
+    const direct=route.kind==='direct';
+    const proxyEnv=direct?{}:{HTTP_PROXY:route.url,HTTPS_PROXY:route.url,NO_PROXY:''};
+    const needsTLS=secure||(!direct&&route.url?.startsWith('https://'));
+    const agent=new implementation.Agent({keepAlive:false,proxyEnv,ca:needsTLS?(typeof ca==='function'?ca():ca):undefined});
     return new Promise((resolve,reject)=>{
       let outgoing,connectingSocket,readySocket,readyEvent,connectTimer,headersTimer,settled=false,ready=false;
       // A proxied HTTPS Agent returns its raw socket before assigning the

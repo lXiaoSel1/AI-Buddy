@@ -1,3 +1,4 @@
+import {copyCompanionValue} from './companion-draft.mjs';
 import {randomUUID} from 'node:crypto';
 
 const plain=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
@@ -9,7 +10,7 @@ export function readGrowthEnvelope(output){
  if(output.growthCandidates===null)return {status:'invalid',candidates:[],code:'null-growth-candidates'};
  if(!Array.isArray(output.growthCandidates))return {status:'invalid',candidates:[],code:'growth-candidates-not-array'};
  if(output.growthCandidates.length>8)return {status:'invalid',candidates:[],code:'too-many-growth-candidates'};
- return {status:output.growthCandidates.length?'provided':'empty',candidates:structuredClone(output.growthCandidates),code:null};
+ return {status:output.growthCandidates.length?'provided':'empty',candidates:copyCompanionValue(output.growthCandidates),code:null};
 }
 export function preferenceState(growth){
  const state=growth.preferences??={schema:1,traits:{},evidenceUseByTrait:{}};
@@ -22,7 +23,7 @@ export function preferenceShape(raw){
  const attributes=raw.attributes??{};
  if(!plain(attributes)||Object.keys(attributes).length>12||Object.entries(attributes).some(([key,value])=>forbidden.has(key)||!text(key,80)||!key.trim()||!text(value,200)||!value.trim()))return false;
  if(raw.operation!=='introduce'&&!raw.traitId)return false;
- return {operation:raw.operation,traitId:raw.traitId??null,subject:raw.subject.trim(),attributes:structuredClone(attributes)};
+ return {operation:raw.operation,traitId:raw.traitId??null,subject:raw.subject.trim(),attributes:copyCompanionValue(attributes)};
 }
 const topic=value=>value.normalize('NFKC').trim().toLocaleLowerCase().replace(/\s+/g,' ');
 // Punctuation/spacing may change at the append boundary, but a refinement may
@@ -48,5 +49,5 @@ export function resolvePreference(growth,candidate,shape){
  return {state,trait};
 }
 export function publicPreferences(life){
- return Object.values(life.growth?.preferences?.traits??{}).map(row=>({id:row.id,field:row.field,subject:row.subject,status:row.status,attributes:structuredClone(row.status==='established'?row.attributes??{}:row.lastProposal?.attributes??{}),...(row.status==='established'?{text:row.text??''}:{}),evidenceCount:row.evidence?.length??0}));
+ return Object.values(life.growth?.preferences?.traits??{}).map(row=>({id:row.id,field:row.field,subject:row.subject,status:row.status,attributes:copyCompanionValue(row.status==='established'?row.attributes??{}:row.lastProposal?.attributes??{}),...(row.status==='established'?{text:row.text??''}:{}),evidenceCount:row.evidence?.length??row.evidenceCount??0}));
 }

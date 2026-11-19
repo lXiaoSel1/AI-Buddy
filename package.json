@@ -1,6 +1,6 @@
 {
   "name": "ai-buddy",
-  "version": "2.0.17",
+  "version": "2.0.18",
   "description": "Local AI usage monitoring and desktop companion",
   "type": "module",
   "private": true,
@@ -14,6 +14,7 @@
     "build:launcher": "node scripts/build-portable-launcher.mjs"
   },
   "dependencies": {
+    "immer": "11.2.9",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },

@@ -3,6 +3,7 @@
 const checkedAt='2026-11-08';
 const source='official-documentation';
 const row=(provider,model,imageInput,protocols,sourceUrl)=>Object.freeze({provider,model,imageInput,protocols:Object.freeze(protocols),source,sourceUrl,checkedAt});
+const grokChatTransport='https://docs.x.ai/developers/rest-api-reference/inference/chat-completions';
 const deepseek='https://api-docs.deepseek.com/guides/vision/';
 const claude='https://platform.claude.com/docs/en/models/overview';
 const qwen='https://help.aliyun.com/zh/model-studio/text-generation-model';
@@ -80,8 +81,9 @@ export function imageInputCapability(profile){
  const imageInput=documented?record.imageInput:declaredImageInput??record?.imageInput??'unknown';
  // Native Codex has its own image URL input adapter in codex-provider.mjs.
  // Its transport evidence is independent of the HTTP Responses protocol.
- const documentedTransport=protocol==='codex'?profile?.kind==='codex'&&provider==='openai':record?.protocols.includes(protocolIdentity(protocol,provider))===true;
+ const grokChat=provider==='xai'&&model==='grok-4.6'&&protocol==='chat-completions'&&profile.baseUrl==='https://api.x.ai/v1';
+ const documentedTransport=grokChat||(protocol==='codex'?profile?.kind==='codex'&&provider==='openai':record?.protocols.includes(protocolIdentity(protocol,provider))===true);
  const transportSupported=transports.has(protocol)&&(useDeclaration||documentedTransport);
  const reason=imageInput==='unknown'?'MODEL_IMAGE_CAPABILITY_UNKNOWN':imageInput==='unsupported'?'MODEL_IMAGE_UNSUPPORTED':!transportSupported?'MODEL_IMAGE_TRANSPORT_UNSUPPORTED':null;
- return {supported:reason===null,reason,imageInput,provider,model,catalogModel,protocol,transportSupported,transportSource:transportSupported?protocol==='codex'?'host-codex-image-adapter':useDeclaration?'model-catalog':'official-documentation':null,source:useDeclaration?'model-catalog':record?.source??'unknown',sourceUrl:useDeclaration?null:record?.sourceUrl??null,checkedAt:useDeclaration?null:record?.checkedAt??null,declaredImageInput,declarationSource:declared?'endpoint-model-catalog':null,declarationConflict:documented&&declaredImageInput!==null&&declaredImageInput!==record.imageInput};
+ return {supported:reason===null,reason,imageInput,provider,model,catalogModel,protocol,transportSupported,transportSource:transportSupported?protocol==='codex'?'host-codex-image-adapter':useDeclaration?'model-catalog':'official-documentation':null,...(grokChat?{transportSourceUrl:grokChatTransport}:{}),source:useDeclaration?'model-catalog':record?.source??'unknown',sourceUrl:useDeclaration?null:record?.sourceUrl??null,checkedAt:useDeclaration?null:record?.checkedAt??null,declaredImageInput,declarationSource:declared?'endpoint-model-catalog':null,declarationConflict:documented&&declaredImageInput!==null&&declaredImageInput!==record.imageInput};
 }

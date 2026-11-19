@@ -2,7 +2,7 @@ import {filterReplySourceLabels,createReplySourceFilter} from './reply-source-la
 export function visibleCompanionText(message,{messages=[]}={}){
  const text=String(message?.text??'');if(message?.role!=='assistant'&&message?.who!=='heroine')return text;
  const request=message.request??{};let requestText=request.inputUserText??'';
- if(!requestText){const index=messages.findIndex(row=>row===message||row.id&&row.id===message.id);for(let i=index-1;i>=0;i--)if(messages[i].role==='user'){requestText=messages[i].text??'';break;}}
+ if(!requestText){const index=messages.findIndex(row=>row===message||(message.occurrenceId!=null?row.occurrenceId===message.occurrenceId:row.id&&row.id===message.id));for(let i=index-1;i>=0;i--)if(messages[i].role==='user'){requestText=messages[i].text??'';break;}}
  return filterReplySourceLabels(text,{preserveLiteral:request.preserveSourceLiteral===true,requestText});
 }
 export function visibleInterruptedText(record,{requestText=''}={}){

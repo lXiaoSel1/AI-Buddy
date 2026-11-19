@@ -9,6 +9,9 @@ import {ensureLives,lifeToken,assertLife} from '../src/companion-life.mjs';
 import {enableGrowth} from '../src/companion-growth.mjs';
 import {createGalgame} from '../src/galgame-host.mjs';
 import {presentedState} from './support/presented-state.mjs';
+import {createCompanionService} from '../src/companion-service.mjs';
+import {workEvidenceHash} from '../src/companion-life-archive.mjs';
+import {syntheticEngine} from './support/audit-harness.mjs';
 
 const copy=value=>structuredClone(value);
 function fixture(){
@@ -90,4 +93,25 @@ test('public archive preview never returns another Persona private raw lines via
   const saved=(await game.action('companion-life-save',{characterId:card.id})).archive;await game.action('companion-persona-select',{id:'default'});const preview=(await game.action('companion-life-preview',{id:saved.id})).preview;
   assert.equal(preview.conversations.every(row=>row.personaId==='default'),true);assert.equal(JSON.stringify(preview).includes('persona-A-raw-visible'),true);assert.equal(JSON.stringify(preview).includes('persona-B-private-never-preview-to-A-79231'),false);assert.equal(preview.life.memory,undefined);
  }finally{await game.close();}
+});
+
+test('public archive preview preserves Persona privacy on the fallback store',async t=>{
+ const root=mkdtempSync(join(tmpdir(),'ai-buddy-life-fallback-preview-'));
+ const state=fixture();state.migrated=true;state.personas.default={id:'default',name:'Default',relationships:{}};
+ const store=memoryStore(state),life=store.state.lives.claude;
+ const proof={version:1,characterId:'claude',lifeId:life.id,tasks:[{id:'fallback-work',scope:{characterId:'claude',lifeId:life.id,personaId:'b'},
+  workspace:{id:'synthetic-workspace',path:root},events:[{text:'private-work-not-on-preview'}]}]};
+ proof.sha256=workEvidenceHash(proof);
+ const {engine}=syntheticEngine({getStore:()=>store,hooks:{call(action){
+  if(action==='companion-life-content')return {ok:true,content:{level:1,affection:0,chatLines:[],cgs:[]}};
+ }}});
+ const service=await createCompanionService({store,engine,provider:{enabled:false},dataRoot:root,automaticWorkAllowed:()=>false,
+  workBridge:{snapshot:()=>proof,restore(){throw Error('preview must never restore work');}}});
+ t.after(async()=>{await service.close();rmSync(root,{recursive:true,force:true});});
+ const archive=(await service.action('companion-life-save',{characterId:'claude'})).archive;
+ const preview=(await service.action('companion-life-preview',{id:archive.id})).preview;
+ assert.ok(JSON.stringify(preview).includes('a-private-original'));
+ assert.equal(preview.conversations.every(row=>row.personaId==='a'),true);
+ assert.doesNotMatch(JSON.stringify(preview),/b-private-secret|private-work-not-on-preview/);
+ assert.equal(preview.workEvidence,undefined);assert.equal(preview.life.memory,undefined);
 });

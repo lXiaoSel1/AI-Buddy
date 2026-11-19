@@ -10,6 +10,9 @@ import {createSocialTransport} from '../src/buddy-plugin-services/social-transpo
 import {createSocialLogin} from '../src/social-login.mjs';
 import {createFeedingService} from '../src/companion-feeding.mjs';
 import {createCompanionService} from '../src/companion-service.mjs';
+import {createCompanionMemory} from '../src/companion-memory.mjs';
+import {createDeferredSaves} from '../src/deferred-saves.mjs';
+import {ensureLives} from '../src/companion-life.mjs';
 import {openCompanionStore} from '../src/companion-store.mjs';
 import {QuotaService} from '../src/quota-service.mjs';
 import {companionFixture,syntheticEngine} from './support/audit-harness.mjs';
@@ -64,21 +67,31 @@ test('later shutdown failures are aggregated without skipping saves and complete
 
 // Run the production main-process shutdown wiring with only its service/Electron
 // boundaries supplied by the fixture. No app startup, account or model is used.
-async function shutdownFixture({failures={},failureDetails={},responses=[0],forUpdate=false}={}){
- const main=await readFile(new URL('../src/main.mjs',import.meta.url),'utf8'),source=main.slice(main.indexOf('let shuttingDown=false'),main.indexOf('function flushSessionEndSync()')),events=[],dialogs=[],attempts={},hooks={};
+async function shutdownFixture({failures={},failureDetails={},responses=[0],forUpdate=false,observeMonitor=false,providerTest,overrides={}}={}){
+ const main=await readFile(new URL('../src/main.mjs',import.meta.url),'utf8'),testHandlers=new Map(),source=main.slice(main.indexOf('let shuttingDown=false'),main.indexOf('function flushSessionEndSync()')),events=[],dialogs=[],attempts={},hooks={};
  const run=name=>async()=>{events.push(name);attempts[name]=(attempts[name]??0)+1;if(attempts[name]<=(failures[name]??0))throw Object.assign(Error('Sensitive account/prompt details must stay out of the dialog'),{code:'FIXTURE_CLOSE_FAILED',...failureDetails[name]});};
  const context={...await load(),quitting:false,shutdownRecoveryFailed:false,dataRoot:'isolated-shutdown-fixture',panel:null,pet:null,t:value=>value,audit:()=>{},
-  deferredSaves:{flushAll:run('save'),stop:()=>events.push('deferred-stop')},agents:{busy:()=>false,close:run('agents')},
+  deferredSaves:{flushAll:run('save'),flushSyncAll(){
+   events.push('preliminary-save');
+   attempts['preliminary-save']=(attempts['preliminary-save']??0)+1;
+   if(attempts['preliminary-save']<=(failures['preliminary-save']??0))
+    throw Object.assign(Error('Fixture preliminary save failed'),{code:'FIXTURE_SAVE_FAILED'});
+  },stop:()=>events.push('deferred-stop')},agents:{busy:()=>false,close:run('agents')},
   updateReservation:{committed:()=>forUpdate,reopenAfterFailedShutdown:()=>events.push('update-reopen')},monitorProfile:{cancel:()=>{}},mainProfile:{cancel:()=>{}},closePetFullscreen:()=>{},applyPetVisibility:()=>{},syncPetFullscreenObserver:()=>{},
   voiceHost:{quiesce:run('quiesce'),close:run('voice')},plugins:{close:run('plugins'),restoreAfterCloseFailure:run('plugins-restore')},attachPluginRuntime:()=>events.push('plugins-attach'),dailyCgScheduler:{stopAndDrain:run('daily-cg')},rewardTail:Promise.resolve(),
   pluginClientStateOff:null,pluginEmbed:{close:run('plugin-pages')},pluginUsage:{close:run('plugin-usage')},petDiagnostics:{dispose:()=>{}},dataImport:{close:()=>{}},buttonObserver:{close:run('buttons')},trajectoryWindow:null,quotas:{close:()=>{}},
-  settingsTail:Promise.resolve(),settingsWriteTail:Promise.resolve(),provider:{close:()=>{}},cg:{close:run('cg')},game:{flushWorkLedger:run('work-ledger'),close:run('game')},workSourceRegistry:{flush:run('work-sources')},worker:null,
+  settingsTail:Promise.resolve(),settingsWriteTail:Promise.resolve(),provider:{close:run('provider'),test:providerTest},cg:{close:run('cg')},game:{flushWorkLedger:run('work-ledger'),close:run('game')},workSourceRegistry:{flush:run('work-sources')},apiUsageJournal:{drain:run('api-usage-drain')},worker:observeMonitor?{}:null,closeMonitorWorker:run('monitor'),
   appUpdates:{close:()=>events.push('app-updates')},network:{close:run('network')},control:{close:()=>events.push('control-close')},
   app:{on:(name,hook)=>{hooks[name]=hook;},relaunch:(...args)=>{assert.deepEqual(args,[],'Electron keeps the original executable, cwd and arguments');events.push('relaunch');},exit:code=>{assert.equal(code,0);events.push('exit');}},
   dialog:{showMessageBox:async(_window,options)=>{dialogs.push(options);return {response:responses.shift()??1};}},
  };
- const lifecycle=Function('context','with(context){'+source+';return {shutdown,state:()=>({quitting,shuttingDown,shutdownRecoveryFailed})};}')(context);
- return {...lifecycle,events,dialogs,attempts,beforeQuit:()=>hooks['before-quit']({preventDefault:()=>events.push('prevent-quit')})};
+ Object.assign(context,overrides);
+ const testStart=main.indexOf('const modelConnectionTests='),testEnd=main.indexOf("ipcMain.handle('cg:get'",testStart);
+ const modelTest=main.slice(testStart,testEnd);
+ Object.assign(context,{setTimeout,clearTimeout,updateGuard:(_capability,run)=>run(),ipcMain:{handle:(name,callback)=>testHandlers.set(name,callback)}});
+ const lifecycle=Function('context','with(context){'+modelTest+'\n'+source+';return {shutdown,state:()=>({quitting,shuttingDown,shutdownRecoveryFailed})};}')(context);
+ return {...lifecycle,events,dialogs,attempts,modelTest:()=>testHandlers.get('models:test')(null,{}),
+  beforeQuit:()=>hooks['before-quit']({preventDefault:()=>events.push('prevent-quit')})};
 }
 
 test('exit and reopen retries the failed step once and preserves successful shutdown steps',async()=>{
@@ -217,7 +230,7 @@ test('real feeding close never converts a failed economy checkpoint into a succe
 async function companionPersistenceFixture(t){
  const f=await persistenceFixture(t),store=await openCompanionStore(f.dataRoot),seed=await companionFixture();await store.mutate(state=>Object.assign(state,seed));
  const {engine}=syntheticEngine({getStore:()=>store}),service=await createCompanionService({store,engine,provider:{enabled:false},dataRoot:f.dataRoot,automaticWorkAllowed:()=>false});
- f.close(()=>store.flush());f.close(()=>service.close());return {...f,service,store};
+ f.close(()=>store.close());f.close(()=>store.flush());f.close(()=>service.close());return {...f,service,store};
 }
 
 const containsFailure=(error,failure)=>error===failure||error?.errors?.some(child=>containsFailure(child,failure))===true;
@@ -268,4 +281,140 @@ test('both host quota entry points share storage admission while get remains rea
  const quotaAction=Function('quotas','updateGuard',source+';return quotaAction;')({action:async action=>{calls.push(action);return action;}},(capability)=>{assert.equal(capability,'storage');return Promise.reject(Object.assign(Error('blocked'),{code:'SHUTDOWN_RECOVERY_REQUIRED'}));});
  assert.equal(await quotaAction('get'),'get');await assert.rejects(quotaAction('refresh',{id:'unused'}),{code:'SHUTDOWN_RECOVERY_REQUIRED'});assert.deepEqual(calls,['get']);
  assert.match(main,/ipcMain\.handle\('quotas:action',\(_,action,args\)=>quotaAction\(action,args\)\)/);assert.match(main,/request\.command==='quota-action'\)result=await quotaAction\(request\.action,request\.args\)/);
+});
+
+
+test('shutdown retries unsaved API usage before closing its monitor',async()=>{
+ const fixture=await shutdownFixture({failures:{'api-usage-drain':1},responses:[1],observeMonitor:true});
+ await fixture.shutdown();
+ assert.equal(fixture.attempts['api-usage-drain'],1);
+ assert.equal(fixture.attempts.monitor,undefined);
+ assert.ok(!fixture.events.includes('exit'));
+ await fixture.shutdown();
+ assert.equal(fixture.attempts['api-usage-drain'],2);
+ assert.equal(fixture.attempts.monitor,1);
+ assert.equal(fixture.attempts.game,1);
+ assert.ok(fixture.events.indexOf('game')<fixture.events.indexOf('api-usage-drain'));
+ assert.ok(fixture.events.lastIndexOf('api-usage-drain')<fixture.events.indexOf('monitor'));
+ assert.equal(fixture.events.at(-1),'exit');
+});
+
+
+test('shutdown waits for the admitted model connection test to produce its terminal usage receipt',async()=>{
+ let finish,receipt=false;
+ const gate=new Promise(resolve=>{finish=resolve;});
+ const fixture=await shutdownFixture({observeMonitor:true,
+  providerTest:async()=>{try{await gate;}finally{receipt=true;}}
+ });
+ const request=fixture.modelTest(),closing=fixture.shutdown();
+ try{
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(fixture.events.includes('game'));
+  assert.equal(receipt,false);
+  assert.equal(fixture.attempts['api-usage-drain'],undefined);
+  assert.ok(!fixture.events.includes('exit'));
+ }finally{finish();await request;await closing;}
+ assert.equal(receipt,true);
+ assert.equal(fixture.attempts['api-usage-drain'],1);
+ assert.equal(fixture.events.at(-1),'exit');
+});
+
+
+test('normal exit cancels a model-backed SQLite reader before waiting for the companion save',async t=>{
+ const dataRoot=await mkdtemp(join(tmpdir(),'audit213-model-reader-exit-'));
+ const registry=createDeferredSaves(),store=await openCompanionStore(dataRoot,{deferredSaveRegistry:registry});
+ const day='2026-10-20',loggedAt=Date.parse(day+'T12:00:00Z'),characterId='claude',personaId='default',owner='fixture-private';
+ const seed=await companionFixture({now:loggedAt+86400000});
+ await store.mutate((state,tx)=>{
+  Object.assign(state,seed);
+  ensureLives(state,loggedAt-1);
+  state.memorySettings.timeZone='UTC';
+  const lifeId=state.lives[characterId].id;
+  state.conversations[owner]={id:owner,characterId,personaId,lifeId};
+  tx.messages.define('private',owner,['conversations',owner]);
+  tx.messages.append('private',owner,{id:'stored-message',characterId,personaId,lifeId,status:'presented',
+   role:'assistant',text:'stored synthetic user history',createdAt:loggedAt});
+ });
+ const waiting=deferred(),modelGate=deferred(),abort=new AbortController();
+ abort.signal.addEventListener('abort',()=>modelGate.resolve(),{once:true});
+ let cancellation=false;
+ const memory=createCompanionMemory({store,now:()=>loggedAt+86400000,autoStart:false,
+  getCapacity:()=>({tokens:32768,verified:true}),runModel:async()=>{
+   waiting.resolve();await modelGate.promise;
+   if(abort.signal.aborted)await store.mutate((_,tx)=>{
+    tx.messages.update('private',owner,'stored-message',row=>{row.shutdownReceipt='terminal';});
+   });
+   throw Object.assign(Error('fixture cancelled'),{code:'ABORT_ERR'});
+  }});
+ const detail=memory.consolidate({characterId,personaId,day});
+ t.after(async()=>{modelGate.resolve();await Promise.allSettled([detail]);await memory.close();await store.close();await rm(dataRoot,{recursive:true,force:true});});
+ const fixture=await shutdownFixture({overrides:{
+  dataRoot,deferredSaves:registry,
+  provider:{close(){cancellation=true;abort.abort();}},
+  game:{async close(){await memory.close();await store.close();}}
+ }});
+ let timeout;
+ await Promise.race([waiting.promise,detail.then(()=>assert.fail('the real SQLite worker never reached its model callback'))]);
+ const closing=fixture.shutdown();
+ try{
+  const exited=await Promise.race([closing.then(()=>fixture.events.includes('exit')),
+   new Promise(resolve=>{timeout=setTimeout(()=>resolve(false),1000);})]);
+  assert.equal(cancellation,true,'shutdown reaches provider cancellation while the worker model callback is held');
+  assert.equal(exited,true,'normal shutdown completes after draining terminal producers');
+ }finally{clearTimeout(timeout);modelGate.resolve();await closing;}
+ const reopened=await openCompanionStore(dataRoot);
+ try{
+  const message=reopened.messages.get('private',owner,'stored-message');
+  assert.equal(message.text,'stored synthetic user history');
+  assert.equal(message.shutdownReceipt,'terminal');
+ }finally{await reopened.close();}
+});
+
+
+test('a failed companion drain keeps the journal and usage monitor open for the successful retry',async()=>{
+ const fixture=await shutdownFixture({observeMonitor:true,failures:{game:1},responses:[1]});
+ await fixture.shutdown();
+ assert.equal(fixture.attempts.game,1);
+ assert.equal(fixture.attempts['api-usage-drain'],undefined);
+ assert.equal(fixture.attempts.monitor,undefined);
+ assert.ok(!fixture.events.includes('exit'));
+ await fixture.shutdown();
+ assert.equal(fixture.attempts.game,2);
+ assert.equal(fixture.attempts['api-usage-drain'],1);
+ assert.equal(fixture.attempts.monitor,1);
+ assert.equal(fixture.events.at(-1),'exit');
+});
+
+
+test('returning from the work-exit choice leaves the companion and provider running',async()=>{
+ let prepared=0;
+ const fixture=await shutdownFixture({responses:[2],overrides:{
+  agents:{busy:()=>true,async prepareExit(){prepared++;}}
+ }});
+ await fixture.shutdown();
+ assert.equal(fixture.attempts['preliminary-save'],1);
+ assert.equal(prepared,0);
+ assert.equal(fixture.attempts.provider,undefined);
+ assert.equal(fixture.attempts.game,undefined);
+ assert.equal(fixture.attempts.save,undefined);
+ assert.deepEqual(fixture.state(),{quitting:false,shuttingDown:false,shutdownRecoveryFailed:false});
+});
+
+test('a preliminary save failure leaves runtime services open before confirmation',async()=>{
+ const fixture=await shutdownFixture({failures:{'preliminary-save':1},responses:[0]});
+ await fixture.shutdown();
+ assert.match(fixture.dialogs[0].detail,/存档保存 \(FIXTURE_SAVE_FAILED\)/);
+ for(const name of ['plugins','provider','game','save','exit'])assert.ok(!fixture.events.includes(name),name);
+ assert.deepEqual(fixture.state(),{quitting:false,shuttingDown:false,shutdownRecoveryFailed:false});
+});
+
+test('a failed final companion save cannot authorize a forced reopen',async()=>{
+ const fixture=await shutdownFixture({observeMonitor:true,failures:{save:Infinity},responses:[0,0]});
+ await fixture.shutdown();
+ assert.equal(fixture.attempts.save,2);
+ assert.equal(fixture.attempts.monitor,undefined);
+ assert.equal(fixture.attempts['api-usage-drain'],undefined);
+ assert.deepEqual(fixture.dialogs[1].buttons,['稍后']);
+ assert.match(fixture.dialogs[1].detail,/陪伴存档 \(FIXTURE_CLOSE_FAILED\)/);
+ for(const name of ['relaunch','exit'])assert.ok(!fixture.events.includes(name),name);
 });

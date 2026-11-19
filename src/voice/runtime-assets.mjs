@@ -10,6 +10,7 @@ import { renamePluginPath } from '../plugin-files.mjs';
 import {createVoiceAssetVerifier} from './asset-verifier.mjs';
 import {waitVoiceOperation} from './operation-wait.mjs';
 import {voiceAssetRecovery} from './asset-errors.mjs';
+import {BUILTIN_ASR_ID, builtinAsrRecord, checkBuiltinAsrWorkers} from './builtin-asr-assets.mjs';
 import {voiceAssetDownloadUrl,voiceAssetDownloadStream,downloadVoiceAsset,parseVoiceAssetDownloads,writeVoiceAsset,checkVoiceAssetDisk,extractVoiceAssetArchive} from './asset-downloads.mjs';
 
 const ids = { breeze: 'ai-buddy.voice-breeze', gpt: 'ai-buddy.voice-gpt-sovits' };
@@ -53,7 +54,7 @@ function validate(kind, descriptor) {
   return total;
 }
 
-export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = fetch,planDownload,downloadOptions={},promote=renamePluginPath,verificationWorker }) {
+export function createVoiceAssets({ dataRoot, builtinAsrDirectory, resolveVoicePackage, fetchImpl = fetch,planDownload,downloadOptions={},promote=renamePluginPath,verificationWorker }) {
   const root = join(dataRoot, 'voice', 'components');
   const pending = new Map();
   const descriptors = new Map();
@@ -67,8 +68,9 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
     if (!Object.hasOwn(scripts, kind)) throw fault('VOICE_ASSET_MANIFEST', '未知语音组件');
     const requested = kind === 'asr' ? engineId : kind;
     const id = ids[requested] ?? requested;
-    if (!Object.values(ids).includes(id)) throw fault('VOICE_PLUGIN_REQUIRED', '请启用一个语音插件');
-    const owner = await wait(()=>resolveVoicePackage(id,{signal}));
+    const builtin = kind === 'asr' && engineId === BUILTIN_ASR_ID;
+    if (!builtin && !Object.values(ids).includes(id)) throw fault('VOICE_PLUGIN_REQUIRED', '请启用一个语音插件');
+    const owner = builtin ? {shared:builtinAsrRecord(builtinAsrDirectory)} : await wait(()=>resolveVoicePackage(id,{signal}));
     const record = kind === 'asr' ? owner.shared : owner;
     if (!isAbsolute(record?.directory ?? '') || !isAbsolute(owner.shared?.directory ?? '')) {
       throw fault('VOICE_PLUGIN_REQUIRED', '语音插件共享运行依赖缺失');
@@ -77,6 +79,7 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
     await wait(()=>assertPluginTreeNoLinks(file));
     const info=await wait(()=>lstat(file,{bigint:true}));
     if(!info.isFile()||info.nlink!==1n)throw fault('VOICE_ASSET_MANIFEST','语音组件清单类型无效');
+    if(builtin && info.size!==BigInt(record.manifest.files.find(row=>row.path==='assets.json').bytes))throw fault('VOICE_ASSET_MANIFEST','语音组件清单与插件签名不符');
     const identity=stamp(info),key=[kind,file,record.sourceId,record.archiveSha256,identity].join('|');
     let cached=descriptors.get(key);
     if(!cached){
@@ -102,14 +105,23 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
     const destination = join(root, kind, descriptorHash);
     const cacheRoot = join(root, 'cache', kind, descriptorHash);
     const proofFile=join(root,'.verification',digest(Buffer.from(proof+'|'+destination))+'.json');
-    return { descriptor, destination, cacheRoot, proof, proofFile,total, downloads,downloadsHash,script: join(record.directory, scripts[kind]), sharedDirectory: owner.shared.directory };
+    return { builtinAsr:builtin, descriptor, destination, cacheRoot, proof, proofFile,total, downloads,downloadsHash,script: join(record.directory, scripts[kind]), sharedDirectory: owner.shared.directory };
   }
 
   async function checkMarker(selected,{signal}={}) {
     const marker = join(selected.destination, '.ready');
     await waitVoiceOperation(()=>assertPluginTreeNoLinks(marker),signal);
     try {
-      if ((await waitVoiceOperation(()=>readFile(marker, 'utf8'),signal)) !== selected.proof) throw fault('VOICE_ASSET_HASH', '语音组件的准备凭据与安装包不符');
+      const actual = selected.builtinAsr ? await installedMarker(selected, {signal})
+        : await waitVoiceOperation(()=>readFile(marker, 'utf8'),signal);
+      if (actual !== selected.proof) {
+        // A prior official package can share the same pinned payload under its own .ready marker.
+        // Keep that marker intact. At use, the verifier checks the new descriptor and member identities.
+        if (!selected.builtinAsr || !/^asr:(?:official|legacy):[a-f0-9]{64}:[a-f0-9]{64}$/.test(actual) || !matchingDescriptor(actual,selected)) {
+          throw fault('VOICE_ASSET_HASH', '语音组件的准备凭据与安装包不符');
+        }
+        selected.readProof = {proof:actual,proofFile:join(dirname(selected.proofFile),digest(Buffer.from(actual+'|'+selected.destination))+'.json')};
+      }
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
       throw fault('VOICE_ASSET_MISSING', '语音资源尚未准备');
@@ -170,6 +182,7 @@ export function createVoiceAssets({ dataRoot, resolveVoicePackage, fetchImpl = f
 
   async function resolve(kind, engineId, options={}) {
     options.signal?.throwIfAborted();const selected = await plan(kind, engineId,options);
+    if (kind === 'asr' && engineId === BUILTIN_ASR_ID) await checkBuiltinAsrWorkers(selected.sharedDirectory, options.signal);
     let verificationDetails;try{verificationDetails=await checkReady(selected,options);verificationFailures.delete(selected.proof);}catch(error){rememberFailure(selected,error);throw error;}
     await waitVoiceOperation(()=>assertPluginTreeNoLinks(selected.cacheRoot),options.signal);
     await waitVoiceOperation(()=>mkdir(selected.cacheRoot, { recursive: true }),options.signal);

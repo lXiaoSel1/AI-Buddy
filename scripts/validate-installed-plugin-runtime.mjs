@@ -7,7 +7,7 @@ import {setTimeout as sleep} from 'node:timers/promises';
 import {requestLocalControl} from '../src/local-control.mjs';
 
 export const OFFICIAL_TARGETS = Object.freeze([
-  {target: 'bilibili', id: 'ai-buddy.bilibili-companion', packageName: '@ai-buddy/bilibili-companion', version: '2.0.16', digest: '9d585ffc887f9a274cb7f321b514fb0b60b400a38665d5563d216f67fdc73336'},
+  {target: 'bilibili', id: 'ai-buddy.bilibili-companion', packageName: '@ai-buddy/bilibili-companion', version: '2.0.18', digest: 'b08988f630f4b49e784d32a7781f1f6c48fffd48d0075e7d17534d26b9bafa59'},
   {target: 'qq', id: 'ai-buddy.qq-connect', packageName: '@ai-buddy/qq-connect', version: '2.0.10', digest: 'c58110307866f15a309bbb9ad2839e521ea61caf897bc7666e0353f582545a6d'},
   {target: 'card-games', id: 'ai-buddy.card-games', packageName: '@ai-buddy/card-games', version: '1.1.5', digest: '7f2c6dcfff0bd3a2e0ad602fea03c1361490914e4764821b374bdd59f7eb086d'},
 ].map(Object.freeze));
@@ -27,7 +27,7 @@ export function requireVoiceInstall(plan,installed){
   assert.ok(installed?.installed===true&&installed.enabled===true&&installed.usable===true&&installed.state==='ready','Breeze was not installed and enabled through the production authority');
   assert.equal(installed.sourceId,'official');assert.equal(installed.id,target.id);assert.equal(installed.version,target.version);assert.equal(installed.archiveSha256,target.digest);
 }
-const CODE_FILES = ['package.json', 'main.cjs', 'preload.cjs', 'plugin-client-preload.cjs', 'dsh-network-bootstrap.mjs', 'dsh-platform/native-bridge-host.mjs', 'dsh-platform/inert-bootstrap.mjs', 'dsh-component-worker.mjs', 'ffmpeg-component-worker.mjs', 'work-archive-cursor-worker.mjs', 'voice-assets-worker.cjs', 'bili-full-media-worker.mjs', 'monitor-worker.cjs', 'plugin-maintenance.cjs', 'index.html'];
+const CODE_FILES = ['package.json', 'main.cjs', 'preload.cjs', 'plugin-client-preload.cjs', 'companion-life-image-preload.cjs', 'companion-storage-worker.mjs', 'companion-economy-worker.mjs', 'companion-economy-wal-worker.mjs', 'companion-wal-worker.mjs', 'export-companion-for-rollback.mjs', 'dsh-network-bootstrap.mjs', 'dsh-platform/native-bridge-host.mjs', 'dsh-platform/inert-bootstrap.mjs', 'dsh-component-worker.mjs', 'ffmpeg-component-worker.mjs', 'work-archive-cursor-worker.mjs', 'voice-assets-worker.cjs', 'bili-full-media-worker.mjs', 'monitor-worker.cjs', 'plugin-maintenance.cjs', 'index.html'];
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const hex = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const pipeName = value => String(value).replace(/^\\\\\.\\pipe\\/i, '');
@@ -168,7 +168,7 @@ async function cdp(url, method, params = {}, timeoutMs = 30000) {
 }
 const evaluate = async (page, expression, timeoutMs) => (await cdp(page.webSocketDebuggerUrl, 'Runtime.evaluate', {expression, awaitPromise: true, returnByValue: true}, timeoutMs)).result?.value;
 
-export async function validateInstalledPluginRuntime(options) {
+export async function validateInstalledPluginRuntime(options, {afterSecondPage} = {}) {
   await isolatedPath(options, options.installRoot, 'Installation');
   await isolatedPath(options, options.out, 'Evidence output');
   await mkdir(dirname(options.out), {recursive: true});
@@ -278,6 +278,7 @@ export async function validateInstalledPluginRuntime(options) {
       const restarted = await job(await action({action: 'dsh-enable', packageKey: row.packageKey}));
       assert.ok(record(restarted.state, target)?.runtimeVerified === true, 'Restarted native plugin was not verified');
       row.restart = restarted.job; row.second = await pageHandshake(target, row.first.document);
+      if (afterSecondPage) await afterSecondPage({target, panel, targetId: row.second.document.targetId, options, row});
       row.finalStop = await disable(target, row.packageKey); row.passed = true; activeRow = null;
       await event('plugin-completed', {target: target.target, document: row.second.document.targetId});
     }

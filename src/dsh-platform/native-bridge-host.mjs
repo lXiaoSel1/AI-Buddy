@@ -4,12 +4,17 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export const name = 'ai-buddy-dsh-platform-bridge';
 export const inject = ['tools', 'pluginManager', 'agents', 'llm'];
 const CHANNEL = 'ai-buddy-dsh-platform-v1';
-const MODEL_CAPACITY_CAUSES=new Set(['MEMORY_CONTEXT_CAPACITY','MODEL_CONTEXT_CAPACITY','BILI_FULL_MODEL_CAPACITY','MODEL_IMAGE_TOO_LARGE']);
+const BILI_CUE_REASONS=new Set(['invalid-tracks','invalid-track','empty-track','invalid-id','invalid-text','invalid-time','duplicate-cue']);
+const MODEL_CAPACITY_CAUSES=new Set(['MEMORY_CONTEXT_CAPACITY','MODEL_CONTEXT_CAPACITY','BILI_FULL_MODEL_CAPACITY','MODEL_IMAGE_TOO_LARGE','MODEL_IMAGE_TRANSPORT_UNSUPPORTED']);
 // The main host supplies a branded cause for the first IPC boundary. Later
 // protected RPC hops carry only this diagnostic whitelist, never release proof.
 export function dshModelError(error,{causeCode=error?.causeCode,stack=false}={}){
   const code=typeof error?.code==='string'?error.code:'DSH_BRIDGE_FAILED',value={code,message:code==='SOCIAL_MODEL_NOT_SUBMITTED'?code:typeof error?.message==='string'?error.message:'Native bridge request failed'};
   if(code==='SOCIAL_MODEL_NOT_SUBMITTED'&&MODEL_CAPACITY_CAUSES.has(causeCode))value.causeCode=causeCode;
+  if(code==='BILI_FULL_CUES_INVALID'&&BILI_CUE_REASONS.has(error?.details?.reason)){
+    const {cid,page,reason}=error.details;
+    value.details={...(Number.isSafeInteger(cid)&&cid>0?{cid}:{}),...(Number.isSafeInteger(page)&&page>0?{page}:{}),reason};
+  }
   if(stack&&code!=='SOCIAL_MODEL_NOT_SUBMITTED'&&typeof error?.stack==='string')value.stack=error.stack;
   return value;
 }
@@ -347,6 +352,7 @@ export function apply(ctx, config = {}) {
       }
       case 'bridge.schemaSnapshot': return ctx.tools.schemas();
       case 'runtime.shutdown': {
+        if (closing) return { status: 'draining', activeCalls: active.size };
         closing = true;
         for (const controller of active.values()) controller.abort(new Error('DSH_RUNTIME_SHUTDOWN'));
         for (const request of installations) ctx.pluginManager.cancelInstall(request);
@@ -354,6 +360,7 @@ export function apply(ctx, config = {}) {
           await Promise.allSettled([...operations]);
           await Promise.allSettled([...nativeScopes.values()].map(async row=>(await row.handle).dispose()));nativeScopes.clear();
           await ctx.root.fiber.dispose();
+          closeIpc();
           if (process.connected) process.disconnect();
         });
         return { status: 'draining', activeCalls: active.size };
@@ -383,12 +390,17 @@ export function apply(ctx, config = {}) {
       error => {stage.record(message.method,message.id,'rpc.error',{elapsedMs:performance.now()-started});return send({ kind: 'response', id: message.id, error: dshModelError(error,{stack:true}) });},
     ).finally(() => { if(tracked)operations.delete(operation); });
   };
-  process.on('message', onMessage);
-  ctx.effect(() => () => {
+  function closeIpc() {
     process.off('message', onMessage);
     for (const controller of active.values()) controller.abort(new Error('DSH_BRIDGE_DISPOSED'));
     for (const pending of buddyRequests.values()) { pending.cleanup(); pending.reject(new Error('DSH_BRIDGE_DISPOSED')); }
     buddyRequests.clear();
+  }
+  process.on('message', onMessage);
+  ctx.effect(() => () => {
+    // Sibling plugin disposers still need their Host close replies. During a
+    // managed shutdown, keep IPC until the whole Cordis root has disposed.
+    if (!closing) closeIpc();
   });
   send({ kind: 'bridge-ready', pid: process.pid, node: process.version, protocolVersion: 1, purpose, uiPolicy });
 }

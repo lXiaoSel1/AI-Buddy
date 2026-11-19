@@ -56,7 +56,7 @@ test('Live stays preparing until the microphone worklet actually opens',async()=
   }finally{completeWorklet();await captureSession.stop();await releaseCapture();await session.stop();await release();}
 });
 
-test('the master switch remains unchanged while the approved plugin page owns voice configuration',()=>{
+test('the master switch stays checked while cold with a separate start button and plugin configuration',()=>{
   const snapshot={state:{...configuration,packages:[{id:'ai-buddy.voice-breeze',installed:true,usable:true}],profile:{label:'Voice'},assets:{tts:{state:'ready'}},engine:'breeze'},captureState:'idle',working:false,error:''};
   const chat=renderToStaticMarkup(React.createElement(voice.VoiceToggle,{snapshot}));
   assert.equal((chat.match(/<button\b/g)??[]).length,1);
@@ -65,7 +65,11 @@ test('the master switch remains unchanged while the approved plugin page owns vo
   const settings=renderToStaticMarkup(React.createElement(voice.VoiceSettingsPanel,{snapshot}));
   assert.doesNotMatch(settings,/录音输入/);assert.doesNotMatch(settings,/<button\b[^>]*>Live 轮流交谈<\/button>/);assert.match(settings,/语音插件/);assert.match(settings,/换成我的录音/);
   const cold=renderToStaticMarkup(React.createElement(voice.VoiceToggle,{snapshot:{...snapshot,state:{...snapshot.state,preparation:{state:'idle',target:null}}}}));
-  assert.match(cold,/启动语音/);assert.match(cold,/语音尚未启动/);assert.doesNotMatch(cold,/语音模型已就绪/);assert.match(cold,/aria-checked="false"/);
+  assert.equal((cold.match(/<button\b/g)??[]).length,2);
+  assert.match(cold,/<button[^>]*role="switch"[^>]*aria-checked="true"/);
+  assert.match(cold,/<button[^>]*data-voice-chat-start="true"[^>]*>启动声音<\/button>/);
+  assert.match(cold,/回复先只显示文字/);
+  assert.doesNotMatch(cold,/语音模型已就绪/);
 });
 
 test('a recording made in settings is delivered once only to its matching chat scope',async()=>{

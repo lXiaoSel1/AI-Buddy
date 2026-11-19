@@ -10,3 +10,18 @@ test('failed transaction neither records activity nor acknowledges any row',asyn
 test('failed activity bookkeeping does not acknowledge a committed batch',async()=>{const value=setup();await assert.rejects(deliverRewardFacts({...value,recordUsage:()=>{throw Error('bookkeeping failed');}}),/bookkeeping failed/);assert.deepEqual(value.calls.map(row=>row[0]),['yield','commit']);});
 test('invalid sequence, sparse or oversized batch is rejected before any work',async()=>{for(const facts of [null,[{seq:0}],[{seq:1.5}],new Array(2),Array.from({length:201},(_,i)=>({seq:i+1}))]){const value=setup();await assert.rejects(deliverRewardFacts({...value,facts}),/Invalid reward delivery batch/);assert.deepEqual(value.calls,[]);}});
 test('real macrotask yield allows shutdown callback before synchronous ingestion',async()=>{const value=setup();let closing=false;setImmediate(()=>{closing=true;});const result=await deliverRewardFacts({...value,isCurrent:()=>!closing,yieldTurn:undefined});assert.equal(result.committed,false);assert.deepEqual(value.calls,[]);});
+test('asynchronous ingestion must commit before usage and ACK, and a replaced sender receives neither',async()=>{
+ for(const stale of [false,true]){
+  const value=setup(),entered=Promise.withResolvers(),release=Promise.withResolvers();
+  let current=true;
+  const delivery=deliverRewardFacts({...value,isCurrent:()=>current,async ingest(){
+   entered.resolve();await release.promise;value.calls.push(['commit']);
+  }});
+  await entered.promise;
+  const beforeCommit=value.calls.map(row=>row[0]);
+  current=!stale;release.resolve();
+  assert.deepEqual(await delivery,{committed:true,acknowledged:!stale,count:2});
+  assert.deepEqual(beforeCommit,['yield']);
+  assert.deepEqual(value.calls.map(row=>row[0]),stale?['yield','commit']:['yield','commit','usage','usage','yield','ack']);
+ }
+});

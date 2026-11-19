@@ -37,7 +37,7 @@ The host's `assets/card-games/` contains project-generated card-table art, props
 
 ## Runtime and tools
 
-[Electron](https://www.electronjs.org/) 44.6.0 and Chromium licenses ship in the runtime folder. React 19.3.0, React DOM, scheduler and esbuild licenses ship in `licenses/`. Windows executable resources are branded with [rcedit](https://github.com/electron/rcedit) 2.0.0. [RIFE](https://github.com/hzwer/ECCV2022-RIFE) was used during motion production; Python, OpenCV, RIFE and video-generation models are not required by the distributed app.
+[Electron](https://www.electronjs.org/) 44.6.0 and Chromium licenses ship in the runtime folder. React 19.3.0, React DOM, scheduler, esbuild, and [Immer](https://github.com/immerjs/immer) 11.2.9 licenses ship in `licenses/`. Windows executable resources are branded with [rcedit](https://github.com/electron/rcedit) 2.0.0. [RIFE](https://github.com/hzwer/ECCV2022-RIFE) was used during motion production; Python, OpenCV, RIFE and video-generation models are not required by the distributed app.
 
 ### Optional DSH runtime and work plugin SDK
 

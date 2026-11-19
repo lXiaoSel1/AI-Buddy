@@ -1,3 +1,4 @@
+import {readCompanionExport} from './support/companion-export-file.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,readdirSync} from 'node:fs';
@@ -14,17 +15,17 @@ const BIG=Buffer.concat([PNG,Buffer.alloc(2*1024*1024,7)]);
 const url=bytes=>'data:image/png;base64,'+bytes.toString('base64');
 const provider={enabled:false,currentSelection:()=>({provider:'fixture',model:'fixture'}),runTurn:async fn=>fn(),resolveContextCapacity:()=>({tokens:8192,source:'fixture',verified:true})};
 const ownedServices=new Map();
-const own=(root,service)=>{const rows=ownedServices.get(root)??[];rows.push(service);ownedServices.set(root,rows);return service;};
+const own=(root,service,store)=>{const rows=ownedServices.get(root)??[];rows.push({service,store});ownedServices.set(root,rows);return service;};
 const companionFile=root=>join(root,'galgame','companion.json');
 async function seeded(t,mutate=()=>{}){
- const root=tmpDir('b04',{t,beforeRemove:async()=>{for(const service of ownedServices.get(root)??[])await service.close();ownedServices.delete(root);}}),state=await companionFixture();mutate(state);
+ const root=tmpDir('b04',{t,beforeRemove:async()=>{const owners=ownedServices.get(root)??[];for(const {service} of owners)await service.close();for(const {store} of owners)await store?.close();ownedServices.delete(root);}}),state=await companionFixture();mutate(state);
  await createSnapshotStorage(companionFile(root)).writeText(JSON.stringify(state));return root;
 }
 async function launch(root,{hooks={}}={}){
  const media=createMediaStore(root),drafts=createDraftStore(root),store=await openCompanionStore(root,{media}),registered=[];
  const {engine}=syntheticEngine({getStore:()=>store,hooks:{call(action,args){if(action==='companion-register'){registered.push(args.card);return {ok:true};}return hooks.call?.(action,args);}}});
- const service=own(root,await createCompanionService({store,engine,provider,dataRoot:root,now:Date.now,media,drafts,imageCodec:()=>({})}));
- return {media,drafts,store,service,registered,close:async()=>{await service.close();await store.flush();}};
+ const service=own(root,await createCompanionService({store,engine,provider,dataRoot:root,now:Date.now,media,drafts,imageCodec:()=>({})}),store);
+ return {media,drafts,store,service,registered,close:async()=>{await service.close();await store.close();}};
 }
 
 test('B4: media names are content hashes; only canonical image data URLs become files',t=>{
@@ -48,11 +49,13 @@ test('B4: a newly set picture is stored as a file, the engine still receives a d
  assert.ok(makeCard({...card,fields:{sprite:{mode:'custom',value:card.fields.sprite.value}}},card),'a media URL is a valid picture value');
 });
 
-test('B4: pictures already in the store stay until migrated, and a store change serializes once with the revision first',async t=>{
+test('B4: pictures already in the store stay until migrated and a no-op leaves the SQLite revision unchanged',async t=>{
  const root=await seeded(t,state=>{state.personas.default.avatar=url(PNG);}),app=await launch(root);t.after(app.close);
  await app.service.action('companion-title-set',{characterId:'claude',title:'新标题'});await app.store.flush();
  assert.equal(app.store.state.personas.default.avatar,url(PNG));
- assert.equal(Object.keys(await readJson(createSnapshotStorage(companionFile(root))))[0],'revision');
+ const fence=await readJson(createSnapshotStorage(companionFile(root)));
+ assert.equal(fence.minimumWriter,'r14-companion-sqlite-v2');
+ assert.match(fence.sqliteMigration.id,/^[a-f0-9-]+$/);
  const revision=app.store.state.revision;await app.service.action('companion-title-set',{characterId:'claude',title:'新标题'});assert.equal(app.store.state.revision,revision,'no change, no write');
 });
 
@@ -70,7 +73,7 @@ test('B4: exports carry the picture bytes, not media URLs',async t=>{
  const root=await seeded(t),app=await launch(root);t.after(app.close);
  await app.service.action('companion-persona-save',{id:'default',name:'默认身份',avatar:url(PNG)});
  assert.match(app.store.state.personas.default.avatar,/^buddy-media:\/\//);
- const {data}=await app.service.action('companion-conversation-export',{});
+ const data=await readCompanionExport(app.service,'companion-conversation-export',{});
  assert.equal(data.personas.default.avatar,url(PNG));assert.doesNotMatch(JSON.stringify(data),/buddy-media:/);
 });
 
@@ -86,19 +89,50 @@ test('B4: a life archive packs media pictures and restoring brings them back as 
 test('T2: migration moves canonical pictures, keeps the rest, and expands back to the identical store; revert undoes it',async t=>{
  const odd='data:image/png;base64,'+PNG.toString('base64').replace(/(.{20})/,'$1\n');
  const root=await seeded(t,state=>{state.personas.default.avatar=url(PNG);state.cards.claude.avatar=url(BIG);state.cards.gpt.avatar=odd;}),app=await launch(root);t.after(app.close);
- const before=copy(app.store.state),maintenance=app.service.maintenance;
- const plan=maintenance.plan('media-migrate');assert.equal(plan.total,2);assert.equal(plan.skipped,1);
+ const before=await app.store.snapshotAsync(),maintenance=app.service.maintenance;
+ const plan=await maintenance.plan('media-migrate');assert.equal(plan.total,2);assert.equal(plan.skipped,1);
  const result=await maintenance.apply('media-migrate',plan.planId);
  assert.match(app.store.state.cards.claude.avatar,/^buddy-media:\/\//);assert.equal(app.store.state.cards.gpt.avatar,odd);
- const {revision,...expanded}=resolveStateImages(app.media,app.store.state),{revision:old,...original}=before;assert.deepEqual(expanded,original);
+ const {revision,...expanded}=resolveStateImages(app.media,await app.store.snapshotAsync()),{revision:old,...original}=before;assert.deepEqual(expanded,original);
  assert.deepEqual(JSON.parse(readFileSync(result.backup,'utf8')),before,'the backup is the store before the change');
- assert.equal(maintenance.plan('media-migrate').total,0);
+ assert.equal((await maintenance.plan('media-migrate')).total,0);
  const id=app.store.state.activeConversationId;await app.service.action('companion-conversation-update',{id,draft:'草稿'});
- const back=maintenance.plan('media-revert');assert.equal(back.total,2);assert.equal(back.drafts,1);
+ const back=await maintenance.plan('media-revert');assert.equal(back.total,2);assert.equal(back.drafts,1);
  await maintenance.apply('media-revert',back.planId);
  assert.equal(app.store.state.cards.claude.avatar,url(BIG));assert.equal(app.store.state.personas.default.avatar,url(PNG));assert.equal(app.store.state.conversations[id].draft,'草稿');
  assert.deepEqual(app.drafts.entries(),[]);
  await app.service.action('companion-title-set',{characterId:'claude',title:'x'});assert.equal(app.store.state.cards.claude.avatar,url(BIG),'an unrelated change does not move it again');
+});
+
+test('SQLite media maintenance preserves archived portraits, complete backups and drafts',async t=>{
+ const root=tmpDir('b04-sqlite-maintenance',{t}),media=createMediaStore(root),drafts=createDraftStore(root);
+ const archiveId='archive-fixture',legacy={schema:1,cards:{deepseek:{id:'deepseek',avatar:url(BIG)}},
+  conversations:{live:{id:'live',messages:[{id:'kept',role:'user',text:'A retained chat row'}]}},
+  lifeArchives:{[archiveId]:{id:archiveId,characterId:'deepseek',avatar:url(PNG)}}};
+ await createSnapshotStorage(companionFile(root),{retention:false}).writeText(JSON.stringify(legacy));
+ const store=await openCompanionStore(root,{media});
+ const {createMaintenance}=await import('../src/maintenance.mjs'),{mediaMaintenanceTasks}=await import('../src/media-migration.mjs');
+ const maintenance=createMaintenance({store,dataRoot:root,tasks:mediaMaintenanceTasks({media,drafts})});
+ try{
+  const before=await store.snapshotAsync();
+  const migrate=await maintenance.plan('media-migrate');
+  assert.equal(migrate.total,2);
+  assert.ok(migrate.paths.includes('lifeArchives/'+archiveId+'/avatar'));
+  const migrated=await maintenance.apply('media-migrate',migrate.planId);
+  assert.deepEqual(JSON.parse(readFileSync(migrated.backup,'utf8')),before);
+  const archived=store.records.get('root.lifeArchives','',archiveId);
+  assert.match(archived.avatar,/^buddy-media:\/\//);
+  assert.equal(media.resolve(archived.avatar),url(PNG));
+  drafts.set('live','A draft saved before maintenance');
+  const revert=await maintenance.plan('media-revert');
+  assert.equal(revert.total,2);
+  assert.equal(revert.drafts,1);
+  await maintenance.apply('media-revert',revert.planId);
+  assert.equal(store.records.get('root.lifeArchives','',archiveId).avatar,url(PNG));
+  assert.equal(store.state.cards.deepseek.avatar,url(BIG));
+  assert.equal(store.state.conversations.live.draft,'A draft saved before maintenance');
+  assert.deepEqual(drafts.entries(),[]);
+ }finally{await store.close();}
 });
 
 test('B4 review: every conversation row shows the drafts file value, and sending clears it',async t=>{
@@ -125,13 +159,14 @@ test('B4 review: archive avatars are media too, AVIF pictures are converted for 
  const AVIF='data:image/avif;base64,'+Buffer.from('ftyp-avif-fixture').toString('base64');
  const root=await seeded(t),media=createMediaStore(root),drafts=createDraftStore(root),store=await openCompanionStore(root,{media}),{engine}=syntheticEngine({getStore:()=>store,hooks:{call(action){if(action==='companion-register'||action==='companion-life-project')return {ok:true};}}});
  const service=await createCompanionService({store,engine,provider,dataRoot:root,now:Date.now,media,drafts,imageCodec:bytes=>{if(!bytes.equals(PNG))throw Error('codec cannot read this');return {};},imageConverter:async()=>PNG});
- own(root,service);t.after(async()=>{await service.close();await store.flush();});
+ own(root,service,store);t.after(async()=>{await service.close();await store.close();});
  await service.action('companion-character-save',{...copy(store.state.cards.claude),avatar:AVIF});
  assert.match(store.state.cards.claude.avatar,/\.avif$/);
  await service.action('companion-conversation-update',{id:'conversation',draft:'切换前的草稿'});
  const archive=(await service.action('companion-life-save',{characterId:'claude'})).archive;
- assert.match(store.state.lifeArchives[archive.id].avatar,/^buddy-media:\/\//);
- const back=service.maintenance.plan('media-revert');assert.ok(back.total>=2,'card and archive avatars');
+ const archives=(await service.action('companion-life-list',{characterId:'claude'})).archives;
+ assert.match(archives.find(item=>item.id===archive.id).avatar,/^buddy-media:\/\//);
+ const back=await service.maintenance.plan('media-revert');assert.ok(back.total>=2,'card and archive avatars');
  await service.action('companion-life-reset',{characterId:'claude',mode:'normal'});
  assert.equal(drafts.get('conversation'),undefined,'the replaced conversation keeps no stale draft');
 });

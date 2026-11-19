@@ -8,6 +8,8 @@ import {writeAtomic} from '../atomic-write.mjs';
 import {voicePythonEnvironment} from './python-environment.mjs';
 import {validateWav} from './voice-profiles.mjs';
 import {createVoiceBatch,createMiniMaxVoiceProvider} from './batch-voices.mjs';
+import {MiniMaxSpeechError,minimaxSpeechStatus} from './minimax-speech-errors.mjs';
+import {launchHttpSpeech} from './cloud-providers/minimax-speech.mjs';
 
 const packages = {breeze:'ai-buddy.voice-breeze',gpt:'ai-buddy.voice-gpt-sovits'};
 const providers = {minimax:'https://api.minimax.cn','minimax-global':'https://api.minimax.io'};
@@ -112,11 +114,24 @@ function remoteError(row) {
 
 // The host supplies trusted resolvers; neither plugin code nor a renderer gets
 // the raw credential. Bindings belong to this host's private data directory.
-export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolveConnection,resolveSecret,supervisor,transport,batchProvider,fetchImpl,network,now=()=>Date.now()}) {
+export function createVoiceCloud({dataRoot,resolveRuntime,authorizeSpeech,resolveProfile,resolveConnection,resolveSecret,supervisor,transport,batchProvider,fetchImpl,network,onSpeechFailure=()=>{},now=()=>Date.now()}) {
   if (!isAbsolute(dataRoot??'')) throw fail('CLOUD_CONFIG','云配音资料目录无效');
   const root=join(dataRoot,'voice','cloud');
   const indexPath=join(root,'bindings.json');
   let active,stopping,closed=false,stopFailure,batchTask;
+  const speechFailures=new Map();
+  function cachedSpeechFailure(ctx){
+    const stamp=now();
+    for(const [account,failure] of speechFailures)if(failure.retryAt<=stamp)speechFailures.delete(account);
+    return speechFailures.get(ctx.connection.accountScope);
+  }
+  function rememberSpeechFailure(ctx,error){
+    const delay=['auth','balance'].includes(error.category)?300000:15000;
+    error.retryAt=now()+delay;
+    speechFailures.set(ctx.connection.accountScope,minimaxSpeechStatus(error));
+    const rawCode=error.providerCode??error.httpStatus;
+    try{onSpeechFailure({category:error.category,...(rawCode===undefined?{}:{code:rawCode})});}catch{}
+  }
 
   function assertOpen() {if (closed) throw fail('CLOUD_CLOSED','云配音已关闭');if (stopFailure) throw stopFailure;}
   function scope(params={}) {
@@ -186,6 +201,17 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
     active=token;return token;
   }
   async function start(token,ctx,op,payload) {
+    if (op==='speak' && !transport && authorizeSpeech) {
+      const fetchSpeech=network?.fetch?.bind(network)??fetchImpl;
+      if (!fetchSpeech) throw new MiniMaxSpeechError('network');
+      const signal=token.controller.signal;
+      signal.throwIfAborted();
+      await authorizeSpeech({engine:ctx.request.engine,packageId:ctx.request.packageId});
+      signal.throwIfAborted();
+      token.job=launchHttpSpeech(fetchSpeech,{base:providers[ctx.connection.provider],key:ctx.connection.key,model:ctx.connection.model,...payload},{signal});
+      token.resolveReady(token.job);
+      return token.job;
+    }
     const assets=await resolveRuntime({engine:ctx.request.engine,packageId:ctx.request.packageId});
     token.controller.signal.throwIfAborted();
     const base=providers[ctx.connection.provider],networkConfig=network?await network.childNetworkConfig(base):null;
@@ -223,7 +249,11 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
   async function status(params) {
     assertOpen();
     try {
-      const ctx=await context(params);const binding=bindingFor(ctx,await load());
+      const ctx=await context(params);
+      const data=await load();
+      const failure=cachedSpeechFailure(ctx);
+      if(failure)return {...failure,suppressed:true,busy:!!active||!!stopping};
+      const binding=bindingFor(ctx,data);
       const activationState=binding.activatedAt?'activated':binding.preparedAt?'pending':'unknown';
       return {state:'ready',provider:ctx.connection.provider,model:ctx.connection.model,voiceId:binding.voiceId,characterId:ctx.request.characterId,profileId:ctx.request.profileId,profileVersion:ctx.request.profileVersion,activationState,
         message:activationState==='pending'?'云音色已克隆，等待首次正式合成激活；7 天内未激活将过期':'当前角色云音色已绑定',busy:!!active||!!stopping};
@@ -319,9 +349,14 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
     if (typeof params.text!=='string' || !params.text.trim() || Array.from(params.text).length>10000) throw fail('CLOUD_TEXT','云配音文字无效或过长');
     const token=reserve();const onAbort=()=>token.controller.abort();
     params.signal?.addEventListener('abort',onAbort,{once:true});if (params.signal?.aborted) onAbort();
-    let done=false;
+    let done=false,ctx;
     try {
-      const ctx=await context(params,token.controller.signal);const binding=bindingFor(ctx,await load());
+      ctx=await context(params,token.controller.signal);
+      const data=await load();
+      token.controller.signal.throwIfAborted();
+      const failure=cachedSpeechFailure(ctx);
+      if(failure)throw Object.assign(fail(failure.code,failure.message),failure,{suppressed:true});
+      const binding=bindingFor(ctx,data);
       const job=await start(token,ctx,'speak',{voiceId:binding.voiceId,text:params.text,performance:params.performance,speechParts:params.speechParts});
       yield {type:'reference',style:'cloud',source:binding.provenance??'account-voice'};
       for await (const row of job.events) {
@@ -336,13 +371,17 @@ export function createVoiceCloud({dataRoot,resolveRuntime,resolveProfile,resolve
         } else if (row.type==='done') {
           if (row.metrics?.voice_id!==binding.voiceId) throw fail('CLOUD_VOICE','实际云配音音色与当前角色不匹配');
           done=true;
-          await batch.markActivated(ctx,binding.voiceId);
+          if (binding.provenance?.startsWith('approved-reference-clone')) await batch.markActivated(ctx,binding.voiceId);
+          token.controller.signal.throwIfAborted();
           const metrics={cloud:true,provider:ctx.connection.provider,model:ctx.connection.model,voice_id:binding.voiceId};
           for (const name of ['first_pcm_seconds','generation_seconds','audio_seconds','input_text_chunks']) if (Number.isFinite(row.metrics[name]) && row.metrics[name]>=0) metrics[name]=row.metrics[name];
           yield {type:'done',metrics};
         } else throw fail('CLOUD_PROTOCOL','云配音返回了无效数据');
       }
       if (!done) throw fail('CLOUD_INCOMPLETE','云配音没有确认完整尾音');
+    } catch(error) {
+      if(ctx && error instanceof MiniMaxSpeechError && !token.controller.signal.aborted)rememberSpeechFailure(ctx,error);
+      throw error;
     } finally {params.signal?.removeEventListener('abort',onAbort);await finish(token);}
   }
   function stopEngine() {

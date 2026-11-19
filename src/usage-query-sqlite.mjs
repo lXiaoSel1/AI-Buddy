@@ -1,4 +1,4 @@
-import {UsageQuery,normalizedRequest,dateInZone} from './usage-query.mjs';
+import {UsageQuery,normalizedRequest,dateInZone,usageFields} from './usage-query.mjs';
 import {UsageRewardOutbox} from './usage-reward-outbox.mjs';
 const fields=['input','output','cacheRead','cacheWrite','reasoning','total'];
 const dims=['tool','provider','modelVendor','model','workspace','sourceId','purpose','sessionId'];
@@ -69,14 +69,14 @@ export class SqlUsageQuery extends UsageQuery {
   this.sessionQueries=(this.sessionQueries||0)+1;
   const{where,params}=this.filter(c);
   const totalSessions=this.db.prepare(`SELECT COUNT(*) AS n FROM (SELECT tool,sessionId FROM usage_contributions ${where} GROUP BY tool,sessionId)`).get(...params).n;
-  const sums=fields.map(k=>`COALESCE(SUM(${k}),0) AS ${k},SUM(CASE WHEN ${k} IS NULL THEN requests ELSE 0 END) AS missing_${k}`).join(',');
+  const sums=usageFields.map(k=>{const expression=k==='totalInput'?"json_extract(value,'$.usage.totalInput')":k;return `COALESCE(SUM(${expression}),0) AS ${k},SUM(CASE WHEN ${expression} IS NULL THEN requests ELSE 0 END) AS missing_${k}`;}).join(',');
   const sql=`SELECT tool,sessionId,MAX(timestamp) AS lastActivity,MIN(seq) AS position,SUM(requests) AS requests,${sums} FROM usage_contributions ${where} GROUP BY tool,sessionId ORDER BY lastActivity DESC,position LIMIT ? OFFSET ?`;
   const sessions=[];
   // Page only small aggregates. Fetch metadata for those sessions after LIMIT;
   // window-sorting the full JSON payload table would spill hundreds of MiB.
   const match=where?where+' AND tool=? AND sessionId=?':'WHERE tool=? AND sessionId=?';
   const first=this.db.prepare(`SELECT json_extract(value,'$.workspace') AS workspace FROM usage_contributions ${match} ORDER BY seq LIMIT 1`),last=this.db.prepare(`SELECT model,provider FROM usage_contributions ${match} ORDER BY timestamp DESC,seq DESC LIMIT 1`);
-  for(const r of this.db.prepare(sql).iterate(...params,pageSize,(page-1)*pageSize)){const usage={requests:r.requests,fieldMissing:{}};for(const k of fields){usage[k]=r[k];if(r['missing_'+k])usage.fieldMissing[k]=r['missing_'+k];}const f=first.get(...params,r.tool,r.sessionId),l=last.get(...params,r.tool,r.sessionId);sessions.push({key:r.tool+':'+r.sessionId,tool:r.tool,sessionId:r.sessionId,workspace:f.workspace??undefined,model:l.model,serviceProvider:l.provider,usage,lastActivity:r.lastActivity});}
+  for(const r of this.db.prepare(sql).iterate(...params,pageSize,(page-1)*pageSize)){const usage={requests:r.requests,fieldMissing:{}};for(const k of usageFields){usage[k]=r[k];if(r['missing_'+k])usage.fieldMissing[k]=r['missing_'+k];}const f=first.get(...params,r.tool,r.sessionId),l=last.get(...params,r.tool,r.sessionId);sessions.push({key:r.tool+':'+r.sessionId,tool:r.tool,sessionId:r.sessionId,workspace:f.workspace??undefined,model:l.model,serviceProvider:l.provider,usage,lastActivity:r.lastActivity});}
   const value={totalSessions,sessions};c.pageResult={signature,value};return value;
  }
 }

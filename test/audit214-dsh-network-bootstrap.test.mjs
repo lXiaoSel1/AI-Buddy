@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
 import {mkdtemp, mkdir, readFile, writeFile} from 'node:fs/promises';
 import {dirname, join, resolve} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -83,5 +85,60 @@ test('Windows DSH reaches host readiness with the production network preload and
       await writeFile(join(root, 'result.json'), JSON.stringify(evidence, null, 2) + '\n');
       await writeFile(join(root, 'runtime.log'), events.filter(event => event.kind === 'runtime-log').map(event => `[${event.stream}] ${event.text}`).join(''));
     }
+  }
+});
+
+test('DSH shutdown receives plugin close replies until the whole scope is disposed', {timeout: 10000}, async t => {
+  const channel = 'ai-buddy-dsh-platform-v1';
+  const runtime = fileURLToPath(new URL('./support/dsh-r7-shutdown.mjs', import.meta.url));
+  const bootstrap = new URL('../src/network-process-bootstrap.mjs', import.meta.url).href;
+  const inherit = new Set(['SYSTEMROOT', 'WINDIR', 'PATH', 'TEMP', 'TMP']);
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => inherit.has(key.toUpperCase())));
+  const child = spawn(process.execPath, ['--import', bootstrap, runtime], {
+    env: {...env, AI_BUDDY_NETWORK_SETTINGS: JSON.stringify({mode: 'system'})},
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+    windowsHide: true,
+  });
+  const exitDeadlineMs = 5000;
+  const exited = once(child, 'exit').then(([code, signal]) => ({code, signal, at: performance.now()}));
+  const deadline = Promise.withResolvers();
+  let stderr = '';
+  let releases;
+  let shutdownAt;
+  let timer;
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  t.after(async () => {
+    // The owned synthetic child can be released cleanly even on the RED path.
+    if (child.connected) child.disconnect();
+    await exited;
+  });
+  child.on('message', message => {
+    if (message.kind === 'fixture-plugins-open') {
+      shutdownAt = performance.now();
+      child.send({channel, kind: 'request', id: randomUUID(), method: 'runtime.shutdown', params: {}});
+      timer = setTimeout(() => deadline.reject(new Error('DSH did not exit while waiting for plugin close replies')), exitDeadlineMs);
+    } else if (message.kind === 'fixture-plugins-closed') {
+      releases = message.releases;
+    } else if (message.channel === channel && ['social-request', 'voice-games-request'].includes(message.kind)) {
+      const {method, pluginId} = message.params;
+      const result = method === 'open'
+        ? {sessionToken: pluginId, dataDirectory: 'fixture-data', description: {}}
+        : {released: pluginId};
+      child.send({channel, kind: 'buddy-response', id: message.id, result});
+    }
+  });
+  try {
+    const {code, signal, at} = await Promise.race([exited, deadline.promise]);
+    assert.deepEqual([code, signal], [0, null], stderr);
+    assert.ok(Number.isFinite(shutdownAt), 'The fixture must send the production shutdown command');
+    assert.ok(at - shutdownAt <= exitDeadlineMs, 'DSH must exit within five seconds of the shutdown command');
+    assert.deepEqual(releases, [
+      {released: 'fixture-bilibili'},
+      {released: 'fixture-qq'},
+      {released: 'fixture-card'},
+    ], 'Every plugin must receive its actual close reply before the child exits');
+  } finally {
+    clearTimeout(timer);
   }
 });

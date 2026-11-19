@@ -16,7 +16,7 @@ function fixture(t,{admission=()=>new Promise(()=>{}),presentation=()=>({availab
  let personaId='persona',lifeId='life',denyHeavy=false,checked=0;const admitted=[];
  const heavy=()=>{if(denyHeavy)throw Error('voiceOnly must not copy/project/flush the full game');};
  const economy={registerRules(){},recover(){},table(id){if(id!==row.id)throw Error('unknown table');return row;},request(id){if(id==='input:reply')return {state:'completed',result:{text:'public reply'}};return null;},
-  chat(){return {inputAccepted:true};},appendChat(message){if(!row.chat.some(item=>item.id===message.id))row.chat.push({role:'assistant',...message});},
+  chat(){return {inputAccepted:true};},chatPage(){return {messages:structuredClone(row.chat)};},appendChat(message){if(!row.chat.some(item=>item.id===message.id))row.chat.push({role:'assistant',...message});},
   project(){heavy();return {type:'texas',phase:'preflop',handId:'hand',players:[{id:'user',kind:'user'},{id:'ai',kind:'ai'}],board:[],ownHand:[]};},account(){heavy();return {};},relationshipProgress(){heavy();return {};},pendingRelationshipFacts(){heavy();return [];},outbox(){heavy();return [];},list(){heavy();return [row];},commandReceipt(){return null;}};
  const game={gameEconomy:economy,context:()=>({personaId,characterId:'whale'}),pluginScope:()=>({...player,lifeId}),viewState:()=>({characters:[{id:'whale',name:'Whale'}]}),gameContext(){throw Error('No model context or request is allowed');}};
  const service=createCardGameService({getGame:()=>game,getProvider(){throw Error('No model calls are allowed');},onCommittedSpeech:fact=>{admitted.push(fact);return admission(fact);},onSpeechPresentation:presentation});

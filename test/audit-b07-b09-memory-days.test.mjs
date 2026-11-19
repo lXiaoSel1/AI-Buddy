@@ -86,7 +86,12 @@ test('B9: a reply presented while the day-D summary runs is moved to a later day
  const late=lateEvent(f.store);assert.equal(late.day,D);assert.equal(late.lateForDay,D);assert.equal(late.consolidationDay,'2026-10-21');assert.equal(covered(f.store,late.id),false);
  f.clock.value=time('2026-10-22T00:05:00');await f.memory.tick();
  assert.equal(covered(f.store,late.id),true);
- const context=await f.memory.context({characterId:'a',personaId:'p',query:'海'});assert.equal(context.inputEventIds.includes(late.id),false,'no longer sent as raw text every turn');
+ const contextArgs={characterId:'a',personaId:'p',query:'海'};
+ const recent=await f.memory.context(contextArgs);assert(recent.messages.some(row=>row.id===late.id),'a recent reply still helps the conversation across midnight');
+ await f.store.mutate(state=>{
+  for(let index=0;index<20;index++)state.conversations.c.messages.push({id:'newer-'+index,role:'user',text:'后来聊的新话题',createdAt:f.clock.value+index,status:'sent'});
+ });
+ const context=await f.memory.context(contextArgs);assert(!context.messages.some(row=>row.id===late.id),'older unrelated raw text is no longer sent every turn');
 });
 
 test('B9: control — a reply presented after the summary commits is rescheduled as before',async()=>{

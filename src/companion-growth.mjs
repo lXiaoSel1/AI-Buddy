@@ -1,3 +1,4 @@
+import {copyCompanionValue} from './companion-draft.mjs';
 import {createHash} from 'node:crypto';
 import {effectiveCard} from './companion-store.mjs';
 import {socialExperienceHash} from './companion-memory.mjs';
@@ -9,7 +10,7 @@ export const GROWTH_FIELDS=Object.freeze(['personality','interests','likes','dis
 export const GROWTH_LOCKED_FIELDS=Object.freeze(['intro','identity','background','personality','interests','likes','dislikes','tone','selfAddress','speechHabits','address','relationship','meeting','greeting']);
 export const GROWTH_POLICY=Object.freeze({version:1,independentExperiences:3,activeDays:2,deepActiveDays:7,ownExperiences:2,dailyChanges:2,maxDelta:180,maxField:12000});
 const OWN=Object.hasOwn;
-const clone=value=>structuredClone(value);
+const clone=value=>copyCompanionValue(value);
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const plain=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);

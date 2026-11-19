@@ -29,6 +29,11 @@ function event(source,row,meta,path,index,usage,extra={}){
  const requestId=String(extra.requestId??row.requestId??row.message_id??row.id??row.ts??hash([sessionId,index,time,model,usage]));
  const value={sourceId:source.id,tool:source.tool,sessionId,requestId,explicitRequestId:!!(extra.requestId||row.requestId||row.message_id||row.id),timestamp:time,model,serviceProvider:source.aliasProvider||providerFor(model,reported),reportedProvider:reported,workspace:String(extra.workspace??row.workspace??row.cwd??row.path?.cwd??meta.workspace??meta.directories?.[0]??meta.projectHash??''),purpose:source.purpose??row.purpose??'work',usage,mode:source.mode||'request',cacheIncluded:usage.cacheIncluded,reasoningIncluded:usage.reasoningIncluded,subagent:extra.subagent===true||meta.kind==='subagent',status:['running','completed','failed','waiting','paused'].includes(extra.status)?extra.status:'unknown',location:{file:path,index},adapterVersion:1,...extra,timestamp:time,model,serviceProvider:source.aliasProvider||providerFor(model,reported),reportedProvider:reported,requestId,sessionId,connectionIdentity:row.connectionIdentity};return {...value,...resolveIdentity(value,source)};
 }
+function apiCacheUsageMetadata(row){
+ if(row.usage.usageSchemaVersion!==2)return {};
+ const {cacheWriteIncluded,cacheWrite5m,cacheWrite1h,cacheWriteMode,requestedCacheTtl,inputBasis,knownFields,usageSchemaVersion,usageQuality,totalQuality,rawUsage}=row.usage;
+ return {cacheWriteIncluded,cacheWrite5m,cacheWrite1h,cacheWriteMode,requestedCacheTtl,inputBasis,knownFields,usageSchemaVersion,usageQuality,totalQuality,rawUsage,protocol:row.protocol};
+}
 export function parseTokenRecord(source,row,meta,path,index){
  if(!row||typeof row!=='object')return [];
  if(source.tool==='dsh')return parseDshRecord(row,meta).map(record=>record.kind==='task'?{...record,tool:'dsh',sourceId:source.id,sessionId:meta.sessionId,workspace:meta.workspace,subagent:meta.kind==='subagent',timestamp:timestamp(record.time)}:event({...source,aliasProvider:record.provider?'':source.aliasProvider},row,meta,path,index,normalizeTokens(record.usage,{cacheIncluded:false}),{requestId:record.requestId,model:record.model,serviceProvider:record.provider,turnId:record.turn,cacheIncluded:false,usageAuthority:'replace',feedbackEligible:false,status:'unknown'}));
@@ -82,7 +87,7 @@ export function parseTokenRecord(source,row,meta,path,index){
    return [event(source,row,meta,path,index,usage,{requestId,sessionId,mode:known&&row.usageMode==='cumulative'?'cumulative':'request',purpose:row.purpose==='work'?'work':'plugin',status:'unknown',workspace:row.workspace??'',model:row.model??'',serviceProvider:row.provider??'',explicitRequestId:!!row.nativeRequestId,qualityNote:known?undefined:(row.qualityReasons??[]).join(', '),pluginId:row.pluginId,nativeEngine:row.engine,nativeSessionId:row.nativeSessionId,usageMode:row.usageMode,usageOrigin:row.origin,accounting:row.accounting,sourceEvidenceId:row.sourceEvidenceId,feedbackEligible:false})];
   }
   if(!row.usage)return [];
-  return [event(source,row,meta,path,index,normalizeTokens(row.usage),{requestId:row.requestId||hash([row.sessionId,row.timestamp,row.usage]),sessionId:row.sessionId||row.requestId||basename(path),mode:row.mode==='cumulative'||row.provider==='codex'?'cumulative':'request',purpose:row.purpose||source.purpose||'galgame',status:'unknown',activityOriginId:row.activityOriginId,scope:row.scope,rewardManagedBy:row.rewardManagedBy,cgJobId:row.cgJobId,usageReceiptId:row.usageReceiptId})];
+  return [event(source,row,meta,path,index,normalizeTokens(row.usage,{cacheIncluded:row.usage.cacheIncluded}),{...apiCacheUsageMetadata(row),requestId:row.requestId||hash([row.sessionId,row.timestamp,row.usage]),sessionId:row.sessionId||row.requestId||basename(path),mode:row.mode==='cumulative'||row.provider==='codex'?'cumulative':'request',purpose:row.purpose||source.purpose||'galgame',status:'unknown',activityOriginId:row.activityOriginId,scope:row.scope,rewardManagedBy:row.rewardManagedBy,cgJobId:row.cgJobId,usageReceiptId:row.usageReceiptId})];
  }
  return [];
 }

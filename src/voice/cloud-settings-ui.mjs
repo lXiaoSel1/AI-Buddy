@@ -1,5 +1,6 @@
 import React,{useEffect,useId,useRef,useState} from 'react';
 import {t,locale} from '../i18n.mjs';
+import {minimaxSpeechMessage} from './minimax-speech-errors.mjs';
 import {CloudDesignDialog,CloudCharacterFace,cloudCharacterId,cloudCharacterLabel,cloudIcon} from './cloud-design-ui.mjs';
 import {VOICE_PLUGINS} from './design-ui.mjs';
 import {cloudVoiceReady} from './cloud-readiness.mjs';
@@ -16,6 +17,8 @@ const safeVoiceId=value=>typeof value==='string'&&/^[a-zA-Z0-9_.:-]{1,256}$/.tes
 const categoryLabels={system_voice:'系统音色',voice_cloning:'克隆音色',voice_generation:'设计音色'};
 const accountReasons={CLOUD_REMOTE_1008:'MiniMax 余额不足，请充值后手动重试',CLOUD_REMOTE_1004:'MiniMax 鉴权失败，请检查 API Key 和账号权限',CLOUD_REMOTE_1002:'MiniMax 请求频率受限，请稍后手动重试'};
 export function cloudVoiceError(error){
+  const speechReason=error?.category&&minimaxSpeechMessage(error,t);
+  if(speechReason)return speechReason;
   const code=/^(?:CLOUD|VOICE)_[A-Z0-9_]{1,80}$/.test(error?.code??'')?error.code:'';
   if(code==='CLOUD_PROFILE_REQUIRED')return t('还没有声音档案');
   const message=accountReasons[code]??(code.startsWith('CLOUD_REMOTE')?'MiniMax 请求未成功，请检查账户状态和音色权限':typeof error?.message==='string'?error.message:typeof error==='string'?error:'云配音操作未完成，请检查配置后重试');

@@ -32,9 +32,12 @@ test('first enable prepares the selected local engine and shared resources befor
  assert.equal((await f.host.action('state')).preparation.state,'ready');
 });
 
-test('cloud first enable prepares shared resources with the cloud selection only',async t=>{
+test('cloud first enable skips local preparation, and Live still prepares shared resources',async t=>{
  const f=await fixture(t,{provider:'minimax'});await f.host.action('configure',{enabled:true});
- assert.equal(f.prepared.length,1);assert.equal(f.prepared[0].provider,'minimax');assert.equal(f.loaded[0].speechProvider,'minimax');
+ assert.deepEqual(f.prepared,[]);assert.deepEqual(f.loaded,[]);
+ await f.host.action('prepare',{target:'live'});
+ assert.equal(f.prepared.length,1);assert.equal(f.prepared[0].provider,'minimax');
+ assert.equal(f.loaded[0].speechProvider,'minimax');assert.equal(f.loaded[0].target,'live');
  assert.equal(f.imports.length,0);
 });
 
@@ -60,8 +63,12 @@ for(const change of ['provider','engine'])test('changing '+change+' cancels its 
  const changed=f.host.action('configure',change==='provider'?{packages:{[ids[0]]:{ttsProvider:'minimax'}}}:{selectedPackageId:ids[1]});
  await new Promise(resolve=>setImmediate(resolve));assert.equal(f.prepared[0].signal.aborted,true);
  f.release();await changed;await enable;
- assert.equal(f.prepared.length,2);assert.equal(f.loaded.length,1);
- assert.equal(f.loaded[0].packageId,change==='provider'?ids[0]:ids[1]);assert.equal(f.loaded[0].speechProvider,change==='provider'?'minimax':'local');
+ if(change==='provider'){
+  assert.equal(f.prepared.length,1);assert.deepEqual(f.loaded,[]);
+ }else{
+  assert.equal(f.prepared.length,2);assert.equal(f.loaded.length,1);
+  assert.equal(f.loaded[0].packageId,ids[1]);assert.equal(f.loaded[0].speechProvider,'local');
+ }
 });
 
 test('Download has no folder picker and offline Import explicitly chooses a folder',async t=>{
@@ -71,7 +78,7 @@ test('Download has no folder picker and offline Import explicitly chooses a fold
  assert.equal(f.imports[1],'choose');assert.equal(f.imports[2].localRoot,'E:\\fixture');
 });
 
-for(const provider of ['local','minimax'])test(provider+' first enable reaches real assets with streamed bytes and leaves the other engine missing',async t=>{
+for(const provider of ['local','minimax'])test(provider+' first enable downloads only the components required for ordinary speech',async t=>{
  const root=await mkdtemp(join(tmpdir(),'voice-host-download-r16-')),records={},requests=[];
  for(const kind of ['asr','breeze','gpt']){
   const directory=join(root,kind),bytes=Buffer.from(kind+' fixture');await mkdir(directory);
@@ -81,7 +88,10 @@ for(const provider of ['local','minimax'])test(provider+' first enable reaches r
  const assets=createVoiceAssets({dataRoot:root,resolveVoicePackage:async id=>({...records[id===ids[0]?'breeze':'gpt'],shared:records.asr}),fetchImpl:async url=>{requests.push(String(url));const bytes=Buffer.from(String(url).split('/').at(-1)+' fixture');return new Response(new ReadableStream({start(stream){stream.enqueue(bytes.subarray(0,2));stream.enqueue(bytes.subarray(2));stream.close();}}));}});
  const f=await fixture(t,{provider,assetsOverride:assets});t.after(async()=>{await assets.close();await rm(root,{recursive:true,force:true});});
  await f.host.action('configure',{enabled:true});
- assert.deepEqual(requests,provider==='local'?['https://fixture.example/asr','https://fixture.example/breeze']:['https://fixture.example/asr']);
- assert.equal((await assets.status('gpt',ids[1])).state,'missing');assert.equal(f.loaded.length,1);
- if(provider==='minimax')assert.equal((await assets.status('breeze',ids[0])).state,'missing');
+ assert.deepEqual(requests,provider==='local'?['https://fixture.example/asr','https://fixture.example/breeze']:[]);
+ assert.equal((await assets.status('gpt',ids[1])).state,'missing');assert.equal(f.loaded.length,provider==='local'?1:0);
+ if(provider==='minimax'){
+  assert.equal((await assets.status('asr',ids[0])).state,'missing');
+  assert.equal((await assets.status('breeze',ids[0])).state,'missing');
+ }
 });

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {join} from 'node:path';
 import {createCompanionService} from '../src/companion-service.mjs';
 import {createGalgame} from '../src/galgame-host.mjs';
+import {openCompanionStore} from '../src/companion-store.mjs';
 import {createSnapshotStorage,readJson} from '../src/storage.mjs';
 import {tmpDir,memoryStore,syntheticEngine,companionFixture} from './support/audit-harness.mjs';
 
@@ -42,15 +43,15 @@ test('B12: a line the engine adds later arrives once; a deleted copy does not co
 });
 
 test('B12: real engine — restarts and new conversations keep one copy, and pre-life CGs stay visible',async t=>{
- const dataRoot=tmpDir('b12-real',{t}),p={enabled:false,currentSelection:()=>({provider:'fixture',model:'fixture'}),listProviders:()=>[{id:'fixture'}],listModels:()=>[{id:'fixture'}]};
- const companion=async()=>readJson(createSnapshotStorage(join(dataRoot,'galgame','companion.json')),null);
- let g=await createGalgame({dataRoot,provider:p,model:'fixture'});const current=(await g.action('view')).current;await g.close();
+ let g;const dataRoot=tmpDir('b12-real',{t,beforeRemove:()=>g?.close()}),p={enabled:false,currentSelection:()=>({provider:'fixture',model:'fixture'}),listProviders:()=>[{id:'fixture'}],listModels:()=>[{id:'fixture'}]};
+ const companion=async()=>{const store=await openCompanionStore(dataRoot);try{return await store.snapshotAsync();}finally{await store.close();}};
+ g=await createGalgame({dataRoot,provider:p,model:'fixture'});const current=(await g.action('view')).current;await g.close();
  const legacyStore=createSnapshotStorage(join(dataRoot,'galgame','storages','dsh-whale-galgame','global.json')),legacy=await readJson(legacyStore,null);
  legacy.characters[current].chatLines=[...(legacy.characters[current].chatLines??[]),{who:'user',text:'旧版本里的一句话'},{who:'heroine',text:'旧版本里的回答'}];
  legacy.characters[current].cgs=[{id:'legacy-cg',status:'ready',at:1,level:2,dataUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII='}];
  await legacyStore.writeText(JSON.stringify(legacy));
  // A store written by 1.9.0 still has the flag on: the next start imports, then turns it off.
- const store=createSnapshotStorage(join(dataRoot,'galgame','companion.json')),before=await companion();before.lives[current].legacyImportEnabled=true;await store.writeText(JSON.stringify(before));
+ const store=await openCompanionStore(dataRoot);try{await store.mutate(state=>{state.lives[current].legacyImportEnabled=true;});}finally{await store.close();}
  const copies=async()=>{const s=await companion();return Object.values(s.conversations).filter(c=>c.characterId===current).reduce((n,c)=>n+c.messages.filter(m=>m.text==='旧版本里的一句话').length,0);};
  const rows=[];
  g=await createGalgame({dataRoot,provider:p,model:'fixture'});await g.action('companion-state');assert.ok((await g.action('cg-gallery',{characterId:current})).items.some(cg=>cg.id==='legacy-cg'));await g.close();rows.push(await copies());

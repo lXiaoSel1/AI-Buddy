@@ -6,15 +6,20 @@ import {join} from 'node:path';
 import {createSnapshotStorage,readJson} from './storage.mjs';
 import {MODEL_PRESETS,API_PROTOCOLS,presetFor,apiBaseUrl,localEndpoint} from './model-presets.mjs';
 import {ApiTransport} from './api-transport.mjs';
+import {supportsKimiCacheTtl} from './api-cache-capabilities.mjs';
 import {profileEffort,validateProfileEffort,cleanModelCatalog} from './reasoning-settings.mjs';
-import {nativeSearchCapability,nativeSearchSystem} from './native-search.mjs';
+import {modelSystemForSearch,nativeSearchCapability} from './native-search.mjs';
 import {ModelImageProbe} from './model-image-probe.mjs';
-const turnCancelled=()=>Object.assign(Error('对话已取消'),{code:'ABORT_ERR'});
+const turnCancelled=cause=>Object.assign(Error('对话已取消',cause?{cause}:undefined),{code:'ABORT_ERR'});
+const chatDisabled=()=>Object.assign(Error('联网聊天关闭'),{code:'R95_MODEL_DISABLED'});
+const cancelledTurn=signal=>signal?.reason?.cause?.code==='R95_MODEL_DISABLED'?signal.reason:turnCancelled();
 export class ModelRouter{
   #imageProbes;
+  #notifyBackgroundTurns;
   get supportsSubmissionLifecycle(){return true;}
-  constructor({codex,dataRoot,crypto,legacy=false,onChange=()=>{},onUsage=()=>{},onActivity=()=>{},audit=()=>{},fetchImpl,timeoutMs=110000,gameIdleTimeoutMs=120000,storeName='model-connections.json',presets=MODEL_PRESETS,protocols=API_PROTOCOLS,outputLimit=()=>8192,searchPolicy=()=>false,onNativeSearch=()=>{}}){
+  constructor({codex,dataRoot,crypto,legacy=false,onChange=()=>{},notifyBackgroundTurns=true,onUsage=()=>{},onActivity=()=>{},audit=()=>{},fetchImpl,timeoutMs=110000,gameIdleTimeoutMs=120000,storeName='model-connections.json',presets=MODEL_PRESETS,protocols=API_PROTOCOLS,outputLimit=()=>8192,searchPolicy=()=>false,onNativeSearch=()=>{}}){
     if(!Number.isSafeInteger(gameIdleTimeoutMs)||gameIdleTimeoutMs<1||gameIdleTimeoutMs>2147483647)throw RangeError('Invalid game model idle timeout');
+    this.#notifyBackgroundTurns=notifyBackgroundTurns;
     Object.assign(this,{codex,dataRoot,crypto,onChange,onActivity,audit,timeoutMs,gameIdleTimeoutMs,presets,protocols,outputLimit,searchPolicy,onNativeSearch});this.store=createSnapshotStorage(join(dataRoot,storeName));this.#imageProbes=new ModelImageProbe({dataRoot});this.enabled=false;this.activeTurns=0;this.turns=new Set();this.controllers=new Set();this.context=new AsyncLocalStorage();this.tail=Promise.resolve();this.transport=new ApiTransport({fetchImpl,onUsage,audit});
     this.ready=readJson(this.store,null).then(async value=>{await this.#imageProbes.ready;this.state=value??{version:1,activeId:legacy?'codex':null,profiles:legacy?[{id:'codex',kind:'codex',name:'本机 Codex 登录',protocol:'codex',baseUrl:'',model:codex.defaultModel,models:[]}]:[]};if(!value)await this.store.writeText(JSON.stringify(this.state));return this;});
   }
@@ -25,7 +30,7 @@ export class ModelRouter{
   get currentName(){return this.selected()?.name??'尚未选择模型';}
   get currentKind(){return this.selected()?.kind??null;}
   status(){return {enabled:this.enabled,model:this.defaultModel,provider:this.currentKind,name:this.currentName,busy:[...this.turns].some(turn=>turn.priority===0)};}
-  publicProfile(profile){return {id:profile.id,kind:profile.kind,name:profile.name,protocol:profile.protocol,baseUrl:profile.baseUrl,model:profile.model,models:profile.models??[],...(this.protocols===API_PROTOCOLS?{reasoningEffort:profileEffort(profile),contextTokens:profile.contextTokens??null,imageCapability:this.imageCapability(profile)}:{}),...(profile.region?{region:profile.region}:{}),keyConfigured:!!profile.keyCiphertext};}
+  publicProfile(profile){return {id:profile.id,kind:profile.kind,name:profile.name,protocol:profile.protocol,baseUrl:profile.baseUrl,model:profile.model,models:profile.models??[],...(this.protocols===API_PROTOCOLS?{reasoningEffort:profileEffort(profile),contextTokens:profile.contextTokens??null,imageCapability:this.imageCapability(profile)}:{}),...(profile.region?{region:profile.region}:{}),...(supportsKimiCacheTtl(profile)?{kimiCacheTtl:profile.kimiCacheTtl==='1h'?'1h':'5m'}:{}),keyConfigured:!!profile.keyCiphertext};}
   view(){return {...this.status(),codexModel:this.codex.defaultModel,activeId:this.state.activeId,presets:this.presets,profiles:this.state.profiles.map(profile=>this.publicProfile(profile))};}
   async mutate(fn){const result=this.tail.then(async()=>{await this.ready;const previous=this.state,next=structuredClone(previous);const value=await fn(next);await this.store.writeText(JSON.stringify(next));this.state=next;this.onChange(this.view());return value??this.view();});this.tail=result.catch(()=>{});return result;}
   validateDraft(draft,previous=null){
@@ -46,6 +51,11 @@ export class ModelRouter{
       profile.contextTokens=capacity==null||capacity===''?null:Number(capacity);
       profile.reasoningEffort=profileEffort({...profile,...(Object.hasOwn(draft,'reasoningEffort')?{reasoningEffort:draft.reasoningEffort}:previous&&Object.hasOwn(previous,'reasoningEffort')?{reasoningEffort:previous.reasoningEffort}:{})});
       validateProfileEffort(profile);
+      if(supportsKimiCacheTtl(profile)){
+        const ttl=draft.kimiCacheTtl??(previous&&supportsKimiCacheTtl(previous)?previous.kimiCacheTtl:null)??'5m';
+        if(ttl!=='5m'&&ttl!=='1h')throw Error('Kimi 缓存时长只能选 5 分钟或 1 小时');
+        profile.kimiCacheTtl=ttl;
+      }
     }
     return profile;
   }
@@ -55,7 +65,7 @@ export class ModelRouter{
   async remove(id){return this.mutate(state=>{this.unlocked(id);if(!state.profiles.some(profile=>profile.id===id))throw Error('连接不存在');this.cancelBackground(id);state.profiles=state.profiles.filter(profile=>profile.id!==id);if(state.activeId===id){state.activeId=null;this.setEnabled(false);}});}
   materialize(profile){if(!profile||!profile.model)throw Error('请先选择连接并填写模型 ID');if(profile.kind==='codex')return {...profile};let key='';if(profile.keyCiphertext){try{key=this.crypto.decryptString(Buffer.from(profile.keyCiphertext,'base64'));}catch{throw Error('API Key 无法解密，请重新填写');}}if(!key&&!localEndpoint(profile.baseUrl))throw Error('请先填写 API Key');return {...profile,key};}
   async activate(id){return this.mutate(state=>{this.unlocked();const profile=state.profiles.find(value=>value.id===id);this.materialize(profile);if(state.activeId!==id)this.cancelBackground(state.activeId);state.activeId=id;if(this.codex.enabled)this.codex.setEnabled(false);});}
-  setEnabled(value){if(value)this.materialize(this.selected());this.enabled=!!value;if(!this.enabled){for(const turn of this.turns)turn.controller.abort(turnCancelled());for(const controller of this.controllers)controller.abort();this.codex.setEnabled(false);}this.onChange(this.state?this.view():null);}
+  setEnabled(value){if(value)this.materialize(this.selected());this.enabled=!!value;if(!this.enabled){for(const turn of this.turns)turn.controller.abort(turnCancelled(chatDisabled()));for(const controller of this.controllers)controller.abort();this.codex.setEnabled(false);}this.onChange(this.state?this.view():null);}
   listProviders(){return this.state.profiles.map(profile=>({id:profile.id,name:profile.name}));}
   listModels(id){const profile=this.state.profiles.find(value=>value.id===id);if(!profile)return [];return [...(profile.models??[]),...(profile.model&&!(profile.models??[]).some(value=>value.id===profile.model)?[{id:profile.model,name:profile.model}]:[])].map(model=>({...model,...(this.protocols===API_PROTOCOLS?{imageCapability:this.imageCapability({...profile,model:model.id})}:{})}));}
   resolveModelInfo(providerId,modelId){const profile=this.selected()?.id===providerId?this.selected():this.state.profiles.find(p=>p.id===providerId),effort=profileEffort(profile);return {reasoning:{efforts:effort?[{id:effort}]:[]}};}
@@ -76,11 +86,14 @@ export class ModelRouter{
   async runCaptured(profile,fn,signal,{background=false}={}){await this.ready;if(!profile)throw Error('聊天连接不存在');return this.scheduleTurn(profile,fn,background?1:0,signal);}
   async runProfile(id,fn,signal,{background=false}={}){await this.ready;const profile=this.state.profiles.find(p=>p.id===id);if(!profile)throw Error('角色关联的聊天连接不存在');const route=this.resolveConnection({enabled:true,connectionId:id});if(route.error)throw Error(route.error);return this.scheduleTurn(profile,fn,background?1:0,signal);}
   async runBackground(profile,fn,signal){await this.ready;return this.scheduleTurn(profile,fn,1,signal);}
+  #notifyTurnChange(priority){
+    if(priority!==1||this.#notifyBackgroundTurns)this.onChange(this.view());
+  }
   // One serial lane per connection: a background job on one provider never
   // delays chat on another, and chat (priority 0) runs before queued
   // background work (priority 1) on the same connection.
   scheduleTurn(profile,fn,priority,signal){
-    if(signal?.aborted)return Promise.reject(turnCancelled());
+    if(signal?.aborted)return Promise.reject(cancelledTurn(signal));
     const captured=structuredClone(profile);this.materialize(captured);
     this.lanes??=new Map();const key=captured.id??captured.kind??'default';let lane=this.lanes.get(key);if(!lane)this.lanes.set(key,lane={queue:[],running:false,executing:null});
     const controller=new AbortController();signal=signal?AbortSignal.any([signal,controller.signal]):controller.signal;
@@ -92,9 +105,9 @@ export class ModelRouter{
     return new Promise((resolve,reject)=>{
       const turn={profile:captured,execute,priority,signal,controller,resolve,reject,abort:()=>{
         const index=lane.queue.indexOf(turn);if(index<0)return;
-        lane.queue.splice(index,1);signal?.removeEventListener('abort',turn.abort);this.turns.delete(turn);this.activeTurns--;reject(turnCancelled());this.onChange(this.view());
+        lane.queue.splice(index,1);signal?.removeEventListener('abort',turn.abort);this.turns.delete(turn);this.activeTurns--;reject(cancelledTurn(signal));this.#notifyTurnChange(priority);
       }};
-      this.turns.add(turn);lane.queue.push(turn);this.onChange(this.view());signal?.addEventListener('abort',turn.abort,{once:true});
+      this.turns.add(turn);lane.queue.push(turn);this.#notifyTurnChange(priority);signal?.addEventListener('abort',turn.abort,{once:true});
       if(signal?.aborted)turn.abort();
       queueMicrotask(()=>this.pumpTurns(lane));
     });
@@ -102,7 +115,7 @@ export class ModelRouter{
   async pumpTurns(lane){
     if(lane.running)return;lane.running=true;
     try{while(lane.queue.length){lane.queue.sort((a,b)=>a.priority-b.priority);const turn=lane.queue.shift();turn.signal?.removeEventListener('abort',turn.abort);lane.executing=turn.profile.id;
-      try{if(turn.signal?.aborted)throw turnCancelled();const result=await turn.execute();if(turn.signal?.aborted)throw turnCancelled();turn.resolve(result);}catch(error){turn.reject(error);}finally{lane.executing=null;this.turns.delete(turn);this.activeTurns--;this.onChange(this.view());}
+      try{if(turn.signal?.aborted)throw cancelledTurn(turn.signal);const result=await turn.execute();if(turn.signal?.aborted)throw cancelledTurn(turn.signal);turn.resolve(result);}catch(error){turn.reject(error);}finally{lane.executing=null;this.turns.delete(turn);this.activeTurns--;this.#notifyTurnChange(turn.priority);}
     }}finally{lane.running=false;}
   }
   requestController(signal,timeout=this.timeoutMs,{idle=false}={}){
@@ -114,14 +127,23 @@ export class ModelRouter{
   }
   async *stream(options){
     options={...this.requestContext?.getStore(),...options};
-    await this.ready;if(!this.enabled)throw Error('联网聊天已关闭');const profile=this.materialize(this.selected()),turnSignal=this.context.getStore()?.signal,signal=turnSignal&&options.signal?AbortSignal.any([turnSignal,options.signal]):turnSignal??options.signal;const idle=true,request=this.requestController(signal,options.gameBinding?this.gameIdleTimeoutMs:this.timeoutMs,{idle});
+    await this.ready;if(!this.enabled)throw Object.assign(Error('联网聊天已关闭'),{code:'R95_MODEL_DISABLED'});const profile=this.materialize(this.selected()),turnSignal=this.context.getStore()?.signal,signal=turnSignal&&options.signal?AbortSignal.any([turnSignal,options.signal]):turnSignal??options.signal;const idle=true,request=this.requestController(signal,options.gameBinding?this.gameIdleTimeoutMs:this.timeoutMs,{idle});
     const activityId='chat:'+randomUUID(),activity={id:activityId,kind:options.purpose==='cg-theme'?'cg-theme':'chat',purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId};this.onActivity({...activity,active:true});
     try{
       const selectedPolicy=(options.singleSubmission===true||options.gameBinding)?false:await this.searchPolicy({profile:this.publicProfile(profile),purpose:options.purpose??'galgame',activityOriginId:options.activityOriginId}),policy=selectedPolicy===true?{allowed:true}:selectedPolicy&&typeof selectedPolicy==='object'?selectedPolicy:{allowed:false},capability=nativeSearchCapability(profile);
-      // Only the Core callback grants this lane; serializable caller fields do not. A granted turn's prompt says
-      // so plainly and no longer carries the companion rule's blanket tool ban (nativeSearchSystem).
-      const allowed=policy.allowed===true&&capability.supported,scoped={...options,nativeSearch:allowed?{allowed:true,check:policy.check}:undefined,...(allowed?{system:nativeSearchSystem(options.system)}:{}),...idle&&{onStreamActivity:request.reset}};
-      if(policy.allowed===true&&!capability.supported){yield {type:'native-search-status',status:'unavailable',capability,reason:capability.reason};if(policy.required)throw Object.assign(Error(capability.reason),{code:'NATIVE_SEARCH_UNAVAILABLE'});scoped.system=(options.system??'')+'\n当前连接的原生联网能力尚未可用。本次不能声称已经联网核实；需要时明确说明未完成核验。';}
+      // Only policy grants tools. A private summary can reuse the prior
+      // system wording without inheriting its search capability.
+      const allowed=policy.allowed===true&&capability.supported;
+      const replay=options.singleSubmission===true&&options.purpose==='chat-window-compact'&&options.cacheContext?.kind==='private';
+      const mode=allowed?'available':policy.allowed===true?'unavailable':'plain';
+      const system=modelSystemForSearch(options.system,replay?options.replayWireSystemMode:mode);
+      const scoped={...options,system,nativeSearch:allowed?{allowed:true,check:policy.check}:undefined,...idle&&{onStreamActivity:request.reset}};
+      if(policy.allowed===true&&!capability.supported){
+        yield {type:'native-search-status',status:'unavailable',capability,reason:capability.reason};
+        if(policy.required)throw Object.assign(Error(capability.reason),{code:'NATIVE_SEARCH_UNAVAILABLE'});
+      }
+      if(profile.kind==='codex')options.observeWireSystemMode?.(mode,!allowed);
+      else if(options.observeWireSystemMode)scoped.observeWireInput=reusable=>options.observeWireSystemMode(mode,reusable);
       if(profile.kind==='codex'){this.codex.setEnabled(true);const args={...scoped,connectionIdentity:connectionIdentity(profile),model:profile.model,reasoningEffort:profileEffort(profile),signal:request.controller.signal};yield* this.observeNativeSearch(this.codex.streamForConnection?this.codex.streamForConnection(profile.id,args):this.codex.stream(args),scoped);}else yield* this.observeNativeSearch(this.streamWithRetry(profile,scoped,request.controller.signal),scoped);
       request.controller.signal.throwIfAborted();
     }catch(error){const reason=request.controller.signal.reason;if(reason?.code==='ABORT_ERR'||idle&&reason?.code==='GAME_MODEL_TIMEOUT')throw reason;throw error;}
@@ -166,5 +188,10 @@ export class ModelRouter{
   async fetchModels(draft){await this.ready;const profile=this.draftProfile({...draft,reasoningEffort:null});if(profile.kind==='codex')return cleanModelCatalog(await this.codex.fetchModels());const request=this.requestController(null,15000);try{return await this.transport.listModels({...this.materialize({...profile,model:profile.model||'model-list'})},request.controller.signal);}finally{request.dispose();}}
   async test(draft){await this.ready;const profile=this.materialize(this.draftProfile(draft));if(profile.kind==='codex')throw Error('本机 Codex 请在 Galgame 手动开启聊天验证');const request=this.requestController();try{let output='';for await(const part of this.transport.stream(profile,{messages:[{role:'user',content:'请只回复：连接成功'}],maxTokens:2048,purpose:'connection-test',signal:request.controller.signal}))if(part.type==='text-delta')output+=part.text;return {ok:true,message:'连接成功',model:profile.model};}finally{request.dispose();}}
   async saveModels(id,models){return this.mutate(state=>{const profile=state.profiles.find(value=>value.id===id);if(profile)profile.models=cleanModelCatalog(models);});}
-  close(){this.setEnabled(false);}
+  commitPrivateThread(requestId,metadata){return this.codex.commitPrivateThread?.(requestId,metadata);}
+  discardPrivateThread(requestId){return this.codex.discardPrivateThread?.(requestId);}
+  markPrivateThreadsForDeletion(selector){return this.codex.markPrivateThreadsForDeletion?.(selector);}
+  deletePrivateThreads(selector){return this.codex.deletePrivateThreads?.(selector);}
+  releasePrivateThreads(selector){return this.codex.releasePrivateThreads?.(selector);}
+  async close(){this.setEnabled(false);await this.codex.close?.();}
 }

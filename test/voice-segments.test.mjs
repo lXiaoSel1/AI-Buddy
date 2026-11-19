@@ -61,3 +61,24 @@ test('legacy plain dialogue and old group JSON remain usable', () => {
   assert.deepEqual(seen.map(row=>row.performance.emotion), ['neutral','neutral']);
 });
 
+
+test('voice reads only dialogue and preserves the tagged expression through subsequent unmarked segments', () => {
+  const seen = [];
+  const decoder = createVoiceSegmentDecoder({onSegment: segment => seen.push(segment)});
+  decoder.feed('{"type":"segment","text":"[[emotion:温柔]]我听着呢。","performance":{"emotion":"angry"}}\n{"type":"segment","text":"继续说吧。"}\n{"type":"segment","text":"[[emotion:invalid]]懂了。"}\n{"type":"control","emotion":"normal"}');
+  assert.equal(decoder.finish().text, '我听着呢。继续说吧。懂了。');
+  assert.deepEqual(seen.map(({text,visualEmotion})=>({text,visualEmotion})), [
+    {text:'我听着呢。',visualEmotion:'gentle'}, {text:'继续说吧。',visualEmotion:'gentle'}, {text:'懂了。',visualEmotion:'normal'},
+  ]);
+  assert.equal(seen[0].performance.emotion, 'angry', 'visual tags do not overwrite TTS performance');
+});
+
+test('legacy TTS performance is independent of its visual whole-reply emotion',()=>{
+  const segments=[];
+  const decoder=createVoiceSegmentDecoder({onSegment:row=>segments.push(row)});
+  decoder.feed('{"type":"segment","text":"过去是这样。","performance":{"emotion":"sad"}}\n{"type":"segment","text":"现在也是。","performance":{"emotion":"happy"}}\n');
+  assert.deepEqual(segments.map(row=>row.performance.emotion),['sad','happy']);
+  assert.deepEqual(segments.map(row=>row.visualEmotion),['normal','normal']);
+  decoder.feed('{"type":"control","emotion":"angry"}');
+  assert.equal(decoder.finish().emotion,'angry');
+});

@@ -13,3 +13,34 @@
 .vx-cloud .vx-vfilter .ui-seg button{white-space:nowrap}
 .vx-cloud .vx-vfilter .ui-icon-btn{flex:none}
 .vx-cloud .vx-vfilter .vx-search{min-width:0}
+
+/* W · built-in cloud voice */
+.ui-alert.cv-info{background:color-mix(in srgb,var(--buddy-accent) 10%,var(--buddy-surface));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--buddy-accent) 32%,transparent)}
+.ui-alert.cv-info>.ui-icon,.ui-alert.cv-info>div>b{color:var(--buddy-accent-text)}
+.vx-notice{align-items:center}
+.vx-notice>div{flex:1;min-width:0;display:grid;gap:2px}
+.cv-facts{list-style:none;margin:14px 0 10px;padding:0;display:grid;gap:0;border-radius:var(--buddy-r-btn-s);box-shadow:inset 0 0 0 1px var(--buddy-dlg-border)}
+.cv-facts li{display:grid;grid-template-columns:5.5em 1fr auto;align-items:center;gap:12px;padding:10px 14px;font-size:var(--buddy-fs-sm);line-height:1.55}
+.cv-facts li+li{border-top:1px solid var(--buddy-dlg-border)}
+.cv-facts b{color:var(--buddy-dlg-muted);font-weight:600}
+.bc-logo{background:color-mix(in srgb,var(--buddy-accent) 20%,var(--buddy-surface2));color:var(--buddy-accent-text)}
+.bc-page .vx-keepalive{padding:10px 20px}
+.bc-page .mk-grow{flex:1;min-width:0}
+.bc-page .bc-character-select{display:inline-flex;align-items:center;gap:10px;border:0;background:transparent;color:inherit;padding:0;font:inherit;cursor:pointer;white-space:nowrap}
+.bc-page .bc-character-select:hover b,.bc-page .bc-character-select:focus-visible b{color:var(--buddy-accent-text)}
+.bc-page .vx-keepalive .ws-srow{padding:0;border:0}
+.bc-page .vx-compalert>.ui-btn{flex:none}
+.bc-modal .vx-compalert>.ui-btn{flex:none}
+@media(max-width:540px){.bc-modal .cv-needplug{flex-wrap:wrap}.bc-modal .cv-needplug>div{flex-basis:80%}}
+.bc-page .vx-voices-f{justify-content:flex-start}
+.bc-page .vx-crow>b{flex:none}
+.bc-page .vx-crow .vx-cst{white-space:normal;text-align:right}
+.bc-page .vx-cfgcard .ui-pill{flex:none}
+
+.bc-accounts .vx-cfglist{list-style:none;padding:0;display:grid;gap:6px}
+.bc-accounts .vx-vrow{flex-wrap:wrap}
+.bc-accounts .vx-vrow>div{flex:1;min-width:130px}
+.bc-accounts .vx-sec-h>h4{margin:0}
+.bc-accounts .ui-alert{margin-bottom:14px}
+.vx-cloud-dialog.bc-modal{position:fixed;inset:0;margin:auto;max-width:calc(100vw - 36px);max-height:calc(100dvh - 40px)}
+.bc-page .vx-eng-acts .ui-btn.ghost,.bc-page .vx-sec-h .ui-btn.ghost,.bc-page .vx-compprog .ui-btn.ghost{color:var(--buddy-accent-text)}

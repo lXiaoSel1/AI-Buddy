@@ -1,12 +1,13 @@
 import {createHash} from 'node:crypto';
 export const REWARD_UNITS_PER_POINT=10000;
 const safe=n=>Number.isSafeInteger(n)&&n>=0;
-const text=(value,label)=>{if(typeof value!=='string'||!value||value.length>512)throw Error(label+'无效');return value;};
+const fail=(message,code)=>Object.assign(Error(message),{code});
+const text=(value,label)=>{if(typeof value!=='string'||!value||value.length>512)throw fail(label+'无效','REWARD_ID_INVALID');return value;};
 export function normalizeRewardFact(raw,{trusted=false,baseline=raw?.baseline===true}={}){
  if(trusted!==true)throw Object.assign(Error('积分只接受本体核验的可信用量事实'),{code:'REWARD_TRUST_REQUIRED'});
- if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('用量事实无效');
+ if(!raw||typeof raw!=='object'||Array.isArray(raw))throw fail('用量事实无效','REWARD_FACT_INVALID');
  const id=text(raw.canonicalRequestId,'规范请求身份'),revision=raw.revision??1;
- if(!safe(revision))throw Error('用量修订版本无效');
+ if(!safe(revision))throw fail('用量修订版本无效','REWARD_REVISION_INVALID');
  if(raw.accounting==='child-detail'||raw.monitorDisposition&&raw.monitorDisposition!=='count'||raw.billable===false||raw.replay===true)return {accepted:false,id,reason:'diagnostic-or-replay'};
  const basis=raw.basis??'actual';let units;
  if(basis==='actual')units=raw.usage?.total??raw.totalTokens??raw.units;
@@ -16,19 +17,19 @@ export function normalizeRewardFact(raw,{trusted=false,baseline=raw?.baseline===
  }else if(basis==='official-equivalent'){
   if(typeof raw.ruleRef!=='string'||!raw.ruleRef||typeof raw.ruleSha256!=='string'||!/^[a-f0-9]{64}$/i.test(raw.ruleSha256))return {accepted:false,id,reason:'official-rule-evidence-required'};
   units=raw.units;
- }else throw Error('计奖依据无效');
+ }else throw fail('计奖依据无效','REWARD_BASIS_INVALID');
  if(units==null)return {accepted:false,id,reason:'usage-not-provided'};
- if(!safe(units))throw Error('计奖量须为非负安全整数');
+ if(!safe(units))throw fail('计奖量须为非负安全整数','REWARD_UNITS_INVALID');
  const value={id,revision,basis,units,origin:raw.origin??'host-normalized',baseline:baseline===true,scope:raw.scope??null,evidenceRef:raw.evidenceRef??null,sourceId:raw.sourceId??null,occurredAt:raw.occurredAt??null,live:raw.live===true,purpose:raw.purpose??null,activityOriginId:raw.activityOriginId??null};
  const fingerprint=createHash('sha256').update(JSON.stringify({basis,units,origin:value.origin,scope:value.scope,evidenceRef:value.evidenceRef})).digest('hex');
  return {accepted:true,...value,fingerprint};
 }
 export function rewardDelta(wallet,delta){
- if(!Number.isSafeInteger(delta))throw Error('计奖差额无效');
+ if(!Number.isSafeInteger(delta))throw fail('计奖差额无效','REWARD_DELTA_INVALID');
  let {balance,remainder,debtUnits}=wallet;
- if(![balance,remainder,debtUnits].every(safe)||remainder>=REWARD_UNITS_PER_POINT)throw Error('积分钱包状态无效');
+ if(![balance,remainder,debtUnits].every(safe)||remainder>=REWARD_UNITS_PER_POINT)throw fail('积分钱包状态无效','REWARD_WALLET_INVALID');
  let liquid=balance*REWARD_UNITS_PER_POINT+remainder;
- if(!Number.isSafeInteger(liquid)||!Number.isSafeInteger(liquid+delta)||!Number.isSafeInteger(debtUnits+Math.abs(delta)))throw Error('积分计量超出安全范围');
+ if(!Number.isSafeInteger(liquid)||!Number.isSafeInteger(liquid+delta)||!Number.isSafeInteger(debtUnits+Math.abs(delta)))throw fail('积分计量超出安全范围','REWARD_PRECISION_UNSUPPORTED');
  if(delta>=0){const paid=Math.min(debtUnits,delta);debtUnits-=paid;liquid+=delta-paid;}
  else{liquid+=delta;if(liquid<0){debtUnits-=liquid;liquid=0;}}
  return {balance:Math.floor(liquid/REWARD_UNITS_PER_POINT),remainder:liquid%REWARD_UNITS_PER_POINT,debtUnits};

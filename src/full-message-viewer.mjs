@@ -13,7 +13,7 @@ export function fullMessageMeta({text,at,interrupted=false}){return [clock(at),t
 
 // Uses the displayed message verbatim (after a stop: the kept partial text). Opening this reader has no model or
 // presentation side effects; a different message/scope closes the old reader.
-export function FullMessageButton({text,messageId,title,name,at,interrupted=false}){
+export function FullMessageButton({text,messageId,title,name,at,interrupted=false,galgame=false}){
  const [snapshot,setSnapshot]=useState(null),[copied,setCopied]=useState(false),dialog=useRef(null),trigger=useRef(null);
  useEffect(()=>setSnapshot(null),[messageId]);
  useEffect(()=>{
@@ -25,13 +25,26 @@ export function FullMessageButton({text,messageId,title,name,at,interrupted=fals
  const close=()=>{setSnapshot(null);setCopied(false);};
  const copy=async()=>{try{await navigator.clipboard.writeText(snapshot.text);setCopied(true);}catch{const range=document.createRange();range.selectNodeContents(dialog.current.querySelector('.buddy-full-message-text'));const selection=getSelection();selection.removeAllRanges();selection.addRange(range);}};
  const open=()=>setSnapshot({text:String(text),title:name?fill(t('{name} 的这条回复'),{name}):title||t('完整正文'),meta:fullMessageMeta({text,at,interrupted}),interrupted:!!interrupted});
+ const meta=snapshot&&h('small',{'data-full-message-meta':true},snapshot.meta);
+ const cut=snapshot?.interrupted&&h(galgame?'span':'p',{className:'buddy-full-message-cut'},t('（这里中断了）'));
+ const note=snapshot?.interrupted&&h(galgame?'p':'span',{className:'buddy-full-message-note'},t('已中断 · 不会自动续写'));
  return h(React.Fragment,null,
   h('div',{className:'buddy-full-message-control'},h('button',{ref:trigger,type:'button',className:'gx-gbtn','data-view-full-message':messageId,'data-interrupted':interrupted||undefined,onClick:open},fullTextLabel(text))),
-  snapshot&&createPortal(h('dialog',{ref:dialog,className:'buddy-dialog buddy-full-message','aria-label':snapshot.title,onCancel:event=>{event.preventDefault();close();},onKeyDownCapture:event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close();}}},
+  snapshot&&createPortal(h('dialog',{ref:dialog,className:'buddy-dialog buddy-full-message'+(galgame?' gx-paper-dialog gx-full-message':''),'aria-label':snapshot.title,onCancel:event=>{event.preventDefault();close();},onKeyDownCapture:event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close();}}},
    h('div',{className:'buddy-dialog-shell'},
-    h('header',{className:'buddy-dialog-head'},h('div',{className:'buddy-full-message-t'},h('h2',null,snapshot.title),h('small',{'data-full-message-meta':true},snapshot.meta)),h('button',{type:'button',className:'buddy-dialog-close ui-icon-btn','aria-label':t('关闭'),onClick:close},Icon('close',{size:18}))),
-    h('div',{className:'buddy-dialog-body buddy-full-message-body',tabIndex:0},h('div',{className:'buddy-full-message-text'},snapshot.text),snapshot.interrupted&&h('p',{className:'buddy-full-message-cut'},t('（这里中断了）'))),
-    h('footer',{className:'buddy-full-message-foot'},snapshot.interrupted&&h('span',{className:'buddy-full-message-note'},t('已中断 · 不会自动续写')),copied&&h('span',{role:'status'},t('已复制')),h('span',{className:'grow'}),h('button',{type:'button',className:'ui-btn sm',onClick:()=>void copy()},Icon('file',{size:14}),t('复制全文')),h('button',{type:'button',className:'ui-btn sm primary',onClick:close},t('关闭'))))),document.body));
+    galgame
+     ? h('header',{className:'buddy-dialog-head'},
+       h('div',{className:'gx-paper-title'},h('span',{className:'orn','aria-hidden':true}),h('h2',null,snapshot.title),h('span',{className:'sub'},'Full text')),
+       h('button',{type:'button',className:'gx-full-close',onClick:close},t('关闭')))
+     : h('header',{className:'buddy-dialog-head'},h('div',{className:'buddy-full-message-t'},h('h2',null,snapshot.title),meta),h('button',{type:'button',className:'buddy-dialog-close ui-icon-btn','aria-label':t('关闭'),onClick:close},Icon('close',{size:18}))),
+    h('div',{className:'buddy-dialog-body buddy-full-message-body',tabIndex:0},
+     galgame&&meta,
+     galgame?h('div',{className:'gx-full-reading'},h('span',{className:'buddy-full-message-text'},snapshot.text),cut):h('div',{className:'buddy-full-message-text'},snapshot.text),
+     galgame?note:cut),
+    h('footer',{className:'buddy-full-message-foot'},
+     !galgame&&note,copied&&h('span',{role:'status'},t('已复制')),h('span',{className:'grow'}),
+     h('button',{type:'button',className:galgame?'gx-full-button pri':'ui-btn sm',onClick:()=>void copy()},!galgame&&Icon('file',{size:14}),t('复制全文')),
+     h('button',{type:'button',className:galgame?'gx-full-button':'ui-btn sm primary',onClick:close},t('关闭'))))),document.body));
 }
 
 export const FullMessageCSS=`
@@ -51,4 +64,19 @@ export const FullMessageCSS=`
 .buddy-full-message-foot .grow{flex:1}
 .buddy-full-message-foot [role=status]{color:var(--buddy-ok);font-size:var(--buddy-fs-sm)}
 .buddy-full-message-note{color:var(--buddy-muted);font-size:var(--buddy-fs-cap)}
+.buddy-dialog.buddy-full-message.gx-full-message{width:min(760px,calc(100vw - 36px));height:fit-content;max-height:min(605px,calc(100dvh - 36px))}
+.gx-full-message .buddy-dialog-head{gap:12px;border-bottom:1px solid var(--dlg-border);flex-shrink:0}
+.gx-full-message .gx-paper-title{flex:1;min-width:0}
+.gx-full-message .gx-paper-title h2{min-width:0;overflow-wrap:anywhere}
+.gx-full-message .gx-paper-title .sub{flex:none}
+.gx-full-message .gx-full-close{flex:none;font-size:12.5px;background:transparent;border:1px solid var(--dlg-border);border-radius:6px;padding:3px 9px;color:var(--dlg-text);cursor:pointer}
+.gx-full-message .buddy-full-message-body{padding:14px 26px 18px;font-size:14px}
+.gx-full-message [data-full-message-meta]{color:var(--dlg-muted);font-size:14px}
+.gx-full-message .gx-full-reading{margin-top:10px;font:17px/1.8 var(--serif);letter-spacing:.05em}
+.gx-full-message .buddy-full-message-text{max-width:none;font:inherit}
+.gx-full-message .buddy-full-message-cut{margin:0;color:var(--dlg-muted);font:inherit}
+.gx-full-message .buddy-full-message-note{margin:6px 0 0;color:var(--dlg-muted);font-size:12px}
+.gx-full-message .buddy-full-message-foot{padding:12px 26px;border-color:var(--dlg-border);flex-shrink:0}
+.gx-full-message .gx-full-button{font-size:13px;border-radius:var(--rb);padding:6px 14px;border:1px solid var(--gline);background:var(--glass);cursor:pointer;color:var(--dlg-text)}
+.gx-full-message .gx-full-button.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc);font-weight:700}
 `;

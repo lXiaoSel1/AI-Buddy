@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {assertR95DatabaseCompatible} from '../r95-data-compatibility.mjs';
 const fail=code=>Object.assign(Error(code),{code});
 const neverSubmitted=new WeakSet(),publicNotSubmitted=new WeakMap();
-const capacityCauses=new Set(['MEMORY_CONTEXT_CAPACITY','MODEL_CONTEXT_CAPACITY','BILI_FULL_MODEL_CAPACITY','MODEL_IMAGE_TOO_LARGE']);
+const capacityCauses=new Set(['MEMORY_CONTEXT_CAPACITY','MODEL_CONTEXT_CAPACITY','BILI_FULL_MODEL_CAPACITY','MODEL_IMAGE_TOO_LARGE','MODEL_IMAGE_TRANSPORT_UNSUPPORTED']);
 export const modelNotSubmittedCause=error=>error&&typeof error==='object'?publicNotSubmitted.get(error)??null:null;
 export function modelNotSubmittedError(error){const value=fail('SOCIAL_MODEL_NOT_SUBMITTED'),causeCode=error?.causeCode??error?.code;if(typeof causeCode==='string'&&causeCode!=='SOCIAL_MODEL_NOT_SUBMITTED')value.causeCode=causeCode;if(capacityCauses.has(causeCode))publicNotSubmitted.set(value,causeCode);return value;}
 export function markModelNotSubmitted(error){const value=error&&typeof error==='object'?error:Error(String(error));neverSubmitted.add(value);return value;}

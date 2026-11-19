@@ -13,7 +13,13 @@ export function createDeferredSaves({setIntervalFn=setInterval,clearIntervalFn=c
  const stores=new Map(),pauses=new Map();let timer=null,tail=Promise.resolve(),audit=onAudit;
  const report=value=>{try{audit(value);}catch{}};
  const paused=scope=>(pauses.get('*')??0)>0||(pauses.get(scope)??0)>0;
- const selected=({scope,automatic=false}={})=>[...stores.values()].filter(row=>(!scope||row.scope===key(scope))&&(!automatic||!paused(row.scope))).sort((a,b)=>Number(a.kind==='engine')-Number(b.kind==='engine')||a.target.localeCompare(b.target));
+ const selected=({scope,automatic=false,kind}={})=>{
+  if(kind!==undefined&&kind!=='companion'&&kind!=='engine')throw fault('DEFERRED_SAVE_KIND_INVALID');
+  const scopeKey=scope?key(scope):null;
+  return [...stores.values()].filter(row=>(!scopeKey||row.scope===scopeKey)&&(kind===undefined||row.kind===kind)&&
+   (!automatic||!row.skipAutomatic&&!paused(row.scope)))
+   .sort((a,b)=>Number(a.kind==='engine')-Number(b.kind==='engine')||a.target.localeCompare(b.target));
+ };
  const enqueue=fn=>{const run=tail.then(fn,fn);tail=run.catch(()=>{});return run;};
  function flushSyncAll(options={}){
   const receipts=[];
@@ -35,10 +41,10 @@ export function createDeferredSaves({setIntervalFn=setInterval,clearIntervalFn=c
   return ()=>{if(released)return;released=true;const n=(pauses.get(id)??1)-1;if(n)pauses.set(id,n);else pauses.delete(id);};
  }
  const api={
-  register(kind,{target,scope,drain=()=>{},flushSync,reload}={}){
+  register(kind,{target,scope,drain=()=>{},flushSync,reload,skipAutomatic=false}={}){
    if(!['companion','engine'].includes(kind)||typeof target!=='string'||typeof scope!=='string'||typeof drain!=='function'||typeof flushSync!=='function')throw fault('DEFERRED_SAVE_REGISTRATION_INVALID');
    const id=key(target);if(stores.has(id))throw fault('DEFERRED_SAVE_ALREADY_REGISTERED');
-   const row={kind,target:id,scope:key(scope),drain,flushSync,reload};stores.set(id,row);
+   const row={kind,target:id,scope:key(scope),drain,flushSync,reload,skipAutomatic};stores.set(id,row);
    return ()=>{if(stores.get(id)===row)stores.delete(id);};
   },
   flushAll,flushSyncAll,pause,

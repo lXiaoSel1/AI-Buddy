@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {apply,createDshStageDiagnostics} from '../src/dsh-platform/native-bridge-host.mjs';
+import {apply,createDshStageDiagnostics,dshModelError} from '../src/dsh-platform/native-bridge-host.mjs';
 
 // Controlled Cordis/process transport; no native process, project code or model
 // is run. Real-host confirmation is a separate diagnostic candidate exercise.
@@ -92,5 +92,33 @@ test('default bridge keeps diagnostic traffic off and errors retain native failu
     await until(()=>harness.sent.some(row=>row.kind==='response'&&row.id===id));
     assert.equal(harness.sent.some(row=>row.kind==='rpc-stage'),false);
     assert.equal(harness.sent.find(row=>row.kind==='response'&&row.id===id).error.code,'CONTROLLED_FAILURE');
+  }finally{harness.restore();}
+});
+
+test('protected plugin RPC retains only allowlisted subtitle diagnostics and the typed absence code',async()=>{
+  const errors=[
+    Object.assign(Error('invalid subtitles'),{code:'BILI_FULL_CUES_INVALID',details:{cid:17,page:2,reason:'duplicate-cue',internalText:'must not cross IPC'}}),
+    Object.assign(Error('checkpoint absent'),{code:'BILI_FULL_CHECKPOINT_ABSENT'}),
+  ];
+  const expected=[
+    {code:'BILI_FULL_CUES_INVALID',details:{cid:17,page:2,reason:'duplicate-cue'}},
+    {code:'BILI_FULL_CHECKPOINT_ABSENT'},
+  ];
+  let harness;
+  harness=installControlledBridge({}, {onSend:message=>{
+    if(message.kind==='buddy-request')queueMicrotask(()=>process.emit('message',{channel:CHANNEL,kind:'buddy-response',id:message.id,error:dshModelError(errors.shift())}));
+  },tools:{execute:async({calls,signal})=>{
+    const call=calls[0],exec={callId:call.id,name:call.name,token:Symbol('native-token'),agent:undefined,signal};
+    const decision=harness.guard(exec);if(decision)throw Error(decision);
+    return harness.handlers.get('tools/execute')(exec,()=>harness.bridge.forCall(exec).invoke('connections.request',{operation:'video.fullReading.get'}));
+  }}});
+  try{
+    for(const diagnostic of expected){
+      const id=harness.request('tools.call',{name:'buddy_work_query',arguments:{},admission:{pluginId:'controlled-plugin',contextToken:'private-context',allowedNames:['buddy_work_query'],readOnlyToolNames:['buddy_work_query'],planState:'planning'}});
+      await until(()=>harness.sent.some(row=>row.kind==='response'&&row.id===id));
+      const error=harness.sent.find(row=>row.kind==='response'&&row.id===id).error;
+      assert.equal(error.code,diagnostic.code);
+      assert.deepEqual(error.details,diagnostic.details);
+    }
   }finally{harness.restore();}
 });

@@ -2,13 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {performance} from 'node:perf_hooks';
 import {ModelRouter} from '../src/model-router.mjs';
+import {connectionView} from '../src/connection-view.mjs';
+import {CgService} from '../src/cg-service.mjs';
 import {createCompanionService} from '../src/companion-service.mjs';
 import {fakeCrypto,stubCodex} from './support/mock-model-server.mjs';
 import {tmpDir,memoryStore,syntheticEngine,companionFixture,gate,sleep} from './support/audit-harness.mjs';
 
 const immediate=()=>new Promise(r=>setImmediate(r));
-async function router(t,fetchImpl=async()=>{throw Error('no network in tests');}){
- const value=new ModelRouter({codex:stubCodex(),dataRoot:tmpDir('b03-router',{t}),crypto:fakeCrypto,fetchImpl});await value.ready;t.after(()=>value.close());
+async function router(t,fetchImpl=async()=>{throw Error('no network in tests');},options={}){
+ const value=new ModelRouter({codex:stubCodex(),dataRoot:tmpDir('b03-router',{t}),crypto:fakeCrypto,fetchImpl,...options});await value.ready;t.after(()=>value.close());
  const add=async name=>{const saved=await value.save({kind:'custom',name,protocol:'chat-completions',baseUrl:'https://fixture.invalid/v1',model:'fixture-model',key:'fake-key',contextTokens:128000});return value.state.profiles.find(p=>p.id===saved.id);};
  const a=await add('A'),b=await add('B');await value.activate(a.id);value.setEnabled(true);return {router:value,a,b};
 }
@@ -68,4 +70,65 @@ test('a group message sent during a life save waits and is sent automatically, w
  assert.equal(streamCalls,1,'sent once the save finished');
  assert.equal(service.viewState().groupRuntime.status,'awaiting-presentation');
  assert.deepEqual(unhandled,[]);
+});
+
+
+test('main chat can omit background notifications while publishing foreground locks and saves',async t=>{
+ const seen=[],order=[],hold=gate(),entered=gate(),cancelled=new AbortController();
+ let r;
+ const fixture=await router(t,undefined,{notifyBackgroundTurns:false,onChange:view=>{
+  if(r)seen.push({busy:view.busy,locked:connectionView(r).profiles.filter(row=>row.locked).map(row=>row.id)});
+ }});
+ r=fixture.router;
+ const {a,b}=fixture;
+ const running=r.runCaptured(a,async()=>{entered.resolve();await hold.promise;order.push('running');return 'background-result';},undefined,{background:true});
+ const tasks=[running];
+ try{
+  await entered.promise;
+  assert.deepEqual(seen,[]);
+  const cancelledTurn=r.runBackground(a,()=>assert.fail('cancelled background ran'),cancelled.signal);
+  tasks.push(cancelledTurn);
+  const wasCancelled=assert.rejects(cancelledTurn,{code:'ABORT_ERR'});
+  await immediate();
+  cancelled.abort();
+  await wasCancelled;
+  assert.deepEqual(seen,[]);
+
+  const queued=r.runBackground(a,()=>{order.push('queued');throw Error('synthetic background error');});
+  tasks.push(queued);
+  const failed=assert.rejects(queued,/synthetic background error/);
+  const chat=r.runTurn(()=>order.push('chat'));
+  tasks.push(chat);
+  await immediate();
+  assert.deepEqual(seen,[{busy:true,locked:[a.id]}]);
+  hold.resolve();
+  assert.equal(await running,'background-result');
+  await Promise.all([chat,failed]);
+  assert.deepEqual(order,['running','chat','queued']);
+  assert.deepEqual(seen,[{busy:true,locked:[a.id]},{busy:false,locked:[]}]);
+
+  await r.activate(b.id);
+  assert.equal(r.view().activeId,b.id);
+  assert.deepEqual(seen.at(-1),{busy:false,locked:[]});
+  assert.equal(seen.length,3,'an explicit connection change is still published');
+ }finally{hold.resolve();await Promise.allSettled(tasks);}
+});
+
+test('default ModelRouter and CG still notify their own background turn transitions',async t=>{
+ const changes=[];
+ const {router:r,a}=await router(t,undefined,{onChange:view=>changes.push(view.busy)});
+ changes.length=0;
+ await r.runBackground(a,()=>undefined);
+ assert.deepEqual(changes,[false,false]);
+
+ let cg;
+ const cgChanges=[];
+ const dataRoot=tmpDir('b03-cg-notifications',{t,beforeRemove:()=>cg?.close()});
+ cg=new CgService({dataRoot,crypto:fakeCrypto,codex:{...stubCodex(),close(){}},onChange:view=>cgChanges.push(view.busy)});
+ await cg.ready;
+ const profile=await cg.save({kind:'custom',model:'fixture',baseUrl:'http://127.0.0.1:3999'});
+ await cg.activate(profile.id);
+ cgChanges.length=0;
+ await cg.runBackground(cg.captureConnection(),()=>undefined);
+ assert.deepEqual(cgChanges,[true,false]);
 });

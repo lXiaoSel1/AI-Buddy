@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,readdirSync,symlinkSync,realpathSync,renameSync,statSync,lstatSync,rmdirSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,readdirSync,symlinkSync,realpathSync,renameSync,statSync,lstatSync,rmdirSync,copyFileSync} from 'node:fs';
+import {rm} from 'node:fs/promises';
+import {openCompanionStore} from '../src/companion-store.mjs';
 import {tmpdir} from 'node:os';
 import {join,relative} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -56,6 +58,62 @@ test('full copy preserves original/current data, images, life archives and hashe
   await f.service.choose();
  }finally{f.close();}
 });
+test('a migrated SQLite source with a committed WAL previews live counts and only interrupts copied history',async t=>{
+ const f=await fixture();
+ t.after(async()=>{f.close();await rm(f.base,{recursive:true,force:true});});
+ const legacyPath=join(f.source,'galgame/companion.json'),old=await inspectSnapshot(legacyPath);
+ await snapshot(legacyPath,{...old,schema:1});
+ const db=join(f.source,'galgame/companion.sqlite'),beforeCheckpoint=join(f.base,'sqlite-before-checkpoint');
+ const source=await openCompanionStore(f.source);
+ try{
+  await source.mutate((_state,tx)=>{
+   tx.messages.append('private','a',{id:'live-only',role:'assistant',status:'presented',text:'A committed row only in SQLite',createdAt:100});
+  });
+  assert.ok(statSync(db+'-wal').size>32,'The fixture row is in a real committed WAL');
+  copyFileSync(db,beforeCheckpoint);
+  copyFileSync(db+'-wal',beforeCheckpoint+'-wal');
+ }finally{await source.close();}
+ copyFileSync(beforeCheckpoint,db);
+ copyFileSync(beforeCheckpoint+'-wal',db+'-wal');
+ assert.equal(existsSync(db+'-shm'),false);
+ const before=await importInventory(f.source),plan=await f.prepare();
+ assert.equal(plan.summary.conversations,1);
+ assert.equal(plan.summary.messages,3);
+ assert.equal(plan.summary.groups,1);
+ assert.equal(plan.summary.memoryEvents,1);
+ assert.equal((await importInventory(f.source)).sha256,before.sha256,'Preview keeps original files byte-for-byte');
+ assert.equal(existsSync(db+'-shm'),false,'Preview never opens or changes original SQLite sidecars');
+ await f.service.start({planId:plan.planId,sourceClosed:true});
+ const completed=await f.finish();
+ assert.equal(completed.phase,'complete',completed.error);
+ assert.equal(f.commits.length,1);
+ assert.equal((await importInventory(f.source)).sha256,before.sha256,'Staging keeps the source inventory unchanged');
+ const copied=await openCompanionStore(plan.targetDataRoot);
+ try{
+  assert.equal(copied.messages.get('private','a','live-only').text,'A committed row only in SQLite');
+  assert.equal(copied.messages.get('private','a','draft').status,'interrupted');
+  assert.equal(copied.messages.get('private','a','draft').interruptedByImport,plan.planId);
+  assert.equal(copied.state.groups.g.pending,null);
+  assert.equal(copied.state.groups.g.importedPending.id,'pending-group');
+ }finally{await copied.close();}
+ const guard=JSON.parse(readFileSync(join(plan.targetDataRoot,IMPORT_GUARD),'utf8'));
+ assert.equal(guard.interruptedRequests,2);
+});
+
+test('an import preview refuses a SQLite migration fence without its database',async t=>{
+ const f=await fixture();
+ t.after(async()=>{f.close();await rm(f.base,{recursive:true,force:true});});
+ const legacyPath=join(f.source,'galgame/companion.json'),old=await inspectSnapshot(legacyPath);
+ await snapshot(legacyPath,{...old,schema:1});
+ const store=await openCompanionStore(f.source);
+ await store.close();
+ renameSync(join(f.source,'galgame/companion.sqlite'),join(f.base,'companion-kept.sqlite'));
+ const before=await importInventory(f.source);
+ await assert.rejects(f.prepare(),/Migrated companion database is missing/);
+ assert.equal((await importInventory(f.source)).sha256,before.sha256);
+ assert.equal(f.commits.length,0);
+});
+
 test('changing the source after preview rejects import without switching anything',async()=>{
  const f=await fixture();try{const p=await f.prepare();writeFileSync(join(f.source,'work-tokens.json'),'new data after preview');await f.service.start({planId:p.planId,sourceClosed:true});const state=await f.finish();assert.equal(state.phase,'failed');assert.match(state.error,/来源.*变化/);assert.equal(f.commits.length,0);assert.equal(existsSync(p.targetDataRoot),false);assert.equal(f.service.automaticWorkAllowed(),true);}finally{f.close();}
 });

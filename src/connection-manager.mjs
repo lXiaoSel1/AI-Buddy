@@ -8,6 +8,7 @@ import {Icon} from './ui-icons.mjs';
 import {Segmented,StatusPill} from './ui-controls.mjs';
 import {locale} from './i18n.mjs';
 import {apiBaseUrl,localEndpoint} from './model-presets.mjs';
+import {supportsKimiCacheTtl} from './api-cache-capabilities.mjs';
 import {providerEndpoint,defaultProviderRegion} from './provider-regions.mjs';
 import {networkLabel as N} from './network-messages.mjs';
 const h=React.createElement;
@@ -83,6 +84,7 @@ export function ConnectionManager({type,initial}){
       !cg&&h('p',{className:'ws-muted ws-span2',...attr('image-capability')},imageCapabilityLabel(imageInputCapability({...draft,models}))),
       !cg&&h('div',{className:'ws-fld'},h('span',null,t("推理强度（effort）")),h(Segmented,{size:'sm',label:t("推理强度（effort）"),...attr('field','reasoningEffort'),value:effortLevels.includes(configuredEffort)?configuredEffort:'',disabled:locked||!effortProtocol(draft.protocol),options:[['',t("模型默认")],...effortLevels.map(value=>[value,value])],onChange:value=>change('reasoningEffort',value||null)}),h('small',null,t(!effortProtocol(draft.protocol)?"该原生协议暂不提供 effort 参数，使用模型默认。":effortSupport(draft,models).source==='unknown'?"尚未取得此模型的推理档位，仅提供模型默认。请获取模型列表。":"档位按当前模型的能力提供；模型默认不发送 effort 参数。"))),
       !cg&&h('label',{className:'ws-fld model-field'},h('span',null,t('上下文容量（tokens，可留空）')),h('input',{type:'number',min:2048,max:2000000,step:1,value:draft.contextTokens??'',disabled:locked,placeholder:t("留空 · 按模型目录（保守 {tokens}）").replace('{tokens}',String(DEFAULT_CONTEXT_TOKENS)),onChange:e=>change('contextTokens',e.target.value===''?null:Number(e.target.value))}),h('small',null,t('优先使用手动填写的容量，其次使用模型目录；未知时按默认 {tokens} tokens 规划并预留回复空间。').replace('{tokens}',DEFAULT_CONTEXT_TOKENS.toLocaleString()))),
+      !cg&&supportsKimiCacheTtl({...draft,baseUrl:draft.baseUrl?.replace(/\/+$/,''),model:draft.model?.trim()})&&h('label',{className:'ws-fld model-field'},h('span',null,t('Kimi 缓存时长')),h('select',{...attr('field','kimiCacheTtl'),value:draft.kimiCacheTtl??'5m',disabled:locked,onChange:e=>change('kimiCacheTtl',e.target.value)},h('option',{value:'5m'},t('5 分钟（默认）')),h('option',{value:'1h'},t('1 小时'))),h('small',null,t('用于私聊。1 小时档的缓存写入费用更高。'))),
       cg&&draft.protocol==='ark-images'&&h('p',{className:'ws-muted ws-span2'},t("请选择已开通的 Seedream 模型或绘图接入点 ID；支持文生图和角色参考图。")),
       cg&&h(React.Fragment,null,draft.kind!=='codex'&&h('label',{className:'ws-fld model-field'},h('span',null,t("图片尺寸（留空使用默认）")),h('input',{...attr('option','size'),value:draft.options.size,disabled:locked,placeholder:draft.protocol==='ark-images'?'2K / 2560x1440':draft.protocol==='gemini-images'?'1K / 2K':draft.protocol.startsWith('wan-')?'1280*720':'1536x1024 / auto',onChange:e=>option('size',e.target.value)})),draft.protocol==='openai-images'&&h('label',{className:'ws-fld model-field'},h('span',null,t("质量")),h('input',{...attr('option','quality'),value:draft.options.quality,disabled:locked,onChange:e=>option('quality',e.target.value)}))))),
      // the advanced strip appears only when it holds something

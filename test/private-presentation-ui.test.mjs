@@ -10,7 +10,7 @@ const source=await readFile(new URL('../src/adapted/galgame-client.ts',import.me
 const setStart=source.indexOf('  const setS = (nextOrUpdater: any) => {');
 const setEnd=source.indexOf('\n  useEffect(() => {',setStart);
 const presentationStart=source.indexOf('  const privatePresentation=useRef');
-const presentationEnd=[source.indexOf('\n  const [groupBrowseRequest',presentationStart),source.indexOf('\n  const group = activeCompanionGroup',presentationStart)].filter(index=>index>presentationStart).sort((a,b)=>a-b)[0];
+const presentationEnd=source.indexOf('\n  const openingBackground =',presentationStart);
 assert.ok(setStart>=0&&setEnd>setStart&&presentationStart>setEnd&&presentationEnd>presentationStart,'real private presentation lifecycle must be extracted');
 const compiled=transformSync(`function renderExtractedBlock(){\n${source.slice(setStart,setEnd)}\n${source.slice(presentationStart,presentationEnd)}\n}`,{loader:'ts',target:'es2022'}).code;
 let createPrivatePresentation,privatePresentationKey;

@@ -5,6 +5,28 @@ import {createGameEconomy} from '../src/voice-games/game-economy.mjs';
 import {createCardGameService} from '../src/voice-games/game-service.mjs';
 import * as rules from '../src/voice-games/rules/index.mjs';
 
+test('card service publishes readiness only after asynchronous recovery completes',async t=>{
+ const entered=Promise.withResolvers(),release=Promise.withResolvers();
+ const player={id:'ai',kind:'ai',characterId:'whale',personaId:'persona',lifeId:'life',operationId:'operation'};
+ const row={id:'table',type:'texas',version:1,status:'active',state:{handId:'hand'},players:[{id:'user',kind:'user',personaId:'persona'},player]};
+ let recoveries=0;
+ const game={context:()=>({personaId:'persona'}),pluginScope:()=>player,gameEconomy:{
+  registerRules(){},table:()=>row,list:()=>[row],
+  async recover(){recoveries++;entered.resolve();await release.promise;row.status='paused';}
+ }};
+ const service=createCardGameService({getGame:()=>game,getProvider(){throw Error('Models are forbidden');}});
+ t.after(async()=>{release.resolve();await service.close();});
+ const registration=service.registerRuleArtifact({module:rules,sha256:'a'.repeat(64)});
+ const during=service.describe();
+ const authorizedDuring=service.voiceScopeValid({channel:'card-table',tableId:row.id,handId:'hand',...player});
+ await entered.promise;release.resolve();
+ await registration;
+ assert.equal(during.gamesReady,false);
+ assert.equal(authorizedDuring,false);
+ assert.equal(service.describe().gamesReady,true);
+ assert.equal(recoveries,1);
+});
+
 test('R15 real SQLite economy polls metadata without decoding large chat, and refreshes identity only on persisted version/status/instance changes',async t=>{
  const database=new DatabaseSync(':memory:');let forbidFull=false,fullReads=0,metadataReads=0,personaId='persona',lifeId='life',operationId='operation';
  const db={exec:sql=>database.exec(sql),prepare(sql){
@@ -17,7 +39,7 @@ test('R15 real SQLite economy polls metadata without decoding large chat, and re
  const player={id:'ai',kind:'ai',characterId:'whale',personaId:'persona',lifeId:'life',operationId:'operation'};
  const game={gameEconomy:makeEconomy(),context:()=>({personaId,characterId:'whale'}),pluginScope:()=>({...player,lifeId,operationId})};
  const service=createCardGameService({getGame:()=>game,getProvider(){throw Error('Models are forbidden');},onSpeechPresentation:()=>({available:true,records:[]})});
- service.registerRuleArtifact({module:rules,sha256:'a'.repeat(64)});assert.equal(service.describe().gamesReady,true);
+ await service.registerRuleArtifact({module:rules,sha256:'a'.repeat(64)});assert.equal(service.describe().gamesReady,true);
  t.after(async()=>{forbidFull=false;await service.close();database.close();});
  const row={id:'table',type:'texas',version:1,status:'active',players:[{id:'user',kind:'user',personaId:'persona'},player],state:{handId:'hand'},chat:[{id:'large',role:'assistant',text:'R15-LARGE-CHAT-'+ 'x'.repeat(2_000_000)}]};
  database.prepare('INSERT INTO game_tables VALUES(?,?,?,?,?)').run(row.id,row.type,row.version,row.status,JSON.stringify(row));

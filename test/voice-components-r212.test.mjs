@@ -61,8 +61,9 @@ for(const language of ['zh-CN','en'])test('existing parts show primary Verify be
 test('host component summary works without a role and explicit Verify reaches the download-free path',async t=>{
  const f=await fixture(t),id='ai-buddy.voice-breeze',settings=createVoiceSettings({dataRoot:f.root});await settings.update({enabled:true,packages:{[id]:{ttsProvider:'minimax'}}});
  const events=[],local={async stopEngine(){},async cancelCapture(){},async close(){}};
- const host=createVoiceHost({dataRoot:f.root,build:f.root,getGame:()=>null,getPlatform:()=>({voicePackageStatus:()=>[{id,engine:'breeze',installed:true,enabled:true,usable:true,trusted:true}]}),send:event=>events.push(event),components:{assets:f.assets,settings,local,supervisor:{async close(){}}}});t.after(()=>host.close());
- const summary=await host.action('component-status',{packageId:id});assert.equal(summary.asr.state,'verification-needed');assert.equal(summary.tts.state,'not-required');assert.equal(summary.ready,false);assert.equal(summary.state,'verification-needed');assert.equal(f.downloads(),0);
+ const assets={...f.assets,status:(kind,packageId)=>kind==='breeze'?{state:'ready'}:f.assets.status(kind,packageId)};
+ const host=createVoiceHost({dataRoot:f.root,build:f.root,getGame:()=>null,getPlatform:()=>({voicePackageStatus:()=>[{id,engine:'breeze',installed:true,enabled:true,usable:true,trusted:true}]}),send:event=>events.push(event),components:{assets,settings,local,supervisor:{async close(){}}}});t.after(()=>host.close());
+ const summary=await host.action('component-status',{packageId:id});assert.equal(summary.asr.state,'verification-needed');assert.equal(summary.tts.state,'ready','legacy cloud preference does not bypass the selected local TTS component');assert.equal(summary.ready,false);assert.equal(summary.state,'verification-needed');assert.equal(f.downloads(),0);
  await assert.rejects(host.action('component-status',{packageId:'untrusted-package'}),{code:'VOICE_PACKAGE_UNAVAILABLE'});
  await host.action('assets-verify',{kind:'asr'});assert.equal((await host.action('component-status',{packageId:id})).ready,true);assert.equal(f.downloads(),0);assert.ok(events.some(row=>row.type==='asset-progress'&&row.operation==='verify'&&row.phase==='verifying'));
 });

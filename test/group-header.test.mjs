@@ -7,7 +7,7 @@ import {setLocale} from '../src/i18n.mjs';
 const state=()=>({activeCharacterId:'claude',activeGroupId:'dinner',characters:[{id:'claude',name:'Claude',effectiveConnection:{mode:'character',name:'Grok connection',model:'grok-test'}},{id:'deepseek',name:'DeepSeek',effectiveConnection:{mode:'character',name:'DeepSeek connection',model:'deepseek-test'}},{id:'chatgpt',name:'GPT',effectiveConnection:{mode:'global',name:'Global',model:'future-gpt'}},{id:'kimi',name:'Kimi',effectiveConnection:{model:'not-in-group'}}],personas:[{id:'a',name:'Dinner persona'},{id:'b',name:'Private persona'}],activePersonaId:'b',groups:[{id:'dinner',name:'今晚吃什么',personaId:'a',memberIds:['claude','deepseek','chatgpt']}],groupMessages:[],groupRuntime:{status:'idle',currentMessage:{id:'reply',role:'assistant',characterId:'chatgpt',request:{connectionId:'previous-api',model:'actual-gpt'}}}});
 test('group header uses group title, bound persona, only present members and recorded reply model',()=>{
  setLocale('zh-CN');const s=state(),c=groupHeaderContext(s);assert.equal(c.group.name,'今晚吃什么');assert.equal(c.persona.name,'Dinner persona');assert.deepEqual(c.members.map(x=>x.id),['claude','deepseek','chatgpt']);assert.equal(c.speaker.id,'chatgpt');assert.equal(c.model,'actual-gpt');
- const html=renderToStaticMarkup(React.createElement(GroupHeader,{state:s,request(){},onBrowse(){},petEnabled:true,onPetToggle(){}}));assert.match(html,/今晚吃什么/);assert.match(html,/role="toolbar"/);assert.match(html,/data-group-connections/);assert.match(html,/buddy-group-stage-controls/);assert.match(html,/buddy-cg-chip/);assert.doesNotMatch(html,/角色来源|与Claude的galgame|Private persona|not-in-group|重置|角色立绘/);
+ const html=renderToStaticMarkup(React.createElement(GroupHeader,{state:s,request(){},onBrowse(){},petEnabled:true,onPetToggle(){},stageUi:{menu:true}}));assert.match(html,/今晚吃什么/);assert.match(html,/role="toolbar"/);assert.match(html,/data-group-connections/);assert.match(html,/buddy-group-stage-controls/);assert.match(html,/buddy-cg-chip/);assert.doesNotMatch(html,/角色来源|与Claude的galgame|Private persona|not-in-group|重置|角色立绘/);
 });
 test('in-flight member route is used instead of previous speaker; user message never becomes an AI identity',()=>{
  const s=state();s.groupRuntime.status='generating';s.groupRuntime.queue=['deepseek'];let c=groupHeaderContext(s);assert.equal(c.speaker.id,'deepseek');assert.equal(c.model,'deepseek-test');assert.equal(c.recorded,undefined);
@@ -16,4 +16,25 @@ test('in-flight member route is used instead of previous speaker; user message n
 });
 test('group header follows membership changes without changing global or private context',()=>{
  const s=state(),before=structuredClone(s);s.groups[0].memberIds=['claude','deepseek'];const c=groupHeaderContext(s);assert.equal(c.speaker,undefined);assert.equal(c.members.length,2);assert.equal(s.activeCharacterId,before.activeCharacterId);assert.deepEqual(s.characters,before.characters);
+});
+
+test('group speaking mode is reachable from the toolbar and the compact-stage menu',()=>{
+ setLocale('zh-CN');
+ const props={state:state(),request(){}};
+ const toolbar=renderToStaticMarkup(React.createElement(GroupHeader,props));
+ const expanded=renderToStaticMarkup(React.createElement(GroupHeader,{...props,stageUi:{menu:true}}));
+ assert.match(toolbar,/<button[^>]*data-group-mode="true"[^>]*aria-controls="galgame-group-mode"[^>]*>发言方式 · 自然接话<\/button>/);
+ assert.match(expanded,/<button[^>]*data-group-mode="true"[^>]*class="mi"[^>]*>[\s\S]*?发言方式<\/button>/);
+ assert.match(expanded,/<button[^>]*data-group-connections="true"[^>]*>[\s\S]*?对话模型<\/button>/);
+});
+
+test('frameless group menu preserves end-chat and group-photo commands when idle',()=>{
+ setLocale('zh-CN');
+ const value=state(),menu=(classic=false)=>renderToStaticMarkup(React.createElement(GroupHeader,{state:value,classic,request(){},stageUi:{menu:true}}));
+ const idle=menu();
+ assert.match(idle,/<button type="button" data-galgame-group-end="true" class="mi">[^]*?结束本次聊天<\/button>/);
+ assert.match(idle,/群聊合影<\/button>/);
+ value.groupRuntime.status='awaiting-continue';
+ assert.match(menu(),/<button type="button" disabled="" data-galgame-group-end="true"[^>]*>[^]*?结束本次聊天<\/button>/);
+ assert.doesNotMatch(menu(true),/data-galgame-group-end/);
 });

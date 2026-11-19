@@ -18,7 +18,7 @@ export function CloudCharacterFace({row}){
 
 // Native modal lifecycle, dismissal and focus restoration match StatisticsModal.
 // The inner structure and dimensions are copied from secVS.js's dlg helper.
-export function CloudDesignDialog({title,subtitle,onClose,children,footer,width=640,noActions=false}){
+export function CloudDesignDialog({title,subtitle,onClose,children,footer,width=640,noActions=false,className=''}){
   const ref=useRef(null),callback=useRef(onClose);callback.current=onClose;
   useEffect(()=>{
     const before=document.activeElement,node=ref.current;node.showModal();
@@ -26,7 +26,7 @@ export function CloudDesignDialog({title,subtitle,onClose,children,footer,width=
     document.addEventListener('wheel',wheel,{capture:true,passive:false});
     return()=>{document.removeEventListener('wheel',wheel,true);node.close();queueMicrotask(()=>before?.isConnected&&before.focus());};
   },[]);
-  return h('dialog',{ref,className:'vx-cloud-dialog','aria-label':title,style:{width},onCancel:e=>{e.preventDefault();callback.current?.();},onClick:e=>{if(e.target===ref.current){const r=ref.current.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)callback.current?.();}}},
+  return h('dialog',{ref,className:'vx-cloud-dialog'+(className?' '+className:''),'aria-label':title,style:{width},onCancel:e=>{e.preventDefault();callback.current?.();},onClick:e=>{if(e.target===ref.current){const r=ref.current.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)callback.current?.();}}},
     h('div',{className:'ui-dlg vx-dlg vx-cloud'+(noActions?' vx-noact':'')},
       h('div',{className:'vx-dlg-h'},h('div',null,h('h3',{className:'ui-dlg-t'},title),subtitle&&h('p',{className:'ws-muted'},subtitle)),h('button',{type:'button',className:'ui-icon-btn','aria-label':t('关闭'),onClick:onClose},cloudIcon('close'))),
       h('div',{className:'ui-dlg-body'},children),h('div',{className:'ui-dlg-act'},footer)));

@@ -48,6 +48,7 @@ function stageRenderer(){
    internals.H={
     useRef(initial){const i=cursor++;return slots[i]??=( {current:initial});},
     useState(initial){const i=cursor++;slots[i]??={value:typeof initial==='function'?initial():initial};return [slots[i].value,value=>{slots[i].value=typeof value==='function'?value(slots[i].value):value;}];},
+    useLayoutEffect(){cursor++;},
     useEffect(callback,dependencies){cursor++;if(callback.toString().includes('auto-rendered'))nextEffect={callback,dependencies};}
    };
    try{tree=CompanionGroupStage({state,request});}finally{internals.H=previous;}
@@ -69,9 +70,9 @@ async function fixture(t,{ended=true}={}){
  let modelCalls=0;const dispatches=[];
  const service=await createCompanionR95({store,dataRoot,provider:{enabled:false,resolveSearchCapability:()=>({supported:false}),stream(){modelCalls++;throw Error('Real or synthetic model execution is forbidden in this probe');}},dispatchAuto:async reservation=>{dispatches.push(structuredClone(reservation));},memory:{context:async()=>({text:''})},getContext:()=>({characterId:'gpt',personaId:'default',groupId:'probe-group'}),getRuntimeState:()=>({sleepPhase:'awake',canPresent:true,sleepIntentVersion:1}),delta:()=>{},now:()=>1700000000000});
  const f=frames(),renderer=stageRenderer(),calls=[];
- const keys=['document','requestAnimationFrame','cancelAnimationFrame','MutationObserver','setTimeout','clearTimeout'];
+ const keys=['document','requestAnimationFrame','cancelAnimationFrame','MutationObserver'];
  const saved=Object.fromEntries(keys.map(key=>[key,globalThis[key]]));
- Object.assign(globalThis,{document:f.doc,requestAnimationFrame:f.requestFrame,cancelAnimationFrame:f.cancelFrame,MutationObserver:f.Observer,setTimeout:f.setTimer,clearTimeout:f.clearTimer});
+ Object.assign(globalThis,{document:f.doc,requestAnimationFrame:f.requestFrame,cancelAnimationFrame:f.cancelFrame,MutationObserver:f.Observer});
  t.after(async()=>{renderer.close();Object.assign(globalThis,saved);f.close();await service.close();await store.flush();rmSync(dataRoot,{recursive:true,force:true});assert.equal(modelCalls,0);});
  const request=async(action,payload)=>{assert.equal(action,'companion-r95');const receipt=await service.action(payload.action,payload.args);calls.push({args:payload.args,receipt});return {ok:true,r95Result:receipt};};
  const ui=(runtime={})=>{const messages=structuredClone(store.state.groups['probe-group'].messages);return {activeGroupId:'probe-group',groups:[structuredClone(store.state.groups['probe-group'])],characters:Object.values(store.state.cards).map(c=>({id:c.id,name:c.name})),personas:[{id:'default',nickname:'你'}],groupMessages:messages,groupRuntime:{mode:'auto',status:'idle',queue:[],currentMessage:messages.at(-1),streaming:null,canRetry:false,canContinue:false,...runtime},r95:service.view()};};
@@ -121,7 +122,7 @@ test('changing only Auto session identity cancels a delayed terminal ACK respons
 test('the Auto strip and stage name the current request while historical text keeps its speaker',async t=>{
  const p=await fixture(t),state=await startAfterColdEnter(p),stage=p.show(state).html;
  const html=renderToStaticMarkup(React.createElement(CompanionGroupDialogue,{state,request:p.request,chat:{enabled:true}}));
- assert.match(stage,/混元<small>正在发言/);
+ assert.match(stage,/data-speaking="true" title="混元"/);
  assert.match(html,/<b>混元<\/b> 正在说/,'The strip must follow the current request, matching the stage roster');
  assert.doesNotMatch(html,/<b>GPT<\/b> 正在说/);
  assert.match(html,/class="whg-plate gx-plate"[^>]*>GPT<\/div>/,'The historical text nameplate must still name GPT');
@@ -147,7 +148,7 @@ test('a real current barrier is ACKed after two frames while a new request and e
  p.service.presentation.beginPresentation(scope,{id:'unrelated-speech',hasAudio:true});
  const {message}=await publishCurrent(p,{hasAudio:true}),state=p.ui();
  assert.equal(state.r95.autoWait,null,'A reserved next opportunity hides autoWait but must not hide the current real target');
- assert.deepEqual(state.r95.autoPresentation,{scope,messageId:message.id,autoRequestId:message.autoRequestId,characterId:'hunyuan'});
+ assert.deepEqual(state.r95.autoPresentation,{scope,messageId:message.id,occurrenceId:undefined,autoRequestId:message.autoRequestId,characterId:'hunyuan'});
  assert.equal(p.store.state.groups['probe-group'].autoPresentation,undefined,'Presentation identity is runtime state only');
  p.show(state);p.f.frame();await settle();assert.equal(p.calls.length,0,'One visible frame is insufficient');
  p.f.frame();await settle();assert.equal(p.calls.length,1);assert.equal(p.calls[0].receipt.acknowledged,true);
@@ -165,13 +166,32 @@ test('an unpublished message cannot ACK even if it has an actual presentation ba
  const p=await fixture(t);await startAfterColdEnter(p);await publishCurrent(p,{status:'pending-presentation'});const state=p.ui();
  assert.equal(state.r95.autoPresentation,null);p.show(state);p.paint();await settle();assert.equal(p.calls.length,0);assert.doesNotMatch(p.show(state).html,/buddy-ack-error/);
 });
-test('a delayed stale-scope ACK cannot surface after the scope changes and the new target ACKs',async t=>{
+test('a delayed stale-scope ACK cannot surface after the scope changes and the new target ACKs',{timeout:10_000},async t=>{
  const p=await fixture(t,{ended:false}),scope=p.service.activeScope();p.service.presentation.beginPresentation(scope,{id:p.old.id,autoRequestId:p.old.autoRequestId,characterId:'gpt'});
- let release,calls=0;const gate=new Promise(resolve=>release=resolve),delayed=async(action,payload)=>{calls++;await gate;return p.request(action,payload);};
- p.renderer.render(p.ui(),delayed);p.paint();await settle();assert.equal(calls,1);
- await p.store.mutate(s=>{s.groups['probe-group'].entryCharacterId='hunyuan';});
- const refreshedScope=p.service.activeScope();p.service.presentation.beginPresentation(refreshedScope,{id:p.old.id,autoRequestId:p.old.autoRequestId,characterId:'gpt'});
- const refreshed=p.ui();p.renderer.render(refreshed,p.request);p.paint();await settle();release();await settle();
+ const gate=Promise.withResolvers(),oldReceipt=Promise.withResolvers(),aborted=Promise.withResolvers();
+ t.signal.addEventListener('abort',()=>{gate.resolve();aborted.resolve();},{once:true});
+ const waitForReceipt=async receipt=>{t.signal.throwIfAborted();await Promise.race([receipt,aborted.promise]);t.signal.throwIfAborted();};
+ let calls=0,newReceipt;
+ const delayed=async(action,payload)=>{calls++;await gate.promise;const receipt=p.request(action,payload);oldReceipt.resolve(receipt);return receipt;};
+ const sendNew=(action,payload)=>{const receipt=p.request(action,payload);newReceipt=receipt;return receipt;};
+ const acknowledgeNew=async()=>{
+  try{
+   p.renderer.render(p.ui(),delayed);p.paint();await settle();assert.equal(calls,1);
+   await p.store.mutate(s=>{s.groups['probe-group'].entryCharacterId='hunyuan';});
+   const refreshedScope=p.service.activeScope();p.service.presentation.beginPresentation(refreshedScope,{id:p.old.id,autoRequestId:p.old.autoRequestId,characterId:'gpt'});
+   const refreshed=p.ui();p.renderer.render(refreshed,sendNew);p.paint();await settle();
+   assert.ok(newReceipt,'Two visible frames must dispatch the new scope ACK');
+   await waitForReceipt(newReceipt);
+  }finally{
+   gate.resolve();
+   if(!calls)oldReceipt.resolve();
+  }
+ };
+ const results=await Promise.allSettled([acknowledgeNew(),waitForReceipt(oldReceipt.promise)]);
+ const errors=[...new Set(results.flatMap(result=>result.status==='rejected'?[result.reason]:[]))];
+ if(errors.length>1)throw new AggregateError(errors,'Both Auto acknowledgement requests failed');
+ if(errors.length)throw errors[0];
+ await settle();
  assert.ok(p.calls.some(call=>call.receipt.reason==='stale-scope'));assert.ok(p.calls.some(call=>call.receipt.acknowledged===true));
  assert.doesNotMatch(p.renderer.render(p.ui(),p.request).html,/buddy-ack-error/);
 });

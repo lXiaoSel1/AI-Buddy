@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {imageSlots,canonicalImage,isMediaUrl,mediaName} from './media-store.mjs';
+import {imageSlots,canonicalImage,isMediaUrl,mediaName,createMediaStore} from './media-store.mjs';
 
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const planId=value=>sha(JSON.stringify(value)).slice(0,32);
@@ -21,11 +21,13 @@ export function mediaMaintenanceTasks({media,drafts=null}){
  }
  function migrate(state,id){
   const plan=migratePlan(state);if(plan.planId!==id)throw changed();
-  const before=JSON.stringify(state),moved=new Set(plan.rows.map(row=>row.path));
-  for(const [holder,key,path]of imageSlots(state))if(moved.has(path)){const url=media.put(holder[key]);if(!url)throw Error('图片迁移失败：'+path);holder[key]=url;}
-  // Expanding only what moved must give back the store byte for byte.
-  const check=structuredClone(state);for(const [holder,key,path]of imageSlots(check))if(moved.has(path))holder[key]=media.resolve(holder[key],{missing:null});
-  if(JSON.stringify(check)!==before)throw Error('图片迁移校验失败，存档没有改动');
+  const moved=new Set(plan.rows.map(row=>row.path));
+  for(const [holder,key,path]of imageSlots(state))if(moved.has(path)){
+   const original=holder[key],url=media.put(original);
+   if(!url)throw Error('图片迁移失败：'+path);
+   if(media.resolve(url,{missing:null})!==original)throw Error('图片迁移校验失败，存档没有改动');
+   holder[key]=url;
+  }
   return plan;
  }
  function revertPlan(state){
@@ -45,6 +47,23 @@ export function mediaMaintenanceTasks({media,drafts=null}){
   'media-migrate':{plan:migratePlan,apply:migrate,summary:({rows,...rest})=>({...rest,paths:rows.map(row=>row.path)})},
   // After the store keeps the drafts again, the drafts file must not shadow them.
   // The store must not turn the restored data URLs back into media files.
-  'media-revert':{plan:revertPlan,apply:revert,mutateOptions:{storeImages:false},after:()=>drafts?.clear(),summary:({rows,...rest})=>rest},
+  'media-revert':{plan:revertPlan,apply:revert,mutateOptions:{storeImages:false},after:()=>drafts?.clear(),
+   draftEntries:()=>drafts?.entries()??[],
+   afterSqlite:entries=>{for(const [id,value] of entries)if(drafts?.get(id)===value)drafts.delete(id);drafts?.flush();},
+   summary:({rows,...rest})=>rest},
  };
+}
+
+export function prepareMediaMaintenance({state,task,dataRoot,draftEntries=[],applyPlanId}){
+ const tools=mediaMaintenanceTasks({media:createMediaStore(dataRoot),drafts:{entries:()=>draftEntries}}),tool=tools[task];
+ if(!applyPlanId)return tool.plan(state);
+ const before=new Map(Array.from(imageSlots(state),([holder,key,path])=>[path,holder[key]]));
+ const plan=tool.apply(state,applyPlanId),slots=[],archiveAvatars=[];
+ for(const [holder,key,path]of imageSlots(state)){
+  const value=holder[key];
+  if(value===before.get(path))continue;
+  if(path.startsWith('lifeArchives/'))archiveAvatars.push({id:path.slice('lifeArchives/'.length,-'/avatar'.length),value});
+  else slots.push({path,value});
+ }
+ return {...plan,changes:{slots,archiveAvatars}};
 }

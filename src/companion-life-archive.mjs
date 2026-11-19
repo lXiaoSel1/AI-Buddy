@@ -37,8 +37,8 @@ export function lifeArchiveCapabilities(snapshot){
 }
 
 // ZIP building, structural/hash verification and verified writing. It uses only
-// its arguments and globals, so the same source also runs in a worker thread
-// (image decoding stays in the main process, where nativeImage lives).
+// its arguments and globals, so the same source also runs in a worker thread.
+// The host routes production image decoding separately to a sandboxed preload.
 function archiveCore({zlib,crypto,fs},{MAX_TOTAL,MAX_IMAGE,MAX_TEXT}){
  const hash=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
  const crc=bytes=>zlib.crc32(bytes)>>>0;
@@ -117,7 +117,7 @@ const sniff=bytes=>bytes[0]===0xff&&bytes[1]===0xd8?'jpeg':bytes.toString('ascii
 
 export function createLifeArchiveRepository({dataRoot,imageCodec=null,imageConverter=null,media=null,worker=true}){
  const directory=join(dataRoot,'galgame','life-archives');mkdirSync(directory,{recursive:true});
- function checkImage(bytes){if(!imageCodec)throw Error('图片解码器尚未就绪，未创建不完整备份');const decoded=imageCodec(bytes);if(decoded===false||decoded&&typeof decoded.isEmpty==='function'&&decoded.isEmpty())throw Error('存档图片无法解码');}
+ function checkImage(bytes,options){if(!imageCodec)throw Error('图片解码器尚未就绪，未创建不完整备份');const decoded=imageCodec(bytes,options);if(decoded===false||decoded&&typeof decoded.isEmpty==='function'&&decoded.isEmpty())throw Error('存档图片无法解码');return decoded;}
  function image(bytes,mime,files){if(bytes.length>MAX_IMAGE)throw Error('存档图片超过 32 MiB');checkImage(bytes);const extension=mime==='jpg'?'jpeg':mime;if(!SUPPORTED.includes(extension))throw Error('存档图片格式不支持');const path='images/'+archiveHash(bytes)+'.'+extension;files.set(path,bytes);return {$image:path};}
  // GIF (first frame), SVG and other formats the codec cannot read are rasterized to
  // PNG before packing; the manifest lists which fields were converted.
@@ -160,7 +160,7 @@ export function createLifeArchiveRepository({dataRoot,imageCodec=null,imageConve
    return value;
   }
   if(Array.isArray(value))return value.map(item=>separate(item,files,ctx,'',key,parent));
-  if(value&&typeof value==='object'){const out={};for(const [field,item]of Object.entries(value)){if(secrets.test(field)||field==='key'&&connectionLike(value))continue;out[field]=separate(item,files,ctx,field,key,value);}return out;}return value;
+  if(value&&typeof value==='object'){if(Object.hasOwn(value,'$assetImage'))throw Error('人生存档图片必须使用已校验的包内引用');const out={};for(const [field,item]of Object.entries(value)){if(secrets.test(field)||field==='key'&&connectionLike(value))continue;out[field]=separate(item,files,ctx,field,key,value);}return out;}return value;
  }
  // Snapshot -> archive entries. Images are decoded once, here. CG records whose
  // files are gone are collected and reported together so the user can clean them up.
@@ -172,18 +172,60 @@ export function createLifeArchiveRepository({dataRoot,imageCodec=null,imageConve
   return {entries:[...files],meta:{version:snapshot.version??1,...(capabilities.length?{requiredCapabilities:capabilities}:{}),createdAt:Date.now(),characterId:snapshot.characterId,lifeId:snapshot.life.id,dependencies:snapshot.dependencies??[],...(ctx.notes.length?{convertedImages:ctx.notes}:{})}};
  }
  function prepare(snapshot){const {entries,meta}=entriesFor(snapshot);return core.build(entries,meta);}
- function decode(bytes){
-  const {files,manifest,declared}=core.verify(bytes);
-  for(const path of declared)if(path.startsWith('images/'))checkImage(files.get(path));
-  const hydrate=(value,key='',parentKey='')=>{if(typeof value==='string'&&(imageField(key,parentKey)&&/^data:image\//i.test(value)||assetKey(key)&&value))throw Error('人生存档图片必须使用已校验的包内引用');if(Array.isArray(value))return value.map(item=>hydrate(item,'',key));if(value&&typeof value==='object'){if(Object.hasOwn(value,'$image')){if(Object.keys(value).length!==1||!declared.has(value.$image)||!value.$image.startsWith('images/'))throw Error('人生存档图片引用缺失');const data='data:image/'+value.$image.split('.').at(-1)+';base64,'+files.get(value.$image).toString('base64');return assetKey(key)?{$assetImage:data}:data;}return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,hydrate(v,k,key)]));}return value;};
-  const snapshot=hydrate(core.json(files.get('text/state.json')));if(snapshot?.format!=='ai-buddy-life-state'||![1,2,3].includes(snapshot.version)||snapshot.version!==manifest.version||snapshot.characterId!==manifest.characterId||!/^[a-zA-Z0-9_-]{1,100}$/.test(snapshot.characterId)||['__proto__','prototype','constructor'].includes(snapshot.characterId)||snapshot.life?.id!==manifest.lifeId||!snapshot.card||!snapshot.relationships||!Array.isArray(snapshot.conversations))throw Error('人生状态内容不完整');
+ function decode(bytes,{verifiedAssets=null}={}){
+  const {files,manifest,declared}=core.verify(bytes),portable=core.json(files.get('text/state.json')),assets=new Map();
+  // Discover real CG references first. Other images still need the same full
+  // decode, but do not need a thumbnail or a materialized asset.
+  const inspect=(value,key='',parentKey='')=>{
+   if(typeof value==='string'&&(imageField(key,parentKey)&&/^data:image\//i.test(value)||assetKey(key)&&value))throw Error('人生存档图片必须使用已校验的包内引用');
+   if(Array.isArray(value)){for(const item of value)inspect(item,'',key);return;}
+   if(!value||typeof value!=='object')return;
+   if(Object.hasOwn(value,'$assetImage'))throw Error('人生存档图片必须使用已校验的包内引用');
+   if(Object.hasOwn(value,'$image')){
+    const path=value.$image;
+    if(Object.keys(value).length!==1||typeof path!=='string'||!path.startsWith('images/')||!declared.has(path))throw Error('人生存档图片引用缺失');
+    if(verifiedAssets&&assetKey(key)){
+     if(!assets.has(path))assets.set(path,new Map());
+     assets.get(path).set(key,null);
+    }
+    return;
+   }
+   for(const [field,item]of Object.entries(value))inspect(item,field,key);
+  };
+  inspect(portable);
+  for(const path of declared)if(path.startsWith('images/')){
+   const image=files.get(path),refs=assets.get(path);
+   if(image.length>MAX_IMAGE)throw Error('存档图片超过 32 MiB');
+   const checked=checkImage(image,{thumbnail:!!verifiedAssets?.thumbnail&&!!refs});
+   // Materialize verified, content-addressed files one at a time. The ZIP
+   // and life records are only published after the complete decode succeeds.
+   if(refs)for(const key of refs.keys())refs.set(key,verifiedAssets.resolve(path,image,checked,key));
+  }
+  const hydrate=(value,key='')=>{
+   if(Array.isArray(value))return value.map(item=>hydrate(item));
+   if(!value||typeof value!=='object')return value;
+   if(Object.hasOwn(value,'$image')){
+    const path=value.$image;
+    if(assetKey(key)&&verifiedAssets)return assets.get(path).get(key);
+    const data='data:image/'+path.split('.').at(-1)+';base64,'+files.get(path).toString('base64');
+    return assetKey(key)?{$assetImage:data}:data;
+   }
+   return Object.fromEntries(Object.entries(value).map(([field,item])=>[field,hydrate(item,field)]));
+  };
+  const snapshot=hydrate(portable);if(snapshot?.format!=='ai-buddy-life-state'||![1,2,3].includes(snapshot.version)||snapshot.version!==manifest.version||snapshot.characterId!==manifest.characterId||!/^[a-zA-Z0-9_-]{1,100}$/.test(snapshot.characterId)||['__proto__','prototype','constructor'].includes(snapshot.characterId)||snapshot.life?.id!==manifest.lifeId||!snapshot.card||!snapshot.relationships||!Array.isArray(snapshot.conversations))throw Error('人生状态内容不完整');
   const capabilities=lifeArchiveCapabilities(snapshot);if(JSON.stringify([...capabilities].sort())!==JSON.stringify([...(manifest.requiredCapabilities??[])].sort()))throw Error('人生状态与清单能力不一致');return {manifest,snapshot};
  }
  function file(id){if(!/^archive-[a-f0-9-]{36}$/.test(id))throw Error('人生存档 ID 无效');const target=join(directory,id+'.zip');if(existsSync(target)&&relative(realpathSync(directory),realpathSync(target)).startsWith('..'))throw Error('人生存档路径越界');return target;}
- async function write(task){const id='archive-'+randomUUID(),target=file(id),result=await runArchiveTask({...task,target,temp:target+'.partial'},{worker});return {id,bytes:result.bytes,sha256:result.sha256,fileName:id+'.zip'};}
- return {prepare,decode,has:id=>{try{return existsSync(file(id));}catch{return false;}},
+ async function write(task){
+  const id='archive-'+randomUUID(),target=file(id),input={...task,target,temp:target+'.partial'};
+  const result=worker?await runArchiveTask(input):core.run(input);
+  return {id,bytes:result.bytes,sha256:result.sha256,fileName:id+'.zip'};
+ }
+ return {prepare,decode,checkImage,has:id=>{try{return existsSync(file(id));}catch{return false;}},
   async save(snapshot){return write(entriesFor(snapshot,await convertImages(snapshot)));},
   // An import is fully decoded here (images included) before the worker writes it.
   async import(bytes){decode(bytes);return write({bytes});},
-  read(id,expectedHash){const bytes=readFileSync(file(id));if(expectedHash&&archiveHash(bytes)!==expectedHash)throw Error('本地人生存档哈希不匹配');return {...decode(bytes),bytes};}};
+  importVerified:bytes=>write({bytes}),
+  remove:id=>fs.promises.rm(file(id),{force:true}),
+  read(id,expectedHash,options){const bytes=readFileSync(file(id));if(expectedHash&&archiveHash(bytes)!==expectedHash)throw Error('本地人生存档哈希不匹配');return {...decode(bytes,options),bytes};}};
 }

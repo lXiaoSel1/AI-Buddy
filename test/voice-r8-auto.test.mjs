@@ -1,19 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm} from 'node:fs/promises';
+import {access,mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve,sep} from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
 import {openCompanionStore} from '../src/companion-store.mjs';
 import {createAutoService} from '../src/companion-auto.mjs';
+import {groupAutoNamespace,groupAutoOwner,groupAutoPath} from '../src/companion-partitions.mjs';
 
 async function fixture(t){
  const root=await mkdtemp(join(tmpdir(),'voice-r8-auto-')),store=await openCompanionStore(root);
- t.after(async()=>{await store.flush();assert.ok(resolve(root).startsWith(resolve(tmpdir())+sep));await rm(root,{recursive:true,force:true});});
+ const reopened=[];
+ t.after(async()=>{for(const reader of reopened)await reader.close();await store.close();assert.ok(resolve(root).startsWith(resolve(tmpdir())+sep));await rm(root,{recursive:true,force:true});});
  const scope={characterId:'a',lifeId:'life-a',operationId:'op-a',personaId:'default',channel:'app-group',conversationId:'g'};
  await store.mutate(state=>{state.r95={settings:{auto:true}};state.lives={a:{id:'life-a',operationId:'op-a'},b:{id:'life-b',operationId:'op-b'}};state.groups.g={id:'g',personaId:'default',memberIds:['a','b'],mutedIds:[],messages:[]};});
  const dispatched=[],cancelled=[],runtime={};
  const service=createAutoService({store,now:()=>1000,getRuntimeState:()=>runtime,dispatchTurn:async value=>{dispatched.push(value);},cancelTurn:async value=>{cancelled.push(value);}});
- return {root,store,scope,service,dispatched,cancelled,runtime,start:(options={})=>service.start({groupId:'g',scope,authorizationId:'human-1',...options})};
+ return {root,store,scope,service,dispatched,cancelled,runtime,async reopen(){await store.flush();const reader=await openCompanionStore(root);reopened.push(reader);return reader;},start:(options={})=>service.start({groupId:'g',scope,authorizationId:'human-1',...options})};
 }
 
 test('R8 a conditional transaction observes the latest committed queue state before choosing to skip',async t=>{
@@ -26,7 +29,7 @@ test('R8 a conditional transaction observes the latest committed queue state bef
  release();await first;await skipped;
  assert.equal(f.store.state.settings.queueMarker,'first');
  assert.equal(f.store.state.revision,before+1);
- await f.store.flush();const reopened=await openCompanionStore(f.root);
+ const reopened=await f.reopen();
  assert.equal(reopened.state.settings.queueMarker,'first');
 });
 async function queuedChange(f,change){
@@ -51,7 +54,7 @@ test('R8 pending Auto waits return the current request without another dispatch 
  const f=await fixture(t);await f.start();const first=await f.service.next({groupId:'g'}),before=f.store.snapshot();
  for(let i=0;i<10;i++)assert.deepEqual(await f.service.next({groupId:'g'}),{skipped:'pending',requestId:first.requestId});
  assert.deepEqual(f.store.state,before);assert.equal(f.dispatched.length,1);assert.equal(f.cancelled.length,0);
- await f.store.flush();const reopened=await openCompanionStore(f.root);assert.deepEqual(reopened.state,before);
+ const reopened=await f.reopen();assert.deepEqual(reopened.state,before);
 });
 
 test('R8 each actual runtime presentation barrier waits without reserving or changing the Auto session',async t=>{
@@ -67,7 +70,7 @@ test('R8 a setting disabled ahead of a pending tick in the store queue still pau
  const f=await fixture(t);await f.start();const first=await f.service.next({groupId:'g'});
  assert.deepEqual(await queuedChange(f,state=>{state.r95.settings.auto=false;}),{skipped:'disabled'});
  const auto=f.service.view({groupId:'g'}).auto;assert.equal(auto.status,'paused');assert.equal(auto.pauseReason,'disabled');assert.equal(auto.pending.requestId,first.requestId);assert.equal(f.dispatched.length,1);
- await f.store.flush();const reopened=await openCompanionStore(f.root);assert.equal(reopened.state.groups.g.auto.pauseReason,'disabled');
+ const reopened=await f.reopen();assert.equal(reopened.state.groups.g.auto.pauseReason,'disabled');
 });
 
 test('R8 members changed ahead of a pending tick retire and cancel the original request exactly once',async t=>{
@@ -109,4 +112,67 @@ test('R8 concurrent Auto services share the real transaction queue and stopping 
  const requestId=f.dispatched[0].requestId;
  await f.service.stop({groupId:'g'});assert.deepEqual(await second.next({groupId:'g'}),{skipped:'ended'});
  assert.equal(f.dispatched.length,1);assert.equal(f.cancelled.length,1);assert.equal(f.cancelled[0].requestId,requestId);
+});
+
+test('a new Auto authorization never opens or initializes the evidence archive on the desktop',async t=>{
+ const f=await fixture(t),exec=DatabaseSync.prototype.exec,archiveStatements=[];
+ t.mock.method(DatabaseSync.prototype,'exec',function(sql,...args){
+  if(sql.startsWith('CREATE TABLE IF NOT EXISTS records(namespace TEXT,id TEXT'))archiveStatements.push(sql);
+  return exec.call(this,sql,...args);
+ });
+ const results=await Promise.all([f.start(),f.start()]);
+ assert.equal(results[0].id,results[1].id);
+ assert.equal(results.filter(row=>row.duplicate).length,1);
+ assert.deepEqual(archiveStatements,[],'an authorization miss must be read-only and outside the desktop thread');
+ await assert.rejects(access(join(f.root,'galgame','auto-evidence.sqlite')),{code:'ENOENT'});
+});
+
+
+test('Auto checks an authorization again when it was archived during an in-flight miss',async t=>{
+ const f=await fixture(t),target='evicted-authorization';
+ const namespace=groupAutoNamespace('autoAuthorizations'),owner=groupAutoOwner('g',null);
+ const descriptor={at:groupAutoPath('g',null,'autoAuthorizations')};
+ await f.store.mutate((_,tx)=>{
+  tx.records.put(namespace,owner,target,{id:'older-auto-session',at:0},descriptor);
+  for(let index=1;index<200;index++)tx.records.put(namespace,owner,'older-'+index,{id:'auto-'+index,at:index},descriptor);
+ });
+ let entered,release;
+ const observed=new Promise(resolve=>{entered=resolve;});
+ const held=new Promise(resolve=>{release=resolve;});
+ const lookup=f.store.archivedAutoAuthorization;
+ let checked=0;
+ t.mock.method(f.store,'archivedAutoAuthorization',async(groupId,id)=>{
+  const archived=await lookup(groupId,id);
+  if(id===target&&++checked===1){entered(archived);await held;}
+  return archived;
+ });
+ const stale=f.start({authorizationId:target}),outcome=assert.rejects(stale,{code:'AUTO_AUTHORIZATION_REUSED'});
+ try{
+  assert.equal(await observed,false,'the worker snapshot preceded actual eviction');
+  const next=await f.start({authorizationId:'new-live-authority'});
+  await f.service.stop({groupId:'g'});
+  assert.equal(f.store.records.get(namespace,owner,target),undefined);
+  assert.equal(await lookup('g',target),true);
+  const revision=f.store.state.revision;
+  release();
+  await outcome;
+  assert.equal(checked,2);
+  assert.equal(f.store.state.revision,revision,'rejecting the reused authorization made no partial mutation');
+  assert.equal(f.service.view({groupId:'g'}).auto.id,next.id);
+ }finally{release();await Promise.allSettled([stale,outcome]);}
+ const reopened=await f.reopen(),service=createAutoService({store:reopened});
+ await assert.rejects(service.start({groupId:'g',scope:f.scope,authorizationId:target}),{code:'AUTO_AUTHORIZATION_REUSED'});
+});
+
+test('Auto fails closed if an existing evidence archive cannot establish an authorization lookup',async t=>{
+ const f=await fixture(t),path=join(f.root,'galgame','auto-evidence.sqlite');
+ const db=new DatabaseSync(path);
+ db.exec('CREATE TABLE invalid_fixture(dummy TEXT)');db.close();
+ const revision=f.store.state.revision;
+ await assert.rejects(f.start(),/no such table: records/i);
+ assert.equal(f.store.state.revision,revision);
+ assert.equal(f.service.view({groupId:'g'}).auto,null);
+ await writeFile(path,'invalid SQLite fixture');
+ await assert.rejects(f.start(),/not a database|disk image is malformed/i);
+ assert.equal(f.store.state.revision,revision);
 });

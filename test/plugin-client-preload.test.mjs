@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import {readFile} from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
 import {build} from 'esbuild';
 import {pluginClientResult} from '../src/plugin-client-result.mjs';
 
+const bundlePreload=name=>build({entryPoints:[fileURLToPath(new URL('../src/'+name+'.mjs',import.meta.url))],bundle:true,format:'cjs',platform:'node',external:['electron'],write:false,logLevel:'silent'});
+
 test('sandbox preload exposes only finite methods and approval requires current genuine user activation', async () => {
-  const contents = await readFile(new URL('../src/plugin-client-preload.mjs', import.meta.url), 'utf8'), compiled = await build({stdin: {contents, loader: 'js'}, bundle: true, format: 'cjs', platform: 'node', external: ['electron'], write: false, logLevel: 'silent'});
+  const compiled = await bundlePreload('plugin-client-preload');
   const calls = [], listeners = new Map(), navigator = {userActivation: {isActive: false}}; let api;
   const electron = {contextBridge: {exposeInMainWorld(name, value) { assert.equal(name, 'aiBuddyPluginClient'); api = value; }}, ipcRenderer: {invoke(channel, value) { calls.push({channel, value}); return Promise.resolve({ok: true, result: {}}); }, on(channel, listener) { listeners.set(channel, listener); }, removeListener(channel) { listeners.delete(channel); }}};
   vm.runInNewContext(compiled.outputFiles[0].text, {require: name => { assert.equal(name, 'electron'); return electron; }, navigator});
@@ -26,7 +28,7 @@ test('plain core work-open failure survives cloning and becomes an Error only in
 });
 
 test('voice failures remain plain across the preload bridge and retain their code in the receiving renderer',async()=>{
- const contents=await readFile(new URL('../src/preload.mjs',import.meta.url),'utf8'),compiled=await build({stdin:{contents,loader:'js'},bundle:true,format:'cjs',platform:'node',external:['electron'],write:false,logLevel:'silent'});
+ const compiled=await bundlePreload('preload');
  let api,transport=false;const wire={__buddyError:true,code:'VOICE_PACKAGE_UNAVAILABLE',message:'Selected voice package is unavailable'};
  const electron={contextBridge:{exposeInMainWorld(_name,value){api=value;}},ipcRenderer:{invoke:async channel=>{assert.equal(channel,'voice:action');if(transport)throw Error('Error invoking remote method \'voice:action\': Error: channel closed');return wire;}}};
  vm.runInNewContext(compiled.outputFiles[0].text,{require:name=>{assert.equal(name,'electron');return electron;}});

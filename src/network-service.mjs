@@ -12,7 +12,13 @@ export async function createNetworkService({dataRoot,session,electronSession,res
   const ses=electronSession??session?.fromPartition('ai-buddy-network',{cache:false});
   ses?.setUserAgent?.(userAgent);
   const systemSes=session?.fromPartition('ai-buddy-network-system',{cache:false});if(systemSes)await systemSes.setProxy({mode:'system'});
-  const apply=async config=>{if(ses)await ses.setProxy(config.mode==='manual'?{mode:'fixed_servers',proxyRules:config.proxyUrl,proxyBypassRules:'<-loopback>;localhost;127.0.0.1;[::1]'}:{mode:config.mode==='direct'?'direct':'system'});};
+  const apply=async config=>{
+    if(!ses)return;
+    await ses.setProxy(config.mode==='manual'?{mode:'fixed_servers',proxyRules:config.proxyUrl,proxyBypassRules:'<-loopback>;localhost;127.0.0.1;[::1]'}:{mode:config.mode==='direct'?'direct':'system'});
+    // Reload before admitting requests under the saved route. Active response
+    // bodies keep their existing connection across the change.
+    await ses.forceReloadProxyConfig();
+  };
   await apply(settings);
   const snapshot=()=>({...settings,revision});
   async function resolveRoutes(value,captured=settings){
@@ -32,7 +38,22 @@ export async function createNetworkService({dataRoot,session,electronSession,res
     try{return ses&&!isLoopback(value)&&redirect!=='manual'?await ses.fetch(input,{credentials:'omit',...init}):await nodeFetch(input,init);}
     catch(cause){if(init.signal?.aborted)throw init.signal.reason;throw networkFailure(cause,value);}
   }
-  function save(value){const task=tail.then(async()=>{const next=normalizeNetworkSettings(value),previous=settings;await apply(next);try{if(store)await store.writeText(JSON.stringify(next));}catch(cause){await apply(previous);throw cause;}settings=next;invalidateSystemCAs();revision++;onChange(snapshot());return snapshot();});tail=task.catch(()=>{});return task;}
+  function save(value){
+    const task=tail.then(async()=>{
+      const next=normalizeNetworkSettings(value),previous=settings;
+      const proxyChanged=next.mode!==previous.mode||(next.mode==='manual'&&next.proxyUrl!==previous.proxyUrl);
+      try{
+        if(proxyChanged)await apply(next);
+        if(store)await store.writeText(JSON.stringify(next));
+      }catch(cause){
+        if(proxyChanged)await apply(previous);
+        throw cause;
+      }
+      settings=next;invalidateSystemCAs();revision++;onChange(snapshot());return snapshot();
+    });
+    tail=task.catch(()=>{});
+    return task;
+  }
   const capture=({official=false}={})=>{if(typeof official!=='boolean')throw Error('Invalid official download mode');const captured={...snapshot(),...(official?{githubMirror:'',huggingFaceMirror:''}:{})},downloadConfig=Object.fromEntries(Object.keys(NETWORK_DEFAULTS).map(key=>[key,captured[key]]));return {snapshot:()=>({...captured}),resolveRoutes:url=>resolveRoutes(url,captured),fetch:createNodeNetworkFetch({resolveRoute:url=>resolveRoutes(url,captured),userAgent}),planDownload:(url,options)=>downloadRequestPlan(url,downloadConfig,{...options,official:official||options?.official===true}),childNetworkConfig:async url=>({destinationOrigin:new URL(url).origin,settings:{...downloadConfig},routes:await resolveRoutes(url,captured),ca:windowsSystemCAs().join('\n')})};};
   async function testCatalog(){
     const signal=AbortSignal.timeout(30000),config={...settings};

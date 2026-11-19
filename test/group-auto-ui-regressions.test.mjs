@@ -47,15 +47,51 @@ function frames({ready=true,send=()=>({acknowledged:true})}={}){
   setModal(value){modal=value;},close(){cancel();globalThis.window=previousWindow;}
  };
 }
-function captureStage(value,request=async()=>({ok:true,r95Result:{acknowledged:true}})){
+function captureStageRender(value,request,stateSlots=[]){
  const internals=React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
  assert.ok(internals&&'H'in internals,'The installed React dispatcher must be available for a hook-only capture');
- const previous=internals.H,effects=[];
- internals.H={useRef:initial=>({current:initial}),useState:initial=>[typeof initial==='function'?initial():initial,()=>{}],useEffect:(callback,dependencies)=>effects.push({callback,dependencies})};
- try{CompanionGroupStage({state:value,request});}finally{internals.H=previous;}
- const effect=effects.find(row=>row.callback.toString().includes('auto-rendered'));
+ const previous=internals.H,effects=[];let index=0,element;
+ internals.H={useRef:initial=>({current:initial}),useState:initial=>{const slot=index++;if(!(slot in stateSlots))stateSlots[slot]=typeof initial==='function'?initial():initial;return [stateSlots[slot],next=>{stateSlots[slot]=typeof next==='function'?next(stateSlots[slot]):next;}];},useLayoutEffect(){},useEffect:(callback,dependencies)=>effects.push({callback,dependencies})};
+ try{element=CompanionGroupStage({state:value,request});}finally{internals.H=previous;}
+ return {element,effects};
+}
+function captureStage(value,request=async()=>({ok:true,r95Result:{acknowledged:true}})){
+ const {effects}=captureStageRender(value,request),effect=effects.find(row=>row.callback.toString().includes('auto-rendered'));
  assert.ok(effect,'Expected the actual group rendered ACK effect');return effect;
 }
+
+test('stale and superseded presentation replies do not leave alerts on the group stage',async t=>{
+ const doc=globalThis.document,requestFrame=globalThis.requestAnimationFrame,cancelFrame=globalThis.cancelAnimationFrame;
+ let frame,cleanup;
+ Object.assign(globalThis,{document:{hidden:false,querySelector:()=>null},requestAnimationFrame:callback=>{frame=callback;return 1;},cancelAnimationFrame:()=>{frame=null;}});
+ t.after(()=>{cleanup?.();Object.assign(globalThis,{document:doc,requestAnimationFrame:requestFrame,cancelAnimationFrame:cancelFrame});});
+ const value=state(null),pending={...reply,id:'first-pending',status:'pending-presentation'},slots=[];
+ value.groupRuntime={...value.groupRuntime,pendingMessage:pending,status:'awaiting-presentation'};
+ let reject,resolve,calls=0;
+ const request=async(action,{id,requestId})=>{
+  assert.equal(action,'companion-group-present');assert.equal(id,value.activeGroupId);
+  assert.equal(requestId,value.groupRuntime.pendingMessage.id);calls++;
+  return new Promise((done,fail)=>{resolve=done;reject=fail;});
+ };
+ const capture=()=>captureStageRender(value,request,slots);
+ const start=()=>{const effect=capture().effects.find(row=>row.callback.toString().includes('companion-group-present'));assert.ok(effect);cleanup=effect.callback();};
+ const html=()=>renderToStaticMarkup(capture().element);
+
+ start();const staleAttempt=frame;staleAttempt();reject(Object.assign(Error('Pending message expired'),{code:'GROUP_PRESENTATION_STALE'}));await settle();
+ assert.doesNotMatch(html(),/Pending message expired/);
+ staleAttempt();await settle();
+ assert.equal(calls,1,'An expired presentation is not retried');
+
+ cleanup();value.groupRuntime.pendingMessage={...pending,id:'second-pending'};
+ start();frame();reject(Error('Presentation bridge failed'));await settle();
+ assert.match(html(),/role="alert">Presentation bridge failed/);
+ frame();resolve({ok:true,presentationDeferred:true});await settle();
+ assert.doesNotMatch(html(),/Presentation bridge failed/);
+
+ frame();cleanup();value.groupRuntime.pendingMessage=null;value.groupRuntime.status='idle';
+ reject(Error('Obsolete bridge error'));await settle();
+ assert.doesNotMatch(html(),/Obsolete bridge error/);
+});
 
 test('group ACK wakes when only message data attributes arrive after the initial not-ready check',async t=>{
  const f=frames({ready:false});t.after(()=>f.close());f.start();assert.equal(f.jobs.size,0);f.data();assert.equal(f.jobs.size,1);f.frame();await settle();assert.equal(f.sent,0);f.frame();await settle();assert.equal(f.sent,1);
@@ -91,7 +127,11 @@ test('the real GroupStage ACK effect depends on streaming readiness, not every s
 });
 test('the real GroupStage sends the full group/message/request/scope identity through the action client',async t=>{
  const f=frames(),saved=Object.fromEntries(['document','requestAnimationFrame','cancelAnimationFrame','MutationObserver'].map(key=>[key,globalThis[key]]));let cleanup;t.after(()=>{cleanup?.();Object.assign(globalThis,saved);f.close();});Object.assign(globalThis,{document:f.doc,requestAnimationFrame:f.requestFrame,cancelAnimationFrame:f.cancelFrame,MutationObserver:f.Observer});const calls=[];
- const effect=captureStage(state(),async(action,payload)=>{calls.push({action,payload});return {ok:true,r95Result:{acknowledged:true}};});cleanup=effect.callback();f.frame();f.frame();await settle();assert.deepEqual(calls,[{action:'companion-r95',payload:{action:'auto-rendered',args:{groupId:'group',messageId:reply.id,autoRequestId:reply.autoRequestId,scope}}}]);
+ const value=state(),occurrenceId='stored-occurrence';
+ value.groupRuntime.currentMessage={...reply,occurrenceId};
+ value.r95.autoPresentation.occurrenceId=occurrenceId;
+ f.node.dataset.groupMessageOccurrence=occurrenceId;
+ const effect=captureStage(value,async(action,payload)=>{calls.push({action,payload});return {ok:true,r95Result:{acknowledged:true}};});cleanup=effect.callback();f.frame();f.frame();await settle();assert.deepEqual(calls,[{action:'companion-r95',payload:{action:'auto-rendered',args:{groupId:'group',messageId:reply.id,occurrenceId,autoRequestId:reply.autoRequestId,scope}}}]);
 });
 test('paused or failed Auto keeps its own compact progress instead of exposing the cumulative manual round',()=>{
  setLocale('zh-CN');const history=[{id:'u',role:'user',text:'Start.'},...Array.from({length:20},(_,index)=>({...reply,id:'old-'+index,characterId:members[index%members.length]}))];
@@ -117,6 +157,29 @@ test('an ended Auto shows a compact summary until a new ordinary user round begi
 test('ordinary progress defaults to collapsed and leaves continuation and stop outside its details',()=>{
  setLocale('zh-CN');const value=state(null);value.groupRuntime={...value.groupRuntime,status:'awaiting-continue',queue:['claude','chatgpt'],canContinue:true};const html=render(CompanionGroupDialogue,props(value)),details=detailsBlock(html,'data-group-progress-details');assert.doesNotMatch(details.match(/^<details[^>]*>/)[0],/\sopen(?:=|\s|>)/);const controls=html.replace(details,'');assert.match(controls,/data-companion-group-continue/);assert.match(controls,/data-companion-group-stop/);assert.match(controls,/whg-line-now/);
 });
+test('frameless groups show one round summary and only the three current-round actions',()=>{
+ setLocale('zh-CN');
+ const user={id:'ordinary-user',role:'user',text:'A new round.'},ordinary={...reply,autoRequestId:undefined};
+ const value=state(null,{groupMessages:[user,ordinary]});
+ value.groupRuntime={...value.groupRuntime,mode:'list',status:'awaiting-continue',canContinue:true,queue:['claude','chatgpt','hunyuan'],currentMessage:ordinary};
+ const html=render(CompanionGroupDialogue,{...props(value),classic:false});
+ assert.match(html,/class="lv gx-round-meta">本轮 · 第 2 位 \/ 共 4 位 · 下一位 Claude/);
+ const actions=html.slice(html.indexOf('data-group-round="true"'),html.indexOf('data-galgame-input-toggle'));
+ assert.match(actions,/<summary class="b">.*展开进度/);
+ assert.match(actions,/<button type="button" class="b pri" data-companion-group-continue="true">继续 ▸/);
+ assert.match(actions,/<button type="button" class="b" data-companion-group-stop="true">停止本轮/);
+ assert.doesNotMatch(actions,/buddy-round-k|buddy-round-current|合影 CG|结束本次聊天/);
+ value.r95={...value.r95,auto:auto({status:'paused'})};
+ const paused=render(CompanionGroupDialogue,{...props(value),classic:false});
+ assert.match(paused,/class="lv gx-round-meta">本轮 · 第 2 位 \/ 共 4 位 · 下一位 Claude/);
+ assert.match(paused,/Auto 已暂停/);
+ const classic=render(CompanionGroupDialogue,props(value));
+ assert.match(classic,/buddy-round-k/);
+ assert.match(classic,/buddy-round-current/);
+ assert.match(classic,/合影 CG/);
+ assert.match(classic,/结束本次聊天/);
+});
+
 test('expanded progress bodies have a 120px internal scrolling limit',()=>{
  const css=CompanionDesignCSS+'\n'+ChatR95CSS,body=css.match(/\.buddy-progress-body\s*\{([^}]+)\}/)?.[1];assert.ok(body,'Use one bounded progress body for ordinary and Auto details');assert.match(body,/max-height:\s*120px/);assert.match(body,/overflow(?:-y)?:\s*auto/);
 });
@@ -128,4 +191,39 @@ test('Auto uses actual wait reasons while non-blocked generation takes precedenc
 });
 test('new progress and wait labels have English translations',()=>{
  setLocale('en');try{for(const reason of ['presenting','input','model','awaiting-user','not-visible','ready']){const html=render(AutoRoundStrip,{view:{groupId:'group',auto:auto(),autoWait:{reason}},onAction:async()=>{},nameOf:id=>names[id]});assert.doesNotMatch(html,/[\u3400-\u9fff]/);assert.match(html,/details/);}}finally{setLocale('zh-CN');}
+});
+
+test('the second of three speakers shows the same next member in the line bar and progress popover',()=>{
+ setLocale('zh-CN');
+ const user={id:'opening',role:'user',text:'Start.'},first={...reply,id:'first',characterId:'claude',characterName:'Claude',autoRequestId:undefined};
+ const value=state(null,{groups:[{id:'group',name:'Group',memberIds:members.slice(0,3),personaId:'default'}],groupMessages:[user,first]});
+ value.groupRuntime={status:'waiting-model',mode:'list',roundId:'second-of-three',roundNumber:1,roundMembers:members.slice(0,3),
+  spokenIds:['claude'],queue:['deepseek','chatgpt'],currentMessage:first};
+ const renderDialogue=()=>render(CompanionGroupDialogue,{...props(value),classic:false,galgame:true});
+ const server=React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
+ const original=server.H;
+ let serverDispatcher=original,reset;
+ try{
+  let replaced=false;
+  Object.defineProperty(server,'H',{configurable:true,
+   get:()=>serverDispatcher,
+   set(value){
+    serverDispatcher=value;
+    if(!value?.useState||replaced)return;
+    replaced=true;
+    const useState=value.useState;
+    let stateIndex=0;
+    // SSR cannot click the disclosure. Initialize the popover's open state
+    // while the production JSX still renders both public DOM surfaces.
+    value.useState=(initial)=>useState(++stateIndex===10?true:initial);
+    reset=()=>{value.useState=useState;};
+   }});
+  const html=renderDialogue();
+  const next=html.match(/data-group-round-member="([^"]+)" data-round-status="next"[^>]*>[\s\S]*?<span class="q-round-name">([^<]+)<\/span>/);
+  assert.deepEqual(next?.slice(1),['chatgpt','GPT']);
+  assert.match(html,/class="lv gx-round-meta">本轮 · 第 2 位 \/ 共 3 位 · 下一位 GPT</);
+ }finally{
+  reset?.();
+  Object.defineProperty(server,'H',{configurable:true,writable:true,enumerable:true,value:original});
+ }
 });

@@ -19,10 +19,12 @@ export function planLegacyDedupe(state){
  const groups=new Map();
  for(const conversation of Object.values(state.conversations??{}))if(conversation.messages?.some(m=>m.legacy===true)){const key=conversation.characterId+'\u0000'+(conversation.lifeId??'');if(!groups.has(key))groups.set(key,[]);groups.get(key).push(conversation);}
  const removals=[],characters={};
+ let skippedAmbiguousConversations=0;
  for(const conversations of groups.values()){
   conversations.sort((a,b)=>(a.createdAt??0)-(b.createdAt??0)||String(a.id).localeCompare(String(b.id)));
   const seen=[],positions=new Map();
   for(const conversation of conversations){
+   if(new Set(conversation.messages.map(row=>row.id)).size!==conversation.messages.length){skippedAmbiguousConversations++;continue;}
    const runs=[];let run=null;
    for(const message of conversation.messages){if(message.legacy===true&&typeof message.text==='string'){if(!run)runs.push(run=[]);run.push(message);}else run=null;}
    const removed=[],kept=[];
@@ -44,8 +46,8 @@ export function planLegacyDedupe(state){
  }
  // The id changes whenever any touched conversation changes, so a stale plan is refused.
  const fingerprint=removals.map(row=>[row.conversationId,sha(state.conversations[row.conversationId].messages.map(m=>m.id+'\u0000'+lineKey(m)).join('\n'))]);
- const planId=sha(JSON.stringify({task:'legacy-dedupe',removals,fingerprint})).slice(0,32);
- return {task:'legacy-dedupe',planId,total:removals.reduce((sum,row)=>sum+row.messages.length,0),characters,removals};
+ const planId=sha(JSON.stringify({task:'legacy-dedupe',removals,fingerprint,...(skippedAmbiguousConversations?{skippedAmbiguousConversations}:{})})).slice(0,32);
+ return {task:'legacy-dedupe',planId,total:removals.reduce((sum,row)=>sum+row.messages.length,0),characters,removals,...(skippedAmbiguousConversations?{skippedAmbiguousConversations,skippedReason:'ambiguous-message-id'}:{})};
 }
 
 // Applies a plan to a state inside store.mutate. The plan is recomputed and must match.

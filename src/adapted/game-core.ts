@@ -1,7 +1,9 @@
+import {privatePromptParts,privateWireMessage} from '../companion-prompt-parts.mjs'
 import {replyStyleInstruction,normalizeReplyStyle} from '../reply-style.mjs'
 import {filterReplySourceLabels} from '../reply-source-labels.mjs'
 import {COMPANION_TOOL_RULE} from '../native-search.mjs'
 import {replyEmotion} from '../group-stage.mjs'
+import {PET_EMOTION_FALLBACK, galgameEmotionInstruction, normalizeGalgameEmotion, parseGalgameReply} from '../galgame-expressions.mjs'
 import {englishProfile,ENGLISH_CHOICES} from '../character-english.mjs';
 import {migrateCharacterDisplay,characterBackground,setCharacterBackground} from '../character-display.mjs';
 import {EMOTION_KEYS,EMOTION_PROMPT,resolveEmotion} from '../emotions.mjs'
@@ -2323,7 +2325,7 @@ export function apply(
   /**
    * CG requests are independent of chat and only follow a newly committed level.
    */
-  function checkLevelUp(charId: string, c: any, options: { skipCg?: boolean } = {}): boolean {
+  function checkLevelUp(charId: string, c: any, options: { skipCg?: boolean; relationshipEventId?: string } = {}): boolean {
     options = { ...options, skipCg: !ctx.cg?.enabled }
     if (!c.level) c.level = 1
     const cap = affectionCap(c.level)
@@ -2340,7 +2342,9 @@ export function apply(
           : '（好感度已满！' + profile.displayName + ' 的等级提升至 Lv.' + c.level + '！正在为' + profile.address + '准备礼物……）',
       })
       if (options.skipCg === true) return true
-      const cgId = makeId('cg')
+      const cgId = options.relationshipEventId
+        ? 'cg-level-'+createHash('sha256').update(JSON.stringify([charId,c.companionPersonaId,c.level,options.relationshipEventId])).digest('hex').slice(0,32)
+        : makeId('cg')
       c.cgs.push({
         id: cgId,
         lifeIds:ctx.companionLifeIds?.([charId]),
@@ -2746,6 +2750,10 @@ export function apply(
     })
   }
 
+  function systemForModel(system: any, purpose?: string){
+    return ctx.language?.() === 'en' && purpose !== 'emotion' ? String(system || '') + '\nRespond in natural English. Keep JSON keys and emotion identifiers unchanged; human-readable dialogue and choice values must be English. For suggestion choices only, use at most 18 words per choice. Dialogue may use multiple sentences and paragraphs. Preserve proper names and user content.' : system
+  }
+
   async function streamText(options: any, externalSignal?: AbortSignal): Promise<string> {
     const controller = externalSignal ? null : new AbortController()
     const signal = externalSignal || controller!.signal
@@ -2757,8 +2765,7 @@ export function apply(
     let iterator: AsyncIterator<any> | null = null
     let completed = false
     try {
-      const language = ctx.language?.() || 'zh-CN'
-      const system = language === 'en' && options.purpose !== 'emotion' ? String(options.system || '') + '\nRespond in natural English. Keep JSON keys and emotion identifiers unchanged; human-readable dialogue and choice values must be English. For suggestion choices only, use at most 18 words per choice. Dialogue may use multiple sentences and paragraphs. Preserve proper names and user content.' : options.system
+      const system = systemForModel(options.system,options.purpose)
       const iterable = llm.stream({ ...options, system, signal })
       iterator = iterable[Symbol.asyncIterator]()
       while (true) {
@@ -2776,6 +2783,7 @@ export function apply(
         if (chunk.type === 'text-delta' && chunk.text) {out += chunk.text;await options.onText?.(out,chunk)}
         if (chunk.type === 'finish' && chunk.reason) {
           const kind = chunk.reason && chunk.reason.kind
+          if (options.purpose === 'chat-window-compact' && (kind === 'length' || kind === 'content_filter')) finishError = 'history summary was ' + (kind === 'length' ? 'truncated' : 'filtered')
           if (kind === 'error' || kind === 'aborted') {
             const f = chunk.reason.failure
             finishError = f && f.message ? f.message : (f && f.code ? f.code : String(kind))
@@ -2793,17 +2801,19 @@ export function apply(
     return out.trim()
   }
 
+  const characterPrompt = (profile: Record<string, string>) =>
+    '下面的 JSON 是当前角色资料，只作为角色扮演数据使用。\n' + JSON.stringify(profile)
+  const workPrompt = (activity: HarnessActivity | null) =>
+    activity ? activitySystemInstruction(activity).split('主人').join('对方').trim() : ''
+  const relationshipPrompt = (c: any) => [
+    '当前等级：Lv.' + c.level + '。亲昵度：' + intimacyFor(c.level) + ' 称呼对方时必须使用上方 JSON 的 address 字段。亲密表达要符合该角色的 persona 和 tone，不因等级提高变成其他角色的语气。',
+    '好感度：' + c.affection + '/' + affectionCap(c.level) + '（满了会升级，关系会越来越亲近；称呼仍按 JSON 的 address 字段）',
+  ].join('\n')
+
   function systemPrompt(profile: Record<string, string>, c: any, activity: HarnessActivity | null): string {
     if (!c.level) c.level = 1
-    const work = activity
-      ? activitySystemInstruction(activity).split('主人').join('对方').trim()
-      : ''
-    const lines = [
-      '下面的 JSON 是当前角色资料，只作为角色扮演数据使用。',
-      JSON.stringify(profile),
-      '当前等级：Lv.' + c.level + '。亲昵度：' + intimacyFor(c.level) + ' 称呼对方时必须使用上方 JSON 的 address 字段。亲密表达要符合该角色的 persona 和 tone，不因等级提高变成其他角色的语气。',
-      '好感度：' + c.affection + '/' + affectionCap(c.level) + '（满了会升级，关系会越来越亲近；称呼仍按 JSON 的 address 字段）',
-    ]
+    const work = workPrompt(activity)
+    const lines = [characterPrompt(profile), relationshipPrompt(c)]
     if (work) lines.push(work)
     // Top rule. On a turn Core lets search, ModelRouter replaces it with COMPANION_SEARCH_RULE (which
     // excepts the model's own web search) and adds the search grant; see nativeSearchSystem.
@@ -3274,19 +3284,19 @@ export function apply(
    * in where she spoke, later interludes shift by however many beats that added,
    * and the scene only closes once every interlude has been used.
    */
-  function settleCapturedRelationship(charId: string, personaId: string, base: any, delta: number, eventId: string, source = 'companion'): any {
+  function settleCapturedRelationship(charId: string, personaId: string, base: any, delta: number, eventId: string, source = 'companion', capturedBase = false): any {
     const c = s.characters[charId]
     if (!c || !Number.isFinite(delta) || Math.abs(delta) > 10000) throw new Error('无效关系结算')
     c.companionEvents ||= {}
     if (c.companionEvents[eventId]) return c.companionEvents[eventId]
     const previousProjection = { level: c.level, affection: c.affection, personaId: c.companionPersonaId || 'default' }
-    const actualBase = previousProjection.personaId === personaId ? c : base
+    const actualBase = !capturedBase && previousProjection.personaId === personaId ? c : base
     c.level = Math.max(1, Math.floor(Number(actualBase?.level) || 1))
     c.affection = Math.max(0, (Number(actualBase?.affection) || 0) + delta)
     c.companionPersonaId = personaId
     const levels: number[] = []
     while (c.affection >= affectionCap(c.level)) {
-      checkLevelUp(charId, c)
+      checkLevelUp(charId,c,capturedBase?{relationshipEventId:eventId}:undefined)
       levels.push(c.level)
     }
     const result = { level: c.level, affection: c.affection, levels, characterId: charId, personaId, delta, eventId, at: Date.now(), source }
@@ -4725,7 +4735,7 @@ export function apply(
       }
       case 'companion-export': {
         return { current: s.current, characters: ROSTER_IDS.map(id => ({ id, hasCustomSprite: !!customSpriteFor(s.characters[id])?.dataUrl, spriteRevision: spriteRevisionFor(s.characters[id]), sprite: ROSTER[id].sprite, color: ROSTER[id].color, background: defaultBuiltinBackground(id), profile: effectiveProfileFor(id), builtIn: builtInProfile(id, ctx.language?.()), overrides: profileOverridesFor(id), level: s.characters[id].level,
-          affection: s.characters[id].affection, history: s.characters[id].chatLines || [], choices: s.characters[id].choices || [], personaId: s.characters[id].companionPersonaId || 'default',
+          affection: s.characters[id].affection, ...(args.includeHistory===false?{}:{history:s.characters[id].chatLines||[]}), choices: s.characters[id].choices || [], personaId: s.characters[id].companionPersonaId || 'default',
           pendingRelationEvents: Object.values(s.characters[id].companionEvents || {}).filter((event: any) => event.source === 'skit' && !event.delivered) })) }
       }
       case 'companion-life-content': {
@@ -4816,14 +4826,25 @@ export function apply(
         }
         const c = s.characters[args.characterId]
         if (!c) throw new Error('角色不存在')
-        c.level = Math.max(1, Math.floor(Number(args.relationship?.level) || 1))
-        c.affection = Math.max(0, Number(args.relationship?.affection) || 0)
-        c.companionPersonaId = args.personaId || 'default'
+        const eventId=typeof args.relationshipEventId==='string'?args.relationshipEventId:null
+        if(eventId&&c.companionEvents?.[eventId])return {ok:true}
+        const level=Math.max(1,Math.floor(Number(args.relationship?.level)||1))
+        const affection=Math.max(0,Number(args.relationship?.affection)||0)
+        const personaId=args.personaId||'default'
+        if(!eventId||(c.companionPersonaId||'default')===personaId){
+          c.level=level
+          c.affection=affection
+          c.companionPersonaId=personaId
+        }
+        if(eventId){
+          c.companionEvents ||= {}
+          c.companionEvents[eventId]={level,affection,characterId:args.characterId,personaId,eventId,at:Date.now(),source:'companion-reset'}
+        }
         await save('global')
         return { ok: true }
       }
       case 'companion-relationship': {
-        const result = settleCapturedRelationship(args.characterId, args.personaId || 'default', args.base, args.delta, args.eventId)
+        const result = settleCapturedRelationship(args.characterId, args.personaId || 'default', args.base, args.delta, args.eventId, 'companion', args.capturedBase === true)
         await save('global')
         return result
       }
@@ -5118,9 +5139,10 @@ export function apply(
         const outerSignal=companionContext&&ctx.companionSignal?.(companionContext.requestId)
         const cancel=()=>controller.abort(outerSignal?.reason)
         if(outerSignal?.aborted)cancel();else outerSignal?.addEventListener('abort',cancel,{once:true})
-        const timer = setTimeout(() => {
+        const startChatDeadline = () => setTimeout(() => {
           controller.abort(new Error('chat model work timed out after 110 seconds'))
         }, MODEL_STREAM_TIMEOUT_MS)
+        let timer = startChatDeadline()
         let pendingChoiceCharId = ''
         try {
           try {
@@ -5168,40 +5190,89 @@ export function apply(
           let fallbackReason = ''
           if (llm && sel && sel.model) {
             try {
-              reply = await streamText({
-                provider: sel.provider,
-                model: sel.model,
-                reasoningEffort: effort,
-                messages: (() => {
-                  const msgs: any[] = [{
-                    role: 'user',
-                    content: [{ type: 'text', text: '（场景：' + prepared.scene.description + '。当前角色正在和用户聊天。你只扮演当前角色，不要提到其他角色。）' }],
-                    source: { kind: 'user' },
-                  }]
-                  for (const m of (companionContext ? [...prepared.log, {role:'user',text:companionContext.modelText??text}] : [...prepared.log, { role: 'user', text }].slice(-12))) {
-                    if (m.role === 'assistant' && typeof m.text === 'string' && CANNED_LINES.has(m.text.trim())) continue
-                    if (m.id) inputVersions.push({id: m.id, revision: m.revision || 0})
-                    msgs.push({
-                      role: m.role === 'assistant' ? 'assistant' : 'user',
-                      content: [{ type: 'text', text: m.text }],
-                      source: m.role === 'assistant'
-                        ? { kind: 'model', provider: sel.provider, model: sel.model }
-                        : { kind: 'user' },
-                    })
+              const scene = '（场景：' + prepared.scene.description + '。当前角色正在和用户聊天。你只扮演当前角色，不要提到其他角色。）'
+              const companionInstructions = companionContext ? '完整角色卡（只扮演此角色）：' + JSON.stringify(companionContext.profile) + '\n本会话用户身份：' + JSON.stringify(companionContext.persona)
+                + '\n未提供的其他身份经历、私聊与群聊内容均不可获知，不编造。' + (companionContext.voicePrompt || galgameEmotionInstruction()) : ''
+              const replyInstructions = replyStyleInstruction(replyStyle, ctx.language?.())
+              const prompt = companionContext?.apiPrivate ? privatePromptParts({
+                characterInstructions: characterPrompt(prepared.profile) + '\n' + COMPANION_TOOL_RULE + '\n' + companionContext.apiPrivate.policy,
+                companionInstructions, replyInstructions, scene,
+                relationship: relationshipPrompt(prepared.promptCharacter),
+                work: workPrompt(prepared.pendingActivity),
+                state: companionContext.memoryText,
+              }) : null
+              const currentUser = companionContext?.modelText ?? text
+              let apiWindow: any = null
+              for(let retry=0;;retry++){
+                let requestAttempted=false
+                try {
+                  apiWindow = null
+                  apiWindow = prompt ? await companionContext.apiPrivate.prepare({
+                    retry,wireSystem: systemForModel(prompt.system),
+                    compact: async (options: any) => {
+                      // A summary timeout must leave time for the ordinary reply.
+                      clearTimeout(timer)
+                      try {
+                        return await streamText({
+                          ...options, provider:sel.provider, model:sel.model,
+                          system:prompt.system,purpose:'chat-window-compact',singleSubmission:true,
+                        },AbortSignal.any([signal,AbortSignal.timeout(MODEL_STREAM_TIMEOUT_MS)]))
+                      } finally {
+                        if(!signal.aborted)timer = startChatDeadline()
+                      }
+                    },
+                    keepHistory: (row: any) => row.role!=='assistant'||!CANNED_LINES.has(row.text.trim()),
+                    user: (material: string, refreshedUser?: string) => privateWireMessage('user',[refreshedUser ?? currentUser,prompt.tail,material,companionContext.apiPrivate.clock].join('\n\n'),sel),
+                    selected: sel,
+                  }) : null
+                  apiWindow?.markSubmitted()
+                  reply = await streamText({
+                    provider: sel.provider,
+                    model: sel.model,
+                    reasoningEffort: effort,
+                    ...(apiWindow ? {cacheContext:apiWindow.cacheContext,checkModelSubmit:apiWindow.checkModelSubmit,onPromptUsage:apiWindow.observeUsage,observeWireSystemMode:apiWindow.observeWireSystemMode} : {}),
+                    messages: apiWindow?.messages ?? (() => {
+                      const msgs: any[] = [{
+                        role: 'user',
+                        content: [{ type: 'text', text: scene }],
+                        source: { kind: 'user' },
+                      }]
+                      for (const m of (companionContext ? [...prepared.log, {role:'user',text:currentUser}] : [...prepared.log, { role: 'user', text }].slice(-12))) {
+                        if (m.role === 'assistant' && typeof m.text === 'string' && CANNED_LINES.has(m.text.trim())) continue
+                        if (m.id) inputVersions.push({id: m.id, revision: m.revision || 0, ...(m.messageOccurrence ? {messageOccurrence: m.messageOccurrence} : {})})
+                        msgs.push({
+                          role: m.role === 'assistant' ? 'assistant' : 'user',
+                          content: [{ type: 'text', text: m.text }],
+                          source: m.role === 'assistant'
+                            ? { kind: 'model', provider: sel.provider, model: sel.model }
+                            : { kind: 'user' },
+                        })
+                      }
+                      return msgs
+                    })(),
+                    system: prompt?.system ?? (systemPrompt(prepared.profile, prepared.promptCharacter, prepared.pendingActivity)
+                      + (companionContext ? '\n' + companionInstructions + '\n' + (typeof companionContext.clockPrompt === 'function' ? companionContext.clockPrompt() + '\n' : '')
+                        + (companionContext.memoryText || '') : '')
+                      + '\n' + replyInstructions),
+                    temperature: 0.9,
+                    maxTokens: 1200,
+                    incremental: !!companionContext,
+                    onTiming: companionContext ? (value: any)=>{
+                      if(value.name==='request-submitted')requestAttempted=true
+                      ctx.emit?.('galgame/output-timing',{requestId,...value})
+                    } : undefined,
+                    onText: companionContext ? (text: string,part: any)=>ctx.captureCompanionDelta?.({requestId,characterId:prepared.charId,text,turnId:part?.turnId,itemId:part?.itemId}) : undefined,
+                    userLimit: true,
+                  }, signal)
+                  if(reply&&apiWindow){
+                    apiWindow.observeAssistant(reply)
+                    inputVersions.push(...apiWindow.inputVersions)
                   }
-                  return msgs
-                })(),
-                system: systemPrompt(prepared.profile, prepared.promptCharacter, prepared.pendingActivity)
-                  + (companionContext ? '\n完整角色卡（只扮演此角色）：' + JSON.stringify(companionContext.profile) + '\n本会话用户身份：' + JSON.stringify(companionContext.persona)
-                    + '\n未提供的其他身份经历、私聊与群聊内容均不可获知，不编造。' + (companionContext.voicePrompt || '可在回复末尾用 [[emotion:标签]] 标记你实际表达的情绪，标签限 normal,cheerful,shy,serious,confused,angry,frightened,exasperated,starry。') + '\n'+(companionContext.memoryText||'')  : '')
-                  + '\n' + replyStyleInstruction(replyStyle, ctx.language?.()),
-                temperature: 0.9,
-                maxTokens: 1200,
-                incremental: !!companionContext,
-                onTiming: companionContext ? (value: any)=>ctx.emit?.('galgame/output-timing',{requestId,...value}) : undefined,
-                onText: companionContext ? (text: string,part: any)=>ctx.captureCompanionDelta?.({requestId,characterId:prepared.charId,text,turnId:part?.turnId,itemId:part?.itemId}) : undefined,
-                userLimit: true,
-              }, signal)
+                  break
+                } catch (error: any) {
+                    if(!prompt||retry>=2||requestAttempted||signal.aborted||!(apiWindow?.staleBeforeSubmit||!apiWindow&&error.code==='MEMORY_SOURCE_CHANGED'))throw error
+                }
+              }
             } catch (err: any) {
               console.error('whale-galgame llm call failed:', err && err.message ? err.message : String(err))
               fallbackReason = err && err.message ? err.message : String(err)
@@ -5220,10 +5291,18 @@ export function apply(
             usedFallback = true
           }
           const voiceReply=companionContext?.voicePrompt&&!usedFallback ? await ctx.finishCompanionVoice?.(requestId,reply) : null
-          reply=filterReplySourceLabels(voiceReply?.text??reply,{requestText:text})
-          const emotionTag=voiceReply?.emotion??reply.match(/\[\[emotion:([a-z-]+)\]\]\s*$/i)?.[1]
-          reply=reply.replace(/\s*\[\[emotion:[a-z-]+\]\]\s*$/i,'')
-          const {emotion, emotionSource} = replyEmotion(reply,emotionTag)
+          reply=voiceReply?.text??filterReplySourceLabels(reply,{requestText:text})
+          const legacyTag=reply.match(/\[\[emotion:([a-z-]+)\]\]\s*$/i)?.[1]
+          const legacyText=reply.replace(/\s*\[\[emotion:[a-z-]+\]\]\s*$/i,'')
+          const visual = companionContext ? parseGalgameReply(reply,voiceReply?.emotion,{preserveWhitespace:!!voiceReply}) : null
+          reply=visual?.text??legacyText
+          if(visual&&!reply.trim())throw Error('模型回复没有可显示的正文，请重试')
+          const petTag=voiceReply?.lastTaggedEmotion??visual?.lastTaggedEmotion??voiceReply?.legacyEmotion??voiceReply?.emotion??visual?.legacyEmotion??legacyTag
+          const oldReplyEmotion=replyEmotion(reply,PET_EMOTION_FALLBACK[petTag]??petTag)
+          const wholeEmotion=normalizeGalgameEmotion(voiceReply?.emotion??visual?.legacyEmotion,null)
+          const emotionSentences=voiceReply?.emotionSentences??visual?.sentences
+          const emotion=wholeEmotion??emotionSentences?.[0]?.emotion??oldReplyEmotion.emotion
+          const emotionSource=wholeEmotion || visual?.firstTaggedSentence!==undefined || voiceReply ? 'structured' : oldReplyEmotion.emotionSource
           pendingChoiceCharId = prepared.charId
           choiceGenerationPending.add(pendingChoiceCharId)
           const committed = await runSerializedStateTask(async () => {
@@ -5237,8 +5316,8 @@ export function apply(
               who: 'user',
               id: requestId + ':user',
               text,
-              emotion,
-              emotionSource,
+              emotion:oldReplyEmotion.emotion,
+              emotionSource:oldReplyEmotion.emotionSource,
               choiceId: prepared.selectedChoice ? prepared.selectedChoice.id : null,
               ...(companionContext ? {personaId: companionContext.personaId, conversationId: companionContext.conversationId} : {}),
             })
@@ -5252,7 +5331,7 @@ export function apply(
             }
             c.log.push({ role: 'assistant', text: reply })
             if (c.log.length > 24) c.log = c.log.slice(-24)
-            c.chatLines.push({ who: 'heroine', id: requestId + ':reply', requestId, text: reply, emotion, emotionSource,
+            c.chatLines.push({ who: 'heroine', id: requestId + ':reply', requestId, text: reply, ...oldReplyEmotion,
               ...(companionContext ? {personaId: companionContext.personaId, conversationId: companionContext.conversationId} : {}) })
             const before = c.affection
             const delta = prepared.selectedChoice
@@ -5263,10 +5342,10 @@ export function apply(
             await save(settledBeforeChat.changed || c.affection !== before || leveled ? 'both' : 'workspace')
             return { leveled, delta, response: view() }
           })
-          if(!companionContext)ctx.emit?.('galgame/chat-committed', {requestId, messageId: requestId + ':reply', sequence, characterId: prepared.charId, role: 'heroine', emotion, emotionSource, text: reply})
+          if(!companionContext)ctx.emit?.('galgame/chat-committed', {requestId, messageId: requestId + ':reply', sequence, characterId: prepared.charId, role: 'heroine', ...oldReplyEmotion, text: reply})
           if(companionContext?.deferChoices){
             choiceGenerationPending.delete(pendingChoiceCharId);pendingChoiceCharId=''
-            return {...view(),companionCommit:{text:reply,emotion,emotionSource,choices:[],choicesDeferred:true,delta:committed.delta,connectionId:sel?.provider,model:sel?.model,inputVersions}}
+            return {...view(),companionCommit:{text:reply,emotion,emotionSource,emotionSentences,petEmotion:oldReplyEmotion,choices:[],choicesDeferred:true,delta:committed.delta,connectionId:sel?.provider,model:sel?.model,inputVersions}}
           }
           if (committed.leveled) {
             choiceGenerationPending.delete(pendingChoiceCharId)
@@ -5274,7 +5353,7 @@ export function apply(
             return await runSerializedStateTask(async () => {
               const c = s.characters[prepared.charId]
               if (ensureReplyChoices(prepared.charId, c)) await save('global')
-              return {...view(), ...(companionContext ? {companionCommit: {text: reply, emotion, emotionSource, choices: c.choices.map((choice: any) => ({...choice})), delta: committed.delta, connectionId: sel?.provider, model: sel?.model, inputVersions}} : {})}
+              return {...view(), ...(companionContext ? {companionCommit: {text: reply, emotion, emotionSource, emotionSentences, petEmotion:oldReplyEmotion, choices: c.choices.map((choice: any) => ({...choice})), delta: committed.delta, connectionId: sel?.provider, model: sel?.model, inputVersions}} : {})}
             })
           }
 
@@ -5287,7 +5366,7 @@ export function apply(
             choiceGenerationPending.delete(prepared.charId)
             pendingChoiceCharId = ''
             await save('workspace')
-            return {...view(), ...(companionContext ? {companionCommit: {text: reply, emotion, emotionSource, choices: c.choices.map((choice: any) => ({...choice})), delta: committed.delta, connectionId: sel?.provider, model: sel?.model, inputVersions}} : {})}
+            return {...view(), ...(companionContext ? {companionCommit: {text: reply, emotion, emotionSource, emotionSentences, petEmotion:oldReplyEmotion, choices: c.choices.map((choice: any) => ({...choice})), delta: committed.delta, connectionId: sel?.provider, model: sel?.model, inputVersions}} : {})}
           })
         } finally {
           outerSignal?.removeEventListener('abort',cancel)
@@ -5333,7 +5412,7 @@ export function apply(
             const outcome = await generateSideStoryFreeReply(pending, spoken)
             resolved = { text: spoken, effects: outcome.effects, reply: outcome.reply }
           }
-          return await runSerializedStateTask(async () => {
+          const settle=()=>runSerializedStateTask(async () => {
             const state = sideStoryState()
             const scene = state.scene
             if (!scene || scene.settled) return view()
@@ -5353,6 +5432,7 @@ export function apply(
             await save('global')
             return view()
           })
+          return await (ctx.serializeCompanionRelationship?.(settle) ?? settle())
         }
         // op === 'start'
         const remaining = sideStoryCooldownRemaining()
@@ -5464,8 +5544,10 @@ export function apply(
           const existing = !previous && c.cgs.find((row: any) => !row.deletedAt && row.level === level && (!row.kind||row.kind==='level') && ['queued', 'planning', 'generating', 'ready'].includes(row.status))
           if (existing) return { ok: true, cgId: existing.id }
           const cgId = makeId('cg')
+          const retryOnStage = !!previous && previous.status === 'failed' && !previous.seen && currentCg()?.id === previous.id
           c.cgs.push({ id: cgId,lifeIds:ctx.companionLifeIds?.([charId]), status: 'queued', kind: 'level', automatic: false, sourceEventId: 'manual:' + cgId,
-            retryOf: previous?.id || null, charId, personaId: previous?.personaId || args.personaId || c.companionPersonaId || 'default', level, at: Date.now(), dataUrl: null, prompt: null, seen: true, savedAsBg: false, error: null })
+            retryOf: previous?.id || null, charId, personaId: previous?.personaId || args.personaId || c.companionPersonaId || 'default', level, at: Date.now(), dataUrl: null, prompt: null, seen: !retryOnStage, savedAsBg: false, error: null })
+          if (retryOnStage) { previous.seen = true; s.cg = {cgId}; claimGlobalValue('cg') }
           await save('global'); void generateCg(charId, level, cgId); return { ok: true, cgId }
         })
       }
