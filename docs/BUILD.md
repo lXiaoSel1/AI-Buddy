@@ -1,11 +1,11 @@
-# Build AI Buddy 2.0.18
+# Build AI Buddy 2.1.0
 
-This guide describes the formal 2.0.18 binary. Development requires Windows x64 and Node.js24. The distributed application does not require a user-installed Node. Use the exact package-lock.json dependency versions.
+This guide describes the formal 2.1.0 binary. Development requires Windows x64 and Node.js24. The distributed application does not require a user-installed Node. Use the exact package-lock.json dependency versions.
 
 ## Application
 
 1. Run npm ci in this repository. Electron44.6.0 and esbuild0.28.2 are pinned.
-2. Extract the approved 2.0.5 release resources for the desired 30fps/60fps edition into an isolated staging root. Reuse immutable asset bytes; do not regenerate animation. Create independent package.json and assets/install-resource-index.json files with application version2.0.18, retaining every asset entry/hash. Never rewrite linked metadata or the original resource tree.
+2. Extract the approved 2.0.5 release resources for the desired 30fps/60fps edition into an isolated staging root. Reuse immutable asset bytes; do not regenerate animation. Create independent package.json and assets/install-resource-index.json files with application version2.1.0, retaining every asset entry/hash. Never rewrite linked metadata or the original resource tree.
 3. Run node scripts/build-public.mjs --resources=<absolute resource root> --out=development --link-assets --public-evidence --bili-ffmpeg-upstream --galgame-expressions=<approved folder> --galgame-expression-manifest-sha256=<sha256> using the published full-index resources. The approved folder must contain the final `x2/` portraits and their `manifest.json`. Use the pinned digest of that manifest and the expression catalog generated from it. Local production evidence and user data are never published.
 4. npm start opens the compiled development app. npm test runs the source test selection. TEST-SCOPE.json records any private Work-plugin or sibling-social integration tests excluded from the public source; their exclusion is not a pass.
 
@@ -15,11 +15,11 @@ Assets are immutable when hard-linked. Never edit a linked output in place. Use 
 
 For an incremental official release, prefer `scripts/package-installer-incremental.py` with an explicitly pinned previous public manifest and its SHA-256, both current application candidates, and a current root tree containing the compiled portable launcher. Stage independent current-version package/index headers before running the unchanged public-evidence build gate. The incremental packager verifies complete edition/asset/file maps and every final ZIP payload, hard-links unchanged resource/runtime ZIPs, and repacks only root plus the two application ZIPs. Never rewrite inherited hard-linked metadata. The root tree must include both current release-note languages.
 
-For 2.0.18, use `--galgame-expressions` with the published 2.0.17 manifest. This repacks the approved Galgame overlay into the shared and character common ZIPs. The built-in recognition files are verified against their source inputs and included in both application ZIPs.
+For this version-only 2.1.0 build, use the published 2.0.18 manifest for incremental packaging. The base already includes the approved Galgame overlay. The built-in recognition files are verified against their source inputs and included in both application ZIPs.
 
 Build the installer from that final manifest with `scripts/prepare-installer.py`, then use `scripts/package-installer-202.py --portable-from-manifest` with the exact root and both build trees. This reconstructs the runtime from the verified reused ZIP and requires the real installer inspect result, including protocol 1 capabilities, before writing portable manager identity. Both portable editions and the installer must appear in the final checksum table. Reusing already verified dependencies, the fixed SDK and an offline NuGet feed does not permit bypassing version, asset or payload checks.
 
-The complete approved inventory is scripts/media-baselines/public-204-assets.json. It pins every distributed resource, its edition/owner, the original media/approval hashes and generated manifest bytes; it contains no private chat or machine path. Application2.0.18, compatible resource release2.0.5 and original media base1.9.2 are separate identities. The public-evidence gate requires application2.0.18 package/index headers in the staging root; resourceBaseVersion does not bypass that gate. The inventory differs from the v2.0.5 source inventory only in applicationVersion. Original approval files are not rewritten.
+The complete approved inventory is scripts/media-baselines/public-204-assets.json. It pins every distributed resource, its edition/owner, the original media/approval hashes and generated manifest bytes; it contains no private chat or machine path. Application2.1.0, compatible resource release2.0.5 and original media base1.9.2 are separate identities. The public-evidence gate requires application2.1.0 package/index headers in the staging root; resourceBaseVersion does not bypass that gate. The inventory differs from the v2.0.5 source inventory only in applicationVersion. Original approval files are not rewritten.
 
 After both candidates are built, run scripts/build-distribution-202.mjs with --baseline30=<absolute30fpscandidate> --baseline60=<absolute60fpscandidate> --runtime=<absoluteElectronruntime> --out=<freshdisjointoutput> --rcedit=<pinnedrcedit> --public-evidence --link-assets. The runtime is copied before version stamping. Public evidence and private --media-baseline/--media-approval modes cannot be mixed.
 
@@ -73,4 +73,4 @@ Push the already verified tag; create a release with --verify-tag and full40char
 
 LICENSE.md, CONTRIBUTING.md and .github/pull_request_template.md retain their exact approved bytes. Their contents require explicit approval to change. Keep the root license filename LICENSE.md. Third-party runtime/component licenses and existing artwork qualifications remain in the distribution.
 
-Incremental 2.0.18 reuses the exact resource and runtime ZIPs from public 2.0.10; the runtime ZIP is named 2.0.5. Its embedded runtime-manifest.json identifies 2.0.4; release.json therefore declares runtimeBaseVersion 2.0.4 separately from media resourceBaseVersion 2.0.5. Neither the ZIP nor its internal identity is rewritten; complete file and executable digests remain mandatory.
+Incremental 2.1.0 reuses the exact resource and runtime ZIPs from public 2.0.18; the runtime ZIP is named 2.0.5. Its embedded runtime-manifest.json identifies 2.0.4; release.json therefore declares runtimeBaseVersion 2.0.4 separately from media resourceBaseVersion 2.0.5. Neither the ZIP nor its internal identity is rewritten; complete file and executable digests remain mandatory.
