@@ -1,9 +1,9 @@
 {
-  "total": 1667,
+  "total": 1753,
   "releases": [
     {
       "tag": "v2.1.0",
-      "downloads": 215
+      "downloads": 298
     },
     {
       "tag": "v2.0.18",
@@ -11,7 +11,7 @@
     },
     {
       "tag": "v2.0.17",
-      "downloads": 187
+      "downloads": 190
     },
     {
       "tag": "v2.0.16",
